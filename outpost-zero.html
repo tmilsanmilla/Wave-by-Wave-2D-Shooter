@@ -1,0 +1,2586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OUTPOST ZERO — Tactical 2D Shooter</title>
+<style>
+  html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace}
+  body{display:flex;align-items:center;justify-content:center}
+  #c{display:block;max-width:100vw;max-height:100vh;cursor:none;touch-action:none;-webkit-user-select:none;user-select:none}
+  .ui{position:fixed;font-family:ui-monospace,Menlo,Consolas,monospace;color:#cdd6b0}
+  #userbar{top:44px;left:18px;display:flex;flex-direction:column;gap:5px;align-items:flex-start;font-size:12px;z-index:5}
+  #userbar span{color:#8a9268}
+  #uemail{font-size:11px;color:#6b7455}
+  .btn{background:rgba(232,182,88,.14);border:1px solid #e8b658;color:#e8b658;
+    font:700 11px ui-monospace,Consolas,monospace;padding:6px 12px;cursor:pointer}
+  .btn:hover{background:#e8b658;color:#101208}
+  #authwrap{inset:0;background:rgba(8,9,5,.86);display:none;align-items:center;justify-content:center;z-index:10}
+  #authbox{background:#101208;border:1px solid #4a4634;padding:28px 26px;width:320px;text-align:center}
+  #authbox h2{color:#e8b658;font-size:20px;margin:0 0 6px}
+  #authbox p{color:#8a9268;font-size:11px;margin:0 0 18px;line-height:1.5}
+  #authbox input{width:100%;box-sizing:border-box;background:rgba(0,0,0,.5);border:1px solid #4a4634;
+    color:#cdd6b0;font:12px ui-monospace,Consolas,monospace;padding:9px;margin-bottom:10px}
+  #authbox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
+  #authmsg{color:#a7c15e;font-size:11px;min-height:15px;margin-top:4px}
+  .llr{position:fixed;top:0;bottom:0;width:0;display:none;align-items:flex-start;
+    justify-content:center;z-index:4;text-decoration:none;overflow:hidden;pointer-events:auto;
+    background:#000}
+  .llr .col{display:flex;flex-direction:column;align-items:center;
+    font:700 20px ui-monospace,Menlo,Consolas,monospace;letter-spacing:1px;
+    color:#fff;animation:llrfall 11s linear infinite}
+  .llr .ch{line-height:1.3;opacity:.96}
+  .llr .ch.hz{color:#ff4d6d;font-size:22px}
+  .llr .yt{display:inline-flex;align-items:center;justify-content:center;
+    width:24px;height:24px;margin:3px 0;background:#fff;border-radius:6px}
+  .llr .yt::before{content:'';border-style:solid;
+    border-width:5px 0 5px 9px;border-color:transparent transparent transparent #ff0000;
+    margin-left:2px}
+  .llr .seg{display:flex;flex-direction:column;align-items:center;
+    color:inherit;text-decoration:none}
+  .llr .gap{height:26px}
+  .llr:hover .col{color:#ffe08a}
+  @keyframes llrfall{ from{transform:translateY(-52%)} to{transform:translateY(0)} }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="llr" id="llrL"></div><div class="llr" id="llrR"></div>
+<div id="userbar" class="ui"><span id="uname">not signed in</span><span id="uemail"></span><button id="ubtn" class="btn">SIGN IN</button></div>
+<div id="authwrap" class="ui">
+  <div id="authbox">
+    <h2>OUTPOST ZERO</h2>
+    <p>Sign in to save your best score to the leaderboard.<br><br>
+    If you sign up and get a verification email, the link may not load the site.
+    Just come back here and sign in normally.</p>
+    <input id="aemail" type="email" placeholder="you@example.com" autocomplete="email">
+    <input id="apass" type="password" placeholder="password" autocomplete="current-password">
+    <button id="ain" class="btn">SIGN IN</button>
+    <button id="aup" class="btn">SIGN UP</button>
+    <button id="aguest" class="btn">PLAY AS GUEST</button>
+    <button id="acancel" class="btn">CANCEL</button>
+    <div id="authmsg"></div>
+    <div style="margin-top:10px">
+      <a id="aforgot" href="#" style="color:#8a9268;font-size:11px;text-decoration:underline;cursor:pointer">Forgot password?</a>
+    </div>
+    <div id="resetbox" style="display:none;margin-top:14px;border-top:1px solid #4a4634;padding-top:14px">
+      <p style="margin:0 0 10px">Set a new password for your account.</p>
+      <input id="rpass1" type="password" placeholder="new password (min 6)" autocomplete="new-password">
+      <input id="rpass2" type="password" placeholder="confirm new password" autocomplete="new-password">
+      <button id="rsave" class="btn">SAVE NEW PASSWORD</button>
+      <button id="rdone" class="btn" style="display:none">CONTINUE</button>
+    </div>
+  </div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+"use strict";
+/* ============================================================
+   OUTPOST ZERO — top-down tactical wave shooter
+   WASD move · mouse fire · E (or hold RMB) scope aim · R reload
+   1-4 swap weapons · ESC menu
+   ============================================================ */
+
+/* ============================================================
+   AUTH + LEADERBOARD (Supabase)
+   Paste your project URL and anon key below. Leave blank to
+   run guest-only. The anon key is safe to expose client-side.
+   ============================================================ */
+const SUPABASE_URL = 'https://edvurrilylypgfyvjyas.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
+
+let sb = null, authUser = null, board = [], boardT = 0, recovering = false;
+const $ = id => document.getElementById(id);
+
+function displayName(u){
+  if(!u) return 'guest';
+  return (u.user_metadata && (u.user_metadata.full_name || u.user_metadata.name))
+      || (u.email ? u.email.split('@')[0] : 'operator');
+}
+function paintUserbar(){
+  $('uname').textContent = authUser ? displayName(authUser) : 'not signed in';
+  $('uemail').textContent = authUser && authUser.email ? authUser.email : '';
+  $('ubtn').textContent  = authUser ? 'SIGN OUT' : 'SIGN IN';
+}
+async function initAuth(){
+  if(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase){
+    try{
+      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      const { data } = await sb.auth.getSession();
+      authUser = data.session ? data.session.user : null;
+      sb.auth.onAuthStateChange((_e, sess)=>{
+        authUser = sess ? sess.user : null;
+        paintUserbar();
+        if(!authUser){
+          for(const slot of ['primary','secondary','melee'])
+            if(loadout[slot] && LOCKED_KEYS.includes(loadout[slot])) loadout[slot]=null;
+          loadout.utility=null;
+        }
+        if(_e==='PASSWORD_RECOVERY'){
+          recovering=true;
+          $('authwrap').style.display='flex';
+          $('resetbox').style.display='block';
+          $('authmsg').textContent='Recovery link accepted \u2014 choose a new password below.';
+        } else if(!recovering){
+          $('authwrap').style.display='none';
+        }
+        fetchBoard();
+      });
+      fetchBoard();
+    }catch(err){ console.warn('supabase init failed', err); sb=null; }
+  }
+  paintUserbar();
+}
+async function submitScore(sc){
+  if(!sb || !authUser || sc<=0) return;
+  try{
+    // never lower an existing entry — keep the player's all-time best
+    let best=sc;
+    try{
+      const { data } = await sb.from('scores').select('score')
+        .eq('user_id',authUser.id).eq('game','outpost-zero').maybeSingle();
+      if(data && data.score>best) best=data.score;
+    }catch(e){}
+    await sb.from('scores').upsert(
+      { user_id: authUser.id, name: displayName(authUser), game: 'outpost-zero', score: best },
+      { onConflict: 'user_id,game' }
+    );
+    fetchBoard();
+  }catch(err){ console.warn('score submit failed', err); }
+}
+async function fetchBoard(){
+  if(!sb) return;
+  try{
+    const { data } = await sb.from('scores').select('name,score')
+      .eq('game','outpost-zero').order('score',{ascending:false}).limit(10);
+    board = data || []; boardT = Date.now();
+  }catch(err){ console.warn('board fetch failed', err); }
+}
+$('ubtn').onclick = async ()=>{
+  if(authUser && sb){ await sb.auth.signOut(); authUser=null; paintUserbar(); }
+  else $('authwrap').style.display='flex';
+};
+$('aguest').onclick = ()=>{ if(!recovering) $('authwrap').style.display='none'; };
+$('acancel').onclick = async ()=>{
+  if(recovering && sb){
+    // abandoning a password reset: sign out so the recovery session is dropped
+    await sb.auth.signOut();
+    authUser=null; paintUserbar();
+    recovering=false;
+    $('resetbox').style.display='none';
+    $('rsave').style.display='block'; $('rdone').style.display='none';
+    $('rpass1').value=''; $('rpass2').value='';
+    $('authmsg').textContent='Password reset cancelled. That link is no longer valid \u2014 request a new one if you still need it.';
+    return;   // keep the panel open so they see the message
+  }
+  recovering=false;
+  $('resetbox').style.display='none';
+  $('rsave').style.display='block'; $('rdone').style.display='none';
+  $('authmsg').textContent='';
+  $('authwrap').style.display='none';
+};
+for(const id of ['aemail','apass'])
+  $(id).addEventListener('keydown', e=>{ if(e.key==='Enter') $('ain').click(); });
+function creds(){
+  return { email: $('aemail').value.trim(), password: $('apass').value };
+}
+$('ain').onclick = async ()=>{
+  if(!sb){ $('authmsg').textContent='Sign-in unavailable here \u2014 works once deployed.'; return; }
+  const c=creds();
+  if(!c.email||!c.password){ $('authmsg').textContent='Email and password required.'; return; }
+  const { error } = await sb.auth.signInWithPassword(c);
+  if(error) $('authmsg').textContent=error.message;
+};
+$('aup').onclick = async ()=>{
+  if(!sb){ $('authmsg').textContent='Sign-in unavailable here \u2014 works once deployed.'; return; }
+  const c=creds();
+  if(!c.email||!c.password){ $('authmsg').textContent='Email and password required.'; return; }
+  const { error } = await sb.auth.signUp(c);
+  if(error){ $('authmsg').textContent=error.message; return; }
+  // with email confirmation off, signUp signs the user in immediately
+  const { error: e2 } = await sb.auth.signInWithPassword(c);
+  $('authmsg').textContent = e2
+    ? 'Account created. Now press SIGN IN with the same email and password.'
+    : 'Account created \u2014 you are signed in.';
+};
+$('aforgot').onclick = async (ev)=>{
+  ev.preventDefault();
+  if(!sb){ $('authmsg').textContent='Password reset works once deployed.'; return; }
+  const email=$('aemail').value.trim();
+  if(!email){ $('authmsg').textContent='Enter your email above, then tap Forgot password.'; return; }
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.href });
+  $('authmsg').textContent = error ? error.message
+    : 'Reset link sent. Open it, then you\'ll be asked for a new password here.';
+};
+// (password recovery is handled in the main onAuthStateChange listener above)
+$('rsave').onclick = async ()=>{
+  if(!sb){ $('authmsg').textContent='Works once deployed.'; return; }
+  const a=$('rpass1').value, b=$('rpass2').value;
+  if(a.length<6){ $('authmsg').textContent='Password must be at least 6 characters.'; return; }
+  if(a!==b){ $('authmsg').textContent='Passwords do not match.'; return; }
+  const { error } = await sb.auth.updateUser({ password: a });
+  if(error){ $('authmsg').textContent=error.message; return; }
+  $('authmsg').textContent='Password saved. You can start playing.';
+  recovering=false;
+  $('rpass1').value=''; $('rpass2').value='';
+  $('rsave').style.display='none';
+  $('rdone').style.display='block';
+};
+$('rdone').onclick = ()=>{ $('authwrap').style.display='none'; };
+for(const id of ['rpass1','rpass2'])
+  $(id).addEventListener('keydown', e=>{ if(e.key==='Enter') $('rsave').click(); });
+initAuth();
+
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+let state = 'select';                 // select | play | over (menu is an overlay)
+let cvLeft=0;
+function px(x){ return x - cvLeft; }
+
+// --- side ribbons: alternate MOVES FOR A MISSION (hearts) and SUBSCRIBE TO LLR (YouTube badges) ---
+(function(){
+  const DONATE='https://movesforamission.org/donate-now/#1740457740469-d24153b1-38c1';
+  const LLR='https://www.youtube.com/@AsrtsbLLR';
+  const letters = t => { let h=''; for(const c of t) h+='<span class="ch">'+(c===' '?'&nbsp;':c)+'</span>'; return h; };
+  const heart = '<span class="ch hz">\u2665</span>';
+  const ytBadge = '<span class="yt"></span>';
+  const movesSeg = () =>
+    '<a class="seg" href="'+DONATE+'" target="_blank" rel="noopener">'+
+      heart+heart+ letters('DONATE TO MOVES FOR A MISSION NOW!') +heart+heart+
+    '</a>';
+  const llrSeg = () =>
+    '<a class="seg" href="'+LLR+'" target="_blank" rel="noopener">'+
+      ytBadge+ letters('SUBSCRIBE TO LLR') +ytBadge+
+    '</a>';
+  const chain = () => movesSeg()+'<div class="gap"></div>'+llrSeg()+'<div class="gap"></div>';
+  const colHTML = () => '<div class="col">'+chain()+chain()+'</div>';   // duplicate for seamless loop
+  const L=document.getElementById('llrL'), R=document.getElementById('llrR');
+  if(L&&R){ L.innerHTML=colHTML(); R.innerHTML=colHTML(); }
+})();
+let _ribbonShown=null;
+function layoutRibbons(){
+  const L=document.getElementById('llrL'), R=document.getElementById('llrR');
+  if(!L||!R) return;
+  const gut=cvLeft;                       // width of each side gutter (canvas is centered)
+  // only show in the menus/armory, never during a live run
+  const show = gut>=34 && (typeof state==='undefined' || state==='select' || state==='over');
+  if(show===_ribbonShown) return;         // no change -> don't touch the DOM
+  _ribbonShown=show;
+  if(show){
+    L.style.display=R.style.display='flex';
+    L.style.left='0px';  L.style.width=gut+'px';
+    R.style.right='0px'; R.style.width=gut+'px';
+  } else {
+    L.style.display=R.style.display='none';
+  }
+}
+let W = 0, H = 0;
+function resize(){
+  H = cv.height = innerHeight;
+  // trim a small symmetric slice off the width for a slightly squarer frame,
+  // but never narrower than the viewport height (keeps it from going portrait)
+  W = cv.width = Math.max(innerHeight, Math.round(innerWidth * 0.92));
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  cvLeft = cv.getBoundingClientRect().left;
+  _ribbonShown=null;
+  if(typeof layoutRibbons==='function') layoutRibbons();
+}
+addEventListener('resize', resize); resize();
+document.addEventListener('fullscreenchange', resize);
+document.addEventListener('webkitfullscreenchange', resize);
+
+const TAU = Math.PI * 2;
+const clamp = (v,a,b)=> v < a ? a : v > b ? b : v;
+const rand  = (a,b)=> a + Math.random()*(b-a);
+const dist2 = (ax,ay,bx,by)=>{ const dx=ax-bx, dy=ay-by; return dx*dx+dy*dy; };
+
+/* ---------------- audio (tiny synth) ---------------- */
+let AC = null, sfxGain = null, musicGain = null;
+let musicVol = 0.6, sfxVol = 0.8;
+function initAudio(){
+  if(!AC){
+    try{
+      AC = new (window.AudioContext||window.webkitAudioContext)();
+      sfxGain = AC.createGain();   sfxGain.gain.value = sfxVol;        sfxGain.connect(AC.destination);
+      musicGain = AC.createGain(); musicGain.gain.value = musicVol*0.7; musicGain.connect(AC.destination);
+      buildMusicGraph();
+      startMusic();
+    }catch(e){}
+  }
+  if(AC && AC.state === 'suspended') AC.resume();
+}
+function tone(f,d,type,v,slide){
+  if(!AC) return;
+  const t=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
+  o.type=type||'square';
+  o.frequency.setValueAtTime(f,t);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,f+slide), t+d);
+  g.gain.setValueAtTime(v||0.12, t);
+  g.gain.exponentialRampToValueAtTime(0.0008, t+d);
+  o.connect(g).connect(sfxGain);
+  o.start(t); o.stop(t+d+0.02);
+}
+function noiseBurst(d,v,f){
+  if(!AC) return;
+  const len = Math.max(1, (AC.sampleRate*d)|0);
+  const buf = AC.createBuffer(1,len,AC.sampleRate), ch = buf.getChannelData(0);
+  for(let i=0;i<len;i++) ch[i]=(Math.random()*2-1)*(1-i/len);
+  const src=AC.createBufferSource(); src.buffer=buf;
+  const bp=AC.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=f; bp.Q.value=0.8;
+  const g=AC.createGain(); g.gain.value=v;
+  src.connect(bp).connect(g).connect(sfxGain); src.start();
+}
+/* ---------------- music: original ambient-electronic loop ---------------- */
+let arpBus=null, padBus=null, percBus=null, musicTimer=null, mStep=0, mNextT=0;
+const M_TEMPO=112, SPB16=60/M_TEMPO/4;
+const mf = m => 440*Math.pow(2,(m-69)/12);
+const M_CHORDS=[
+  {bass:45, pool:[57,60,64,69]},   // Am
+  {bass:41, pool:[57,60,65,69]},   // F
+  {bass:36, pool:[55,60,64,67]},   // C
+  {bass:43, pool:[55,59,62,67]},   // G
+];
+function buildMusicGraph(){
+  padBus=AC.createBiquadFilter(); padBus.type='lowpass'; padBus.frequency.value=1000; padBus.connect(musicGain);
+  arpBus=AC.createGain(); arpBus.connect(musicGain);
+  const dly=AC.createDelay(1.0); dly.delayTime.value=SPB16*3;   // dotted-8th echo
+  const fb=AC.createGain(); fb.gain.value=0.34;
+  const wet=AC.createGain(); wet.gain.value=0.5;
+  arpBus.connect(dly); dly.connect(fb); fb.connect(dly); dly.connect(wet); wet.connect(musicGain);
+  percBus=AC.createGain(); percBus.connect(musicGain);
+}
+function mOsc(freq,t,dur,type,vol,dest,atk){
+  const o=AC.createOscillator(), g=AC.createGain();
+  o.type=type; o.frequency.setValueAtTime(freq,t);
+  g.gain.setValueAtTime(0.0001,t);
+  g.gain.linearRampToValueAtTime(vol,t+(atk||0.01));
+  g.gain.exponentialRampToValueAtTime(0.0008,t+dur);
+  o.connect(g).connect(dest);
+  o.start(t); o.stop(t+dur+0.05);
+}
+function mNoise(t,dur,vol,freq){
+  const len=Math.max(1,(AC.sampleRate*dur)|0), buf=AC.createBuffer(1,len,AC.sampleRate), ch=buf.getChannelData(0);
+  for(let i=0;i<len;i++) ch[i]=(Math.random()*2-1)*(1-i/len);
+  const src=AC.createBufferSource(); src.buffer=buf;
+  const f=AC.createBiquadFilter(); f.type='highpass'; f.frequency.value=freq;
+  const g=AC.createGain(); g.gain.value=vol;
+  src.connect(f); f.connect(g); g.connect(percBus);
+  src.start(t);
+}
+const ARP_PAT=[0,2,1,3,2,0,3,1,0,2,1,3,2,3,1,2];
+function playStep(st,t){
+  const chord=M_CHORDS[Math.floor(st/32)%4];
+  if(st%32===0) for(const m of chord.pool){        // washy pad on each chord change
+    mOsc(mf(m),       t, 32*SPB16*1.05, 'sawtooth', 0.028, padBus, 1.2);
+    mOsc(mf(m)*1.004, t, 32*SPB16*1.05, 'triangle', 0.030, padBus, 1.2);
+  }
+  if(st%8===0) mOsc(mf(chord.bass), t, 8*SPB16*0.9, 'sine', 0.16, percBus, 0.02);
+  const lift=(st%32)>=24 ? 12 : 0;                 // shimmer octave in the back half
+  const note=chord.pool[ARP_PAT[st%16]]+lift;
+  mOsc(mf(note), t, SPB16*2.6, 'triangle', st%4===0?0.075:0.05, arpBus, 0.005);
+  if(st%8===0){                                    // soft kick pulse
+    const o=AC.createOscillator(), g=AC.createGain();
+    o.type='sine'; o.frequency.setValueAtTime(120,t);
+    o.frequency.exponentialRampToValueAtTime(42,t+0.11);
+    g.gain.setValueAtTime(0.4,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.13);
+    o.connect(g).connect(percBus); o.start(t); o.stop(t+0.15);
+  }
+  if(st%16===8) mNoise(t,0.10,0.10,1800);
+  if(st%2===1)  mNoise(t,0.03,0.045,6000);
+}
+function startMusic(){
+  if(!AC || musicTimer) return;
+  mNextT=AC.currentTime+0.1;
+  musicTimer=setInterval(()=>{
+    if(!AC) return;
+    while(mNextT < AC.currentTime+0.3){
+      playStep(mStep, mNextT);
+      mNextT += SPB16;
+      mStep = (mStep+1)%128;
+    }
+  }, 90);
+}
+
+function sfx(k,w){
+  if(!AC) return;
+  try{
+    switch(k){
+      case 'shoot':  noiseBurst(w.sndD, 0.26, w.sndF); tone(w.sndF*0.45, w.sndD*0.9, 'square', 0.07, -w.sndF*0.3); break;
+      case 'reload': tone(520,0.05,'square',0.1); setTimeout(()=>AC&&tone(760,0.06,'square',0.1),130); break;
+      case 'loaded': tone(880,0.07,'square',0.1); break;
+      case 'dry':    tone(950,0.04,'square',0.07); break;
+      case 'hit':    tone(230,0.06,'sawtooth',0.09,-90); break;
+      case 'die':    noiseBurst(0.14,0.18,320); tone(130,0.2,'sawtooth',0.11,-70); break;
+      case 'hurt':   tone(150,0.16,'sawtooth',0.16,-70); break;
+      case 'pickup': tone(660,0.07,'sine',0.12); setTimeout(()=>AC&&tone(990,0.09,'sine',0.12),80); break;
+      case 'wave':   tone(440,0.11,'square',0.1); setTimeout(()=>AC&&tone(660,0.14,'square',0.1),140); break;
+      case 'aim':    tone(1250,0.05,'sine',0.05); break;
+      case 'swap':   tone(800,0.05,'square',0.08); break;
+      case 'slash':  noiseBurst(0.07,0.22,900); tone(520,0.08,'sawtooth',0.06,-260); break;
+      case 'ammo':   tone(420,0.06,'square',0.1); setTimeout(()=>AC&&tone(560,0.07,'square',0.1),90); break;
+      case 'crit':   noiseBurst(0.08,0.3,1200); tone(1500,0.1,'square',0.12,-500); break;
+    }
+  }catch(e){}
+}
+
+/* ---------------- weapons ---------------- */
+const WEAPONS = {
+  /* primaries */
+  ar     : { name:'SCAR-H RIFLE', dmg:30,  mag:23, reload:1600, fireRate:145, auto:true,  pellets:1,
+             spread:0.05,  aimSpread:0.016, speed:19, len:34, kick:2.6, zoom:1.55, scoped:false,
+             moveMod:0.95, range:620,  fall:0.70, sndF:950,  sndD:0.08,
+             blurb:'Measured full-auto. Accurate, hits hard, reaches far.' },
+  smg    : { name:'MP7 SMG',      dmg:11,  mag:55, reload:1400, fireRate:65,  auto:true,  pellets:1,
+             spread:0.135, aimSpread:0.05,  speed:15, len:26, kick:1.6, zoom:1.30, scoped:false,
+             moveMod:1.05, range:340,  fall:0.50, sndF:1800, sndD:0.05,
+             blurb:'Pure spam. Huge mag, melts up close, tickles far away.' },
+  shotgun: { name:'M870 SHOTGUN', dmg:12,  mag:8,  reload:1900, fireRate:760, auto:false, pellets:7,
+             spread:0.21,  aimSpread:0.10,  speed:13, len:30, kick:8,  zoom:1.25, scoped:false,
+             moveMod:0.92, range:260,  fall:0.45, sndF:520,  sndD:0.17,
+             blurb:'Seven pellets of persuasion. Still bites at mid range.' },
+  sniper : { name:'AWM SNIPER',   dmg:130, mag:5,  reload:2300, fireRate:1150,auto:false, pellets:1, pierce:5,
+             spread:0.16,  aimSpread:0.0,   speed:28, len:42, kick:10, zoom:3.0,  scoped:true,
+             moveMod:0.85, range:99999,fall:1.0,  sndF:340,  sndD:0.24,
+             blurb:'Full damage at any range, pierces 5. Useless from the hip.' },
+  /* sidearms */
+  m9     : { name:'M9 SIDEARM',   dmg:38,  mag:12, reload:800,  fireRate:200, auto:false, pellets:1,
+             spread:0.055, aimSpread:0.006, speed:17, len:22, kick:3,  zoom:1.45, scoped:false,
+             moveMod:1.0,  range:340,  fall:0.55, sndF:1400, sndD:0.09,
+             blurb:'Reliable semi-auto. Fast handling, honest damage.' },
+  revolver:{ name:'.357 PYTHON',  dmg:70,  mag:8,  reload:1500, fireRate:620, auto:false, pellets:1,
+             spread:0.05,  aimSpread:0.005, speed:19, len:24, kick:5,  zoom:1.50, scoped:false,
+             moveMod:1.0,  range:420,  fall:0.65, sndF:800,  sndD:0.13,
+             blurb:'Eight heavy rounds, slow hammer. Make each one count.' },
+  g18    : { name:'G18 MACHINE PISTOL', dmg:9,  mag:31, reload:1150, fireRate:75, auto:true, pellets:1,
+             spread:0.19,  aimSpread:0.08,  speed:14, len:20, kick:1.6, zoom:1.25, scoped:false,
+             moveMod:1.08, range:220,  fall:0.40, sndF:2000, sndD:0.045,
+             blurb:'Secondary SMG. Melts anything adjacent.' },
+  volt   : { name:'VOLT PISTOL',  dmg:24,  mag:6,  reload:750,  fireRate:170, auto:false, pellets:1,
+             spread:0.04,  aimSpread:0.008, speed:20, len:24, kick:2, zoom:1.40, scoped:false,
+             moveMod:1.0,  range:99999,fall:1.0,  sndF:1600, sndD:0.07,
+             energy:true, tracer:'rgba(127,216,255,0.9)',
+             blurb:'Bottomless reserve, tiny cell. You live between reloads.' },
+  /* melee */
+  chainsaw:{ name:'CHAINSAW',     melee:true, saw:true, drain:5, dmg:28, mag:Infinity, reload:0, fireRate:130, auto:true,
+             pellets:1, spread:0, aimSpread:0, len:18, kick:1, zoom:1.15, scoped:false,
+             moveMod:1.05, range:72,  arc:6.3,
+             blurb:'Shreds everything nearby. E: rip charge through the horde.' },
+  knife  : { name:'KA-BAR KNIFE', melee:true, dmg:48, mag:Infinity, reload:0, fireRate:380, auto:true,
+             pellets:1, spread:0, aimSpread:0, len:16, kick:2.5, zoom:1.15, scoped:false,
+             moveMod:1.08, range:105, arc:0.35,
+             blurb:'Straight-line thrust. E: execute at point-blank.' },
+  scythe : { name:'REAPER SCYTHE',melee:true, dmg:75, mag:Infinity, reload:0, fireRate:950, auto:true,
+             pellets:1, spread:0, aimSpread:0, len:26, kick:5, zoom:1.15, scoped:false,
+             moveMod:0.95, range:82,  arc:3.8, 
+             blurb:'Wide harvest, slow wind-up. E: long reaper dash.' },
+  hammer : { name:'WAR HAMMER',   melee:true, dmg:80, mag:Infinity, reload:0, fireRate:900, auto:true,
+             pellets:1, spread:0, aimSpread:0, len:22, kick:6, zoom:1.15, scoped:false,
+             moveMod:0.92, range:70,  arc:2.2,
+             blurb:'Slow, heavy swings. E: ground slam — wide 360 shockwave.' },
+};
+const PRIMARIES   = ['ar','smg','shotgun','sniper'];
+const SECONDARIES = ['m9','revolver','g18','volt'];
+const MELEES      = ['chainsaw','knife','scythe','hammer'];
+const WKEYS = [...PRIMARIES, ...SECONDARIES, ...MELEES];
+/* utilities: recharge-based, G to use, hold G for medkit channel */
+const UTILITIES = {
+  medkit : { name:'FIELD MEDKIT', cd:75000,
+             blurb:'Unlimited use. G: quick 5% heal. Equip [4] + hold LMB 10s: 20%. -10% spd while healing.' },
+  grenade: { name:'FRAG GRENADE', cd:20000,
+             blurb:'Tap to throw at your crosshair. Big blast, friendly to you only.' },
+  portal : { name:'PORTAL',       cd:25000,
+             blurb:'Tap: teleport straight to your crosshair.' },
+  redball: { name:'RED BALL',     cd:13000,
+             blurb:'Bouncy decoy, lives 3s. Enemies chase it; light contact damage.' },
+};
+const UTILKEYS = ['medkit','grenade','portal','redball'];
+const LOCKED_KEYS = ['sniper','volt','hammer'];
+function isLocked(k){ return sb && !authUser && (LOCKED_KEYS.includes(k) || UTILKEYS.includes(k)); }  // no Supabase (preview/offline) = everything unlocked
+
+/* ---------------- world ---------------- */
+const WORLD = { w:2400, h:1800 };
+const obstacles = [
+  {x: 420, y: 320, w:150, h: 90}, {x:1830, y: 300, w: 90, h:170},
+  {x: 350, y:1380, w: 90, h:160}, {x:1900, y:1400, w:170, h: 90},
+  {x:1080, y: 780, w:240, h: 70}, {x:1080, y: 950, w: 70, h:180},
+  {x: 760, y: 860, w: 90, h: 90}, {x:1560, y: 860, w: 90, h: 90},
+  {x:1180, y: 260, w: 80, h: 80}, {x:1140, y:1460, w:130, h: 80},
+];
+
+/* ---------------- enemy types ---------------- */
+const ETYPES = {
+  grunt : { r:16, hp: 60, spd:1.7, dmg:12, col:'#c8504a', score:100, ranged:false },
+  runner: { r:11, hp: 30, spd:3.1, dmg: 8, col:'#e08a3c', score:150, ranged:false },
+  brute : { r:26, hp:230, spd:1.0, dmg:26, col:'#9a55d0', score:300, ranged:false },
+  gunner: { r:14, hp: 55, spd:1.5, dmg: 9, col:'#4fa8c9', score:200, ranged:true  },
+  seeker: { r:13, hp: 70, spd:1.6, dmg: 0, col:'#c9b23e', score:220, ranged:true,  seeker:true },
+  arty  : { r:17, hp:130, spd:1.2, dmg: 0, col:'#d0763e', score:350, ranged:true,  arty:true },
+  boss  : { r:40, hp:1000, spd:1.1, dmg:35, col:'#c23a3a', score:2000, ranged:false, boss:true },
+};
+function fireHoming(e, a, spd, turn, life, dmg){
+  ebullets.push({x:e.x, y:e.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, spd, h:turn, life, dmg});
+}
+
+/* ---------------- state ---------------- */
+let now = performance.now(), last = now;
+
+const player = {
+  x:WORLD.w/2, y:WORLD.h/2, r:15, hp:100, spd:3.4,
+  cur:'pistol', mags:{}, lastShot:0, reloadEnd:0, equipEnd:0,
+  flash:0, hurtCd:0, hurtFlash:0, bloom:0,
+};
+let aiming=false, rmbAim=false;
+let bullets=[], ebullets=[], enemies=[], particles=[], pickups=[];
+let cam={x:WORLD.w/2,y:WORLD.h/2}, zoom=1, shakeMag=0, shakeX=0, shakeY=0;
+let wave=0, score=0, kills=0, waveMsg='', waveMsgT=0, hiScore=0, prevBest=0;
+let spawnQueue=[], spawnTimer=0, betweenTimer=1500;
+let loadout={primary:null,secondary:null,melee:null,utility:null}, cardRects=[], deployRect=null;
+let selPage='hub', catBtns=[], backRect=null;   // hub | PRIMARY | SIDEARM | MELEE | UTILITY
+let detailKey=null, detailBtns=[], detailRects={};
+const CATS=[['PRIMARY','primary',()=>PRIMARIES],['SIDEARM','secondary',()=>SECONDARIES],
+            ['MELEE','melee',()=>MELEES],['UTILITY','utility',()=>UTILKEYS]];
+
+/* ---------------- upgrades ---------------- */
+let perks={dmg:1,rate:1,reload:1,mag:1,spd:1,maxhp:100,vamp:0,pierce:0,acc:1,drop:0.05,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,autoload:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
+let perkCounts={}, upgradeChoices=[], upgradeRects=[], upgradeOffered=false;
+let surgeT=0, windReadyWave=0, dashReadyT=0, sawFuel=100, sawLock=false, sawChargeUntil=0, sawChargeTick=0;
+let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
+let utilReadyT=0, medChan=0, medChanHeal=0, medCharges=Infinity, medRegenT=0, medCanChannel=true, balls=[], grenades=[], utilityOut=false;
+const ABILITY_CD={scythe:12000, knife:6000, chainsaw:20000, hammer:10000};
+let wmods={}, bossBounty=false;
+function wm(k){ return wmods[k] || (wmods[k]={dmg:1,rate:1,mag:1,pellets:0,pierce:0,drain:1,cdAdd:0,slamR:0}); }
+function abilityCdOf(k){ return Math.max(1500, (ABILITY_CD[k]||0) + wm(k).cdAdd); }
+const WEAPON_MODS=[
+  {wkey:'ar',      n:'MATCH RECEIVER', d:'SCAR-H: +25% damage',                 f:()=>wm('ar').dmg*=1.25},
+  {wkey:'smg',     n:'OVERCLOCK KIT',  d:'MP7: +20% fire rate',                 f:()=>wm('smg').rate*=0.8},
+  {wkey:'shotgun', n:'FLECHETTE LOAD', d:'M870: +2 pellets per shell',          f:()=>wm('shotgun').pellets+=2},
+  {wkey:'sniper',  n:'DEPLETED CORE',  d:'AWM: +2 pierce and +15% damage',      f:()=>{wm('sniper').pierce+=2; wm('sniper').dmg*=1.15;}},
+  {wkey:'m9',      n:'RACE TRIGGER',   d:'M9: +35% fire rate',                  f:()=>wm('m9').rate*=0.74},
+  {wkey:'revolver',n:'HOT LOADS',      d:'.357: +30% damage',                   f:()=>wm('revolver').dmg*=1.3},
+  {wkey:'g18',     n:'DRUM FEED',      d:'G18: +40% magazine',                  f:()=>wm('g18').mag*=1.4},
+  {wkey:'volt',    n:'CAPACITOR BANK', d:'VOLT: cell size 6 → 10',         f:()=>wm('volt').mag*=10/6},
+  {wkey:'chainsaw',n:'LEAN ENGINE',    d:'CHAINSAW: fuel drain -30%',           f:()=>wm('chainsaw').drain*=0.7},
+  {wkey:'knife',   n:'ASSASSIN TEMPO', d:'KNIFE: execute cooldown -2s',         f:()=>wm('knife').cdAdd-=2000},
+  {wkey:'scythe',  n:'REAPER PACT',    d:'SCYTHE: dash cooldown -4s',           f:()=>wm('scythe').cdAdd-=4000},
+  {wkey:'hammer',  n:'SEISMIC HEAD',   d:'HAMMER: +25% dmg, slam radius +40',   f:()=>{wm('hammer').dmg*=1.25; wm('hammer').slamR+=40;}},
+];
+const magSize = k => Math.round(WEAPONS[k].mag*perks.mag*wm(k).mag);
+const UPGRADES = [
+  // tier I (stackable)
+  { n:'HOLLOW POINTS', d:'+15% damage on every weapon',        f:()=>perks.dmg*=1.15 },
+  { n:'TRIGGER JOB',   d:'+12% fire rate',                     f:()=>perks.rate*=0.89 },
+  { n:'LIGHT BOOTS',   d:'+10% move speed',                    f:()=>perks.spd*=1.10 },
+  { n:'SPEED LOADER',  d:'reloads finish 20% faster',          f:()=>perks.reload*=0.80 },
+  { n:'EXTENDED MAGS', d:'+30% magazine size',                  f:()=>perks.mag*=1.30 },
+  { n:'COMBAT STIMS',  d:'recover 1 integrity on every kill',  f:()=>perks.vamp+=1 },
+  { n:'MATCH BARREL',  d:'25% tighter spread on everything',   f:()=>perks.acc*=0.75 },
+  { n:'FIELD MEDIC',   d:'medkits drop 20% more often',        f:()=>perks.drop=Math.min(0.18,perks.drop*1.2) },
+  { n:'KEVLAR WEAVE',  d:'take 20% less damage',               f:()=>perks.armor*=0.8 },
+  { n:'FRAG SHELLS',   d:'enemies detonate on death \u2014 chain reactions', once:true, f:()=>perks.explode=1 },
+  // tier II (unlock by owning the base perk; one-time)
+  { n:'HERMES BOOTS',  req:'LIGHT BOOTS',   once:true, d:'SPACE to dash \u2014 brief invulnerability, 2.2s cooldown', f:()=>perks.dash=1 },
+  { n:'DEAD EYE',      req:'HOLLOW POINTS', once:true, d:'20% chance to crit for triple damage',                      f:()=>perks.crit=0.2 },
+  { n:'HAIR TRIGGER',  req:'TRIGGER JOB',   once:true, d:'every weapon becomes full-auto, +10% fire rate',            f:()=>{perks.autoAll=1; perks.rate*=0.90;} },
+  { n:'SECOND WIND',   req:'KEVLAR WEAVE',  once:true, d:'cheat death \u2014 revive at 25%, recharges every 3 waves',  f:()=>perks.secondWind=1 },
+  { n:'ADRENAL SURGE', req:'COMBAT STIMS',  once:true, d:'kills grant +30% speed and fire rate for 3s',               f:()=>perks.surge=1 },
+  { n:'GYRO STOCK',    req:'MATCH BARREL',  once:true, d:'recoil bloom eliminated \u2014 spread never grows',         f:()=>perks.noBloom=1 },
+  { n:'AUTO-LOADER',   req:'SPEED LOADER',  once:true, d:'magazine trickle-refills while not firing',                 f:()=>perks.autoload=1 },
+  { n:'TRAUMA KITS',   req:'FIELD MEDIC',   once:true, d:'medkits heal 30 instead of 25',                             f:()=>perks.medkitHeal=30 },
+];
+function rollUpgrades(){
+  const out=[];
+  if(bossBounty){
+    const mine=[loadout.primary, loadout.secondary, loadout.melee];
+    const mods=WEAPON_MODS.filter(m => mine.includes(m.wkey) && !perkCounts[m.n]);
+    while(out.length<3 && mods.length) out.push(mods.splice((Math.random()*mods.length)|0,1)[0]);
+  }
+  const pool=UPGRADES.filter(u => (!u.req || perkCounts[u.req]) && !(u.once && perkCounts[u.n]));
+  while(out.length<3 && pool.length) out.push(pool.splice((Math.random()*pool.length)|0,1)[0]);
+  return out;
+}
+function chooseUpgrade(i){
+  const u=upgradeChoices[i]; if(!u) return;
+  u.f(); perkCounts[u.n]=(perkCounts[u.n]||0)+1;
+  bossBounty=false;
+  sfx('pickup');
+  waveMsg=u.n+' ACQUIRED'; waveMsgT=now+1800;
+  state='play'; betweenTimer=2200;
+}
+function clickUpgrade(){
+  for(let i=0;i<upgradeRects.length;i++){
+    const r=upgradeRects[i];
+    if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){ chooseUpgrade(i); return; }
+  }
+}
+function doDash(){
+  if(!perks.dash || state!=='play' || now<dashReadyT) return;
+  let dx=0,dy=0;
+  if(keys['w'])dy--; if(keys['s'])dy++; if(keys['a'])dx--; if(keys['d'])dx++;
+  if(!dx&&!dy){ const a=aimAngle(); dx=Math.cos(a); dy=Math.sin(a); }
+  const m=Math.hypot(dx,dy);
+  player.ddx=dx/m; player.ddy=dy/m;
+  player.dashSpd=14; player.dashUntil=now+150; dashReadyT=now+2200;
+  player.hurtCd=Math.max(player.hurtCd,320);           // i-frames
+  for(let i=0;i<10;i++) particles.push({x:player.x,y:player.y,
+    vx:-player.ddx*rand(1,3)+rand(-0.8,0.8), vy:-player.ddy*rand(1,3)+rand(-0.8,0.8),
+    life:300,max:300,col:'#a7c15e',size:2.5});
+  noiseBurst(0.1,0.2,800);
+}
+function menuClick(){
+  const hit=o=>o && mouse.x>=o.x && mouse.x<=o.x+o.w && mouse.y>=o.y && mouse.y<=o.y+o.h;
+  if(hit(menuRects.resume)){ menuOpen=false; sfx('swap'); return; }
+  if(hit(menuRects.exit)){ menuOpen=false; state='select'; selPage='hub'; aiming=false; rmbAim=false; sfx('swap'); return; }
+  if(hit(menuRects.music)){ dragSlider='music'; setSliderFromMouse(); return; }
+  if(hit(menuRects.sfx)){ dragSlider='sfx'; setSliderFromMouse(); return; }
+}
+function setSliderFromMouse(){
+  const o=menuRects[dragSlider]; if(!o) return;
+  const v=clamp((mouse.x-o.x)/o.w, 0, 1);
+  if(dragSlider==='music'){ musicVol=v; if(musicGain) musicGain.gain.value=v*0.7; }
+  else { sfxVol=v; if(sfxGain) sfxGain.gain.value=v; }
+}
+function meleeAbility(){
+  if(state!=='play') return;
+  const k=player.cur;
+  const ready = now >= (abilityCD[k]||0);
+  if(k==='scythe'){                                  // reaper dash: far, slow to restore
+    if(!ready){ sfx('dry'); return; }
+    let dx=0,dy=0;
+    if(keys['w'])dy--; if(keys['s'])dy++; if(keys['a'])dx--; if(keys['d'])dx++;
+    if(!dx&&!dy){ const a=aimAngle(); dx=Math.cos(a); dy=Math.sin(a); }
+    const m=Math.hypot(dx,dy);
+    player.ddx=dx/m; player.ddy=dy/m; player.dashSpd=22;
+    player.dashUntil=now+260;
+    meleeSwing(Object.assign({}, WEAPONS.scythe, {range:105, arc:4.4}), 2.0);   // one big cleave as it launches
+    player.hurtCd=Math.max(player.hurtCd,460);
+    abilityCD[k]=now+abilityCdOf(k);
+    for(let i=0;i<16;i++) particles.push({x:player.x,y:player.y,
+      vx:-player.ddx*rand(1,4)+rand(-1,1), vy:-player.ddy*rand(1,4)+rand(-1,1),
+      life:360,max:360,col:'#8fb3c9',size:2.8});
+    noiseBurst(0.14,0.25,600);
+  } else if(k==='knife'){                            // execute: huge damage, tiny range
+    let best=null, bd=1e9;
+    for(const e of enemies){
+      const d=Math.hypot(e.x-player.x,e.y-player.y)-e.r;
+      if(d<50 && d<bd){ bd=d; best=e; }
+    }
+    if(!best || !ready){ sfx('dry'); return; }
+    const isBoss=ETYPES[best.type].boss;
+    // percentage-based so it scales with wave HP: guaranteed kill on non-bosses, 90% on Warlords
+    const hdmg = isBoss ? best.maxhp*0.9*perks.dmg : Math.max(180*perks.dmg, best.maxhp);
+    best.hp-=hdmg; best.hitT=now+90;
+    burst(best.x,best.y,'#ffe08a',18,5);
+    addShake(6); sfx('crit');
+    player.spinT=now;                                // 360 spin animation
+    player.swingT=now; player.swingA=0; player.swingArc=6.3; player.swingR=52; player.swingDur=180;
+    if(best.hp<=0) killEnemy(enemies.indexOf(best));
+    abilityCD[k]=now+abilityCdOf(k);
+  } else if(k==='hammer'){                           // ground slam: wide 360 shockwave
+    if(!ready){ sfx('dry'); return; }
+    const R=160+wm('hammer').slamR;
+    player.swingT=now; player.swingA=0; player.swingArc=6.3; player.swingR=R; player.swingDur=220;
+    for(let j=enemies.length-1;j>=0;j--){
+      const e=enemies[j];
+      const d=Math.hypot(e.x-player.x,e.y-player.y);
+      if(d < R+e.r){
+        e.hp -= 110*perks.dmg; e.hitT=now+90;
+        const kb = ETYPES[e.type].boss ? 4 : 26;
+        e.x+=(e.x-player.x)/(d||1)*kb; e.y+=(e.y-player.y)/(d||1)*kb;
+        burst(e.x,e.y,ETYPES[e.type].col,6,4);
+        if(e.hp<=0) killEnemy(j);
+      }
+    }
+    addShake(10); sfx('die');
+    abilityCD[k]=now+abilityCdOf(k);
+  } else if(k==='chainsaw'){                         // rip charge: fast dash, constant damage, i-frames
+    if(!ready){ sfx('dry'); return; }
+    let dx=0,dy=0;
+    if(keys['w'])dy--; if(keys['s'])dy++; if(keys['a'])dx--; if(keys['d'])dx++;
+    if(!dx&&!dy){ const a=aimAngle(); dx=Math.cos(a); dy=Math.sin(a); }
+    const m=Math.hypot(dx,dy);
+    player.ddx=dx/m; player.ddy=dy/m; player.dashSpd=18;
+    player.dashUntil=now+400;
+    sawChargeUntil=now+400; sawChargeTick=0; sawChargeDmg=28; sawChargeR=72;
+    player.hurtCd=Math.max(player.hurtCd,550);       // i-frames through the whole charge
+    abilityCD[k]=now+abilityCdOf(k);
+    noiseBurst(0.2,0.3,300);
+  }
+}
+
+const keys={};
+const mouse={x:W/2,y:H/2,down:false};
+let menuRects={}, dragSlider=null, menuOpen=false, gearRect={x:-99,y:-99,w:0,h:0};
+
+/* ---------------- input ---------------- */
+function typingInField(e){
+  const t=e.target;
+  return t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA' || t.isContentEditable);
+}
+addEventListener('keydown', e=>{
+  if(typingInField(e)) return;          // don't eat keys while typing in the auth form
+  const k = e.key.toLowerCase();
+  if(['w','a','s','d',' '].includes(k)) e.preventDefault();
+  keys[k]=true;
+  initAudio();
+
+  if(k==='p' || k==='escape'){ menuOpen=!menuOpen; sfx('swap'); return; }
+  if(menuOpen) return;
+
+  if(state==='select'){
+    const i = parseInt(k)-1;
+    if(i>=0 && i<WKEYS.length) pickWeapon(WKEYS[i]);
+    if(k==='enter'){
+      if(loadout.primary && loadout.secondary && loadout.melee) startGame();
+      else sfx('dry');
+    }
+    return;
+  }
+  if(state==='over'){
+    if(k==='enter') startGame();
+    if(k==='m'){ state='select'; }
+    return;
+  }
+  if(state==='upgrade'){
+    const i = parseInt(k)-1;
+    if(i>=0 && i<3) chooseUpgrade(i);
+    return;
+  }
+  if(state!=='play') return;
+
+  if(k==='e'){
+    if(utilityOut) utilQuick();
+    else if(WEAPONS[player.cur].melee) meleeAbility();
+    else { aiming=!aiming; sfx('aim'); }
+  }
+  if(k==='r') startReload();
+  if(k===' ') doDash();
+  if(k==='f') quickMelee();
+  if(k==='g' && !e.repeat) utilQuick();
+  if(k==='4') equipUtility();
+  if(k==='1') switchWeapon(loadout.primary);
+  if(k==='2') switchWeapon(loadout.secondary);
+  if(k==='3') switchWeapon(loadout.melee);
+  if(k==='q') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
+});
+addEventListener('keyup', e=>{
+  if(typingInField(e)) return;
+  keys[e.key.toLowerCase()]=false;
+});
+
+cv.addEventListener('mousemove', e=>{
+  mouse.x=px(e.clientX); mouse.y=e.clientY;
+  if(dragSlider && mouse.down) setSliderFromMouse();
+});
+cv.addEventListener('mousedown', e=>{
+  initAudio();
+  if(e.button===0){
+    mouse.down=true;
+    if(mouse.x>=gearRect.x && mouse.x<=gearRect.x+gearRect.w && mouse.y>=gearRect.y && mouse.y<=gearRect.y+gearRect.h){
+      menuOpen=!menuOpen; sfx('swap'); return;
+    }
+    if(menuOpen){ menuClick(); return; }
+    if(state==='select'){ clickSelect(); return; }
+    if(state==='upgrade'){ clickUpgrade(); return; }
+    if(state==='over') return;
+    if(state==='play' && utilityOut){
+      if(loadout.utility==='medkit') medHoldStart();
+      else utilQuick();
+      return;
+    }
+    if(state==='play' && (!WEAPONS[player.cur].auto || WEAPONS[player.cur].melee)) tryFire();
+  } else if(e.button===2 && state==='play'){
+    if(WEAPONS[player.cur].melee) meleeAbility();
+    else { rmbAim=true; aiming=true; sfx('aim'); }
+  }
+});
+addEventListener('mouseup', e=>{
+  if(e.button===0){ mouse.down=false; dragSlider=null; if(utilityOut) utilRelease(); }
+  if(e.button===2 && rmbAim){ rmbAim=false; aiming=false; }
+});
+cv.addEventListener('contextmenu', e=> e.preventDefault());
+
+/* ---------------- touch controls (twin-stick) ---------------- */
+const touchUI = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
+const STICK_R=60;
+const sticks={ move:{id:null,cx:0,cy:0,dx:0,dy:0}, aim:{id:null,cx:0,cy:0,dx:0,dy:0} };
+let touchButtons=[], pressedBtn=null, menuTouchId=null;
+let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null;
+function buttonAt(x,y){
+  // magnet: snap to the nearest button within a generous radius, so hurried
+  // boss-fight taps don't get swallowed by the aim stick
+  let best=null, bd=1e9;
+  for(const b of touchButtons){
+    const d2=(x-b.x)*(x-b.x)+(y-b.y)*(y-b.y);
+    if(d2 <= (b.r+22)*(b.r+22) && d2<bd){ bd=d2; best=b; }
+  }
+  return best;
+}
+function doButton(k){
+  if(k==='rld') startReload();
+  else if(k==='swp') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
+  else if(k==='e'){ if(WEAPONS[player.cur].melee) meleeAbility(); else { aiming=!aiming; sfx('aim'); } }
+  else if(k==='dsh') doDash();
+  else if(k==='f') quickMelee();
+}
+cv.addEventListener('touchstart', e=>{
+  e.preventDefault(); initAudio();
+  for(const t of e.changedTouches){
+    const x=px(t.clientX), y=t.clientY;
+    if(x>=gearRect.x&&x<=gearRect.x+gearRect.w&&y>=gearRect.y&&y<=gearRect.y+gearRect.h){
+      menuOpen=!menuOpen; sfx('swap'); continue;
+    }
+    if(state!=='play' || menuOpen){
+      mouse.x=x; mouse.y=y; mouse.down=true; menuTouchId=t.identifier;
+      if(menuOpen) menuClick();
+      else if(state==='select') clickSelect();
+      else if(state==='upgrade') clickUpgrade();
+      else if(state==='over') startGame();
+      continue;
+    }
+    const b=buttonAt(x,y);
+    if(b){ pressedBtn=b.key; doButton(b.key); continue; }
+    // left-bottom quadrant drives the movement joystick
+    if(x < W*0.42 && y > H*0.45 && sticks.move.id===null){
+      sticks.move.id=t.identifier; sticks.move.cx=x; sticks.move.cy=y; sticks.move.dx=0; sticks.move.dy=0;
+      continue;
+    }
+    // anywhere else on the field: tap to aim + shoot there
+    const wp=screenToWorld(x,y);
+    tapAimX=wp.x; tapAimY=wp.y;
+    mouse.x=x; mouse.y=y;
+    tapShootUntil=now+220;              // brief fire window per tap
+    aimStickId=t.identifier;            // drag to keep firing along the finger
+  }
+},{passive:false});
+cv.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier===menuTouchId){
+      mouse.x=px(t.clientX); mouse.y=t.clientY;
+      if(dragSlider) setSliderFromMouse();
+      continue;
+    }
+    if(t.identifier===aimStickId){
+      const sx=px(t.clientX), sy=t.clientY;
+      const wp=screenToWorld(sx,sy);
+      tapAimX=wp.x; tapAimY=wp.y; mouse.x=sx; mouse.y=sy;
+      tapShootUntil=now+220;
+      continue;
+    }
+    const st=sticks.move;
+    if(st.id===t.identifier){
+      let dx=px(t.clientX)-st.cx, dy=t.clientY-st.cy;
+      const m=Math.hypot(dx,dy);
+      if(m>STICK_R){ dx*=STICK_R/m; dy*=STICK_R/m; }
+      st.dx=dx; st.dy=dy;
+    }
+  }
+},{passive:false});
+function touchEnd(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier===menuTouchId){ menuTouchId=null; mouse.down=false; dragSlider=null; }
+    if(t.identifier===aimStickId){ aimStickId=null; }
+    if(sticks.move.id===t.identifier){ sticks.move.id=null; sticks.move.dx=0; sticks.move.dy=0; }
+  }
+  pressedBtn=null;
+}
+cv.addEventListener('touchend', touchEnd, {passive:false});
+cv.addEventListener('touchcancel', touchEnd, {passive:false});
+addEventListener('blur', ()=>{ if(state==='play') menuOpen=true; });
+
+function pickWeapon(k){
+  if(isLocked(k)){ sfx('dry'); utilLockMsgT=performance.now()+2200; return; }
+  if(UTILKEYS.includes(k)){
+    loadout.utility = loadout.utility===k ? null : k;
+    sfx('swap'); return;
+  }
+  const slot = PRIMARIES.includes(k) ? 'primary' : SECONDARIES.includes(k) ? 'secondary' : 'melee';
+  if(loadout[slot]===k){ loadout[slot]=null; sfx('swap'); return; }
+  loadout[slot]=k; sfx('swap');
+}
+let utilLockMsgT=0;
+function clickSelect(){
+  const inR=r=>r&&mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
+  if(detailKey){
+    if(inR(detailRects.close) || !inR(detailRects.panel)){ detailKey=null; sfx('swap'); }
+    return;
+  }
+  // details arrows (only on a category page)
+  for(const b of detailBtns){ if(inR(b)){ detailKey=b.key; sfx('aim'); return; } }
+  if(selPage==='hub'){
+    for(const c of catBtns){
+      if(inR(c)){ selPage=c.cat; sfx('swap'); return; }
+    }
+    const d=deployRect;
+    if(inR(d)){
+      if(loadout.primary && loadout.secondary && loadout.melee) startGame();
+      else sfx('dry');
+    }
+    return;
+  }
+  // category page
+  if(inR(backRect)){ selPage='hub'; sfx('swap'); return; }
+  for(const r of cardRects){
+    if(inR(r)){ pickWeapon(r.key); return; }   // stays on page so you can compare
+  }
+}
+
+/* ---------------- helpers ---------------- */
+function screenToWorld(sx,sy){
+  return { x: cam.x + (sx - W/2)/zoom, y: cam.y + (sy - H/2)/zoom };
+}
+function swayScreen(){
+  const w = WEAPONS[player.cur];
+  const s = aiming ? (w.scoped ? 1 : 0.35) : 0;
+  return {
+    x: (Math.sin(now*0.0011)*10 + Math.sin(now*0.0027)*5) * s,
+    y: (Math.cos(now*0.0009)*8  + Math.sin(now*0.0023)*4) * s,
+  };
+}
+function aimAngle(){
+  const sw = swayScreen();
+  const t = screenToWorld(mouse.x + sw.x, mouse.y + sw.y);
+  return Math.atan2(t.y - player.y, t.x - player.x);
+}
+function effSpread(){
+  const w = WEAPONS[player.cur];
+  const base = aiming ? w.aimSpread : w.spread;
+  return (base + player.bloom * (aiming ? 0.3 : 1)) * perks.acc;
+}
+function dmgMul(b){
+  if(b.dist<=b.rng) return 1;
+  const t=Math.min(1,(b.dist-b.rng)/b.rng);   // linear falloff from range to 2x range
+  return 1-(1-b.fall)*t;
+}
+function addShake(m){ shakeMag = Math.min(18, shakeMag + m); }
+function collideRects(e){
+  for(const o of obstacles){
+    const cx = clamp(e.x, o.x, o.x+o.w), cy = clamp(e.y, o.y, o.y+o.h);
+    let dx=e.x-cx, dy=e.y-cy;
+    const d2 = dx*dx+dy*dy;
+    if(d2 < e.r*e.r){
+      if(d2===0){ e.y = o.y - e.r; continue; }
+      const d = Math.sqrt(d2), push = (e.r-d)/d;
+      e.x += dx*push; e.y += dy*push;
+    }
+  }
+}
+function pointInRects(x,y){
+  for(const o of obstacles)
+    if(x>=o.x && x<=o.x+o.w && y>=o.y && y<=o.y+o.h) return true;
+  return false;
+}
+function burst(x,y,col,n,pow){
+  for(let i=0;i<n;i++){
+    const a=rand(0,TAU), s=rand(0.5,pow);
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(280,520),max:520,col,size:rand(1.5,3.5)});
+  }
+}
+
+/* ---------------- game flow ---------------- */
+function startGame(){
+  selPage='hub';
+  perks={dmg:1,rate:1,reload:1,mag:1,spd:1,maxhp:100,vamp:0,pierce:0,acc:1,drop:0.05,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,autoload:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
+  perkCounts={}; upgradeOffered=false; upgradeChoices=[]; wmods={}; bossBounty=false;
+  surgeT=0; windReadyWave=0; dashReadyT=0; sawFuel=100; sawLock=false; player.lastSaw=0;
+  sawChargeUntil=0; sawChargeTick=0; abilityCD={}; quickReadyT=0; player.dashSpd=14; player.spinT=0;
+  utilReadyT=0; medChan=0; medChanHeal=0; medCharges=Infinity; medRegenT=0; balls=[]; grenades=[]; utilityOut=false;
+  player.dashUntil=0; player.regenT=0; player.ddx=0; player.ddy=0; player.swingDur=130;
+  player.x=WORLD.w/2; player.y=WORLD.h/2; player.hp=perks.maxhp;
+  player.cur=loadout.primary;
+  player.mags={};
+  for(const k of WKEYS) player.mags[k]=magSize(k);
+  player.reserve={};
+  for(const k of WKEYS) player.reserve[k] = (WEAPONS[k].melee || WEAPONS[k].energy) ? Infinity : magSize(k)*5;
+  player.reloadEnd=0; player.equipEnd=now+250; player.lastShot=0;
+  player.bloom=0; player.hurtCd=0; player.hurtFlash=0;
+  aiming=false; rmbAim=false;
+  bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; spawnQueue=[];
+  wave=0; score=0; kills=0; betweenTimer=1400; prevBest=hiScore;
+  cam.x=player.x; cam.y=player.y; zoom=1;
+  state='play';
+  goFullscreen();
+}
+function goFullscreen(){
+  try{
+    const el=document.documentElement;
+    if(!document.fullscreenElement){
+      (el.requestFullscreen || el.webkitRequestFullscreen || el.msRequestFullscreen || function(){}).call(el);
+    }
+  }catch(e){}
+}
+function nextWave(){
+  wave++;
+  const bossWave = wave%5===0;
+  waveMsg = bossWave ? 'WAVE '+wave+' \u2014 '+(Math.floor(wave/5)>1 ? Math.floor(wave/5)+' WARLORDS' : 'WARLORD')+' INBOUND' : 'WAVE '+wave;
+  waveMsgT=now+2200;
+  sfx('wave');
+  const bossCount = bossWave ? Math.floor(wave/5) : 0;   // 1 at w5, 2 at w10, 3 at w15...
+  const count = bossWave ? Math.min(10, 3+wave) : Math.min(26, 4 + wave*2);
+  for(let i=0;i<count;i++){
+    let pool=['grunt'];
+    if(wave>=2) pool.push('runner','runner');
+    if(wave>=3) pool.push('gunner');
+    if(wave>=4) pool.push('brute');
+    if(wave>=5) pool.push('gunner','runner');
+    if(wave>=8) pool.push('seeker');
+    if(wave>=12) pool.push('seeker');
+    if(wave>=20) pool.push('arty');
+    if(wave>=26) pool.push('arty');
+    spawnQueue.push(pool[(Math.random()*pool.length)|0]);
+  }
+  for(let i=0;i<bossCount;i++) spawnQueue.push('boss');
+}
+function spawnOne(type){
+  let x,y,tries=0;
+  do{
+    const side=(Math.random()*4)|0;
+    if(side===0){ x=rand(60,WORLD.w-60); y=50; }
+    else if(side===1){ x=rand(60,WORLD.w-60); y=WORLD.h-50; }
+    else if(side===2){ x=50; y=rand(60,WORLD.h-60); }
+    else { x=WORLD.w-50; y=rand(60,WORLD.h-60); }
+    tries++;
+  } while(dist2(x,y,player.x,player.y) < 550*550 && tries<12);
+  const t=ETYPES[type], hpMul=1+(wave-1)*0.12;
+  enemies.push({ type, x, y, r:t.r, hp:t.hp*hpMul, maxhp:t.hp*hpMul,
+                 spd:t.spd*rand(0.9,1.1), fireT:now+rand(400,1400), hitT:0,
+                 mode:'chase', modeT:0, ringT:now+2500, dashT:now+5500, streamT:now+1500, missileT:now+3000, cvx:0, cvy:0 });
+}
+
+/* ---------------- combat ---------------- */
+function switchWeapon(k){
+  if(medChan){ sfx('dry'); return; }                 // channeling the medkit locks your weapon
+  if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
+  if(state!=='play') return;
+  if(utilityOut){                                     // stow the utility, even back to the same gun
+    utilityOut=false; player.equipEnd=now+250; sfx('swap');
+    if(k===player.cur) return;
+  }
+  if(k===player.cur) return;
+  player.cur=k; player.reloadEnd=0; player.equipEnd=now+300; player.bloom=0;
+  aiming=false; rmbAim=false;
+  sfx('swap');
+}
+function meleeSwing(w, mul){
+  const base=aimAngle();
+  player.swingT=now; player.swingA=base; player.swingArc=w.arc; player.swingR=w.range;
+  player.swingDur=clamp(w.fireRate*0.55, 90, 260);   // faster weapons = snappier visible swing
+  const targets=[];
+  for(const e of enemies){
+    const d=Math.hypot(e.x-player.x, e.y-player.y);
+    if(d > w.range+e.r) continue;
+    let da=Math.atan2(e.y-player.y, e.x-player.x)-base;
+    da=Math.atan2(Math.sin(da),Math.cos(da));
+    if(Math.abs(da) <= w.arc/2 + Math.asin(Math.min(1,e.r/(d+1)))*0.8) targets.push(e);
+  }
+  for(const e of targets){
+    if(!enemies.includes(e)) continue;          // may already be gone via frag chains
+    let hdmg=w.dmg*perks.dmg*wm(player.cur).dmg*mul;
+    if(perks.crit && Math.random()<perks.crit){ hdmg*=3; burst(e.x,e.y,'#ffe08a',8,4); }
+    e.hp-=hdmg; e.hitT=now+70;
+    const d=Math.hypot(e.x-player.x,e.y-player.y)||1;
+    const kb = ETYPES[e.type].boss ? 3 : 14;
+    e.x+=(e.x-player.x)/d*kb; e.y+=(e.y-player.y)/d*kb;      // knockback
+    burst(e.x,e.y,ETYPES[e.type].col,5,3);
+    if(e.hp<=0) killEnemy(enemies.indexOf(e));
+  }
+  if(targets.length) sfx('hit');
+  addShake(w.kick); sfx('slash');
+}
+function equipUtility(){
+  if(state!=='play' || !loadout.utility) return;
+  if(medChan){ sfx('dry'); return; }
+  utilityOut=true;
+  player.equipEnd=now+250; aiming=false; rmbAim=false;
+  sfx('swap');
+}
+function medQuick(){          // the fast heal: 5% over 1s, one charge
+  if(medCharges<1 || player.hp>=perks.maxhp || medChan || medChanHeal){ sfx('dry'); return; }
+  medChanHeal=now+1000; medHealPct=0.05; medHealT0=now;
+  spendMedCharge(1); sfx('aim');
+}
+function medHoldStart(){      // equipped: hold LMB to channel the long heal
+  if(medCharges<1 || player.hp>=perks.maxhp || medChan || medChanHeal){ sfx('dry'); return; }
+  medChan=now; medCanChannel = medCharges>=2;
+}
+function utilQuick(){         // G (or E/LMB-tap when equipped): instant cast at the crosshair
+  if(state!=='play' || !loadout.utility) return;
+  if(loadout.utility==='medkit'){ medQuick(); return; }
+  utilCast(loadout.utility);
+}
+function utilCast(u){
+  if(now < utilReadyT){ sfx('dry'); return; }
+  if(u==='grenade'){
+    const a=aimAngle();
+    grenades.push({x:player.x,y:player.y,vx:Math.cos(a)*14,vy:Math.sin(a)*14,t:now+950});
+    utilReadyT=now+UTILITIES.grenade.cd; sfx('swap');
+  } else if(u==='portal'){
+    const sw=swayScreen();
+    const t=screenToWorld(mouse.x+sw.x, mouse.y+sw.y);      // blink to the crosshair
+    burst(player.x,player.y,'#c98fb8',14,4);
+    player.x=clamp(t.x,50,WORLD.w-50); player.y=clamp(t.y,50,WORLD.h-50);
+    collideRects(player);                                    // never land inside a crate
+    burst(player.x,player.y,'#c98fb8',20,5);
+    player.hurtCd=Math.max(player.hurtCd,350);
+    utilReadyT=now+UTILITIES.portal.cd; sfx('pickup');
+  } else if(u==='redball'){
+    const a=aimAngle();
+    // launch it out ahead of you so the swarm it lures gathers away from your position
+    const sx=player.x+Math.cos(a)*90, sy=player.y+Math.sin(a)*90;
+    balls.push({x:sx,y:sy,vx:Math.cos(a)*6,vy:Math.sin(a)*6,life:3000,hitT:0});
+    utilReadyT=now+UTILITIES.redball.cd; sfx('swap');
+  }
+}
+function spendMedCharge(n){ /* medkit is infinite-use: charges never deplete */ }
+function utilRelease(){
+  if(!medChan) return;
+  const held=now-medChan;
+  medChan=0;
+  if(held<450){ medQuick(); }   // LMB tap while equipped = the quick heal
+  // early release of a long hold: channel cancelled, nothing spent
+}
+let medHealPct=0, medHealT0=0;
+function quickMelee(){
+  if(state!=='play') return;
+  const saved=player.cur;
+  player.cur=loadout.melee;    // F = the equipped melee's ability (scythe dash also cleaves on launch)
+  meleeAbility();
+  player.cur=saved;
+}
+
+function startReload(){
+  const w=WEAPONS[player.cur];
+  if(w.melee) return;
+  if(player.reloadEnd>now || player.mags[player.cur]>=magSize(player.cur)) return;
+  if(player.reserve[player.cur]<=0){ sfx('dry'); return; }
+  player.reloadEnd = now + w.reload*perks.reload;
+  aiming=false; rmbAim=false;
+  sfx('reload');
+}
+function tryFire(){
+  if(state!=='play') return;
+  const w=WEAPONS[player.cur];
+  if(player.reloadEnd>now || player.equipEnd>now) return;
+  if(now - player.lastShot < w.fireRate*perks.rate*wm(player.cur).rate*(now<surgeT?0.77:1)) return;
+  if(w.melee){
+    if(w.saw){
+      if(sawLock || sawFuel<=0){ sawLock=true; player.lastShot=now; sfx('dry'); return; }
+      sawFuel=Math.max(0, sawFuel-w.drain*wm('chainsaw').drain);
+      player.lastSaw=now;
+      if(sawFuel<=0) sawLock=true;
+    }
+    player.lastShot=now;
+    meleeSwing(w, 1);
+    return;
+  }
+  if(player.mags[player.cur]<=0){
+    player.lastShot=now; sfx('dry'); startReload(); return;
+  }
+  player.lastShot=now; player.mags[player.cur]--;
+  const base=aimAngle(), sp=effSpread();
+  for(let i=0;i<w.pellets+wm(player.cur).pellets;i++){
+    const a = base + (Math.random()-0.5)*2*sp;
+    const tx = player.x + Math.cos(base)*6, ty = player.y + Math.sin(base)*6; // spawn at body, not muzzle: point-blank shots connect
+    bullets.push({ x:tx, y:ty, vx:Math.cos(a)*w.speed*perks.velo, vy:Math.sin(a)*w.speed*perks.velo,
+                   dmg:w.dmg*perks.dmg*wm(player.cur).dmg, pierce:(w.pierce||0)+perks.pierce+wm(player.cur).pierce, life:1200,
+                   rng:w.range, fall:w.fall, dist:0, col:w.tracer||null });
+  }
+  if(!perks.noBloom) player.bloom = Math.min(0.24, player.bloom + w.kick*0.013);
+  player.flash = now + 55;
+  addShake(w.kick*0.8);
+  sfx('shoot', w);
+  if(player.mags[player.cur]<=0) startReload();
+}
+
+/* ---------------- update ---------------- */
+function update(dtms){
+  const dt = dtms/16.667;
+  const w = WEAPONS[player.cur];
+
+  // reload completion
+  if(player.reloadEnd && now>=player.reloadEnd){
+    const cap=magSize(player.cur);
+    const take=Math.min(cap-player.mags[player.cur], player.reserve[player.cur]);
+    player.mags[player.cur]+=take; player.reserve[player.cur]-=take;
+    player.reloadEnd=0; sfx('loaded');
+  }
+  // auto-loader: trickle refill while not firing
+  if(perks.autoload && !player.reloadEnd && now-player.lastShot>700 &&
+     player.mags[player.cur]<magSize(player.cur) && player.reserve[player.cur]>0 && now>player.regenT){
+    player.mags[player.cur]++; player.reserve[player.cur]--; player.regenT=now+450;
+  }
+  // chainsaw battery: slow recharge, hard lockout when drained
+  if(sawFuel<100 && now-(player.lastSaw||0)>600){
+    sawFuel=Math.min(100, sawFuel + 7*dtms/1000);
+    if(sawLock && sawFuel>=100){ sawLock=false; sfx('loaded'); }
+  }
+  // full-auto
+  if(!utilityOut && (w.auto || perks.autoAll) && mouse.down) tryFire();
+
+  // movement
+  let mx=0,my=0;
+  if(keys['w'])my--; if(keys['s'])my++; if(keys['a'])mx--; if(keys['d'])mx++;
+  if(sticks.move.id!==null){ mx=sticks.move.dx/STICK_R; my=sticks.move.dy/STICK_R; }
+  if(now < player.dashUntil){
+    player.x += player.ddx*(player.dashSpd||14)*dt; player.y += player.ddy*(player.dashSpd||14)*dt;
+  } else if(mx||my){
+    const m=Math.max(1,Math.hypot(mx,my));
+    const surgeMul = now<surgeT ? 1.3 : 1;
+    const healMul = (medChan||medChanHeal) ? 0.9 : 1;
+    const spd = player.spd * perks.spd * surgeMul * healMul * w.moveMod * (aiming?0.45:1) * dt;
+    player.x += mx/m*spd; player.y += my/m*spd;
+  }
+  player.x=clamp(player.x,40,WORLD.w-40);
+  player.y=clamp(player.y,40,WORLD.h-40);
+  collideRects(player);
+
+  // chainsaw rip charge: constant damage around the player
+  if(now < sawChargeUntil && now >= sawChargeTick){
+    sawChargeTick = now + 90;
+    player.swingT=now; player.swingA=0; player.swingArc=6.3; player.swingR=sawChargeR+4; player.swingDur=130;
+    for(let j=enemies.length-1;j>=0;j--){
+      const e=enemies[j];
+      if(dist2(e.x,e.y,player.x,player.y) < (sawChargeR+e.r)*(sawChargeR+e.r)){
+        e.hp -= sawChargeDmg*perks.dmg; e.hitT=now+60;
+        burst(e.x,e.y,ETYPES[e.type].col,4,3);
+        const d=Math.hypot(e.x-player.x,e.y-player.y)||1;
+        const kb=ETYPES[e.type].boss?2:8;
+        e.x+=(e.x-player.x)/d*kb; e.y+=(e.y-player.y)/d*kb;
+        if(e.hp<=0) killEnemy(j);
+      }
+    }
+    sfx('slash');
+  }
+
+  // touch: hold anywhere on the field to fire continuously; one tap = one shot (semi-auto)
+  if(touchUI){
+    if(aimStickId!==null) tapShootUntil=now+120;    // finger still down -> keep firing
+    if(now<tapShootUntil){
+      mouse.x=(tapAimX-cam.x)*zoom+W/2;
+      mouse.y=(tapAimY-cam.y)*zoom+H/2;
+      if(utilityOut){ if(loadout.utility==='medkit') medHoldStart(); else utilQuick(); }
+      else tryFire();
+    }
+  }
+
+  // --- utilities ---
+  // medkit hold-channel: 10s for 20% (both charges); -10% speed; switching cancels
+  if(medChan){
+    if(!medCanChannel && now-medChan>=450){            // only 1 charge left: force it to a tap
+      medChan=0;
+      medChanHeal=now+1000; medHealPct=0.05; medHealT0=now;
+      spendMedCharge(1);
+    } else if(now-medChan>=10000){
+      player.hp=Math.min(perks.maxhp, player.hp+perks.maxhp*0.20);
+      burst(player.x,player.y,'#5ec46a',16,4); sfx('pickup');
+      medChan=0; spendMedCharge(2);
+    }
+  }
+  // medkit charge regen: one charge per 75s
+  if(medCharges<2 && medRegenT>0 && now>=medRegenT){
+    medCharges++;
+    medRegenT = medCharges<2 ? now+UTILITIES.medkit.cd : 0;
+    sfx('loaded');
+  }
+  // quick heal drip (tap): 5% spread over 1s
+  if(medChanHeal){
+    if(now>=medChanHeal){
+      medChanHeal=0;
+    }
+    player.hp=Math.min(perks.maxhp, player.hp + perks.maxhp*medHealPct*(dtms/1000));
+  }
+  // grenades
+  for(let i=grenades.length-1;i>=0;i--){
+    const g=grenades[i];
+    g.x+=g.vx*dt; g.y+=g.vy*dt; g.vx*=0.94; g.vy*=0.94;
+    if(pointInRects(g.x,g.y)){ g.vx*=-0.5; g.vy*=-0.5; }
+    if(now>=g.t){
+      burst(g.x,g.y,'#e8b658',30,7); addShake(8); sfx('die');
+      for(let j=enemies.length-1;j>=0;j--){
+        const e=enemies[j];
+        const d2g=dist2(e.x,e.y,g.x,g.y);
+        if(d2g<170*170){
+          e.hp -= (ETYPES[e.type].boss?180:300)*perks.dmg*(1-Math.sqrt(d2g)/220);
+          e.hitT=now+80;
+          if(e.hp<=0) killEnemy(j);
+        }
+      }
+      grenades.splice(i,1);
+    }
+  }
+  // red balls: bounce off world/crates, taunt enemies, tick damage on contact
+  for(let i=balls.length-1;i>=0;i--){
+    const b=balls[i];
+    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dtms;
+    if(b.x<40||b.x>WORLD.w-40) b.vx*=-1;
+    if(b.y<40||b.y>WORLD.h-40) b.vy*=-1;
+    for(const o of obstacles){
+      if(b.x>o.x-8&&b.x<o.x+o.w+8&&b.y>o.y-8&&b.y<o.y+o.h+8){
+        const cx=clamp(b.x,o.x,o.x+o.w), cy=clamp(b.y,o.y,o.y+o.h);
+        if(Math.abs(b.x-cx)>Math.abs(b.y-cy)) b.vx*=-1; else b.vy*=-1;
+        b.x+=b.vx*dt; b.y+=b.vy*dt;
+      }
+    }
+    if(now>=b.hitT) for(let j=enemies.length-1;j>=0;j--){
+      const e=enemies[j];
+      if(dist2(e.x,e.y,b.x,b.y)<(e.r+9)*(e.r+9)){
+        e.hp-=8*perks.dmg; e.hitT=now+60; b.hitT=now+280;
+        burst(b.x,b.y,'#d05548',3,2);
+        if(e.hp<=0) killEnemy(j);
+        break;
+      }
+    }
+    if(b.life<=0) balls.splice(i,1);
+  }
+
+  player.bloom *= Math.pow(0.94, dt);
+  if(player.hurtCd>0) player.hurtCd-=dtms;
+  if(player.hurtFlash>0) player.hurtFlash-=dtms*0.002;
+
+  // camera: pull toward crosshair, hard when scoped
+  const mw = screenToWorld(mouse.x, mouse.y);
+  const bias = aiming ? (w.scoped?0.62:0.35) : 0.12;
+  const tzoom = aiming ? w.zoom : 1;
+  zoom += (tzoom-zoom)*Math.min(1,0.11*dt);
+  const tx = player.x + (mw.x-player.x)*bias;
+  const ty = player.y + (mw.y-player.y)*bias;
+  cam.x += (tx-cam.x)*Math.min(1,0.09*dt);
+  cam.y += (ty-cam.y)*Math.min(1,0.09*dt);
+  const hw=W/2/zoom, hh=H/2/zoom;
+  cam.x = WORLD.w<hw*2 ? WORLD.w/2 : clamp(cam.x,hw,WORLD.w-hw);
+  cam.y = WORLD.h<hh*2 ? WORLD.h/2 : clamp(cam.y,hh,WORLD.h-hh);
+
+  shakeMag*=Math.pow(0.88,dt);
+  shakeX=rand(-1,1)*shakeMag/zoom; shakeY=rand(-1,1)*shakeMag/zoom;
+
+  // waves
+  if(spawnQueue.length){
+    spawnTimer-=dtms;
+    if(spawnTimer<=0){ spawnOne(spawnQueue.shift()); spawnTimer=330; }
+  } else if(!enemies.length){
+    if(wave>=1 && !upgradeOffered){
+      bossBounty = wave%5===0;
+      upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
+      state='upgrade'; sfx('wave');
+    } else {
+      betweenTimer-=dtms;
+      if(betweenTimer<=0){ nextWave(); betweenTimer=2600; upgradeOffered=false; }
+    }
+  }
+
+  // enemies
+  for(const e of enemies){
+    const t=ETYPES[e.type];
+    // red balls taunt: nearest ball within 500 overrides the player as target (bosses immune)
+    let tx=player.x, ty=player.y;
+    if(balls.length && !t.boss){
+      let bb=null, bd=500*500;
+      for(const b of balls){ const d2b=dist2(e.x,e.y,b.x,b.y); if(d2b<bd){bd=d2b;bb=b;} }
+      if(bb){ tx=bb.x; ty=bb.y; }
+    }
+    const dx=tx-e.x, dy=ty-e.y, d=Math.hypot(dx,dy)||1;
+    let vx=dx/d, vy=dy/d;
+    if(t.boss){
+      if(e.mode==='wind'){
+        vx=0; vy=0;
+        if(now>=e.modeT){ e.mode='charge'; e.modeT=now+520; e.cvx=dx/d*9; e.cvy=dy/d*9; }
+      } else if(e.mode==='charge'){
+        e.x+=e.cvx*dt; e.y+=e.cvy*dt; vx=0; vy=0;
+        if(now>=e.modeT){ e.mode='chase'; e.dashT=now+6500; }
+      } else if(now>=e.dashT){
+        e.mode='wind'; e.modeT=now+550;
+      }
+      // constant aimed spam: 3-shot fan at the player every 250ms
+      if(e.mode!=='charge' && now>=e.streamT){
+        e.streamT=now+250;
+        const pa=Math.atan2(player.y-e.y, player.x-e.x);
+        for(const off of [-0.14,0,0.14]){
+          const a=pa+off+rand(-0.04,0.04);
+          ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*6.5,vy:Math.sin(a)*6.5,life:2400});
+        }
+      }
+      if(wave>=15 && now>=e.missileT){
+        e.missileT=now+3600;
+        const pa=Math.atan2(player.y-e.y, player.x-e.x);
+        for(const off of [-0.5,0.5])
+          fireHoming(e, pa+off, 4.2, Math.min(0.065, 0.035+(wave-15)*0.001), 5000, 14);
+      }
+      if(now>=e.ringT){
+        e.ringT=now+4000;
+        for(let i=0;i<14;i++){
+          const a=i/14*TAU + rand(-0.05,0.05);
+          ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,life:2600});
+        }
+        sfx('shoot',{sndF:300,sndD:0.15});
+      }
+    }
+    if(t.ranged){
+      const near = t.arty?420:300, hold = t.arty?560:430, rng = t.arty?900:640;
+      if(d<near){ vx=-vx; vy=-vy; }        // keep distance
+      else if(d<hold){ vx=0; vy=0; }
+      if(d<rng && now>=e.fireT){
+        const a=Math.atan2(dy,dx);
+        if(t.arty){                        // spamming 3-missile fan; missiles curve around walls
+          e.fireT=now+2600;
+          for(const off of [-0.35,0,0.35])
+            fireHoming(e, a+off, 4.0, Math.min(0.06, 0.03+(wave-20)*0.001), 5200, 12);
+        } else if(t.seeker){               // tracking shots that sharpen every wave
+          e.fireT=now+Math.max(1200, 2000-wave*20);
+          fireHoming(e, a+rand(-0.2,0.2), 5.2, Math.min(0.06, 0.028+wave*0.0015), 3500, 10);
+        } else {
+          e.fireT=now+1600;
+          const aa=a+rand(-0.06,0.06);
+          ebullets.push({x:e.x,y:e.y,vx:Math.cos(aa)*7.5,vy:Math.sin(aa)*7.5,life:2000});
+        }
+      }
+    }
+    e.x+=vx*e.spd*dt; e.y+=vy*e.spd*dt;
+    e.x=clamp(e.x,30,WORLD.w-30); e.y=clamp(e.y,30,WORLD.h-30);
+    collideRects(e);
+    // don't let enemies stack inside the player
+    const pdx=e.x-player.x, pdy=e.y-player.y, prr=e.r+player.r-2, pd2=pdx*pdx+pdy*pdy;
+    if(pd2>0 && pd2<prr*prr){ const pd=Math.sqrt(pd2), push=(prr-pd)/pd; e.x+=pdx*push; e.y+=pdy*push; }
+    // contact damage — measure the REAL distance to the player, not the taunt target
+    if(!t.ranged){
+      const cdx=e.x-player.x, cdy=e.y-player.y;
+      if(cdx*cdx+cdy*cdy < (e.r+player.r+2)*(e.r+player.r+2) && player.hurtCd<=0) hurtPlayer(t.dmg);
+    }
+  }
+  // simple separation
+  for(let i=0;i<enemies.length;i++) for(let j=i+1;j<enemies.length;j++){
+    const a=enemies[i],b=enemies[j];
+    const dx=b.x-a.x, dy=b.y-a.y, rr=a.r+b.r, d2=dx*dx+dy*dy;
+    if(d2>0 && d2<rr*rr){
+      const d=Math.sqrt(d2), p=(rr-d)/d*0.5;
+      a.x-=dx*p; a.y-=dy*p; b.x+=dx*p; b.y+=dy*p;
+    }
+  }
+
+  // player bullets (substepped so fast rounds can't tunnel through close targets)
+  for(let i=bullets.length-1;i>=0;i--){
+    const b=bullets[i];
+    b.life-=dtms;
+    let dead = b.life<=0;
+    const stepLen = Math.hypot(b.vx,b.vy)*dt;
+    const steps = Math.max(1, Math.ceil(stepLen/7));
+    for(let s=0; s<steps && !dead; s++){
+      b.x+=b.vx*dt/steps; b.y+=b.vy*dt/steps; b.dist+=stepLen/steps;
+      if(b.x<0||b.y<0||b.x>WORLD.w||b.y>WORLD.h){ dead=true; break; }
+      if(pointInRects(b.x,b.y)){ dead=true; burst(b.x,b.y,'#c9b26a',4,2.5); break; }
+      for(let j=enemies.length-1;j>=0;j--){
+        const e=enemies[j];
+        if(dist2(b.x,b.y,e.x,e.y) < (e.r+4)*(e.r+4)){
+          if(b.hits && b.hits.has(e)) continue;
+          let hdmg=b.dmg*dmgMul(b);
+          if(perks.crit && Math.random()<perks.crit){ hdmg*=3; burst(b.x,b.y,'#ffe08a',8,4); }
+          e.hp-=hdmg; e.hitT=now+70;
+          burst(b.x,b.y,ETYPES[e.type].col,5,3);
+          sfx('hit');
+          if(e.hp<=0) killEnemy(j);
+          if(b.pierce>0){ b.pierce--; (b.hits||(b.hits=new Set())).add(e); }
+          else dead=true;
+          break;
+        }
+      }
+    }
+    if(dead) bullets.splice(i,1);
+  }
+  // enemy bullets (h = homing turn rate; missiles fly over crates)
+  for(let i=ebullets.length-1;i>=0;i--){
+    const b=ebullets[i];
+    if(b.h){
+      const ta=Math.atan2(player.y-b.y, player.x-b.x);
+      let ca=Math.atan2(b.vy,b.vx);
+      let da=Math.atan2(Math.sin(ta-ca),Math.cos(ta-ca));
+      const mt=b.h*dt;
+      ca += clamp(da,-mt,mt);
+      b.vx=Math.cos(ca)*b.spd; b.vy=Math.sin(ca)*b.spd;
+    }
+    b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dtms;
+    let dead = b.life<=0 || (!b.h && pointInRects(b.x,b.y));
+    if(!dead && dist2(b.x,b.y,player.x,player.y) < (player.r+3)*(player.r+3)){
+      dead=true; if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg);
+    }
+    if(dead) ebullets.splice(i,1);
+  }
+  // particles
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i];
+    p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.96; p.vy*=0.96; p.life-=dtms;
+    if(p.life<=0) particles.splice(i,1);
+  }
+  // pickups
+  for(let i=pickups.length-1;i>=0;i--){
+    const p=pickups[i];
+    // auto-collect: pickups fly to the player (medkits wait on the ground while HP is full)
+    const wanted = p.type==='ammo' || player.hp < perks.maxhp;
+    if(wanted){
+      const dx=player.x-p.x, dy=player.y-p.y, d=Math.hypot(dx,dy)||1;
+      const sp=Math.min(11, 3 + d*0.012)*dt;
+      p.x+=dx/d*sp; p.y+=dy/d*sp;
+    }
+    if(wanted && dist2(p.x,p.y,player.x,player.y) < 30*30){
+      if(p.type==='ammo'){
+        for(const k of [loadout.primary, loadout.secondary]){
+          player.reserve[k]+=magSize(k);
+        }
+        sfx('ammo');
+      } else {
+        player.hp=Math.min(perks.maxhp,player.hp+perks.medkitHeal);
+        sfx('pickup');
+      }
+      pickups.splice(i,1);
+    }
+  }
+}
+function hurtPlayer(dmg){
+  player.hp-=dmg*perks.armor; player.hurtCd=550; player.hurtFlash=1;
+  addShake(6); sfx('hurt');
+  if(player.hp<=0){
+    if(perks.secondWind && wave>=windReadyWave){
+      windReadyWave=wave+3; player.hp=Math.ceil(perks.maxhp*0.25);
+      player.hurtCd=1200;
+      waveMsg='SECOND WIND'; waveMsgT=now+1800;
+      burst(player.x,player.y,'#a7c15e',24,5); sfx('pickup');
+      return;
+    }
+    player.hp=0; state='over'; sfx('die'); submitScore(hiScore);
+  }
+}
+function killEnemy(j){
+  const e=enemies[j], t=ETYPES[e.type];
+  burst(e.x,e.y,t.col,16,4.5);
+  score+=t.score; kills++;
+  if(score>hiScore) hiScore=score;
+  if(perks.vamp) player.hp=Math.min(perks.maxhp,player.hp+perks.vamp);
+  if(perks.surge) surgeT=now+3000;
+  if(Math.random()<perks.drop) pickups.push({x:e.x,y:e.y,type:'med'});
+  if(Math.random()<0.165) pickups.push({x:e.x+rand(-10,10),y:e.y+rand(-10,10),type:'ammo'});
+  if(t.boss) pickups.push({x:e.x-32,y:e.y,type:'med'},{x:e.x+32,y:e.y,type:'ammo'},{x:e.x,y:e.y+32,type:'ammo'});
+  enemies.splice(j,1);
+  sfx('die');
+  if(perks.explode){
+    burst(e.x,e.y,'#e8b658',22,6); addShake(3);
+    for(const o of enemies) if(dist2(o.x,o.y,e.x,e.y)<90*90) o.hp-=45*perks.dmg;
+    let idx;
+    while((idx=enemies.findIndex(o=>o.hp<=0))>=0) killEnemy(idx);
+  }
+}
+
+/* ---------------- render: world ---------------- */
+function drawWorld(){
+  ctx.fillStyle='#101208';
+  ctx.fillRect(0,0,W,H);
+
+  ctx.save();
+  ctx.translate(W/2,H/2);
+  ctx.scale(zoom,zoom);
+  ctx.translate(-cam.x+shakeX,-cam.y+shakeY);
+
+  // grid
+  const hw=W/2/zoom, hh=H/2/zoom;
+  const x0=Math.max(0,cam.x-hw), x1=Math.min(WORLD.w,cam.x+hw);
+  const y0=Math.max(0,cam.y-hh), y1=Math.min(WORLD.h,cam.y+hh);
+  ctx.strokeStyle='rgba(140,160,90,0.07)'; ctx.lineWidth=1/zoom;
+  ctx.beginPath();
+  for(let x=Math.floor(x0/80)*80;x<=x1;x+=80){ ctx.moveTo(x,y0); ctx.lineTo(x,y1); }
+  for(let y=Math.floor(y0/80)*80;y<=y1;y+=80){ ctx.moveTo(x0,y); ctx.lineTo(x1,y); }
+  ctx.stroke();
+
+  // world border
+  ctx.strokeStyle='#e8b658'; ctx.lineWidth=3/zoom;
+  ctx.strokeRect(20,20,WORLD.w-40,WORLD.h-40);
+  ctx.strokeStyle='rgba(232,182,88,0.15)'; ctx.lineWidth=10/zoom;
+  ctx.strokeRect(20,20,WORLD.w-40,WORLD.h-40);
+
+  // obstacles
+  for(const o of obstacles){
+    ctx.fillStyle='#262620'; ctx.fillRect(o.x,o.y,o.w,o.h);
+    ctx.strokeStyle='#4a4634'; ctx.lineWidth=2/zoom; ctx.strokeRect(o.x,o.y,o.w,o.h);
+    ctx.strokeStyle='rgba(74,70,52,0.5)';
+    ctx.beginPath();
+    ctx.moveTo(o.x,o.y); ctx.lineTo(o.x+o.w,o.y+o.h);
+    ctx.moveTo(o.x+o.w,o.y); ctx.lineTo(o.x,o.y+o.h);
+    ctx.stroke();
+  }
+
+  // pickups
+  for(const p of pickups){
+    const pulse=1+Math.sin(now*0.006)*0.15;
+    if(p.type==='ammo'){
+      ctx.fillStyle='#c9973b';
+      ctx.fillRect(p.x-9*pulse,p.y-6*pulse,18*pulse,12*pulse);
+      ctx.strokeStyle='#5a4318'; ctx.lineWidth=1.5/zoom;
+      ctx.strokeRect(p.x-9*pulse,p.y-6*pulse,18*pulse,12*pulse);
+      ctx.fillStyle='#5a4318';
+      ctx.fillRect(p.x-5,p.y-4,2.5,8); ctx.fillRect(p.x-0.5,p.y-4,2.5,8); ctx.fillRect(p.x+4,p.y-4,2.5,8);
+    } else {
+      ctx.fillStyle='#5ec46a';
+      ctx.fillRect(p.x-8*pulse,p.y-2.5*pulse,16*pulse,5*pulse);
+      ctx.fillRect(p.x-2.5*pulse,p.y-8*pulse,5*pulse,16*pulse);
+    }
+  }
+
+  // grenades
+  for(const g of grenades){
+    ctx.fillStyle='#3a4a2c';
+    ctx.beginPath(); ctx.arc(g.x,g.y,7,0,TAU); ctx.fill();
+    const fl=(g.t-now)/700;
+    ctx.fillStyle = ((now>>7)&1) ? '#e8b658' : '#d05548';
+    ctx.beginPath(); ctx.arc(g.x,g.y-9,2.5,0,TAU); ctx.fill();
+  }
+  // red balls
+  for(const b of balls){
+    ctx.fillStyle='#d05548';
+    ctx.beginPath(); ctx.arc(b.x,b.y,9,0,TAU); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.5)';
+    ctx.beginPath(); ctx.arc(b.x-3,b.y-3,2.5,0,TAU); ctx.fill();
+  }
+
+  // enemy bullets
+  ctx.lineCap='round';
+  for(const b of ebullets){
+    if(b.h){
+      ctx.strokeStyle='#ff9a4a'; ctx.lineWidth=4.2/zoom;
+      ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*2.4,b.y-b.vy*2.4); ctx.stroke();
+      ctx.fillStyle='#ffd8a0';
+      ctx.beginPath(); ctx.arc(b.x,b.y,2.6/Math.max(1,zoom*0.7),0,TAU); ctx.fill();
+    } else {
+      ctx.strokeStyle='#e05b52'; ctx.lineWidth=3/zoom;
+      ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*1.6,b.y-b.vy*1.6); ctx.stroke();
+    }
+  }
+  // player bullets
+  for(const b of bullets){
+    ctx.strokeStyle=b.col||'rgba(232,182,88,0.85)'; ctx.lineWidth=3.2/zoom;
+    ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*1.7,b.y-b.vy*1.7); ctx.stroke();
+    ctx.strokeStyle='#fff5da'; ctx.lineWidth=1.2/zoom;
+    ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*0.9,b.y-b.vy*0.9); ctx.stroke();
+  }
+
+  // enemies
+  for(const e of enemies){
+    const t=ETYPES[e.type];
+    const flash = now<e.hitT;
+    ctx.fillStyle = flash ? '#ffffff' : t.col;
+    ctx.beginPath(); ctx.arc(e.x,e.y,e.r,0,TAU); ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.45)'; ctx.lineWidth=2.5/zoom; ctx.stroke();
+    const a=Math.atan2(player.y-e.y,player.x-e.x);
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.arc(e.x+Math.cos(a)*e.r*0.55, e.y+Math.sin(a)*e.r*0.55, e.r*0.3,0,TAU);
+    ctx.fill();
+    if(t.ranged){
+      ctx.strokeStyle='#1c2b33'; ctx.lineWidth=4/zoom;
+      ctx.beginPath(); ctx.moveTo(e.x,e.y);
+      ctx.lineTo(e.x+Math.cos(a)*(e.r+10), e.y+Math.sin(a)*(e.r+10)); ctx.stroke();
+    }
+    if(t.boss){
+      ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=2.5/zoom;
+      ctx.beginPath(); ctx.arc(e.x,e.y,e.r*0.6,0,TAU); ctx.stroke();
+      if(e.mode==='wind'){
+        const wp=1-Math.max(0,(e.modeT-now))/550;
+        ctx.strokeStyle='rgba(224,90,80,'+(0.7*wp).toFixed(2)+')'; ctx.lineWidth=3/zoom;
+        ctx.beginPath(); ctx.arc(e.x,e.y,e.r+8+wp*12,0,TAU); ctx.stroke();
+      }
+    }
+    if(e.hp<e.maxhp){
+      const bw=e.r*2;
+      ctx.fillStyle='rgba(0,0,0,0.55)';
+      ctx.fillRect(e.x-bw/2,e.y-e.r-9,bw,4);
+      ctx.fillStyle='#d05548';
+      ctx.fillRect(e.x-bw/2,e.y-e.r-9,bw*Math.max(0,e.hp/e.maxhp),4);
+    }
+  }
+
+  // particles
+  for(const p of particles){
+    ctx.globalAlpha=Math.max(0,p.life/p.max);
+    ctx.fillStyle=p.col;
+    ctx.fillRect(p.x-p.size/2,p.y-p.size/2,p.size,p.size);
+  }
+  ctx.globalAlpha=1;
+
+  // player
+  const w=WEAPONS[player.cur], ang=aimAngle();
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(player.x+3,player.y+5,player.r,player.r*0.7,0,0,TAU); ctx.fill();
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  let spinA=0;
+  if(player.spinT && now-player.spinT<250) spinA=((now-player.spinT)/250)*TAU;
+  ctx.rotate(ang+spinA);
+  if(utilityOut){                                // utility in hand
+    drawUtilIcon(14, 0, loadout.utility, '#c98fb8', 0.8);
+  } else if(w.melee){                            // melee: distinct steel-blue silhouettes
+    ctx.lineCap='round';
+    if(player.cur==='scythe'){
+      ctx.strokeStyle='#5a6b52'; ctx.lineWidth=3.4;
+      ctx.beginPath(); ctx.moveTo(2,7); ctx.lineTo(36,-7); ctx.stroke();     // long shaft
+      ctx.strokeStyle='#a9c4d6'; ctx.lineWidth=3.8;
+      ctx.beginPath(); ctx.arc(30,-16,12,0.45,2.7); ctx.stroke();            // curved blade
+      ctx.strokeStyle='#8fb3c9'; ctx.lineWidth=1.6;
+      ctx.beginPath(); ctx.arc(30,-16,8.5,0.55,2.6); ctx.stroke();
+    } else if(player.cur==='knife'){
+      ctx.strokeStyle='#3a4239'; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(4,0); ctx.lineTo(12,0); ctx.stroke();      // handle
+      ctx.fillStyle='#c9d6e2';
+      ctx.beginPath(); ctx.moveTo(12,-3); ctx.lineTo(38,0); ctx.lineTo(12,3); ctx.closePath(); ctx.fill();
+    } else if(player.cur==='hammer'){
+      ctx.strokeStyle='#5a6b52'; ctx.lineWidth=3.6;
+      ctx.beginPath(); ctx.moveTo(4,5); ctx.lineTo(26,-7); ctx.stroke();       // haft
+      ctx.fillStyle='#a9c4d6';
+      ctx.save(); ctx.translate(26,-7); ctx.rotate(0.5);
+      ctx.fillRect(-5,-10,10,20); ctx.restore();                              // head
+    } else {                                                                 // chainsaw
+      ctx.fillStyle='#3a4a54'; ctx.fillRect(3,-4.5,11,9);                    // engine body
+      ctx.fillStyle='#8fb3c9'; ctx.fillRect(14,-2.8,18,5.6);                 // bar
+      ctx.fillStyle='#25313a';
+      const jig = (now-player.lastSaw<160) ? (now>>5)%2 : 0;                 // teeth buzz while sawing
+      for(let i=0;i<4;i++) ctx.fillRect(15+i*4.4, ((i+jig)%2 ? -4.8 : 2.4), 2.6, 2.4);
+    }
+  } else {
+    ctx.fillStyle='#2a2f1c';                     // gun
+    ctx.fillRect(4,-3.2,w.len,6.4);
+    ctx.fillStyle='#454e2c';
+    ctx.fillRect(4,-3.2,w.len*0.45,6.4);
+    if(now<player.flash){                        // muzzle flash
+      ctx.fillStyle='rgba(255,220,130,0.9)';
+      ctx.beginPath();
+      ctx.moveTo(w.len+2,0); ctx.lineTo(w.len+16,-6); ctx.lineTo(w.len+22,0); ctx.lineTo(w.len+16,6);
+      ctx.closePath(); ctx.fill();
+    }
+  }
+  ctx.fillStyle='#a7c15e';                       // body
+  ctx.beginPath(); ctx.arc(0,0,player.r,0,TAU); ctx.fill();
+  ctx.strokeStyle='#39421f'; ctx.lineWidth=3/zoom; ctx.stroke();
+  ctx.fillStyle='#39421f';                       // helmet stripe
+  ctx.beginPath(); ctx.arc(0,0,player.r*0.55,-0.9,0.9); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // melee swing arc — animation length tracks the weapon's swing speed
+  const swingDur = player.swingDur || 130;
+  if(player.swingT && now-player.swingT<swingDur){
+    const pr=(now-player.swingT)/swingDur;
+    ctx.strokeStyle='rgba(232,217,168,'+(0.8*(1-pr)).toFixed(3)+')';
+    ctx.lineWidth=4/zoom;
+    ctx.beginPath();
+    if(player.swingArc<0.6){                         // knife thrust: a line, not an arc
+      ctx.moveTo(player.x+Math.cos(player.swingA)*12, player.y+Math.sin(player.swingA)*12);
+      ctx.lineTo(player.x+Math.cos(player.swingA)*player.swingR*(0.8+0.25*pr),
+                 player.y+Math.sin(player.swingA)*player.swingR*(0.8+0.25*pr));
+    } else {
+      ctx.arc(player.x,player.y,player.swingR*(0.7+0.3*pr),player.swingA-player.swingArc/2,player.swingA+player.swingArc/2);
+    }
+    ctx.stroke();
+  }
+
+  // reload arc
+  if(player.reloadEnd>now){
+    const frac = 1-(player.reloadEnd-now)/(w.reload*perks.reload);
+    ctx.strokeStyle='#e8b658'; ctx.lineWidth=3.5/zoom;
+    ctx.beginPath(); ctx.arc(player.x,player.y,player.r+9,-Math.PI/2,-Math.PI/2+frac*TAU); ctx.stroke();
+  }
+  if(now<surgeT){
+    ctx.strokeStyle='rgba(224,138,60,0.85)'; ctx.lineWidth=2.5/zoom;
+    ctx.beginPath(); ctx.arc(player.x,player.y,player.r+14,0,TAU); ctx.stroke();
+  }
+  if(medChan){
+    const frac=Math.min(1,(now-medChan)/10000);
+    ctx.strokeStyle='#5ec46a'; ctx.lineWidth=4/zoom;
+    ctx.beginPath(); ctx.arc(player.x,player.y,player.r+18,-Math.PI/2,-Math.PI/2+frac*TAU); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ---------------- render: HUD ---------------- */
+function drawHUD(){
+  const w=WEAPONS[player.cur];
+  const sw=swayScreen();
+  const cxs=mouse.x+sw.x, cys=mouse.y+sw.y;
+  const scoped = aiming && w.scoped;
+
+  // aim vignette / scope
+  if(aiming){
+    if(scoped){
+      const R=Math.min(W,H)*0.30;
+      ctx.fillStyle='rgba(4,5,2,0.94)';
+      ctx.beginPath(); ctx.rect(0,0,W,H); ctx.arc(cxs,cys,R,0,TAU); ctx.fill('evenodd');
+      const g=ctx.createRadialGradient(cxs,cys,R*0.2,cxs,cys,R);
+      g.addColorStop(0,'rgba(150,190,140,0.05)');
+      g.addColorStop(1,'rgba(20,40,20,0.28)');
+      ctx.fillStyle=g;
+      ctx.beginPath(); ctx.arc(cxs,cys,R,0,TAU); ctx.fill();
+      ctx.strokeStyle='#0a0c08'; ctx.lineWidth=10;
+      ctx.beginPath(); ctx.arc(cxs,cys,R,0,TAU); ctx.stroke();
+      ctx.strokeStyle='#e8b658'; ctx.lineWidth=1.5;
+      ctx.beginPath(); ctx.arc(cxs,cys,R-6,0,TAU); ctx.stroke();
+      // reticle
+      ctx.strokeStyle='rgba(20,25,15,0.95)'; ctx.lineWidth=1.4;
+      ctx.beginPath();
+      ctx.moveTo(cxs-R,cys); ctx.lineTo(cxs+R,cys);
+      ctx.moveTo(cxs,cys-R); ctx.lineTo(cxs,cys+R);
+      ctx.stroke();
+      ctx.fillStyle='rgba(20,25,15,0.95)';
+      for(let i=1;i<=3;i++){
+        const o=R*0.22*i;
+        for(const s of [-1,1]){
+          ctx.fillRect(cxs+o*s-1.5,cys-4,3,8);
+          ctx.fillRect(cxs-4,cys+o*s-1.5,8,3);
+        }
+      }
+      ctx.fillStyle='#d05548';
+      ctx.beginPath(); ctx.arc(cxs,cys,2.2,0,TAU); ctx.fill();
+    } else {
+      const g=ctx.createRadialGradient(cxs,cys,Math.min(W,H)*0.22,W/2,H/2,Math.max(W,H)*0.75);
+      g.addColorStop(0,'rgba(0,0,0,0)');
+      g.addColorStop(1,'rgba(0,0,0,0.5)');
+      ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+    }
+  }
+
+  // crosshair (hidden inside sniper scope)
+  if(!scoped && state==='play' && !menuOpen){
+    const gap = 7 + effSpread()*230*zoom;
+    const L=9;
+    ctx.strokeStyle='#e8d9a8'; ctx.lineWidth=1.6;
+    ctx.beginPath();
+    ctx.moveTo(cxs-gap-L,cys); ctx.lineTo(cxs-gap,cys);
+    ctx.moveTo(cxs+gap,cys);   ctx.lineTo(cxs+gap+L,cys);
+    ctx.moveTo(cxs,cys-gap-L); ctx.lineTo(cxs,cys-gap);
+    ctx.moveTo(cxs,cys+gap);   ctx.lineTo(cxs,cys+gap+L);
+    ctx.stroke();
+    ctx.fillStyle='#e8d9a8';
+    ctx.fillRect(cxs-1,cys-1,2,2);
+  }
+
+  // hurt flash
+  if(player.hurtFlash>0){
+    ctx.fillStyle='rgba(180,30,30,'+(0.35*player.hurtFlash)+')';
+    ctx.fillRect(0,0,W,H);
+  }
+
+  const pad=18;
+  // score / wave
+  ctx.textAlign='left'; ctx.textBaseline='top';
+  ctx.fillStyle='#e8b658'; ctx.font='700 22px ui-monospace,Consolas,monospace';
+  ctx.fillText('SCORE '+score, pad, pad);
+  ctx.fillStyle='#8a9268'; ctx.font='13px ui-monospace,Consolas,monospace';
+  ctx.fillText('WAVE '+Math.max(1,wave)+'   KILLS '+kills+'   BEST '+hiScore, pad, pad+28);
+
+  // health
+  const hbW=230, hbY=H-92;
+  ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
+  ctx.fillText('INTEGRITY '+Math.ceil(player.hp)+' / '+perks.maxhp, pad, hbY-15);
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(pad,hbY,hbW,13);
+  ctx.fillStyle = player.hp>perks.maxhp*0.35 ? '#a7c15e' : '#d05548';
+  ctx.fillRect(pad,hbY,hbW*player.hp/perks.maxhp,13);
+  ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(pad+0.5,hbY+0.5,hbW,13);
+
+  // weapon block
+  const mag=player.mags[player.cur];
+  ctx.fillStyle = utilityOut ? '#c98fb8' : w.melee ? '#8fb3c9' : '#cdd6b0';
+  ctx.font='700 16px ui-monospace,Consolas,monospace';
+  ctx.fillText(utilityOut ? UTILITIES[loadout.utility].name : w.name, pad, H-62);
+  ctx.font='700 30px ui-monospace,Consolas,monospace';
+  ctx.fillStyle = w.saw ? (sawLock ? '#d05548' : '#e8b658') : (mag===0 ? '#d05548' : '#e8b658');
+  const ammoTxt = utilityOut
+                ? (loadout.utility==='medkit' ? '\u221E HEALS'
+                   : now<utilReadyT ? 'RECHARGING' : 'READY')
+                : w.saw ? (sawLock ? 'RECHARGING' : 'FUEL '+Math.ceil(sawFuel)+'%')
+                : w.melee ? 'MELEE'
+                : (player.reloadEnd>now ? 'RELOADING' : (mag+' / '+(isFinite(player.reserve[player.cur])?player.reserve[player.cur]:'\u221E')));
+  ctx.fillText(ammoTxt, pad, H-42);
+  // slots: 1 primary / 2 sidearm / 3 melee / 4 utility
+  const slots=[loadout.primary, loadout.secondary, loadout.melee];
+  if(loadout.utility) slots.push(loadout.utility);
+  for(let i=0;i<slots.length;i++){
+    const x=pad+i*66, y=H-102-26, k=slots[i];
+    const isU = i===3;
+    const cur = isU ? utilityOut : (!utilityOut && k===player.cur);
+    ctx.fillStyle = cur ? 'rgba(232,182,88,0.22)' : 'rgba(0,0,0,0.4)';
+    ctx.fillRect(x,y,60,20);
+    ctx.strokeStyle = cur ? '#e8b658' : '#4a4634';
+    ctx.strokeRect(x+0.5,y+0.5,60,20);
+    ctx.fillStyle = cur ? '#e8b658' : '#8a9268';
+    ctx.font='11px ui-monospace,Consolas,monospace';
+    ctx.fillText(String(i+1), x+6, y+5);
+    ctx.textAlign='right';
+    ctx.fillText((isU ? UTILITIES[k] : WEAPONS[k]).name.split(' ')[0], x+54, y+5);
+    ctx.textAlign='left';
+  }
+
+  // melee E ability cooldown
+  if(w.melee){
+    const cdMax=abilityCdOf(player.cur)||1;
+    const frac=clamp(1-((abilityCD[player.cur]||0)-now)/cdMax, 0, 1);
+    const lbl = player.cur==='scythe' ? 'E: DASH' : player.cur==='knife' ? 'E: CRIT' : player.cur==='hammer' ? 'E: SLAM' : 'E: RIP';
+    ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText(lbl, pad+208, H-124);
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(pad+208, H-112, 70, 6);
+    ctx.fillStyle = frac>=1 ? '#a7c15e' : '#6b7455';
+    ctx.fillRect(pad+208, H-112, 70*frac, 6);
+  }
+  // utility recharge
+  if(loadout.utility){
+    const u=UTILITIES[loadout.utility];
+    const ux=pad+300+86, isMed=loadout.utility==='medkit';
+    const frac = isMed ? 1 : clamp(1-(utilReadyT-now)/u.cd, 0, 1);
+    ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText('G: '+u.name.split(' ').pop()+(isMed?' \u221E':''), ux, H-124);
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(ux, H-112, 70, 6);
+    ctx.fillStyle = frac>=1 ? '#c98fb8' : '#6b7455';
+    ctx.fillRect(ux, H-112, 70*frac, 6);
+    if(medChan){
+      ctx.fillStyle='#5ec46a';
+      ctx.fillText('CHANNELING '+Math.ceil((10000-(now-medChan))/1000)+'s', ux, H-100);
+    }
+  }
+  // dash indicator
+  if(perks.dash){
+    const cdFrac = clamp(1-(dashReadyT-now)/2200, 0, 1);
+    ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText('DASH [SPACE]', pad+300, H-124);
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(pad+300, H-112, 70, 6);
+    ctx.fillStyle = cdFrac>=1 ? '#a7c15e' : '#6b7455';
+    ctx.fillRect(pad+300, H-112, 70*cdFrac, 6);
+  }
+  // hint
+  ctx.textAlign='right';
+  ctx.fillStyle='rgba(138,146,104,0.8)'; ctx.font='11px ui-monospace,Consolas,monospace';
+  ctx.fillText('WASD move · LMB fire · E / hold RMB scope · R reload · 1-4 / Q swap · G utility'+(perks.dash?' · SPACE dash':'')+' · F melee ability · ESC menu', W-pad, H-26);
+  ctx.textAlign='left';
+
+  // touch controls
+  touchButtons=[];
+  if(touchUI){
+    // movement joystick, bottom-left
+    const st=sticks.move;
+    const gx=110, gy=H-120;
+    const ax=st.id!==null?st.cx:gx, ay=st.id!==null?st.cy:gy;
+    ctx.globalAlpha=st.id!==null?0.5:0.22;
+    ctx.strokeStyle='#cdd6b0'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(ax,ay,STICK_R,0,TAU); ctx.stroke();
+    ctx.fillStyle='#cdd6b0';
+    ctx.beginPath(); ctx.arc(ax+st.dx,ay+st.dy,24,0,TAU); ctx.fill();
+    ctx.globalAlpha=1;
+
+    const iconBtn=(key,cx,cy,R,draw,active)=>{
+      touchButtons.push({key,x:cx,y:cy,r:R});
+      const pressed = pressedBtn===key || active;
+      ctx.fillStyle = pressed ? 'rgba(232,182,88,0.5)' : 'rgba(8,10,5,0.6)';
+      ctx.beginPath(); ctx.arc(cx,cy,R,0,TAU); ctx.fill();
+      ctx.strokeStyle = pressed ? '#e8b658' : '#8a9268'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.arc(cx,cy,R,0,TAU); ctx.stroke();
+      ctx.strokeStyle = pressed ? '#101208' : '#cdd6b0'; ctx.fillStyle=ctx.strokeStyle;
+      ctx.lineWidth=2.4; draw(cx,cy);
+    };
+
+    // --- bottom-right: big AIM (crosshair) + RELOAD (cycle) ---
+    const R=40, bx=W-72;
+    iconBtn('e', bx, H-118, R, (cx,cy)=>{
+      ctx.beginPath(); ctx.arc(cx,cy,13,0,TAU); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx-19,cy); ctx.lineTo(cx-5,cy); ctx.moveTo(cx+5,cy); ctx.lineTo(cx+19,cy);
+      ctx.moveTo(cx,cy-19); ctx.lineTo(cx,cy-5); ctx.moveTo(cx,cy+5); ctx.lineTo(cx,cy+19);
+      ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx,cy,2,0,TAU); ctx.fill();
+    }, aiming);
+    iconBtn('rld', bx, H-210, R, (cx,cy)=>{
+      ctx.beginPath(); ctx.arc(cx,cy,13,0.5,Math.PI*1.4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx+9,cy-10); ctx.lineTo(cx+13,cy-4); ctx.lineTo(cx+6,cy-5); ctx.stroke();
+      ctx.beginPath(); ctx.arc(cx,cy,13,Math.PI+0.5,Math.PI*2.4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx-9,cy+10); ctx.lineTo(cx-13,cy+4); ctx.lineTo(cx-6,cy+5); ctx.stroke();
+    }, player.reloadEnd>now);
+    if(perks.dash){
+      iconBtn('dsh', bx, H-302, R, (cx,cy)=>{
+        ctx.beginPath(); ctx.moveTo(cx-12,cy); ctx.lineTo(cx+5,cy); ctx.lineTo(cx-1,cy-6);
+        ctx.moveTo(cx+5,cy); ctx.lineTo(cx-1,cy+6); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(cx+7,cy-7); ctx.lineTo(cx+13,cy); ctx.lineTo(cx+7,cy+7); ctx.stroke();
+      }, now<(dashReadyT||0));
+    }
+
+    // --- top-right icon row: SWAP, FIST (melee ability), GRENADE (utility) ---
+    const rY=124, rR=30;
+    let rx=W-14-rR;
+    // SWAP weapon
+    iconBtn('swp', rx, rY, rR, (cx,cy)=>{
+      ctx.beginPath(); ctx.moveTo(cx-10,cy-4); ctx.lineTo(cx+10,cy-4); ctx.lineTo(cx+5,cy-9); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx+10,cy+4); ctx.lineTo(cx-10,cy+4); ctx.lineTo(cx-5,cy+9); ctx.stroke();
+    }, false);
+    rx-=rR*2+10;
+    // FIST — melee ability (F)
+    iconBtn('f', rx, rY, rR, (cx,cy)=>{
+      ctx.lineWidth=2.2;
+      ctx.strokeRect(cx-9,cy-8,18,11);                 // fist block
+      ctx.beginPath();
+      for(let i=0;i<4;i++){ const fx=cx-7+i*4.6; ctx.moveTo(fx,cy-8); ctx.lineTo(fx,cy-11); }
+      ctx.moveTo(cx-9,cy+3); ctx.lineTo(cx-9,cy+8); ctx.lineTo(cx+3,cy+8); // thumb/wrist
+      ctx.stroke();
+    }, false);
+    rx-=rR*2+10;
+    // GRENADE — utility (G), only when one is equipped
+    if(loadout.utility){
+      iconBtn('g', rx, rY, rR, (cx,cy)=>{
+        ctx.beginPath(); ctx.arc(cx,cy+3,9,0,TAU); ctx.stroke();      // body
+        ctx.strokeRect(cx-4,cy-11,8,5);                               // top cap
+        ctx.beginPath(); ctx.moveTo(cx+5,cy-9); ctx.lineTo(cx+10,cy-13); ctx.stroke(); // pin
+      }, utilityOut);
+    }
+
+    // top-right HP + ammo panel (below the icon row)
+    const pw2=150, pxp=W-pw2-14, pyp=rY+rR+12;
+    ctx.fillStyle='rgba(8,10,5,0.55)'; ctx.fillRect(pxp,pyp,pw2,54);
+    ctx.strokeStyle='#4a4634'; ctx.strokeRect(pxp+0.5,pyp+0.5,pw2,54);
+    ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace'; ctx.textAlign='left';
+    ctx.fillText('HP', pxp+8, pyp+7);
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(pxp+30,pyp+6,pw2-40,9);
+    ctx.fillStyle = player.hp>perks.maxhp*0.35 ? '#a7c15e' : '#d05548';
+    ctx.fillRect(pxp+30,pyp+6,(pw2-40)*clamp(player.hp/perks.maxhp,0,1),9);
+    const wq=WEAPONS[player.cur];
+    ctx.fillStyle='#cdd6b0'; ctx.font='700 12px ui-monospace,Consolas,monospace';
+    let atxt;
+    if(utilityOut) atxt = loadout.utility==='medkit' ? 'MEDKIT \u221E' : (now<utilReadyT?'RECHARGING':'READY');
+    else if(wq.saw) atxt = sawLock?'RECHARGING':'FUEL '+Math.ceil(sawFuel)+'%';
+    else if(wq.melee) atxt='MELEE';
+    else atxt = player.reloadEnd>now ? 'RELOADING' : (player.mags[player.cur]+' / '+(isFinite(player.reserve[player.cur])?player.reserve[player.cur]:'\u221E'));
+    ctx.fillText(atxt, pxp+8, pyp+26);
+    ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
+    ctx.fillText((utilityOut?UTILITIES[loadout.utility].name:wq.name), pxp+8, pyp+42);
+  }
+
+  // minimap
+  const mmW=150, mmH=mmW*WORLD.h/WORLD.w, mmX=W-pad-mmW, mmY=pad+42;
+  ctx.fillStyle='rgba(8,10,5,0.75)'; ctx.fillRect(mmX,mmY,mmW,mmH);
+  ctx.strokeStyle='#4a4634'; ctx.strokeRect(mmX+0.5,mmY+0.5,mmW,mmH);
+  const sx=mmW/WORLD.w, sy=mmH/WORLD.h;
+  ctx.fillStyle='#33332a';
+  for(const o of obstacles) ctx.fillRect(mmX+o.x*sx,mmY+o.y*sy,Math.max(2,o.w*sx),Math.max(2,o.h*sy));
+  for(const e of enemies){
+    ctx.fillStyle=ETYPES[e.type].col;
+    const ms = ETYPES[e.type].boss ? 6 : 3;
+    ctx.fillRect(mmX+e.x*sx-ms/2,mmY+e.y*sy-ms/2,ms,ms);
+  }
+  ctx.fillStyle='#a7c15e';
+  ctx.fillRect(mmX+player.x*sx-2,mmY+player.y*sy-2,4,4);
+  ctx.strokeStyle='rgba(232,182,88,0.5)';
+  const vw=W/zoom*sx, vh=H/zoom*sy;
+  ctx.strokeRect(mmX+cam.x*sx-vw/2, mmY+cam.y*sy-vh/2, vw, vh);
+
+  // boss bar
+  const bossE = enemies.find(e=>ETYPES[e.type].boss);
+  if(bossE){
+    const bw2=Math.min(420,W*0.4), bx=W/2-bw2/2, by=16;
+    ctx.textAlign='center';
+    const nb=enemies.filter(e=>ETYPES[e.type].boss).length;
+    ctx.fillStyle='#c23a3a'; ctx.font='700 12px ui-monospace,Consolas,monospace';
+    ctx.fillText(nb>1 ? 'WARLORD  (\u00d7'+nb+')' : 'WARLORD', W/2, by-2);
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(bx,by+13,bw2,10);
+    ctx.fillStyle='#c23a3a'; ctx.fillRect(bx,by+13,bw2*Math.max(0,bossE.hp/bossE.maxhp),10);
+    ctx.strokeStyle='#4a4634'; ctx.strokeRect(bx+0.5,by+13.5,bw2,10);
+    ctx.textAlign='left';
+  }
+
+  // wave banner
+  if(now<waveMsgT){
+    const a=Math.min(1,(waveMsgT-now)/500);
+    ctx.globalAlpha=a;
+    ctx.textAlign='center';
+    ctx.fillStyle='#e8b658'; ctx.font='700 42px ui-monospace,Consolas,monospace';
+    ctx.fillText(waveMsg, W/2, H*0.2);
+    ctx.globalAlpha=1;
+  }
+  ctx.textAlign='left';
+}
+
+/* ---------------- render: screens ---------------- */
+function statBar(x,y,w,label,frac,col){
+  ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
+  ctx.textAlign='left'; ctx.fillText(label,x,y-12);
+  ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(x,y,w,6);
+  ctx.fillStyle=col; ctx.fillRect(x,y,w*clamp(frac,0.06,1),6);
+}
+function drawGunIcon(x,y,key,col,sc){
+  ctx.save(); ctx.translate(x,y); if(sc&&sc!==1) ctx.scale(sc,sc); ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=3; ctx.lineCap='round';
+  ctx.beginPath();
+  if(key==='m9'){ ctx.moveTo(-16,0); ctx.lineTo(14,0); ctx.moveTo(-8,0); ctx.lineTo(-11,12); }
+  else if(key==='g18'){ ctx.moveTo(-15,0); ctx.lineTo(13,0); ctx.moveTo(-7,0); ctx.lineTo(-9,14); ctx.moveTo(-2,0); ctx.lineTo(-2,8); }
+  else if(key==='revolver'){ ctx.moveTo(-14,0); ctx.lineTo(16,0); ctx.moveTo(-6,0); ctx.lineTo(-9,12); ctx.moveTo(1,2); ctx.arc(-3,2,4,0,TAU); }
+  else if(key==='volt'){ ctx.moveTo(-15,2); ctx.lineTo(13,2); ctx.moveTo(-7,2); ctx.lineTo(-10,13); ctx.moveTo(6,-2); ctx.arc(2,-4,4,0,TAU); ctx.moveTo(9,-8); ctx.lineTo(12,-11); }
+  else if(key==='chainsaw'){ ctx.moveTo(-16,3); ctx.lineTo(-6,3); ctx.moveTo(-6,-2); ctx.lineTo(16,-2); ctx.lineTo(16,4); ctx.lineTo(-6,4); ctx.moveTo(-2,4); ctx.lineTo(0,7); ctx.moveTo(4,4); ctx.lineTo(6,7); ctx.moveTo(10,4); ctx.lineTo(12,7); }
+  else if(key==='knife'){ ctx.moveTo(-14,5); ctx.lineTo(-4,5); ctx.moveTo(-4,1); ctx.lineTo(-4,9); ctx.moveTo(-4,5); ctx.lineTo(15,5); ctx.lineTo(8,0); }
+  else if(key==='scythe'){ ctx.moveTo(-13,15); ctx.lineTo(7,-9); ctx.moveTo(15,-2); ctx.arc(6,-4,9,0.3,3.0); }
+  else if(key==='hammer'){ ctx.moveTo(-14,12); ctx.lineTo(5,-5); ctx.moveTo(2,-13); ctx.rect(2,-13,13,13); }
+  else if(key==='ar'){ ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.moveTo(-4,0); ctx.lineTo(-6,12); ctx.moveTo(-14,0); ctx.lineTo(-16,8); ctx.moveTo(10,0); ctx.lineTo(10,-5); }
+  else if(key==='smg'){ ctx.moveTo(-20,0); ctx.lineTo(18,0); ctx.moveTo(-6,0); ctx.lineTo(-6,12); ctx.moveTo(-16,0); ctx.lineTo(-18,9); }
+  else if(key==='shotgun'){ ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.moveTo(-24,4); ctx.lineTo(2,4); ctx.moveTo(-16,4); ctx.lineTo(-19,13); }
+  else { ctx.moveTo(-30,0); ctx.lineTo(30,0); ctx.moveTo(-12,0); ctx.lineTo(-15,12); ctx.moveTo(2,-2); ctx.arc(6,-6,5,Math.PI*0.75,Math.PI*2.1); }
+  ctx.stroke(); ctx.restore();
+}
+function weaponDetails(k){
+  const rows=[];
+  if(isLocked(k)) rows.push(['ACCESS','\u{1F512} SIGN IN TO UNLOCK']);
+  if(UTILKEYS.includes(k)){
+    const u=UTILITIES[k];
+    rows.push(['RECHARGE',(u.cd/1000)+'s']);
+    if(k==='medkit') rows.push(['QUICK HEAL','5% max HP over 1s'],['CHANNEL HEAL','20% max HP over 10s'],
+      ['HEAL PENALTY','-10% move speed'],['CHANNEL LOCK','no weapon swap'],['USES','unlimited']);
+    if(k==='grenade') rows.push(['DAMAGE','up to 300 at center'],['VS BOSS','up to 180'],
+      ['BLAST RADIUS','170'],['FUSE','0.95s'],['THROW SPEED','14']);
+    if(k==='portal') rows.push(['EFFECT','teleport to crosshair'],['I-FRAMES','0.35s']);
+    if(k==='redball') rows.push(['LIFETIME','3s'],['TAUNT RADIUS','500'],
+      ['CONTACT DMG','8 per 0.28s'],['BOSSES','immune to taunt']);
+    return rows;
+  }
+  const w=WEAPONS[k];
+  if(w.melee){
+    rows.push(['DAMAGE',''+w.dmg],
+      ['SWING RATE',(1000/w.fireRate).toFixed(2)+'/s  ('+w.fireRate+'ms)'],
+      ['DPS',''+Math.round(w.dmg*1000/w.fireRate)],
+      ['RANGE',''+w.range],
+      ['ARC',Math.round(w.arc*57.3)+'\u00b0'],
+      ['MOVE SPEED',Math.round(w.moveMod*100)+'%']);
+    if(w.saw) rows.push(['FUEL DRAIN','5% per tick (~2.6s/tank)'],
+      ['RECHARGE','7%/s idle \u00b7 lockout when empty']);
+    const ab={chainsaw:['E: RIP CHARGE','0.4s dash \u00b7 28/90ms \u00b7 i-frames \u00b7 20s'],
+              knife:['E: EXECUTE','kills non-boss, 90% boss \u00b7 rng 50 \u00b7 6s'],
+              scythe:['E: REAPER DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 12s'],
+              hammer:['E: GROUND SLAM','110 dmg \u00b7 radius 160 \u00b7 10s']}[k];
+    if(ab) rows.push(ab);
+    return rows;
+  }
+  const shot=w.dmg*w.pellets;
+  rows.push(['DAMAGE', w.pellets>1 ? w.dmg+' \u00d7 '+w.pellets+' = '+shot : ''+w.dmg],
+    ['FIRE RATE',(1000/w.fireRate).toFixed(1)+'/s  ('+w.fireRate+'ms)'],
+    ['DPS',''+Math.round(shot*1000/w.fireRate)],
+    ['MAG',''+w.mag],
+    ['RESERVE', w.energy ? '\u221E' : (w.mag*5)+'  (5 mags)'],
+    ['RELOAD',(w.reload/1000).toFixed(2)+'s'],
+    ['RANGE', w.range>2000 ? 'no falloff' : w.range+' \u2192 '+Math.round(w.fall*100)+'% floor at '+w.range*2],
+    ['SPREAD',(w.spread*57.3).toFixed(1)+'\u00b0 hip \u00b7 '+(w.aimSpread*57.3).toFixed(1)+'\u00b0 aimed'],
+    ['BULLET SPEED',''+w.speed],
+    ['FIRE MODE', w.auto ? 'full-auto' : 'semi-auto'],
+    ['SCOPE ZOOM', w.zoom+'\u00d7'+(w.scoped?' (full scope)':'')],
+    ['MOVE SPEED',Math.round(w.moveMod*100)+'%']);
+  if(w.pierce) rows.push(['PIERCE',w.pierce+' enemies']);
+  return rows;
+}
+function drawDetail(){
+  if(!detailKey) return;
+  const k=detailKey, isU=UTILKEYS.includes(k);
+  const def=isU?UTILITIES[k]:WEAPONS[k];
+  const rows=weaponDetails(k);
+  ctx.fillStyle='rgba(8,9,5,0.82)'; ctx.fillRect(0,0,W,H);
+  const pw=470, headHt=96, ph=headHt+rows.length*19+22;
+  const px=W/2-pw/2, py=Math.max(16, H/2-ph/2);
+  detailRects={panel:{x:px,y:py,w:pw,h:ph}, close:{x:px+pw-32,y:py+10,w:22,h:20}};
+  ctx.fillStyle='rgba(16,18,8,0.97)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  const cls = PRIMARIES.includes(k)?'PRIMARY':SECONDARIES.includes(k)?'SIDEARM':MELEES.includes(k)?'MELEE':'UTILITY';
+  ctx.textAlign='left';
+  ctx.fillStyle='#e8b658'; ctx.font='700 18px ui-monospace,Consolas,monospace';
+  ctx.fillText(def.name, px+20, py+14);
+  ctx.fillStyle=ROLECOL[cls]||'#8a9268'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+  ctx.fillText(cls, px+20, py+36);
+  // close X
+  const hc=mouse.x>=detailRects.close.x&&mouse.x<=detailRects.close.x+22&&mouse.y>=detailRects.close.y&&mouse.y<=detailRects.close.y+20;
+  ctx.fillStyle=hc?'#e8b658':'rgba(0,0,0,0.4)';
+  ctx.fillRect(px+pw-32,py+10,22,20);
+  ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+pw-31.5,py+10.5,22,20);
+  ctx.fillStyle=hc?'#101208':'#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center'; ctx.fillText('\u2715', px+pw-21, py+15);
+  // description
+  ctx.textAlign='left'; ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
+  wrapText(def.blurb, px+20+ (pw-40)/2, py+52, pw-40, 13);   // wrapText centers; emulate left by centering block
+  ctx.strokeStyle='rgba(74,70,52,0.7)';
+  ctx.beginPath(); ctx.moveTo(px+16,py+headHt-8); ctx.lineTo(px+pw-16,py+headHt-8); ctx.stroke();
+  // stat rows
+  for(let i=0;i<rows.length;i++){
+    const ry=py+headHt+ i*19;
+    if(i%2===0){ ctx.fillStyle='rgba(255,255,255,0.025)'; ctx.fillRect(px+12,ry-3,pw-24,18); }
+    ctx.textAlign='left';  ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText(rows[i][0], px+22, ry);
+    ctx.textAlign='right'; ctx.fillStyle='#e8d9a8'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+    ctx.fillText(''+rows[i][1], px+pw-22, ry);
+  }
+  ctx.textAlign='left';
+}
+const ROLECOL={PRIMARY:'#e8b658', SIDEARM:'#a7c15e', MELEE:'#8fb3c9', UTILITY:'#c98fb8'};
+function selBg(){
+  ctx.textBaseline='top';
+  ctx.fillStyle='#101208'; ctx.fillRect(0,0,W,H);
+  ctx.strokeStyle='rgba(140,160,90,0.05)'; ctx.lineWidth=1;
+  ctx.beginPath();
+  for(let x=0;x<W;x+=80){ ctx.moveTo(x,0); ctx.lineTo(x,H); }
+  for(let y=0;y<H;y+=80){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
+  ctx.stroke();
+  ctx.textAlign='left';
+  ctx.fillStyle='#8a9268'; ctx.font='700 13px ui-monospace,Consolas,monospace';
+  ctx.fillText('BEST '+hiScore, 18, 18);
+}
+function drawSelect(){
+  cardRects=[]; detailBtns=[]; catBtns=[]; backRect=null;
+  if(selPage==='hub') drawHub(); else drawCategory(selPage);
+  drawDetail();
+  ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
+  ctx.textAlign='left';
+}
+function slotFor(cat){ return CATS.find(c=>c[0]===cat)[1]; }
+function drawHub(){
+  selBg();
+  ctx.textAlign='center';
+  ctx.fillStyle='#e8b658'; ctx.font='700 '+(H<760?30:40)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('OUTPOST ZERO', W/2, H*0.05);
+  ctx.fillStyle='#8a9268'; ctx.font='12px ui-monospace,Consolas,monospace';
+  ctx.fillText('LOADOUT \u2014 tap a category to choose', W/2, H*0.05+44);
+
+  const bw=Math.min(460,W-80), rowH=Math.min(70,(H*0.62-40)/4), gap=14;
+  const x0=W/2-bw/2;
+  let y=H*0.18;
+  for(const [cat,slot,listFn] of CATS){
+    const k=loadout[slot];
+    const col=ROLECOL[cat];
+    catBtns.push({cat,x:x0,y,w:bw,h:rowH});
+    const hov=mouse.x>=x0&&mouse.x<=x0+bw&&mouse.y>=y&&mouse.y<=y+rowH;
+    ctx.fillStyle = hov ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.35)';
+    ctx.fillRect(x0,y,bw,rowH);
+    ctx.strokeStyle = k ? col : (cat==='UTILITY'?'#4a4634':'#6b5030'); ctx.lineWidth = k?2:1;
+    ctx.strokeRect(x0+0.5,y+0.5,bw,rowH);
+    ctx.fillStyle=col; ctx.fillRect(x0,y,5,rowH);
+    ctx.textAlign='left';
+    ctx.fillStyle=col; ctx.font='700 16px ui-monospace,Consolas,monospace';
+    ctx.fillText(cat, x0+20, y+rowH/2-16);
+    ctx.fillStyle='#6b7455'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText(cat==='UTILITY'?'optional \u00b7 sign-in only':(cat==='PRIMARY'||cat==='SIDEARM'||cat==='MELEE')?'required':'', x0+20, y+rowH/2+4);
+    // current pick
+    ctx.textAlign='right';
+    if(k){
+      const nm=(cat==='UTILITY'?UTILITIES[k]:WEAPONS[k]).name;
+      ctx.fillStyle='#e8d9a8'; ctx.font='700 15px ui-monospace,Consolas,monospace';
+      ctx.fillText(nm, x0+bw-44, y+rowH/2-8);
+    } else {
+      ctx.fillStyle='#6b5030'; ctx.font='700 14px ui-monospace,Consolas,monospace';
+      ctx.fillText('\u2014 none \u2014', x0+bw-44, y+rowH/2-8);
+    }
+    ctx.fillStyle=hov?'#e8b658':'#8a9268'; ctx.font='700 20px ui-monospace,Consolas,monospace';
+    ctx.fillText('\u203A', x0+bw-20, y+rowH/2-11);
+    ctx.textAlign='center';
+    y+=rowH+gap;
+  }
+
+  const dw=340, dh=48, dx=W/2-dw/2, dy=y+6;
+  deployRect={x:dx,y:dy,w:dw,h:dh};
+  const ready = loadout.primary && loadout.secondary && loadout.melee;
+  const hov = ready && mouse.x>=dx&&mouse.x<=dx+dw&&mouse.y>=dy&&mouse.y<=dy+dh;
+  ctx.fillStyle = hov ? '#e8b658' : ready ? 'rgba(232,182,88,0.14)' : 'rgba(0,0,0,0.3)';
+  ctx.fillRect(dx,dy,dw,dh);
+  ctx.strokeStyle = ready ? '#e8b658' : '#4a4634'; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
+  ctx.fillStyle = hov ? '#101208' : ready ? '#e8b658' : '#6b7455';
+  ctx.font='700 17px ui-monospace,Consolas,monospace';
+  ctx.fillText(ready ? 'DEPLOY  \u23CE' : 'PICK PRIMARY + SIDEARM + MELEE', W/2, dy+(dh-17)/2);
+  if(now<utilLockMsgT){
+    ctx.fillStyle='#d05548'; ctx.font='700 12px ui-monospace,Consolas,monospace';
+    ctx.fillText('SIGN-IN ONLY \u2014 use the SIGN IN button top-left', W/2, dy+dh+16);
+  }
+}
+function drawCategory(cat){
+  selBg();
+  const slot=slotFor(cat), list=CATS.find(c=>c[0]===cat)[2]();
+  const col=ROLECOL[cat];
+
+  ctx.textAlign='center';
+  ctx.fillStyle=col; ctx.font='700 '+(H<760?26:32)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(cat, W/2, H*0.045);
+  ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
+  ctx.fillText(cat==='UTILITY'?'tap to equip \u00b7 tap again to clear \u00b7 optional'
+                              :'tap to equip \u00b7 \u25B8 for details', W/2, H*0.045+34);
+
+  // grid of cards (leaves room for the CONTINUE button below)
+  const n=list.length;
+  const cols=2;   // always two weapons per row
+  const rows=Math.ceil(n/cols);
+  const gap=18;
+  const topY=H*0.045+58;
+  const btnH=48, btnGap=18;
+  const availH=H-topY-24-btnH-btnGap;
+  const cw=Math.min(220,(W-80-(cols-1)*gap)/cols);
+  const ch=Math.min(230, (availH-(rows-1)*gap)/rows);
+  const sc=Math.min(1.15, ch/200);
+  const gridW=cw*cols+gap*(cols-1), gx=W/2-gridW/2;
+  let gridBottom=topY;
+  for(let i=0;i<n;i++){
+    const cx=gx+(i%cols)*(cw+gap), cy=topY+Math.floor(i/cols)*(ch+gap);
+    drawCard(list[i], cat, slot, cx, cy, cw, ch, sc);
+    gridBottom=Math.max(gridBottom, cy+ch);
+  }
+
+  // CONTINUE button below the weapons
+  const bw=340, dh=btnH, dx=W/2-bw/2, dy=Math.min(H-dh-16, gridBottom+btnGap);
+  backRect={x:dx,y:dy,w:bw,h:dh};
+  const hov=mouse.x>=dx&&mouse.x<=dx+bw&&mouse.y>=dy&&mouse.y<=dy+dh;
+  const picked=!!loadout[slot];
+  ctx.fillStyle=hov?'#e8b658':'rgba(232,182,88,0.14)';
+  ctx.fillRect(dx,dy,bw,dh);
+  ctx.strokeStyle='#e8b658'; ctx.strokeRect(dx+0.5,dy+0.5,bw,dh);
+  ctx.fillStyle=hov?'#101208':'#e8b658'; ctx.font='700 16px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center';
+  ctx.fillText(picked||cat==='UTILITY' ? 'CONTINUE \u203A' : 'CONTINUE (no pick) \u203A', W/2, dy+(dh-16)/2);
+}
+function drawCard(k, cat, slot, x, yb, cw, ch, sc){
+  const isUtil=cat==='UTILITY';
+  const w = isUtil ? UTILITIES[k] : WEAPONS[k];
+  const sel = loadout[slot]===k;
+  const roleCol = ROLECOL[cat];
+  const locked = isLocked(k);
+  cardRects.push({x,y:yb,w:cw,h:ch,key:k,cat});
+  const hov = mouse.x>=x&&mouse.x<=x+cw&&mouse.y>=yb&&mouse.y<=yb+ch;
+  ctx.fillStyle = sel ? 'rgba(232,182,88,0.08)' : hov ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.35)';
+  ctx.fillRect(x,yb,cw,ch);
+  ctx.strokeStyle = sel ? roleCol : hov ? '#6b7455' : '#4a4634'; ctx.lineWidth = sel?2:1;
+  ctx.strokeRect(x+0.5,yb+0.5,cw,ch);
+  const dbx=x+cw-20, dby=yb+16;
+  detailBtns.push({x:dbx,y:dby,w:16,h:14,key:k});
+  const hovD = mouse.x>=dbx&&mouse.x<=dbx+16&&mouse.y>=dby&&mouse.y<=dby+14;
+  ctx.fillStyle = hovD ? '#e8b658' : 'rgba(0,0,0,0.4)';
+  ctx.fillRect(dbx,dby,16,14);
+  ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(dbx+0.5,dby+0.5,16,14);
+  ctx.fillStyle = hovD ? '#101208' : '#8a9268'; ctx.font='700 9px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center'; ctx.fillText('\u25B8', dbx+8, dby+3);
+  if(sel){
+    ctx.fillStyle=roleCol; ctx.fillRect(x,yb,cw,13);
+    ctx.fillStyle='#101208'; ctx.font='700 8px ui-monospace,Consolas,monospace';
+    ctx.fillText('EQUIPPED', x+cw/2, yb+3);
+  }
+  if(!isUtil) drawGunIcon(x+cw/2, yb+Math.round(44*sc), k, sel?'#e8d9a8':'#8a9268', sc);
+  else drawUtilIcon(x+cw/2, yb+Math.round(44*sc), k, locked?'#4a4634':(sel?'#e8d9a8':'#8fb3c9'), sc);
+  ctx.fillStyle = locked ? '#4a4634' : sel ? roleCol : '#cdd6b0';
+  ctx.font='700 '+Math.max(11,Math.round(13*sc))+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(w.name, x+cw/2, yb+Math.round(68*sc));
+  if(!isUtil){
+    const bw=(cw-40)/2, bx1=x+15, bx2=x+25+bw;
+    const r1=yb+Math.round(98*sc), r2=yb+Math.round(126*sc);
+    if(w.melee){
+      statBar(bx1,r1,bw,'DMG', w.dmg/80,'#d0a548');
+      statBar(bx2,r1,bw,'RATE',(1000/w.fireRate)/4.2,'#d0a548');
+      statBar(bx1,r2,bw,'ARC', w.arc/3.8,'#d0a548');
+      statBar(bx2,r2,bw,'RNG', w.range/110,'#d0a548');
+    } else {
+      statBar(bx1,r1,bw,'DMG', w.dmg*w.pellets/130,'#d0a548');
+      statBar(bx2,r1,bw,'RATE',(1000/w.fireRate)/16.7,'#d0a548');
+      statBar(bx1,r2,bw,'MAG', w.mag/40,'#d0a548');
+      statBar(bx2,r2,bw,'RNG', Math.min(w.range,900)/900,'#d0a548');
+    }
+  } else {
+    ctx.fillStyle= locked ? '#4a4634' : '#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
+    ctx.fillText('RECHARGE '+(w.cd/1000)+'s', x+cw/2, yb+Math.round(98*sc));
+  }
+  ctx.fillStyle = locked ? '#3a3a30' : '#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center';
+  wrapText(w.blurb, x+cw/2, yb+Math.round(150*sc), cw-16, 11);
+  if(locked){
+    ctx.fillStyle='rgba(8,10,5,0.55)'; ctx.fillRect(x,yb,cw,ch);
+    ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+    ctx.textAlign='center';
+    ctx.fillText('\u{1F512} SIGN IN', x+cw/2, yb+ch/2-12);
+    ctx.fillText('TO UNLOCK', x+cw/2, yb+ch/2+3);
+  }
+}
+function drawUtilIcon(x,y,key,col,sc){
+  ctx.save(); ctx.translate(x,y); if(sc&&sc!==1) ctx.scale(sc,sc);
+  ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=3; ctx.lineCap='round';
+  ctx.beginPath();
+  if(key==='medkit'){ ctx.rect(-12,-9,24,18); ctx.moveTo(-4,0); ctx.lineTo(4,0); ctx.moveTo(0,-4); ctx.lineTo(0,4); }
+  else if(key==='grenade'){ ctx.arc(0,3,9,0,TAU); ctx.moveTo(-3,-6); ctx.rect(-4,-11,8,5); ctx.moveTo(6,-9); ctx.lineTo(11,-12); }
+  else if(key==='portal'){ ctx.ellipse(0,0,7,13,0,0,TAU); ctx.moveTo(3.5,0); ctx.ellipse(0,0,3.5,8,0,0,TAU); }
+  else { ctx.arc(0,0,9,0,TAU); ctx.moveTo(3,-3); ctx.arc(1,-2,3,0,TAU); }
+  ctx.stroke(); ctx.restore();
+}
+function wrapText(text,x,y,maxW,lh){
+  const words=text.split(' '); let line='';
+  for(const word of words){
+    const test=line?line+' '+word:word;
+    if(ctx.measureText(test).width>maxW && line){
+      ctx.fillText(line,x,y); line=word; y+=lh;
+    } else line=test;
+  }
+  if(line) ctx.fillText(line,x,y);
+}
+function drawOver(){
+  ctx.fillStyle='rgba(8,9,5,0.82)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#d05548'; ctx.font='700 64px ui-monospace,Consolas,monospace';
+  ctx.fillText('K.I.A.', W/2, H*0.36);
+  ctx.fillStyle='#cdd6b0'; ctx.font='18px ui-monospace,Consolas,monospace';
+  ctx.fillText('SCORE '+score+'   ·   WAVE '+wave+'   ·   KILLS '+kills, W/2, H*0.36+48);
+  ctx.fillStyle = score>prevBest ? '#a7c15e' : '#8a9268';
+  ctx.font='700 15px ui-monospace,Consolas,monospace';
+  ctx.fillText(score>prevBest ? 'NEW BEST — '+score : 'BEST '+hiScore, W/2, H*0.36+78);
+  ctx.fillStyle='#e8b658'; ctx.font='700 16px ui-monospace,Consolas,monospace';
+  ctx.fillText(touchUI ? 'TAP — redeploy' : 'ENTER — redeploy      M — armory', W/2, H*0.36+118);
+  ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
+  ctx.textAlign='left';
+}
+function drawUpgrade(){
+  ctx.fillStyle='rgba(8,9,5,0.8)'; ctx.fillRect(0,0,W,H);
+  ctx.textAlign='center';
+  ctx.fillStyle='#a7c15e'; ctx.font='700 36px ui-monospace,Consolas,monospace';
+  ctx.fillText('WAVE '+wave+' CLEARED', W/2, H*0.20);
+  ctx.fillStyle = bossBounty ? '#d0763e' : '#8a9268';
+  ctx.font='13px ui-monospace,Consolas,monospace';
+  ctx.fillText(bossBounty ? 'BOSS BOUNTY \u2014 weapon mods for your loadout'
+                          : 'FIELD REQUISITION \u2014 choose one upgrade', W/2, H*0.20+32);
+
+  const cw=Math.min(250,(W-100)/3), ch=180, gap=20;
+  const x0=W/2-(cw*3+gap*2)/2, y0=H*0.34;
+  upgradeRects=[];
+  for(let i=0;i<upgradeChoices.length;i++){
+    const u=upgradeChoices[i], x=x0+i*(cw+gap);
+    upgradeRects.push({x,y:y0,w:cw,h:ch});
+    const hov = mouse.x>=x&&mouse.x<=x+cw&&mouse.y>=y0&&mouse.y<=y0+ch;
+    ctx.fillStyle = hov ? 'rgba(232,182,88,0.14)' : 'rgba(0,0,0,0.45)';
+    ctx.fillRect(x,y0,cw,ch);
+    ctx.strokeStyle = hov ? '#e8b658' : '#4a4634'; ctx.lineWidth = hov?2:1;
+    ctx.strokeRect(x+0.5,y0+0.5,cw,ch);
+    ctx.fillStyle = hov ? '#e8b658' : '#8a9268';
+    ctx.font='700 12px ui-monospace,Consolas,monospace';
+    ctx.textAlign='left'; ctx.fillText('['+(i+1)+']', x+12, y0+12);
+    if(u.wkey){
+      ctx.textAlign='right'; ctx.fillStyle='#d0763e';
+      ctx.fillText('WEAPON MOD', x+cw-12, y0+12);
+    } else if(u.req){
+      ctx.textAlign='right'; ctx.fillStyle='#e8b658';
+      ctx.fillText('TIER II', x+cw-12, y0+12);
+    }
+    ctx.textAlign='center';
+    ctx.fillStyle = hov ? '#e8d9a8' : '#cdd6b0';
+    ctx.font='700 16px ui-monospace,Consolas,monospace';
+    ctx.fillText(u.n, x+cw/2, y0+58);
+    ctx.fillStyle='#a7c15e'; ctx.font='12px ui-monospace,Consolas,monospace';
+    wrapText(u.d, x+cw/2, y0+92, cw-30, 15);
+    const owned=perkCounts[u.n]||0;
+    if(owned){
+      ctx.fillStyle='#6b7455'; ctx.font='10px ui-monospace,Consolas,monospace';
+      ctx.fillText('owned \u00D7'+owned, x+cw/2, y0+ch-24);
+    }
+  }
+  ctx.fillStyle='#6b7455'; ctx.font='12px ui-monospace,Consolas,monospace';
+  const hintY=y0+ch+30;
+  ctx.fillText('press 1-3 or click', W/2, hintY);
+  if(board.length){
+    let ly=Math.max(H*0.36+152, hintY+28);          // always sit below the hint text
+    ctx.fillStyle='#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+    ctx.fillText('GLOBAL TOP 10', W/2, ly); ly+=18;
+    ctx.font='11px ui-monospace,Consolas,monospace';
+    for(let i=0;i<board.length;i++){
+      const me = authUser && board[i].name===displayName(authUser);
+      ctx.fillStyle = me ? '#a7c15e' : '#6b7455';
+      ctx.textAlign='right'; ctx.fillText((i+1)+'.', W/2-96, ly);
+      ctx.textAlign='left';  ctx.fillText(board[i].name.slice(0,16), W/2-86, ly);
+      ctx.textAlign='right'; ctx.fillText(String(board[i].score), W/2+110, ly);
+      ly+=15;
+    }
+    ctx.textAlign='center';
+  } else if(!sb){
+    ctx.fillStyle='#4a4634'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText('leaderboard offline \u2014 add Supabase keys to enable', W/2, Math.max(H*0.36+152, hintY+28));
+  }
+  ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
+  ctx.textAlign='left';
+}
+function drawMenuBtn(id,label,x,y,w,h){
+  menuRects[id]={x,y,w,h};
+  const hov = mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
+  ctx.fillStyle = hov ? '#e8b658' : 'rgba(232,182,88,0.12)';
+  ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle='#e8b658'; ctx.strokeRect(x+0.5,y+0.5,w,h);
+  ctx.fillStyle = hov ? '#101208' : '#e8b658';
+  ctx.font='700 15px ui-monospace,Consolas,monospace'; ctx.textAlign='center';
+  ctx.fillText(label, x+w/2, y+h/2-7);
+}
+function drawSlider(id,label,val,x,y,w){
+  ctx.textAlign='left'; ctx.fillStyle='#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+  ctx.fillText(label, x, y-6);
+  ctx.textAlign='right'; ctx.fillText(Math.round(val*100)+'%', x+w, y-6);
+  const ty=y+12;
+  menuRects[id]={x, y:ty-9, w, h:24};      // generous hit box for grabbing
+  ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(x,ty,w,6);
+  ctx.fillStyle='#a7c15e'; ctx.fillRect(x,ty,w*val,6);
+  ctx.strokeStyle='#4a4634'; ctx.strokeRect(x+0.5,ty+0.5,w,6);
+  ctx.fillStyle='#e8d9a8'; ctx.fillRect(x+w*val-4, ty-5, 8, 16);
+}
+function drawMenu(){
+  const inRun = state!=='select';
+  ctx.fillStyle='rgba(8,9,5,0.78)'; ctx.fillRect(0,0,W,H);
+  const pw=340, ph=inRun?306:256, px=W/2-pw/2, py=H/2-ph/2;
+  ctx.fillStyle='rgba(16,18,8,0.96)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  ctx.textAlign='center';
+  ctx.fillStyle='#e8b658'; ctx.font='700 26px ui-monospace,Consolas,monospace';
+  ctx.fillText('GAME MENU', W/2, py+20);
+
+  menuRects={};
+  const bw=pw-60;
+  drawMenuBtn('resume','CLOSE', px+30, py+62, bw, 36);
+  let sy;
+  if(inRun){ drawMenuBtn('exit','EXIT TO MENU', px+30, py+110, bw, 36); sy=py+186; }
+  else sy=py+136;
+  drawSlider('music','MUSIC', musicVol, px+30, sy,    bw);
+  drawSlider('sfx','SOUND',  sfxVol,   px+30, sy+52, bw);
+
+  ctx.textAlign='center';
+  ctx.fillStyle='#6b7455'; ctx.font='11px ui-monospace,Consolas,monospace';
+  ctx.fillText('P / ESC closes', W/2, py+ph-24);
+  ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
+  ctx.textAlign='left';
+}
+function drawGear(){
+  const sz=34, x=W-16-sz, y=14;
+  gearRect={x,y,w:sz,h:sz};
+  const hot = menuOpen || (mouse.x>=x&&mouse.x<=x+sz&&mouse.y>=y&&mouse.y<=y+sz);
+  ctx.fillStyle = hot ? 'rgba(232,182,88,0.18)' : 'rgba(8,10,5,0.7)';
+  ctx.fillRect(x,y,sz,sz);
+  ctx.strokeStyle = hot ? '#e8b658' : '#4a4634'; ctx.lineWidth=1;
+  ctx.strokeRect(x+0.5,y+0.5,sz,sz);
+  const cx=x+sz/2, cy=y+sz/2;
+  ctx.strokeStyle = hot ? '#e8b658' : '#8a9268'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.arc(cx,cy,6,0,TAU); ctx.stroke();
+  for(let i=0;i<8;i++){
+    const a=i*TAU/8;
+    ctx.beginPath();
+    ctx.moveTo(cx+Math.cos(a)*7, cy+Math.sin(a)*7);
+    ctx.lineTo(cx+Math.cos(a)*10,cy+Math.sin(a)*10);
+    ctx.stroke();
+  }
+  ctx.fillStyle=ctx.strokeStyle;
+  ctx.beginPath(); ctx.arc(cx,cy,2,0,TAU); ctx.fill();
+}
+
+/* ---------------- main loop ---------------- */
+function frame(){
+  now = performance.now();
+  const dtms = clamp(now-last, 8, 42);
+  last = now;
+
+  if(state==='play' && !menuOpen) update(dtms);
+
+  const ub=$('userbar').style;
+  const wantBar = (state==='select' || state==='over') && !menuOpen;
+  if(ub.display !== (wantBar?'flex':'none')) ub.display = wantBar?'flex':'none';
+
+  if(state==='select'){ drawSelect(); }
+  else {
+    drawWorld();
+    drawHUD();
+    if(state==='upgrade') drawUpgrade();
+    if(state==='over')  drawOver();
+  }
+  drawGear();
+  if(menuOpen) drawMenu();
+  layoutRibbons();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
