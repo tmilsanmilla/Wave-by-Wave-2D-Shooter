@@ -286,7 +286,7 @@ async function initAuth(){
         fetchProfile().then(()=>{                       // wait for the streak before deciding
           if(!openDailyGate()) maybeFirstRunTutorial();
         });
-        fetchScoreReqs(); fetchMyBan(); fetchWeaponDefs();
+        fetchScoreReqs(); fetchMyBan(); fetchWeaponDefs(); fetchOwnBest();
         setupRealtime();                              // re-subscribe: RLS scope changes with the signed-in user
         if(_e==='PASSWORD_RECOVERY'){
           recovering=true;
@@ -300,6 +300,7 @@ async function initAuth(){
       });
       fetchBoard();
       fetchMyBan();                                  // device bans apply even signed out
+      fetchBanners();                                // the UPDATES board is for everyone
       fetchLayout();                                 // where admins placed the hub blocks
       fetchCustomText();                             // admin-written text on the menus
       fetchStandard();                               // the creator's saved default layout
@@ -697,27 +698,27 @@ function sfx(k,w){
 /* ---------------- weapons ---------------- */
 const WEAPONS = {
   /* primaries */
-  ar     : { name:'SCAR-H RIFLE', dmg:42,  mag:25, reload:1600, fireRate:145, auto:true,  pellets:1,
+  ar     : { name:'SCAR-H RIFLE', dmg:48,  mag:25, reload:1600, fireRate:145, auto:true,  pellets:1, fg:14,
              spread:0.05,  aimSpread:0.016, speed:19, len:34, kick:2.6, zoom:1.55, scoped:false,
              moveMod:0.95, range:620,  fall:0.781, sndF:950,  sndD:0.08,
-             blurb:'Measured full-auto. Hits 10% harder than the M9, 27% less falloff.' },
+             blurb:'Measured full-auto. Heavy hitter with forgiving aim.' },
   solarrifle:{ name:'SOLAR RIFLE', dmg:95, mag:4, reload:3200, fireRate:1400, auto:false, pellets:1, pierce:2, fg:6,
              spread:0.16, aimSpread:0.10, speed:15, len:26, kick:6, zoom:1.15, scoped:false,
              solar:true, fire:true, bounce:5, infinite:true, tracer:'rgba(255,200,70,0.95)',
              moveMod:0.95, range:99999, fall:1, sndF:1100, sndD:0.08,
              blurb:'Bouncing solar bolts \u2014 hits ignite, infinite reach & ammo. Slow, kicks hard, wild spread.' },
-  smg    : { name:'MP7 SMG',      dmg:11,  mag:55, reload:1400, fireRate:65,  auto:true,  pellets:1,
+  smg    : { name:'MP7 SMG',      dmg:11,  mag:55, reload:1400, fireRate:65,  auto:true,  pellets:1, fg:14,
              spread:0.135, aimSpread:0.05,  speed:15, len:26, kick:1.6, zoom:1.30, scoped:false,
-             moveMod:1.05, range:340,  fall:0.50, sndF:1800, sndD:0.05,
-             blurb:'Pure spam. Huge mag, melts up close, tickles far away.' },
-  shotgun: { name:'M870 SHOTGUN', dmg:12,  mag:8,  reload:1900, fireRate:760, auto:false, pellets:7,
+             moveMod:1.05, range:340,  fall:0.85, sndF:1800, sndD:0.05,
+             blurb:'Pure spam. Huge mag, forgiving aim, holds up at range.' },
+  shotgun: { name:'M870 SHOTGUN', dmg:30,  mag:8,  reload:1900, fireRate:760, auto:false, pellets:7, fg:10,
              spread:0.21,  aimSpread:0.10,  speed:13, len:30, kick:8,  zoom:1.25, scoped:false,
-             moveMod:0.92, range:260,  fall:0.45, sndF:520,  sndD:0.17,
-             blurb:'Seven pellets of persuasion. Still bites at mid range.' },
-  sniper : { name:'AWM SNIPER',   dmg:130, mag:6,  reload:2300, fireRate:1150,auto:false, pellets:1, pierce:5, fg:6,
+             moveMod:0.92, range:340,  fall:0.70, sndF:520,  sndD:0.17,
+             blurb:'Seven pellets of persuasion. Devastating up close.' },
+  sniper : { name:'AWM SNIPER',   dmg:170, mag:6,  reload:2300, fireRate:1150,auto:false, pellets:1, pierce:5, fg:1,
              spread:0.28,  aimSpread:0.0,   speed:28, len:42, kick:10, zoom:3.0,  scoped:true,
              moveMod:0.85, range:99999,fall:1.0,  sndF:340,  sndD:0.24,
-             blurb:'Full damage at any range, pierces 5. Useless from the hip.' },
+             blurb:'Full damage at any range, pierces 5. Precise \u2014 no forgiving hits.' },
   /* sidearms */
   m9     : { name:'M9 SIDEARM',   dmg:38,  mag:12, reload:800,  fireRate:200, auto:false, pellets:1,
              spread:0.055, aimSpread:0.006, speed:17, len:22, kick:3,  zoom:1.45, scoped:false,
@@ -879,6 +880,7 @@ let gems=0, dailyTasks=[], tasksDate='', gemOwned={};
 // ---- HUB LAYOUT: main admins can drag these blocks; the offsets apply for every player ----
 const LAYOUT_BLOCKS={
   banner:  'SEASON BANNER',
+  posts:   'UPDATES BOARD',
   adleft:  'LLR AD (LEFT)',
   adright: 'MOVES AD (RIGHT)',
   streak:  'STREAK STRIP',
@@ -1240,7 +1242,7 @@ function spinWheel(){
 function wheelSettle(){
   const r=WHEEL[wheelTarget];
   if(r.coins) addCoins(r.coins);
-  if(r.gems) gems+=r.gems;
+  if(r.gems) addGems(r.gems);
   wheelResult=wheelTarget; wheelSpinning=false;
   saveMeta(); sfx('pickup');
 }
@@ -1272,7 +1274,7 @@ function collectStreak(){
   const broke = day===1 && streakDays>0;
   streakDays=day; streakLastDay=todayIndex();
   addCoins(r.coins);
-  if(r.gems) gems+=r.gems;
+  if(r.gems) addGems(r.gems);
   saveMeta();
   streakMsg = (broke?'streak reset \u2014 ':'')+'+'+r.coins+' \uD83E\uDE99'+(r.gems?('  +'+r.gems+' \uD83D\uDC8E'):'');
   streakMsgT=now+2400;
@@ -1844,14 +1846,15 @@ const TASK_POOL=[
   {id:'bosses', d:'Defeat 3 warlords', goal:3,  reward:35},
   {id:'chests', d:'Open 2 mod chests', goal:2,  reward:40},
 ];
-function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkDay:streakLastDay, wr:wheelReady, wa:Math.round(wheelAcc)})); }catch(e){} }
+function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkDay:streakLastDay, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); }catch(e){} }
 function saveMeta(){ saveMetaLocal(); queueProfileSave(); }
 // ---- account progress sync: purchases + currency live with the account, not the device ----
 let profileLoaded=false, profileSaveT=0, profilePending=false;
 function metaPayload(){
   return {gems, coins, device:deviceId(), stk:streakDays, stkDay:streakLastDay, wr:wheelReady, wa:Math.round(wheelAcc),
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
-          pow:powerStock, anim:animOwned, animEq:animEquipped};
+          pow:powerStock, anim:animOwned, animEq:animEquipped,
+          hi:hiScore, mv:musicVol, sv:sfxVol};
 }
 function applyProfile(m){
   if(!m) return;
@@ -1881,6 +1884,10 @@ function applyProfile(m){
       tasksDate=m.date; dailyTasks=m.tasks;          // this device was behind; take the account's day
     }
   }
+  if(typeof m.hi==='number') hiScore=Math.max(hiScore, m.hi);   // best score is the best of both
+  if(typeof m.mv==='number') musicVol=m.mv;
+  if(typeof m.sv==='number') sfxVol=m.sv;
+  try{ if(musicGain) musicGain.gain.value=musicVol*0.7; if(sfxGain) sfxGain.gain.value=sfxVol; }catch(e){}
   if(typeof m.wr==='number') wheelReady=m.wr;
   if(typeof m.wa==='number') wheelAcc=m.wa;
   // take the account's streak only when it is at least as far along as this device's,
@@ -1895,6 +1902,15 @@ function applyProfile(m){
   for(const k in animEquipped){ const id=animEquipped[k];
     if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }
   syncOwnedWeapons();                                 // otherwise a synced purchase has no card
+}
+// an older account may have a leaderboard score but no saved profile yet
+async function fetchOwnBest(){
+  if(!sb || !authUser) return;
+  try{
+    const { data } = await sb.from('scores').select('score')
+      .eq('user_id',authUser.id).eq('game','outpost-zero').maybeSingle();
+    if(data && typeof data.score==='number' && data.score>hiScore){ hiScore=data.score; saveMetaLocal(); }
+  }catch(e){}
 }
 async function fetchProfile(){
   if(!sb || !authUser) return;
@@ -1922,6 +1938,9 @@ function loadMeta(){
     animOwned=m.anim||{}; animEquipped=(m.animEq && typeof m.animEq==='object') ? m.animEq : {};
     streakDays=m.stk||0; streakLastDay=m.stkDay||'';
     wheelReady=m.wr||0; wheelAcc=m.wa||0;
+    hiScore=m.hi||0;
+    if(typeof m.mv==='number') musicVol=m.mv;
+    if(typeof m.sv==='number') sfxVol=m.sv;
     for(const k in animEquipped){ const id=animEquipped[k];
       if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }
   }catch(e){}
@@ -1998,6 +2017,7 @@ function buyGem(it){
   gems-=it.cost; gemOwned[it.key]=true; gemUnlock(it); saveMeta(); sfx('pickup');
 }
 function addCoins(n){ if(sb && !authUser) return; coins+=n; saveMeta(); }   // coins are sign-in only
+function addGems(n){ if(sb && !authUser) return; if(testMode) return; gems+=n; saveMeta(); }   // gems count the same way
 function buyPowerup(pu){
   if(coins<pu.cost){ sfx('dry'); return; }
   coins-=pu.cost; powerStock[pu.id]=(powerStock[pu.id]||0)+1; saveMeta(); sfx('pickup');
@@ -2020,7 +2040,7 @@ function taskProgress(id,n){
   for(const t of dailyTasks){
     if(t.id===id && !t.done){
       t.prog+=n;
-      if(t.prog>=t.goal){ t.prog=t.goal; t.done=true; if(!testMode) gems+=t.reward;
+      if(t.prog>=t.goal){ t.prog=t.goal; t.done=true; addGems(t.reward);
         waveMsg='\uD83D\uDC8E DAILY TASK COMPLETE +'+t.reward+' GEMS'; waveMsgT=now+2600; sfx('pickup'); }
       saveMeta();
     }
@@ -2207,6 +2227,7 @@ function setSliderFromMouse(){
   const v=clamp((mouse.x-o.x)/o.w, 0, 1);
   if(dragSlider==='music'){ musicVol=v; if(musicGain) musicGain.gain.value=v*0.7; }
   else { sfxVol=v; if(sfxGain) sfxGain.gain.value=v; }
+  saveMeta();                                        // volumes follow the account too
 }
 // pull every vault weapon/utility into the live rosters so all categories show everything
 function injectVault(){
@@ -2239,7 +2260,8 @@ function drawHubPosts(topY, maxBottom){
   // UPDATES board: newest first, capped at 5 posts / 10 lines, each post wraps to two lines max
   bannerXRect=null; feedXRects=[];
   if(!banners.length) return topY;
-  const bw=Math.min(560,W-56), bx=W/2-bw/2;
+  const bw=Math.min(560,W-56), bx=W/2-bw/2+offX('posts');
+  topY += offY('posts');
   const head=20, pad=8, lineH=13;
   const xw = isMainAdmin() ? 18 : 0;                 // room for the remove button
   const maxCh=Math.max(8, Math.floor((bw-38-xw)/6.8));
@@ -2261,23 +2283,25 @@ function drawHubPosts(topY, maxBottom){
   if(!items.length) return topY;
   const bh=head+pad*2+usedH;
   hubPostsRect={x:bx,y:topY,w:bw,h:bh};
+  layoutBlock('posts',bx,topY,bw,bh);
+  const postCol=offCol('posts');
   const g=ctx.createLinearGradient(bx,topY,bx,topY+bh);
   g.addColorStop(0,'rgba(232,182,88,0.16)'); g.addColorStop(1,'rgba(232,182,88,0.05)');
   ctx.fillStyle=g; ctx.fillRect(bx,topY,bw,bh);
   ctx.strokeStyle='#e8b658'; ctx.lineWidth=1.5; ctx.strokeRect(bx+0.5,topY+0.5,bw,bh);
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle='#e8b658'; ctx.font='700 12px ui-monospace,Consolas,monospace';
-  ctx.fillText('\uD83D\uDCE2 UPDATES', W/2, topY+head/2+4);
+  ctx.fillStyle=postCol||'#e8b658'; ctx.font='700 12px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83D\uDCE2 UPDATES', bx+bw/2, topY+head/2+4);
   ctx.textAlign='left';
   let ry=topY+head+pad;
   for(let i=0;i<items.length;i++){
     const it=items[i];
     ctx.fillStyle= i%2 ? 'rgba(0,0,0,0.16)' : 'rgba(0,0,0,0.26)';
     ctx.fillRect(bx+6, ry, bw-12, it.h-3);
-    ctx.fillStyle='#e8d9a8'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+    ctx.fillStyle='#e8d9a8'; ctx.font='11px ui-monospace,Consolas,monospace';
     ctx.fillText('\u2022 '+it.lines[0], bx+14, ry+3+lineH/2+2);
     if(it.lines[1]){
-      ctx.fillStyle='#cdd6b0'; ctx.font='10px ui-monospace,Consolas,monospace';
+      ctx.fillStyle='#e8d9a8'; ctx.font='11px ui-monospace,Consolas,monospace';
       ctx.fillText('  '+it.lines[1], bx+14, ry+3+lineH+lineH/2+2);
     }
     if(isMainAdmin()){                               // remove from the feed for everyone (not archived)
@@ -2388,6 +2412,7 @@ function drawInboxTabs(px,py,pw,y,rects){
   const TABS=[];
   if(isAdmin())     TABS.push(['msgs','\u2709 MESSAGES'+(unreadMsgs?' ('+unreadMsgs+')':'')]);
   if(isMainAdmin()) TABS.push(['updates','\uD83D\uDCE5 UPDATES']);
+  if(isAdmin())     TABS.push(['archive','\uD83D\uDDC3 ARCHIVE']);
   if(TABS.length<2) return y;                       // nothing to switch between
   const tw=Math.min(160,(pw-40)/TABS.length), th=22;
   let tx=W/2-(TABS.length*tw+8*(TABS.length-1))/2;
@@ -2409,8 +2434,10 @@ function inboxTabClick(id){
   if(String(id).indexOf('itab:')!==0) return false;
   const t=String(id).slice(5);
   inboxTab=t;
-  if(t==='msgs'){ updatesOpen=false; msgsOpen=true; fetchMsgs().then(()=>markMsgsRead()); }
-  else          { msgsOpen=false; updatesOpen=true; fetchUpdatesFeed(); }
+  msgsOpen=updatesOpen=archOpen=false;
+  if(t==='msgs'){ msgsOpen=true; fetchMsgs().then(()=>markMsgsRead()); }
+  else if(t==='updates'){ updatesOpen=true; fetchUpdatesFeed(); }
+  else { archOpen=true; archTab='msgs'; fetchMsgs(); fetchUpdatesFeed(); }
   sfx('aim');
   return true;
 }
@@ -2510,16 +2537,17 @@ function drawArchive(){
   ctx.strokeStyle='#e8b658'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   ctx.fillStyle='#e8d9a8'; ctx.font='700 17px ui-monospace,Consolas,monospace';
-  ctx.fillText('\uD83D\uDDC3 ARCHIVED', W/2, py+26);
+  ctx.fillText('\u2709 INBOX \u00b7 ARCHIVE', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
   ctx.fillText('read messages land here after 7 days \u00b7 resolved reports too', W/2, py+42);
   archRects=[];
+  const inboxY=drawInboxTabs(px,py,pw,py+50,archRects);
   const x0=px+16, rw=pw-32;
-  let y=py+52;
-  // tabs: MESSAGES | REPORTS (reports only for mains)
+  let y=inboxY;
+  // sub-sections: old messages | resolved reports (reports only for mains)
   if(!isMainAdmin()) archTab='msgs';
-  const tabs=[['msgs','\u2709 MESSAGES']].concat(isMainAdmin()?[['reports','\u26A0 REPORTS']]:[]);
-  const tw=110, th=22;
+  const tabs=[['msgs','OLD MESSAGES']].concat(isMainAdmin()?[['reports','RESOLVED REPORTS']]:[]);
+  const tw=Math.min(150,(rw-8)/2), th=20;
   let tx=W/2 - (tabs.length*tw + (tabs.length-1)*8)/2;
   for(const [id,lbl] of tabs){
     archRects.push({x:tx,y,w:tw,h:th,id:'tab:'+id});
@@ -2589,6 +2617,12 @@ function drawArchive(){
 }
 function archReadable(r){ return !!r.read; }
 function archClick(){
+  for(const r of archRects){
+    if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
+      if(inboxTabClick(r.id)) return;
+      break;
+    }
+  }
   for(const r of archRects){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       const id=String(r.id||'');
@@ -3705,7 +3739,7 @@ function drawAdminPanel(){
   ctx.strokeStyle='#d05548'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   ctx.fillStyle='#e0a8a0'; ctx.font='700 17px ui-monospace,Consolas,monospace';
-  ctx.fillText('\u2699 ADMIN PANEL', W/2, py+26);
+  ctx.fillText('\u2699 ADMIN TOOLS', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
   ctx.fillText(isMainAdmin()?'MAIN ADMIN \u00b7 full access':'CO-ADMIN \u00b7 shared powers', W/2, py+42);
   ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
@@ -3746,6 +3780,8 @@ function drawAdminPanel(){
   if(isCoAdmin() && !isMainAdmin()) actionBtn('staffreport','\u26A0 STAFF REPORT \u2014 flag a problem to the mains');
   // everyone with admin: broadcast a banner
   actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 banner for all players'+(isMainAdmin()?'':' (needs approval)'));
+  actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up \u00b7 ban \u00b7 log');
+  if(isMainAdmin()) actionBtn('edit','\u270E EDIT PAGES \u2014 move things \u00b7 add your own text');
   if(isMainAdmin()) actionBtn('promos','\uD83C\uDF81 PROMO CODES \u2014 create \u00b7 edit \u00b7 expire');
 
   toggle('testmode','\uD83E\uDDEA TEST MODE \u2014 all weapons \u00b7 no gems', testMode, true);
@@ -3799,6 +3835,8 @@ function adminPanelClick(){
       if(id==='staffreport'){ openStaffReport(); sfx('swap'); return; }
       if(id==='post'){ openPost(); sfx('swap'); return; }
       if(id==='promos'){ adminPanelOpen=false; promoAdminOpen=true; fetchPromos(); sfx('swap'); return; }
+      if(id==='players'){ adminPanelOpen=false; playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
+      if(id==='edit'){ if(!isMainAdmin()){ sfx('dry'); return; } adminPanelOpen=false; textMode=true; textSel=null; layoutPick=null; editHist=[]; editFuture=[]; sfx('swap'); return; }
       if(id==='testmode'){ setTestMode(!testMode); sfx('swap'); return; }
       if(id==='storage'){ adminPanelOpen=false; storageOpen=true; sfx('swap'); return; }
       if(id.indexOf('appr:')===0){ approveBanner(+id.slice(5)); sfx('pickup'); return; }
@@ -3956,6 +3994,7 @@ addEventListener('keydown', e=>{
   if(appealOpen){ if(e.key==='Escape') closeAppeal(); return; }
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
   if(formOpen){ if(e.key==='Escape') closeForm(); return; }
+  if(alignOpen && e.key==='Escape'){ alignOpen=false; sfx('swap'); return; }
   if(textMode && e.key==='Escape'){ textMode=false; textSel=null; sfx('swap'); return; }
   if(adminPanelOpen||updatesOpen||adminsOpen||msgsOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||readerOpen){ if(e.key==='Escape'){ if(wheelSpinning) return; if(readerOpen){ readerOpen=false; sfx('swap'); return; } wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; adminPanelOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
@@ -4035,6 +4074,7 @@ cv.addEventListener('mousedown', e=>{
       menuOpen=!menuOpen; sfx('swap'); return;
     }
     if(menuOpen){ menuClick(); return; }
+    if(alignOpen && state==='select'){ alignClick(); return; }
     if(textMode && state==='select'){ textMouseDown(); return; }
     if(layoutMode && state==='select' && selPage==='hub'){ layoutMouseDown(); return; }
     if(state==='select'){ clickSelect(); return; }
@@ -4194,13 +4234,9 @@ function clickSelect(){
   if(signBtnRect && inR(signBtnRect) && !adminPanelOpen && !updatesOpen && !adminsOpen && !msgsOpen && !archOpen && !storageOpen && !scoresOpen && !detailKey){ toggleAuth(); sfx('swap'); return; }
   // ADMIN / UPDATES live beside the gear, so they work from any select page
   if(selPage==='hub'){ for(const xr of feedXRects){ if(inR(xr)){ deleteBanner(xr.id); sfx('dry'); return; } } }
-  if(isMainAdmin() && inR(editHubBtnRect)){ textMode=true; textSel=null; layoutPick=null; editHist=[]; editFuture=[]; sfx('swap'); return; }
-  if(isAdmin() && inR(playersHubBtnRect)){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
   if(isAdmin() && inR(adminHubBtnRect)){ adminPanelOpen=true; fetchAdmins(); fetchBanners(); sfx('swap'); return; }
-  if(isMainAdmin() && inR(updatesHubBtnRect)){ updatesOpen=true; fetchUpdatesFeed(); sfx('swap'); return; }
   if(isMainAdmin() && inR(adminsHubBtnRect)){ adminsOpen=true; fetchAdmins(); sfx('swap'); return; }
   if(isAdmin() && inR(msgsHubBtnRect)){ msgsOpen=true; fetchMsgs().then(()=>markMsgsRead()); sfx('swap'); return; }
-  if(isAdmin() && inR(archHubBtnRect)){ archOpen=true; archTab='msgs'; fetchMsgs(); if(isMainAdmin()) fetchUpdatesFeed(); sfx('swap'); return; }
   if(detailKey){
     if(inR(detailRects.close) || !inR(detailRects.panel)){ detailKey=null; sfx('swap'); }
     return;
@@ -4261,8 +4297,17 @@ function clickSelect(){
     if(inR(cosPrevRect)){ const i=pickable.indexOf(shopCosWeapon); shopCosWeapon=pickable[(i-1+pickable.length)%pickable.length]; sfx('swap'); return; }
     if(inR(cosNextRect)){ const i=pickable.indexOf(shopCosWeapon); shopCosWeapon=pickable[(i+1)%pickable.length]; sfx('swap'); return; }
   }
+  // buttons first: the whole-row expand target must never swallow a BUY
+  for(const r of shopRects){ if(r.kind!=='expand' && inR(r)){
+    if(r.kind==='cosmetic') buyCosmetic(r.wkey, r.cos);
+    else if(r.kind==='anim') buyAnim(r.anim, r.wkey);
+    else if(r.kind==='powerup') buyPowerup(r.pu);
+    else buyGem(r.item);
+    return;
+  } }
   for(const r of shopRects){ if(inR(r)){
     if(r.kind==='cosmetic') buyCosmetic(r.wkey, r.cos);
+    else if(r.kind==='expand'){ shopExpanded = (shopExpanded===r.item.key) ? null : r.item.key; sfx('swap'); }
     else if(r.kind==='anim') buyAnim(r.anim, r.wkey);
     else if(r.kind==='powerup') buyPowerup(r.pu);
     else buyGem(r.item);
@@ -5500,7 +5545,7 @@ function update(dtms){
           if(sb && !authUser){
             waveMsg='\uD83C\uDF81 '+modTxt+'+'+coinDrop+' \uD83E\uDE99 (sign in for \uD83D\uDC8E)'; waveMsgT=now+2600;
           } else {
-            if(gemDrop>0 && !testMode){ gems+=gemDrop; saveMeta(); }
+            if(gemDrop>0) addGems(gemDrop);
             waveMsg='\uD83C\uDF81 '+modTxt+'+'+gemDrop+' \uD83D\uDC8E  +'+coinDrop+' \uD83E\uDE99'; waveMsgT=now+2600;
           }
         }
@@ -5569,7 +5614,7 @@ function usePowerup(id){
     const r=Math.random();
     if(r<0.90){ pickups.push({x:player.x+rand(-30,30),y:player.y+rand(-30,30),type:'ammo'}); waveMsg='\uD83D\uDCE6 AMMO CRATE'; }
     else if(r<0.99){ pickups.push({x:player.x+rand(-30,30),y:player.y+rand(-30,30),type:'med'}); waveMsg='\uD83D\uDCE6 MEDKIT'; }
-    else { if(!(sb&&!authUser) && !testMode){ gems+=10; saveMeta(); } waveMsg='\uD83D\uDCE6 JACKPOT +10 \uD83D\uDC8E'; }
+    else { addGems(10); waveMsg='\uD83D\uDCE6 JACKPOT +10 \uD83D\uDC8E'; }
     waveMsgT=now+1600; burst(player.x,player.y,'#cdd6b0',14,4);
   }
   sfx('pickup');
@@ -5617,7 +5662,7 @@ function killEnemy(j){
   } else {
     score+=t.score; kills++;
     if(!practiceMode && !testMode){ killCoinAcc++; if(killCoinAcc>=20){ killCoinAcc-=20; addCoins(3); } }   // 20 eliminations -> 3 coins (halved; off in test mode)
-    if(score>hiScore) hiScore=score;
+    if(score>hiScore){ hiScore=score; saveMeta(); }
     if(perks.vamp) player.hp=Math.min(perks.maxhp,player.hp+perks.vamp);
     if(perks.surge) surgeT=now+3000;
     if(Math.random()<perks.drop) pickups.push({x:e.x,y:e.y,type:'med'});
@@ -6647,7 +6692,7 @@ function drawBanNotice(){
 function drawSelect(){
   layoutRects=[]; if(!(layoutMode||textMode)) textRects=[];   // one registry per frame
   cardRects=[]; detailBtns=[]; catBtns=[]; backRect=null;
-  adLeftRect=null; adRightRect=null; editHubBtnRect=null;
+  adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
   adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
   // swallow a click meant for the page you are on (stale shop/practice/feed buttons)
@@ -7008,6 +7053,20 @@ function drawShop(){
   ctx.fillText('\u2039 BACK', W/2, by+bh/2);
   ctx.textBaseline='alphabetic';
 }
+let shopExpanded=null;                               // which shop row is opened up
+function shopStatLine(k){
+  const w=WEAPONS[k]||VAULT_WEAPONS[k];
+  if(!w) return '';
+  const bits=[];
+  if(typeof w.dmg==='number') bits.push('DMG '+w.dmg);
+  if(typeof w.fireRate==='number') bits.push('RATE '+w.fireRate+'ms');
+  if(typeof w.mag==='number') bits.push('MAG '+w.mag);
+  if(typeof w.reload==='number' && w.reload) bits.push('RELOAD '+(w.reload/1000)+'s');
+  if(typeof w.range==='number') bits.push('RANGE '+Math.round(w.range));
+  if(w.pellets>1) bits.push(w.pellets+' PELLETS');
+  if(w.pierce) bits.push('PIERCE '+w.pierce);
+  return bits.join('   \u00b7   ');
+}
 function drawShopWeapons(cw, y){
   const x=W/2-cw/2;
   if(!GEM_SHOP.length){
@@ -7018,12 +7077,44 @@ function drawShopWeapons(cw, y){
   }
   // fit every card in the room between here and the BACK button (which sits ~64px tall at the bottom)
   const n=GEM_SHOP.length, avail=H-y-64, gap=Math.max(4, Math.min(12, Math.floor(avail*0.015)));
-  const ch=clamp(Math.floor((avail-(n-1)*gap)/n), 30, 64);
+  // an opened row needs extra height, so take it out of the shared space first
+  let openExtra=0;
+  if(shopExpanded){
+    const wd=WEAPONS[shopExpanded]||VAULT_WEAPONS[shopExpanded]||UTILITIES[shopExpanded]||VAULT_UTILITIES[shopExpanded];
+    if(wd){
+      ctx.font='10px ui-monospace,Consolas,monospace';
+      const room=cw-32; let ln='', cnt=0;
+      for(const word of String(wd.blurb||'').split(' ')){
+        const test=ln?ln+' '+word:word;
+        if(ctx.measureText(test).width>room && ln){ cnt++; ln=word; } else ln=test;
+      }
+      if(ln) cnt++;
+      openExtra = 10 + cnt*14 + (shopStatLine(shopExpanded)?16:0);
+    }
+  }
+  const ch=clamp(Math.floor((avail-openExtra-(n-1)*gap)/n), 24, 64);
   const compact = ch<56;
   for(const it of GEM_SHOP){
     const wdef=WEAPONS[it.key]||VAULT_WEAPONS[it.key]||UTILITIES[it.key]||VAULT_UTILITIES[it.key];
-    ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(x,y,cw,ch);
-    ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,cw,ch);
+    const open = shopExpanded===it.key;
+    let extra=0, blurbLines=[], statLine='';
+    if(open){
+      ctx.font='10px ui-monospace,Consolas,monospace';
+      const room=cw-32;
+      let line='';
+      for(const word of String(wdef.blurb||'').split(' ')){
+        const test=line?line+' '+word:word;
+        if(ctx.measureText(test).width>room && line){ blurbLines.push(line); line=word; }
+        else line=test;
+      }
+      if(line) blurbLines.push(line);
+      statLine=shopStatLine(it.key);
+      extra = 10 + blurbLines.length*14 + (statLine?16:0);
+    }
+    const rh = ch + extra;
+    ctx.fillStyle= open ? 'rgba(127,216,255,0.10)' : 'rgba(0,0,0,0.4)'; ctx.fillRect(x,y,cw,rh);
+    ctx.strokeStyle= open ? '#7fd8ff' : '#4a4634'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,cw,rh);
+    shopRects.push({x,y,w:cw,h:rh,item:it,kind:'expand'});   // the row toggles open/closed
     ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.fillStyle='#e8d9a8'; ctx.font='700 14px ui-monospace,Consolas,monospace';
     if(compact){
@@ -7036,7 +7127,20 @@ function drawShopWeapons(cw, y){
     } else {
       ctx.fillText(wdef.name, x+16, y+20);
       ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
-      ctx.fillText(it.slot.toUpperCase()+'  \u00b7  '+wdef.blurb.slice(0,40), x+16, y+44);
+      ctx.fillText(it.slot.toUpperCase()+(open?'':('  \u00b7  '+fitLine(wdef.blurb, cw-190))), x+16, y+44);
+    }
+    ctx.textAlign='right'; ctx.textBaseline='middle';
+    ctx.fillStyle= open ? '#7fd8ff' : '#5a5648'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+    ctx.fillText(open?'\u25B2':'\u25BC', x+cw-140, y+ch/2);
+    ctx.textAlign='left';
+    if(open){
+      let ty=y+ch+4;
+      ctx.fillStyle='#cdd6b0'; ctx.font='10px ui-monospace,Consolas,monospace';
+      for(const ln of blurbLines){ ctx.fillText(ln, x+16, ty+7); ty+=14; }
+      if(statLine){
+        ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine(statLine, cw-32), x+16, ty+8);
+      }
     }
     const owned=!!gemOwned[it.key];
     const b2w=112, b2h=Math.min(32,ch-10), b2x=x+cw-b2w-12, b2y=y+ch/2-b2h/2;
@@ -7050,7 +7154,7 @@ function drawShopWeapons(cw, y){
     ctx.fillStyle = owned ? '#a7c15e' : (can&&hv) ? '#101208' : can ? '#cdd6b0' : '#6b7455';
     ctx.font='700 11px ui-monospace,Consolas,monospace';
     ctx.fillText(owned ? 'OWNED' : '\uD83D\uDC8E '+it.cost+' BUY', b2x+b2w/2, b2y+b2h/2);
-    y+=ch+gap;
+    y+=rh+gap;
   }
   ctx.textBaseline='alphabetic';
   return y;
@@ -7307,23 +7411,13 @@ function drawHub(){
   let adminRowShift=0;
   if(isAdmin()){
     const defs=[];
-    defs.push({id:'panel', t:'\u2699 ADMIN', st:'\u2699 ADMIN', d:'post \u00b7 modes \u00b7 tools',
+    defs.push({id:'panel', t:'\u2699 ADMIN TOOLS', st:'\u2699 TOOLS', d:'edit \u00b7 players \u00b7 modes',
                f0:'rgba(208,85,72,0.12)', f1:'rgba(208,85,72,0.30)', c:'#d05548', tc:'#e0a8a0'});
     if(isMainAdmin())
-      defs.push({id:'edit', t:'\u270E EDIT', st:'\u270E EDIT', d:'move \u00b7 add text',
-                 f0:'rgba(191,168,255,0.12)', f1:'rgba(191,168,255,0.30)', c:'#bfa8ff', tc:'#d8c8ff'});
-    defs.push({id:'players', t:'\uD83D\uDC65 PLAYERS', st:'\uD83D\uDC65 PLYRS', d:'look up \u00b7 ban \u00b7 log',
-               f0:'rgba(127,216,255,0.12)', f1:'rgba(127,216,255,0.30)', c:'#7fd8ff', tc:'#bfe8ff'});
-    if(isMainAdmin()){
       defs.push({id:'admins', t:'\uD83D\uDEE1 ADMINS', st:'\uD83D\uDEE1 ADMINS', d:'manage the team',
                  f0:'rgba(232,182,88,0.12)', f1:'rgba(232,182,88,0.30)', c:'#e8b658', tc:'#e8d9a8'});
-      defs.push({id:'updates', t:'\uD83D\uDCE5 UPDATES'+(pendingBanners.length?' ('+pendingBanners.length+')':''), st:'\uD83D\uDCE5 UPD'+(pendingBanners.length?' ('+pendingBanners.length+')':''), d:'reports feed',
-                 f0:'rgba(127,216,255,0.12)', f1:'rgba(127,216,255,0.30)', c:'#7fd8ff', tc:'#bfe8ff'});
-    }
-    defs.push({id:'msgs', t:'\u2709 MESSAGES'+(unreadMsgs?' ('+unreadMsgs+')':''), st:'\u2709 MSGS'+(unreadMsgs?' ('+unreadMsgs+')':''), d:'admin inbox',
+    defs.push({id:'msgs', t:'\u2709 INBOX'+(unreadMsgs?' ('+unreadMsgs+')':''), st:'\u2709 INBOX'+(unreadMsgs?' ('+unreadMsgs+')':''), d:'messages \u00b7 reports \u00b7 archive',
                f0:'rgba(167,193,94,0.12)', f1:'rgba(167,193,94,0.30)', c:'#a7c15e', tc:'#cfe0a8'});
-    defs.push({id:'arch', t:'\uD83D\uDDC3 ARCHIVE', st:'\uD83D\uDDC3 ARCH', d:'old msgs \u00b7 resolved',
-               f0:'rgba(232,182,88,0.10)', f1:'rgba(232,182,88,0.26)', c:'#b0975a', tc:'#d8c8a0'});
     const tightHub = H<640;                         // small phones: icons only, shorter buttons
     const g2=tightHub?6:10, bh2=tightHub?28:46;
     const minBw=tightHub?44:78;
@@ -7350,12 +7444,8 @@ function drawHub(){
         ctx.fillText(fitLine(d.d, bw2-8), r.x+bw2/2, by+bh2/2+9); }
       ctx.textBaseline='alphabetic';
       if(d.id==='panel') adminHubBtnRect=r;
-      else if(d.id==='edit') editHubBtnRect=r;
-      else if(d.id==='players') playersHubBtnRect=r;
       else if(d.id==='admins') adminsHubBtnRect=r;
-      else if(d.id==='updates') updatesHubBtnRect=r;
       else if(d.id==='msgs') msgsHubBtnRect=r;
-      else if(d.id==='arch') archHubBtnRect=r;
       bx+=bw2+g2;
     }
     ctx.textAlign='center';
@@ -7480,7 +7570,7 @@ function drawHub(){
   ctx.textBaseline='top';
   // ---- HOW TO PLAY / SHOP / PRACTICE row, right below DEPLOY ----
   const hbGap=8, hbH=40;                             // bigger, easier targets
-  const hbN=(lbShown?3:4)+1;                          // +1 for CODE (and the lookup when narrow)
+  const hbN=(lbShown?3:4)+2;                          // +CODE +SPIN (and the lookup when narrow)
   const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
   const hbY=Math.min(dy+dh+10, H-hbH-8);           // sits under DEPLOY, never off the bottom
   let hbX=W/2-(hbW*hbN+hbGap*(hbN-1))/2;
@@ -7504,6 +7594,8 @@ function drawHub(){
   shopBtnRect=hubBtn('\uD83D\uDC8E SHOP \u00b7 '+gems,'#7fd8ff','#bfe8ff');
   pracBtnRect=hubBtn('\uD83C\uDFAF PRACTICE','#a7c15e','#cfe0a8');
   promoBtnRect=hubBtn('\uD83C\uDF81 CODE','#a7c15e','#cfe0a8');
+  wheelBtnRect=hubBtn('\uD83C\uDFA1 SPIN'+(wheelReady>0?' ('+wheelReady+')':''),
+                      wheelReady>0?'#e8b658':'#5a5648', wheelReady>0?'#e8d9a8':'#8a9268');
   if(!lbShown) lookupBtnRect=hubBtn('\uD83D\uDD0D LOOKUP','#7fd8ff','#bfe8ff');
   if(pendingPractice){
     ctx.fillStyle='#a7c15e'; ctx.font='700 11px ui-monospace,Consolas,monospace';
@@ -7552,7 +7644,7 @@ function drawHub(){
     // reserve the right-hand controls first, so the text below can be clipped to fit
     const cbwR=Math.min(118, stW*0.36);
     const chipW=Math.min(78, stW*0.20);
-    const nChips=((!signedOut && wheelReady>0)?1:0);
+    const nChips=0;
     const textRoom=Math.max(60, (stX+stW-cbwR-18) - nChips*(chipW+6) - (stX+12) - 8);
     // how long the streak is
     const shown = streakClaimable() ? streakDays : streakDays;
@@ -7584,9 +7676,6 @@ function drawHub(){
       chipX=bx-6;
       return {x:bx,y:by,w:cw2,h:ch2};
     };
-    if(!signedOut && wheelReady>0)
-      wheelBtnRect=chip('\uD83C\uDFA1 SPIN'+(wheelReady>1?' x'+wheelReady:''),
-        ['rgba(232,182,88,0.16)','rgba(232,182,88,0.34)','#e8b658','#e8d9a8']);
     if(ready){
       streakBtnRect={x:cbx,y:cby,w:cbw,h:cbh};
       const hv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
@@ -7651,6 +7740,7 @@ function drawHub(){
     const rows=Math.min(10, board.length);
     const lbH=52 + Math.max(rows,1)*18 + 14;
     layoutBlock('board',lbX,lbY,lbW,lbH);
+    boardPanelRect={x:lbX,y:lbY,w:lbW,h:lbH};
     ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(lbX,lbY,lbW,lbH);
     ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(lbX+0.5,lbY+0.5,lbW,lbH);
     ctx.textAlign='center';
@@ -8140,7 +8230,7 @@ function drawMenu(){
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 }
 let signBtnRect=null;
-let adLeftRect=null, adRightRect=null, editHubBtnRect=null;
+let adLeftRect=null, adRightRect=null, editHubBtnRect=null, boardPanelRect=null;
 // ---- DAILY REWARD: a full page you must collect before the menu ----
 let dailyGateOpen=false, dailyGateRects=[], dailyGateReward=null;
 function openDailyGate(){
@@ -8208,9 +8298,9 @@ function hasSeenTutorial(){
   try{ return localStorage.getItem('oz_seen_tut')==='1'; }catch(e){ return true; }
 }
 function maybeFirstRunTutorial(){
-  if(!authUser || hasSeenTutorial()) return false;
+  if(hasSeenTutorial()) return false;                // guests count too, not just new accounts
   markSignedInOnce();
-  selPage='tutorial';
+  selPage='howto';                                   // let them pick text or interactive
   return true;
 }
 // ---- signed-out nudges ----
@@ -8297,6 +8387,12 @@ const TEXT_COLOURS=['#f2f2e8','#e8b658','#a7c15e','#7fd8ff','#d05548','#bfa8ff',
 let customText=[], textMode=false, textRects=[], textSel=null, textDrag=null, textDirty=false;
 // editing covers both the hub blocks and free text; one undo stack for the lot
 let editHist=[], editFuture=[], layoutStandard=null, textStandard=null, editSuggestOpen=false;
+let multiMode=false, textSelMany=[];                 // MULTI: tap several bits of text, then act on the lot
+function selectedTextIds(){
+  if(multiMode && textSelMany.length) return textSelMany.slice();
+  return textSel ? [textSel] : [];
+}
+function isTextSelected(id){ return multiMode ? textSelMany.includes(id) : textSel===id; }
 function editSnapshot(){ return JSON.stringify({layout, customText}); }
 function editPush(){                                  // call BEFORE a change
   editHist.push(editSnapshot());
@@ -8320,17 +8416,169 @@ function editRedo(){
   editHist.push(editSnapshot());
   editApply(editFuture.pop()); sfx('swap');
 }
-function editCentre(){                                // centre whatever is selected
-  editPush();
+let alignOpen=false, alignRects=[], alignSel=null, alignList=[], alignScroll=0;
+// where the selected thing currently sits on screen
+function currentSelRect(){
   if(textSel){
-    const t=customText.find(x=>x.id===textSel);
-    if(t){ t.x=0.5; textDirty=true; sfx('aim'); return; }
+    const r=textRects.find(x=>!x.tool && x.id===textSel);
+    if(r) return {id:textSel, kind:'text', x:r.x, y:r.y, w:r.w, h:r.h, cx:r.x+r.w/2, cy:r.y+r.h/2};
   }
-  if(layoutPick){ const cur=layout[layoutPick]||{};
-    layout[layoutPick]={dx:0, dy:cur.dy||0, col:cur.col||null}; layoutDirty=true; sfx('aim'); return; }
-  sfx('dry');
+  if(layoutPick){
+    const r=layoutRects.find(x=>!x.tool && x.id===layoutPick);
+    if(r) return {id:layoutPick, kind:'block', x:r.x, y:r.y, w:r.w, h:r.h, cx:r.x+r.w/2, cy:r.y+r.h/2};
+  }
+  return null;
 }
-async function saveAsStandard(){
+// everything else on this page you could line up against
+function collectAlignTargets(excludeId){
+  const out=[];
+  for(const r of layoutRects){
+    if(r.tool || r.id===excludeId) continue;
+    out.push({id:r.id, name:LAYOUT_BLOCKS[r.id]||r.id, cx:r.x+r.w/2, cy:r.y+r.h/2});
+  }
+  for(const r of textRects){
+    if(r.tool || r.id===excludeId) continue;
+    const t=customText.find(x=>x.id===r.id);
+    out.push({id:r.id, name: t ? ('\u201C'+String(t.text).slice(0,16)+'\u201D') : r.id,
+              cx:r.x+r.w/2, cy:r.y+r.h/2});
+  }
+  return out;
+}
+function openAlign(){
+  const sel=currentSelRect();
+  if(!sel){ sfx('dry'); return; }
+  alignSel=sel; alignList=collectAlignTargets(sel.id); alignOpen=true; alignRects=[]; alignScroll=0;
+}
+// move the selection so its centre lands on cx / cy (either may be null to leave that axis alone)
+function applyAlign(cx, cy){
+  if(!alignSel) return;
+  editPush();
+  if(alignSel.kind==='text'){
+    const t=customText.find(x=>x.id===alignSel.id);
+    if(t){
+      if(cx!==null) t.x=clamp(cx/W, 0.02, 0.98);
+      if(cy!==null) t.y=clamp(cy/H, 0.02, 0.98);
+      textDirty=true;
+    }
+  } else {
+    const cur=layout[alignSel.id]||{};
+    layout[alignSel.id]={
+      dx: (cur.dx||0) + (cx!==null ? Math.round(cx-alignSel.cx) : 0),
+      dy: (cur.dy||0) + (cy!==null ? Math.round(cy-alignSel.cy) : 0),
+      col: cur.col||null
+    };
+    layoutDirty=true;
+  }
+  alignOpen=false; sfx('aim');
+}
+function drawAlignPanel(){
+  ctx.fillStyle='rgba(4,6,3,0.94)'; ctx.fillRect(0,0,W,H);
+  const pw=Math.min(440,W-24), ph=Math.min(430,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  ctx.fillStyle='#0a0c0e'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  alignRects=[];
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.fillStyle='#bfe8ff'; ctx.font='700 16px ui-monospace,Consolas,monospace';
+  ctx.fillText('\u2B0C ALIGN', W/2, py+26);
+  ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
+  const selName = alignSel ? (alignSel.kind==='block'
+      ? (LAYOUT_BLOCKS[alignSel.id]||alignSel.id)
+      : (()=>{ const t=customText.find(x=>x.id===alignSel.id); return t?('\u201C'+String(t.text).slice(0,18)+'\u201D'):alignSel.id; })())
+    : '';
+  ctx.fillText(fitLine('moving '+selName, pw-24), W/2, py+42);
+  const x0=px+16, rw=pw-32; let y=py+54;
+
+  // down the middle of the screen
+  ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
+  ctx.fillText('SCREEN', x0, y+8); y+=14;
+  const mid=[['mx','\u2195 DOWN THE MIDDLE (X)'],['my','\u2194 MIDDLE OF THE SCREEN (Y)'],['mb','\u2732 DEAD CENTRE']];
+  for(const [id,lbl] of mid){
+    const h=26;
+    alignRects.push({x:x0,y,w:rw,h,id});
+    const hv=mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+h;
+    ctx.fillStyle=hv?'rgba(127,216,255,0.30)':'rgba(127,216,255,0.12)'; ctx.fillRect(x0,y,rw,h);
+    ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='#bfe8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(lbl, rw-14), W/2, y+h/2);
+    ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+    y+=h+5;
+  }
+  y+=6;
+  ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
+  ctx.fillText('LINE UP WITH SOMETHING ELSE', x0, y+8); y+=14;
+  if(!alignList.length){
+    ctx.fillStyle='#5a5648'; ctx.fillText('nothing else on this page', x0+4, y+8); y+=18;
+  }
+  const rowH2=33, listBottom=py+ph-46;
+  const perPage=Math.max(1, Math.floor((listBottom-y)/rowH2));
+  const maxScroll=Math.max(0, alignList.length-perPage);
+  if(alignScroll>maxScroll) alignScroll=maxScroll;
+  if(maxScroll>0){                                   // page arrows, so nothing is unreachable
+    const aw2=30, ah2=18, ax2=x0+rw-2*aw2-6;
+    for(const [id,lbl,bx3,on] of [['aup','\u25B2',ax2,alignScroll>0],
+                                  ['adn','\u25BC',ax2+aw2+6,alignScroll<maxScroll]]){
+      alignRects.push({x:bx3,y:y-4,w:aw2,h:ah2,id});
+      const hv=mouse.x>=bx3&&mouse.x<=bx3+aw2&&mouse.y>=y-4&&mouse.y<=y-4+ah2;
+      ctx.fillStyle= on?(hv?'rgba(127,216,255,0.4)':'rgba(127,216,255,0.16)'):'rgba(255,255,255,0.04)';
+      ctx.fillRect(bx3,y-4,aw2,ah2);
+      ctx.strokeStyle= on?'#7fd8ff':'#4a4634'; ctx.lineWidth=1; ctx.strokeRect(bx3+0.5,y-3.5,aw2,ah2);
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillStyle= on?'#bfe8ff':'#5a5648'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+      ctx.fillText(lbl, bx3+aw2/2, y-4+ah2/2);
+      ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+    }
+    ctx.fillStyle='#6b7455'; ctx.font='8px ui-monospace,Consolas,monospace';
+    ctx.fillText((alignScroll+1)+'-'+Math.min(alignList.length,alignScroll+perPage)+' of '+alignList.length, x0+rw-150, y+8);
+  }
+  for(const t of alignList.slice(alignScroll, alignScroll+perPage)){
+    const h=28, bw2=52;
+    if(y+h>listBottom) break;
+    ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
+    ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(t.name, rw-2*bw2-24), x0+8, y+h/2);
+    const ax=x0+rw-2*bw2-8, bx2=x0+rw-bw2-4;
+    alignRects.push({x:ax,y:y+4,w:bw2,h:h-8,id:'ax:'+t.id});
+    alignRects.push({x:bx2,y:y+4,w:bw2,h:h-8,id:'ay:'+t.id});
+    for(const [bx3,lbl] of [[ax,'MATCH X'],[bx2,'MATCH Y']]){
+      const hv=mouse.x>=bx3&&mouse.x<=bx3+bw2&&mouse.y>=y+4&&mouse.y<=y+h-4;
+      ctx.fillStyle=hv?'rgba(127,216,255,0.34)':'rgba(127,216,255,0.14)'; ctx.fillRect(bx3,y+4,bw2,h-8);
+      ctx.strokeStyle='#7fd8ff'; ctx.strokeRect(bx3+0.5,y+4.5,bw2,h-8);
+      ctx.textAlign='center'; ctx.font='700 7px ui-monospace,Consolas,monospace';
+      ctx.fillStyle='#bfe8ff'; ctx.fillText(lbl, bx3+bw2/2, y+h/2);
+    }
+    ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+    y+=h+5;
+  }
+  const cbw=Math.min(140,pw-40), cbh=28, cbx=W/2-cbw/2, cby=py+ph-36;
+  alignRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'cancel'});
+  const chv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
+  ctx.fillStyle=chv?'#d05548':'rgba(208,85,72,0.14)'; ctx.fillRect(cbx,cby,cbw,cbh);
+  ctx.strokeStyle='#d05548'; ctx.lineWidth=1; ctx.strokeRect(cbx+0.5,cby+0.5,cbw,cbh);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle=chv?'#101208':'#e0a8a0'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+  ctx.fillText('CANCEL', W/2, cby+cbh/2);
+  ctx.textAlign='left'; ctx.textBaseline='top';
+}
+function alignClick(){
+  for(const r of alignRects){
+    if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
+      const id=String(r.id);
+      if(id==='cancel'){ alignOpen=false; sfx('swap'); return; }
+      if(id==='aup'){ alignScroll=Math.max(0,alignScroll-3); sfx('aim'); return; }
+      if(id==='adn'){ alignScroll+=3; sfx('aim'); return; }
+      if(id==='mx'){ applyAlign(W/2, null); return; }
+      if(id==='my'){ applyAlign(null, H/2); return; }
+      if(id==='mb'){ applyAlign(W/2, H/2); return; }
+      if(id.indexOf('ax:')===0){ const t=alignList.find(x=>x.id===id.slice(3)); if(t) applyAlign(t.cx, null); return; }
+      if(id.indexOf('ay:')===0){ const t=alignList.find(x=>x.id===id.slice(3)); if(t) applyAlign(null, t.cy); return; }
+      return;
+    }
+  }
+}
+async function saveAsStandard(){                     // called automatically when the creator publishes
   if(!isCreator() || !sb) return;
   layoutStandard=JSON.parse(JSON.stringify(layout));
   textStandard=JSON.parse(JSON.stringify(customText));
@@ -8361,7 +8609,10 @@ async function submitEditSuggestion(){
   }catch(e){ sfx('dry'); }
 }
 async function publishEdits(){
-  if(isCreator()){ await saveLayout(); await saveCustomText(); }
+  if(isCreator()){
+    await saveLayout(); await saveCustomText();
+    await saveAsStandard();                          // what you publish becomes the new baseline
+  }
   else await submitEditSuggestion();
 }
 function fontCss(id,size,weight){
@@ -8454,15 +8705,26 @@ function drawTextOverlay(){
     ctx.fillText(fitLine(LAYOUT_BLOCKS[r.id]||r.id, r.w), r.x+2, Math.max(10,r.y-2));
   }
   for(const r of textRects){
-    const on=r.id===textSel;
+    if(r.tool) continue;
+    const on=isTextSelected(r.id);
     ctx.setLineDash([5,4]);
     ctx.strokeStyle= on?'#7dff8c':'#7fd8ff'; ctx.lineWidth= on?2:1;
     ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h);
     ctx.setLineDash([]);
   }
+  // solid backing for the toolbar area: without it the hub text underneath reads through
+  {
+    const sel0=selectedText() || (textSelMany.length? customText.find(t=>t.id===textSelMany[0]) : null);
+    const rows = sel0 ? 4 : 2;                       // tools + tools2 (+ colour + font when something is picked)
+    const stripH = 28+8 + 24+6 + (sel0 ? (20+10 + 20+6) : 0) + 6;
+    ctx.fillStyle='rgba(6,8,4,0.94)';
+    ctx.fillRect(0, H-stripH, W, stripH);
+    ctx.strokeStyle='rgba(127,216,255,0.35)'; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(0, H-stripH+0.5); ctx.lineTo(W, H-stripH+0.5); ctx.stroke();
+  }
   const row2=[['undo','\u21B6 UNDO','#8a9268'],['redo','\u21B7 REDO','#8a9268'],
-              ['centre','\u2B0C CENTRE','#7fd8ff'],['reset','RESET','#e8b658']];
-  if(isCreator()) row2.push(['std','USE AS STANDARD','#bfa8ff']);
+              ['align','\u2B0C ALIGN','#7fd8ff'],['reset','RESET','#e8b658'],
+              ['multi', multiMode ? ('MULTI ('+textSelMany.length+')') : 'MULTI', multiMode?'#7dff8c':'#8a9268']];
   const bw2b=Math.min(104,(W-40)/row2.length), bh2b=24, gap2=6;
   let bx2=W/2-(row2.length*bw2b+gap2*(row2.length-1))/2; const by2=H-28-8-bh2b-6;
   for(const [id,lbl,col] of row2){
@@ -8493,7 +8755,7 @@ function drawTextOverlay(){
     bx+=bw+gap;
   }
   // colour + font rows for the selected line
-  const sel=selectedText();
+  const sel=selectedText() || (textSelMany.length? customText.find(t=>t.id===textSelMany[0]) : null);
   if(sel){
     const sw=Math.min(46,(W-40)/TEXT_COLOURS.length), sh=20;
     let cx=W/2-(TEXT_COLOURS.length*sw+5*(TEXT_COLOURS.length-1))/2;
@@ -8519,13 +8781,6 @@ function drawTextOverlay(){
       ctx.fillText(f.name, fx+fw/2, fy+fh/2);
       fx+=fw+6;
     }
-    ctx.textAlign='center'; ctx.textBaseline='bottom';
-    ctx.fillStyle='#7fd8ff'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine('TEXT MODE \u00b7 drag to move \u00b7 editing the '+selPage+' page', W-24), W/2, fy-6);
-  } else {
-    ctx.textAlign='center'; ctx.textBaseline='bottom';
-    ctx.fillStyle='#7fd8ff'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine('TEXT MODE \u00b7 + ADD puts a line on the '+selPage+' page', W-24), W/2, by-10);
   }
   ctx.textAlign='left'; ctx.textBaseline='top';
   ctx.restore();
@@ -8537,22 +8792,43 @@ function textMouseDown(){
       const id=String(r.id);
       if(id==='tt:undo'){ editUndo(); return true; }
       if(id==='tt:redo'){ editRedo(); return true; }
-      if(id==='tt:centre'){ editCentre(); return true; }
+      if(id==='tt:align'){ openAlign(); return true; }
       if(id==='tt:reset'){ resetToStandard(); return true; }
-      if(id==='tt:std'){ saveAsStandard(); return true; }
+      if(id==='tt:multi'){
+        multiMode=!multiMode;
+        if(multiMode){ textSelMany = textSel ? [textSel] : []; }
+        else { textSel = textSelMany[textSelMany.length-1] || textSel; textSelMany=[]; }
+        sfx('aim'); return true;
+      }
       if(id==='tt:add'){ editPush(); addCustomText(); return true; }
       if(id==='tt:edit'){ const s2=selectedText(); if(s2) editCustomText(s2); return true; }
-      if(id==='tt:del'){ editPush(); customText=customText.filter(t=>t.id!==textSel); textSel=null; textDirty=true; sfx('dry'); return true; }
+      if(id==='tt:del'){
+        const ids=selectedTextIds();
+        if(!ids.length){ sfx('dry'); return true; }
+        editPush();
+        customText=customText.filter(t=>!ids.includes(t.id));
+        textSel=null; textSelMany=[]; textDirty=true; sfx('dry'); return true;
+      }
       if(id==='tt:save'){ publishEdits(); return true; }
-      if(id==='tt:done'){ textMode=false; textSel=null; textDrag=null; sfx('swap'); return true; }
-      if(id.indexOf('tc:')===0){ const s2=selectedText(); if(s2){ editPush(); s2.col=id.slice(3); textDirty=true; sfx('aim'); } return true; }
-      if(id.indexOf('tf:')===0){ const s2=selectedText(); if(s2){ editPush(); s2.font=id.slice(3); textDirty=true; sfx('aim'); } return true; }
+      if(id==='tt:done'){ textMode=false; textSel=null; textDrag=null; multiMode=false; textSelMany=[]; sfx('swap'); return true; }
+      if(id.indexOf('tc:')===0){ const ids=selectedTextIds(); if(ids.length){ editPush();
+        for(const t of customText) if(ids.includes(t.id)) t.col=id.slice(3);
+        textDirty=true; sfx('aim'); } return true; }
+      if(id.indexOf('tf:')===0){ const ids=selectedTextIds(); if(ids.length){ editPush();
+        for(const t of customText) if(ids.includes(t.id)) t.font=id.slice(3);
+        textDirty=true; sfx('aim'); } return true; }
       return true;
     }
   }
   for(const r of textRects){
     if(r.tool) continue;
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
+      if(multiMode){
+        const i=textSelMany.indexOf(r.id);
+        if(i>=0) textSelMany.splice(i,1); else textSelMany.push(r.id);
+        textSel=r.id; layoutPick=null; sfx('aim');
+        return true;                                 // multi-select never drags
+      }
       editPush();
       textSel=r.id; layoutPick=null;
       const t=customText.find(x=>x.id===r.id);
@@ -8574,7 +8850,7 @@ function textMouseDown(){
       }
     }
   }
-  textSel=null; layoutPick=null;
+  if(!multiMode){ textSel=null; layoutPick=null; }
   return true;
 }
 function textMouseMove(){
@@ -8615,9 +8891,18 @@ function drawSideAds(){
   const gutter=W/2-centreHalf-14;
   if(aw<96 || gutter<aw+10) return;                 // too narrow: no ads rather than a squeeze
   const ah=Math.min(210, Math.max(150, H*0.26));
-  const ay=Math.max(120, H/2-ah/2)+offY('adleft');
+  // one shared baseline so the two ads line up with each other,
+  // pushed below the leaderboard panel on the right so they never overlap it
+  let base=Math.max(120, H/2-ah/2);
+  if(boardPanelRect){
+    const clear=boardPanelRect.y+boardPanelRect.h+14;
+    if(clear+ah <= H-16) base=Math.max(base, clear);
+    else base=Math.max(120, Math.min(base, H-ah-16));
+  }
+  base=Math.min(base, H-ah-16);
+  const ay=base+offY('adleft');
   const lx2=14+offX('adleft'), rx2=W-aw-14+offX('adright');
-  const ry=Math.max(120, H/2-ah/2)+offY('adright');
+  const ry=base+offY('adright');
 
   const panel=(x,y,label,sub,accent,isYT)=>{
     const hv=mouse.x>=x&&mouse.x<=x+aw&&mouse.y>=y&&mouse.y<=y+ah;
@@ -8828,6 +9113,7 @@ function frame(){
   if(state==='select') drawCustomText();          // admin-placed text, on whichever page it belongs to
   if(layoutMode && state==='select' && selPage==='hub') drawLayoutOverlay();   // last: everything has registered
   if(textMode && state==='select') drawTextOverlay();
+  if(alignOpen && state==='select') drawAlignPanel();
   if(showFps){
     ctx.save();
     ctx.textAlign='right'; ctx.textBaseline='top';
@@ -8839,6 +9125,8 @@ function frame(){
   layoutRibbons();
   requestAnimationFrame(frame);
 }
+// a brand new visitor, account or not, is offered the tutorials once
+setTimeout(()=>{ try{ if(state==='select' && !dailyGateOpen && !signUpPromptOpen) maybeFirstRunTutorial(); }catch(e){} }, 500);
 requestAnimationFrame(frame);
 </script>
 </body>
