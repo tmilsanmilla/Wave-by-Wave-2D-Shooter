@@ -45,7 +45,8 @@
   #msgbox h2{color:#cfe0a8;font-size:18px;margin:0 0 4px}
   #msgto{color:#8a9268;font-size:11px;margin:0 0 12px}
   #msgmsg{width:100%;box-sizing:border-box;height:90px;resize:none;background:rgba(0,0,0,.5);
-    border:1px solid #4a4634;color:#cdd6b0;font:12px ui-monospace,Consolas,monospace;padding:9px;margin-bottom:10px}
+    border:1px solid #4a4634;color:#cdd6b0;font:12px ui-monospace,Consolas,monospace;padding:9px;margin-bottom:10px;
+    user-select:text;-webkit-user-select:text;-webkit-touch-callout:default}
   #msgbox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
   #msgstatus{color:#a7c15e;font-size:11px;min-height:15px;margin-top:2px}
   #formwrap{inset:0;background:rgba(8,9,5,.94);display:none;align-items:center;justify-content:center;z-index:62}
@@ -2499,20 +2500,30 @@ function drawReader(){
     ctx.textAlign='right'; ctx.fillStyle='#6b7455'; ctx.font='8px ui-monospace,Consolas,monospace';
     ctx.fillText((readerScroll+1)+'-'+Math.min(lines.length,readerScroll+fit)+' of '+lines.length, px+pw-14, bottom+12);
   }
-  const cbw=Math.min(140,pw-40), cbh=28, cbx=W/2-cbw/2, cby=py+ph-36;
-  readerRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
-  const chv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
-  ctx.fillStyle=chv?'#7fd8ff':'rgba(127,216,255,0.14)'; ctx.fillRect(cbx,cby,cbw,cbh);
-  ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(cbx+0.5,cby+0.5,cbw,cbh);
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle=chv?'#101208':'#bfe8ff'; ctx.font='700 11px ui-monospace,Consolas,monospace';
-  ctx.fillText('CLOSE', W/2, cby+cbh/2);
+  const cbw=Math.min(130,(pw-50)/2), cbh=28, gap=10, cby=py+ph-36;
+  const button=(id,label,bx,col)=>{
+    readerRects.push({x:bx,y:cby,w:cbw,h:cbh,id});
+    const hv=mouse.x>=bx&&mouse.x<=bx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
+    ctx.fillStyle=hv?col:'rgba(127,216,255,0.14)'; ctx.fillRect(bx,cby,cbw,cbh);
+    ctx.strokeStyle=col; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,cby+0.5,cbw,cbh);
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=hv?'#101208':'#bfe8ff';
+    ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(label,bx+cbw/2,cby+cbh/2);
+  };
+  const first=W/2-cbw-gap/2;
+  button('copy','COPY TEXT',first-cbw,'#a7c15e');
+  button('close','CLOSE',first+gap,'#7fd8ff');
   ctx.textAlign='left'; ctx.textBaseline='top';
+}
+async function copyReaderText(){
+  const text=[readerTitle,readerMeta,readerBody].filter(Boolean).join('\n');
+  try{ await navigator.clipboard.writeText(text); readerMeta='COPIED \u2014 paste it anywhere'; sfx('pickup'); }
+  catch(e){ try{ window.prompt('Copy this text:',text); }catch(e2){} }
 }
 function readerClick(){
   for(const r of readerRects){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       if(r.id==='close'){ readerOpen=false; sfx('swap'); return; }
+      if(r.id==='copy'){ copyReaderText(); return; }
       if(r.id==='up'){ readerScroll=Math.max(0,readerScroll-3); sfx('aim'); return; }
       if(r.id==='down'){ readerScroll+=3; sfx('aim'); return; }
       return;
