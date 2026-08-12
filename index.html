@@ -2314,27 +2314,25 @@ const WEAPON_MODS=[
   {wkey:'hammer',  n:'SEISMIC HEAD',   d:'HAMMER: +20% dmg, +25% slam radius', f:()=>{wm('hammer').dmg*=1.20; wm('hammer').slamR*=1.25;}},
 ];
 const magSize = k => Math.round(WEAPONS[k].mag*perks.mag*wm(k).mag);
-const UPGRADES = [
-  // tier I (stackable)
-  { n:'HOLLOW POINTS', d:'+15% damage on every weapon',        f:()=>perks.dmg*=1.15 },
-  { n:'TRIGGER JOB',   d:'+12% fire rate',                     f:()=>perks.rate*=0.89 },
-  { n:'LIGHT BOOTS',   d:'+10% move speed',                    f:()=>perks.spd*=1.10 },
-  { n:'SPEED LOADER',  d:'reloads finish 20% faster',          f:()=>perks.reload*=0.80 },
-  { n:'EXTENDED MAGS', d:'+30% magazine size',                  f:()=>perks.mag*=1.30 },
-  { n:'COMBAT STIMS',  d:'recover 1 integrity on every kill',  f:()=>perks.vamp+=1 },
-  { n:'MATCH BARREL',  d:'25% tighter spread on everything',   f:()=>perks.acc*=0.75 },
-  { n:'FIELD MEDIC',   d:'medkits drop 20% more often',        f:()=>perks.drop=Math.min(0.18,perks.drop*1.2) },
-  { n:'KEVLAR WEAVE',  d:'take 20% less damage',               f:()=>perks.armor*=0.8 },
-  { n:'FRAG SHELLS',   d:'enemies detonate on death \u2014 chain reactions', once:true, f:()=>perks.explode=1 },
-  // tier II (unlock by owning the base perk; one-time)
-  { n:'DEAD EYE',      req:'HOLLOW POINTS', once:true, d:'20% chance to crit for triple damage',                      f:()=>perks.crit=0.2 },
-  { n:'HAIR TRIGGER',  req:'TRIGGER JOB',   once:true, d:'every weapon becomes full-auto, +10% fire rate',            f:()=>{perks.autoAll=1; perks.rate*=0.90;} },
-  { n:'SECOND WIND',   req:'KEVLAR WEAVE',  once:true, d:'cheat death \u2014 revive at 25%, recharges every 3 waves',  f:()=>perks.secondWind=1 },
-  { n:'ADRENAL SURGE', req:'COMBAT STIMS',  once:true, d:'kills grant +30% speed and fire rate for 3s',               f:()=>perks.surge=1 },
-  { n:'GYRO STOCK',    req:'MATCH BARREL',  once:true, d:'recoil bloom eliminated \u2014 spread never grows',         f:()=>perks.noBloom=1 },
-  { n:'FAST HANDS',    req:'SPEED LOADER',  once:true, d:'reloads finish an extra 25% faster',                       f:()=>perks.reload*=0.75 },
-  { n:'TRAUMA KITS',   req:'FIELD MEDIC',   once:true, d:'medkits heal 30 instead of 25',                             f:()=>perks.medkitHeal=30 },
+const TIER_CHAINS=[
+  {n:'HOLLOW POINTS', ds:['+15% weapon damage','+20% more weapon damage','+25% more weapon damage'], fs:[()=>perks.dmg*=1.15,()=>perks.dmg*=1.20,()=>perks.dmg*=1.25]},
+  {n:'TRIGGER JOB', ds:['+12% fire rate','+16% more fire rate','+20% more fire rate'], fs:[()=>perks.rate*=0.89,()=>perks.rate*=0.84,()=>perks.rate*=0.80]},
+  {n:'LIGHT BOOTS', ds:['+10% move speed','+15% more move speed','+20% more move speed'], fs:[()=>perks.spd*=1.10,()=>perks.spd*=1.15,()=>perks.spd*=1.20]},
+  {n:'SPEED LOADER', ds:['reload 20% faster','reload 25% faster again','reload 30% faster again'], fs:[()=>perks.reload*=0.80,()=>perks.reload*=0.75,()=>perks.reload*=0.70]},
+  {n:'EXTENDED MAGS', ds:['+30% magazine size','+40% more magazine size','+50% more magazine size'], fs:[()=>perks.mag*=1.30,()=>perks.mag*=1.40,()=>perks.mag*=1.50]},
+  {n:'COMBAT STIMS', ds:['heal 1 integrity per kill','heal 2 more per kill','heal 3 more per kill'], fs:[()=>perks.vamp+=1,()=>perks.vamp+=2,()=>perks.vamp+=3]},
+  {n:'MATCH BARREL', ds:['25% tighter spread','35% tighter spread again','removes recoil bloom'], fs:[()=>perks.acc*=0.75,()=>perks.acc*=0.65,()=>perks.noBloom=1]},
+  {n:'FIELD MEDIC', ds:['+20% medkit drops','+35% medkit drops and 30 healing','+50% drops and 40 healing'], fs:[()=>perks.drop=Math.min(0.18,perks.drop*1.2),()=>{perks.drop=Math.min(0.24,perks.drop*1.35);perks.medkitHeal=30;},()=>{perks.drop=Math.min(0.30,perks.drop*1.5);perks.medkitHeal=40;}]},
+  {n:'KEVLAR WEAVE', ds:['take 20% less damage','take 25% less damage again','take 30% less and unlock Second Wind'], fs:[()=>perks.armor*=0.80,()=>perks.armor*=0.75,()=>{perks.armor*=0.70;perks.secondWind=1;}]},
+  {n:'FRAG SHELLS', ds:['enemies explode on death','explosions deal +50% damage','explosions deal double damage'], fs:[()=>perks.explode=1,()=>perks.explode=1.5,()=>perks.explode=2]},
 ];
+const ROMAN=['','I','II','III'];
+const UPGRADES=[];
+for(const c of TIER_CHAINS) for(let tier=1;tier<=3;tier++){
+  const n=c.n+' '+ROMAN[tier];
+  UPGRADES.push({n,base:c.n,tier,d:c.ds[tier-1],f:c.fs[tier-1],once:true,
+                 req:tier>1?c.n+' '+ROMAN[tier-1]:null});
+}
 function rollUpgrades(){
   const out=[];
   if(bossBounty){
@@ -5906,7 +5904,7 @@ function killEnemy(j){
   sfx('die');
   if(perks.explode){
     burst(e.x,e.y,'#e8b658',22,6); addShake(3);
-    for(const o of enemies) if(dist2(o.x,o.y,e.x,e.y)<90*90) o.hp-=45*perks.dmg;
+    for(const o of enemies) if(dist2(o.x,o.y,e.x,e.y)<90*90) o.hp-=45*perks.dmg*perks.explode;
     let idx;
     while((idx=enemies.findIndex(o=>o.hp<=0))>=0) killEnemy(idx);
   }
@@ -8335,7 +8333,7 @@ function drawUpgrade(){
         ctx.fillText(u.d.slice(0,44), cx+40, cyy+cardH/2+9);
       }
       if(u.wkey){ ctx.textAlign='right'; ctx.fillStyle='#d0763e'; ctx.font='700 9px ui-monospace,Consolas,monospace'; ctx.fillText('MOD', cx+colW-10, cyy+cardH/2); }
-      else if(u.req){ ctx.textAlign='right'; ctx.fillStyle='#e8b658'; ctx.font='700 9px ui-monospace,Consolas,monospace'; ctx.fillText('TIER II', cx+colW-10, cyy+cardH/2); }
+      else if(u.tier){ ctx.textAlign='right'; ctx.fillStyle=u.tier===3?'#bfa8ff':'#e8b658'; ctx.font='700 9px ui-monospace,Consolas,monospace'; ctx.fillText('TIER '+ROMAN[u.tier], cx+colW-10, cyy+cardH/2); }
       ctx.textBaseline='alphabetic';
     }
     ctx.textAlign='center'; ctx.fillStyle='#6b7455'; ctx.font='11px ui-monospace,Consolas,monospace';
@@ -8397,9 +8395,9 @@ function drawUpgrade(){
     if(u.wkey){
       ctx.textAlign='right'; ctx.fillStyle='#d0763e';
       ctx.fillText('WEAPON MOD', x+cw-12, y0+12);
-    } else if(u.req){
+    } else if(u.tier){
       ctx.textAlign='right'; ctx.fillStyle='#e8b658';
-      ctx.fillText('TIER II', x+cw-12, y0+12);
+      ctx.fillText('TIER '+ROMAN[u.tier], x+cw-12, y0+12);
     }
     ctx.textAlign='center';
     ctx.fillStyle = hov ? '#e8d9a8' : '#cdd6b0';
@@ -8415,7 +8413,7 @@ function drawUpgrade(){
   }
   ctx.fillStyle='#6b7455'; ctx.font='12px ui-monospace,Consolas,monospace';
   const hintY=y0+ch+30;
-  ctx.fillText('press 1-3 or click', W/2, hintY);
+  ctx.fillText('press 1-4 or click', W/2, hintY);
   if(board.length){
     let ly=Math.max(H*0.36+152, hintY+28);          // always sit below the hint text
     ctx.fillStyle='#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
