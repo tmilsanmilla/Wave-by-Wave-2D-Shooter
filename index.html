@@ -58,7 +58,8 @@
   #formgrid label{display:flex;flex-direction:column;gap:4px;color:#8a9268;
     font:9px ui-monospace,Consolas,monospace;letter-spacing:.5px}
   #formgrid input{background:rgba(0,0,0,.5);border:1px solid #4a4634;color:#e8d9a8;
-    font:700 14px ui-monospace,Consolas,monospace;padding:8px;width:100%;box-sizing:border-box}
+    font:700 14px ui-monospace,Consolas,monospace;padding:8px;width:100%;box-sizing:border-box;
+    pointer-events:auto;user-select:text;-webkit-user-select:text}
   #formgrid input:focus{outline:none;border-color:#7fd8ff}
   #formgrid .was{color:#5a5648;font-size:8px}
   #formextra{margin:12px 0 0}
@@ -255,6 +256,8 @@ const SUPABASE_URL = 'https://edvurrilylypgfyvjyas.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
 let sb = null, authUser = null, board = [], streakBoard = [], boardT = 0, recovering = false;
+let leaderboardRowRects=[];
+let publicProfileCache={};
 const $ = id => document.getElementById(id);
 
 function displayName(u){
@@ -285,6 +288,7 @@ async function initAuth(){
         fetchAdmins(); fetchBanners(); fetchMsgs(); fetchPrices();
         profileLoaded=false;
         fetchProfile().then(()=>{                       // wait for the streak before deciding
+          publishPublicProfile(true);
           processReferral();
           if(!openDailyGate()) maybeFirstRunTutorial();
         });
@@ -368,17 +372,26 @@ async function submitScore(sc){
 async function fetchBoard(){
   if(!sb) return;
   try{
-    const { data } = await sb.from('scores').select('name,score')
+    const { data } = await sb.from('scores').select('user_id,name,score')
       .eq('game','outpost-zero').order('score',{ascending:false}).limit(10);
     board = data || []; boardT = Date.now();
     syncFallAccess();
+    fetchPublicProfiles();
     fetchStreakBoard();
   }catch(err){ console.warn('board fetch failed', err); }
+}
+async function fetchPublicProfiles(){
+  if(!sb) return;
+  try{
+    const {data}=await sb.from('scores').select('user_id,name,score').eq('game','outpost-zero-profile').limit(500);
+    const next={}; for(const r of (data||[])){ try{ next[r.user_id]=JSON.parse(r.name||'{}'); }catch(e){} }
+    publicProfileCache=next;
+  }catch(e){}
 }
 async function fetchStreakBoard(){
   if(!sb) return;
   try{
-    const { data } = await sb.from('scores').select('name,score')
+    const { data } = await sb.from('scores').select('user_id,name,score')
       .eq('game','outpost-zero-streak').order('score',{ascending:false}).limit(10);
     streakBoard=data||[];
   }catch(err){ console.warn('streak board fetch failed',err); }
@@ -434,7 +447,7 @@ $('postcancel').onclick=closePost;
 $('msgsend').onclick=sendMsg;
 $('msgcancel').onclick=closeMsgCompose;
 $('formsave').onclick=()=>{ if(formSave) formSave(formValues()); };
-$('formcancel').onclick=closeForm;
+$('formcancel').onclick=cancelForm;
 $('promosend').onclick=redeemPromo;
 $('promocancel').onclick=closePromo;
 $('appealsend').onclick=sendAppeal;
@@ -935,16 +948,20 @@ function offY(id){ const o=layout[id]; return (o&&+o.dy)||0; }
 // register a block so layout mode can outline and drag it
 function layoutBlock(id,x,y,w,h){ if(layoutMode||textMode) layoutRects.push({id,x,y,w,h}); }
 async function fetchLayout(){
+  try{ const v=JSON.parse(localStorage.getItem('oz_ui_layout')||'null'); if(v&&typeof v==='object') layout=v; }catch(e){}
   if(!sb) return;
   try{
     const { data } = await sb.from('ui_layout').select('data').eq('id','hub').maybeSingle();
-    if(data && data.data && typeof data.data==='object') layout=data.data;
+    if(data && data.data && typeof data.data==='object'){ layout=data.data; localStorage.setItem('oz_ui_layout',JSON.stringify(layout)); }
   }catch(e){}
 }
 async function saveLayout(){
-  if(!isMainAdmin() || !sb) return;
-  try{ await sb.from('ui_layout').upsert({id:'hub', data:layout, updated_by:adminEmail()}); layoutDirty=false; sfx('pickup'); }
-  catch(e){ sfx('dry'); }
+  if(!isMainAdmin()) return false;
+  try{
+    localStorage.setItem('oz_ui_layout',JSON.stringify(layout));
+    if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'hub',data:layout,updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
+    layoutDirty=false; sfx('pickup'); return true;
+  }catch(e){ waveMsg='LAYOUT SAVE FAILED: '+String((e&&e.message)||e).slice(0,80); waveMsgT=now+4000; sfx('dry'); return false; }
 }
 function resetLayout(){ layout={}; layoutPick=null; layoutDirty=true; sfx('dry'); }
 function drawLayoutOverlay(){
@@ -1056,7 +1073,7 @@ function layoutMouseMove(){
 }
 function layoutMouseUp(){ layoutDrag=null; }
 // daily login streak: rolls over at 12:00 UTC like the tasks, and must be COLLECTED by hand
-let streakDays=0, streakLastDay='', streakBtnRect=null, streakMsgT=0, streakMsg='';
+let streakDays=0, streakLongest=0, streakLastDay='', streakBtnRect=null, streakMsgT=0, streakMsg='';
 let referralUsed=false, referralPaid=0, referralMsg='', referralMsgT=0, shareBtnRect=null;
 const REFERRAL_GEMS=5;
 function referralLink(){ return location.origin+location.pathname+'?ref='+encodeURIComponent(authUser.id); }
@@ -1120,9 +1137,9 @@ function dailyCountdown(){
 }
 // ---- PROMO CODES ----
 let promoOpen=false, promoBtnRect=null, promoList=[], promoAdminOpen=false, promoRects=[];
-let formOpen=false, formSave=null, formFields=[];
+let formOpen=false, formSave=null, formCancel=null, formFields=[];
 function openForm(opts){
-  formOpen=true; formFields=opts.fields||[]; formSave=opts.onSave||null;
+  formOpen=true; formFields=opts.fields||[]; formSave=opts.onSave||null; formCancel=opts.onCancel||null;
   $('formtitle').textContent=opts.title||'EDIT';
   $('formhint').textContent=opts.hint||'';
   $('formstatus').textContent='';
@@ -1160,7 +1177,8 @@ function openForm(opts){
   $('formwrap').style.display='flex';
   try{ const first=$('ff_'+(formFields[0]||{}).id); if(first) first.focus(); }catch(e){}
 }
-function closeForm(){ formOpen=false; $('formwrap').style.display='none'; formSave=null; }
+function closeForm(){ formOpen=false; $('formwrap').style.display='none'; formSave=null; formCancel=null; }
+function cancelForm(){ const fn=formCancel; closeForm(); if(fn) fn(); }
 function formValues(){
   const out={};
   for(const f of formFields){
@@ -1348,6 +1366,7 @@ function collectStreak(){
   const day=streakNext(), r=streakReward(day);
   const broke = day===1 && streakDays>0;
   streakDays=day; streakLastDay=todayIndex();
+  streakLongest=Math.max(streakLongest,streakDays);
   addCoins(r.coins);
   if(r.gems) addGems(r.gems);
   saveMeta();
@@ -1474,23 +1493,35 @@ let scoresOpen=false, scoresRects=[], scoreEditOpen=false, scoreReqs=[];
 let pePanelTab='items';
 let peStep='choose', peMode='edit', peTarget='', peData=null, peEdit=null, peBusy=false;
 let lookupBtnRect=null;
-// everyone may look a player up (score only); admins also see the rest; mains+ may change it
+// Inventory and moderation details stay admin-only; public profiles expose only the small stat summary.
 function canSeeStats(){ return isAdmin(); }
 function canEditPlayer(){ return isMainAdmin(); }
 function canBan(){ return isMainAdmin(); }            // main admins may ban directly now
 const PE_ITEMS=()=>GEM_SHOP.map(it=>it.key);          // everything ownable
-async function lookupPlayer(email){
+async function lookupPlayer(target){
   peBusy=true; peData=null; peEdit=null;
   try{
-    const { data, error } = await sb.rpc('admin_get_player', {target_email:String(email).toLowerCase()});
-    if(error) throw error;
-    const d = Array.isArray(data) ? data[0] : data;
-    if(!d) throw new Error('not found');
-    peData={score:d.score||0, gems:d.gems||0, coins:d.coins||0,
-            owned:d.owned||{}, pow:d.pow||{}, ban:d.ban||null};
+    const q=String(target||'').trim(), uuid=/^[0-9a-f-]{36}$/i.test(q);
+    let req=sb.from('scores').select('user_id,name,score').eq('game','outpost-zero-profile').limit(1);
+    req=uuid?req.eq('user_id',q):req.ilike('name','%"email":"'+q.toLowerCase().replace(/[%_]/g,'')+'"%');
+    const {data,error}=await req; if(error) throw error;
+    const row=(data||[])[0]; if(!row) throw new Error('not found');
+    let p={}; try{ p=JSON.parse(row.name||'{}'); }catch(e){}
+    const owned={}; for(const k of (p.owned||[])) owned[k]=true;
+    peData={score:p.highScore||0,gems:p.gems||0,coins:p.coins||0,streak:p.streak||0,longestStreak:p.longestStreak||p.streak||0,
+            lastLogin:p.lastLogin||new Date((row.score||0)*1000).toISOString(),owned,pow:p.powerups||{},
+            cosmetics:p.cosmetics||0,animations:p.animations||0,daily:p.daily||[],wheelSpins:p.wheelSpins||0,ban:null};
+    if(isAdmin()&&p.email){
+      try{
+        const {data:ad,error:ae}=await sb.rpc('admin_get_player',{target_email:p.email}); if(ae) throw ae;
+        const d=Array.isArray(ad)?ad[0]:ad;
+        if(d){ peData.score=d.score||peData.score; peData.gems=d.gems||0; peData.coins=d.coins||0;
+          peData.owned=d.owned||{}; peData.pow=d.pow||{}; peData.ban=d.ban||null; }
+      }catch(e){}
+    }
     peEdit={score:peData.score, gems:peData.gems, coins:peData.coins,
             owned:Object.assign({}, peData.owned), pow:Object.assign({}, peData.pow)};
-    peTarget=String(email).toLowerCase();
+    peTarget=p.email||p.display||q;
     peStep='panel';
   }catch(e){ peData=null; }
   peBusy=false;
@@ -1948,15 +1979,38 @@ const DAILY_REWARDS={kills:50, waves:100, bosses:350, chests:200};
 function normalizeDailyRewards(){
   for(const t of dailyTasks) if(DAILY_REWARDS[t.id]!=null) t.reward=DAILY_REWARDS[t.id];
 }
-function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, gv:GEM_ECONOMY_VERSION, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); }catch(e){} }
+function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, gv:GEM_ECONOMY_VERSION, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); }catch(e){} }
 function saveMeta(){ saveMetaLocal(); queueProfileSave(); }
 // ---- account progress sync: purchases + currency live with the account, not the device ----
 let profileLoaded=false, profileSaveT=0, profilePending=false;
+let currentLoginAt='';
 function metaPayload(){
-  return {gems, gv:GEM_ECONOMY_VERSION, coins, device:deviceId(), stk:streakDays, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
+  return {gems, gv:GEM_ECONOMY_VERSION, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
           hi:hiScore, mv:musicVol, sv:sfxVol};
+}
+function publicProfilePayload(){
+  return {
+    v:1, email:String((authUser&&authUser.email)||'').toLowerCase(), display:displayName(authUser),
+    lastLogin:currentLoginAt||new Date().toISOString(), gems, coins, streak:streakDays, longestStreak:streakLongest, highScore:hiScore,
+    owned:Object.keys(gemOwned).filter(k=>gemOwned[k]),
+    powerups:Object.fromEntries(Object.entries(powerStock).filter(([,v])=>v>0)),
+    cosmetics:Object.keys(cosmeticOwned).filter(k=>cosmeticOwned[k]).length,
+    animations:Object.keys(animOwned).filter(k=>animOwned[k]).length,
+    daily:dailyTasks.map(t=>({id:t.id,prog:t.prog,goal:t.goal,done:!!t.done})),
+    wheelSpins:wheelReady
+  };
+}
+async function publishPublicProfile(isLogin){
+  if(!sb||!authUser) return;
+  if(isLogin||!currentLoginAt) currentLoginAt=new Date().toISOString();
+  try{
+    const {error}=await sb.from('scores').upsert({user_id:authUser.id,
+      name:JSON.stringify(publicProfilePayload()), game:'outpost-zero-profile',
+      score:Math.floor(Date.parse(currentLoginAt)/1000)},{onConflict:'user_id,game'});
+    if(error) throw error;
+  }catch(e){ console.warn('public profile update failed',e); }
 }
 function applyProfile(m){
   if(!m) return;
@@ -1993,6 +2047,7 @@ function applyProfile(m){
   if(typeof m.wr==='number') wheelReady=m.wr;
   if(typeof m.wa==='number') wheelAcc=m.wa;
   referralUsed=!!(referralUsed||m.refUsed);
+  if(typeof m.stkMax==='number') streakLongest=Math.max(streakLongest,m.stkMax);
   if(typeof m.refPaid==='number') referralPaid=Math.max(referralPaid,m.refPaid);
   // take the account's streak only when it is at least as far along as this device's,
   // so a profile landing after a local collect cannot hand out the same reward twice
@@ -2035,6 +2090,7 @@ async function saveProfile(force){
   if(!force && !profileLoaded) return;               // never overwrite the cloud before we've read it
   try{ await sb.from('profiles').upsert({user_id:authUser.id, data:metaPayload(), updated_at:new Date().toISOString()}); }
   catch(e){}
+  publishPublicProfile(false);
 }
 function queueProfileSave(){                          // debounce: batch rapid changes into one write
   if(!sb || !authUser) return;
@@ -2046,7 +2102,7 @@ function loadMeta(){
     gems=(m.gems||0)*(m.gv===GEM_ECONOMY_VERSION?1:10); gemOwned=m.owned||{}; tasksDate=m.date||''; dailyTasks=m.tasks||[];
     coins=m.coins||0; cosmeticOwned=m.cos||{}; cosmeticEquipped=m.cosEq||{}; powerStock=m.pow||{};
     animOwned=m.anim||{}; animEquipped=(m.animEq && typeof m.animEq==='object') ? m.animEq : {};
-    streakDays=m.stk||0; streakLastDay=m.stkDay||'';
+    streakDays=m.stk||0; streakLongest=m.stkMax||streakDays; streakLastDay=m.stkDay||'';
     referralUsed=!!m.refUsed; referralPaid=m.refPaid||0;
     wheelReady=m.wr||0; wheelAcc=m.wa||0;
     hiScore=m.hi||0;
@@ -2358,7 +2414,8 @@ function injectVault(){
 }
 function setTestMode(on){
   testMode=!!on;
-  if(testMode){ adminUsed=true; injectVault(); }     // every weapon free + usable; run is tainted
+  if(testMode){ adminUsed=true; injectVault(); }     // every weapon appears published, free, and usable
+  else for(const k in VAULT_SLOTS) if(!savedWeaponPublished(k)) unpublishVaultKey(k); // restore real publish state
   waveMsg='\uD83E\uDDEA TEST MODE '+(testMode?'ON \u2014 every weapon free':'OFF'); waveMsgT=now+1600;
 }
 function isStorageKey(k){ return !!(VAULT_WEAPONS[k] || VAULT_UTILITIES[k]); }
@@ -2767,7 +2824,22 @@ const WFIELDS=[
   {k:'pellets',  label:'PELLETS',       min:1,   max:20},
   {k:'pierce',   label:'PIERCE',        min:0,   max:20},
 ];
-function weaponIsPublished(k){ return !!WEAPONS[k] && !VAULT_ACTIVE.hasOwnProperty(k) ? true : !!VAULT_ACTIVE[k] || (!!WEAPONS[k] && !VAULT_WEAPONS[k]); }
+const WEAPON_EDITOR_SLOTS={};
+for(const k of PRIMARIES) WEAPON_EDITOR_SLOTS[k]='primary';
+for(const k of SECONDARIES) WEAPON_EDITOR_SLOTS[k]='secondary';
+for(const k of MELEES) WEAPON_EDITOR_SLOTS[k]='melee';
+for(const k of UTILKEYS) WEAPON_EDITOR_SLOTS[k]='utility';
+for(const k of TEMP_PRIMARY) WEAPON_EDITOR_SLOTS[k]='primary';
+for(const k of TEMP_SECONDARY) WEAPON_EDITOR_SLOTS[k]='secondary';
+for(const k of TEMP_MELEE) WEAPON_EDITOR_SLOTS[k]='melee';
+for(const k of TEMP_UTILITY) WEAPON_EDITOR_SLOTS[k]='utility';
+for(const k in VAULT_SLOTS) WEAPON_EDITOR_SLOTS[k]=VAULT_SLOTS[k];
+function savedWeaponPublished(k){
+  if(weaponDefs[k] && typeof weaponDefs[k].published==='boolean') return weaponDefs[k].published;
+  if(VAULT_ACTIVE.hasOwnProperty(k)) return !!VAULT_ACTIVE[k];
+  return true;                                       // built-in weapons start published unless an admin saves otherwise
+}
+function weaponIsPublished(k){ return testMode ? true : savedWeaponPublished(k); }
 function weaponDefOf(k){ return WEAPONS[k] || VAULT_WEAPONS[k] || UTILITIES[k] || VAULT_UTILITIES[k] || null; }
 function weaponPrice(k){ const it=GEM_SHOP.find(i=>i.key===k); return it? it.cost : null; }
 async function fetchWeaponDefs(){
@@ -2784,15 +2856,11 @@ async function fetchWeaponDefs(){
 function applyWeaponDef(r){
   const def=weaponDefOf(r.key); if(!def) return;
   if(r.stats) for(const f of WFIELDS) if(typeof r.stats[f.k]==='number') def[f.k]=r.stats[f.k];
-  if(r.published && VAULT_ACTIVE.hasOwnProperty(r.key) && !VAULT_ACTIVE[r.key]){
-    VAULT_ACTIVE[r.key]=true; publishVaultKey(r.key);
-  }
-  if(r.published===false && VAULT_ACTIVE.hasOwnProperty(r.key) && VAULT_ACTIVE[r.key]){
-    VAULT_ACTIVE[r.key]=false; unpublishVaultKey(r.key);
-  }
+  if(VAULT_ACTIVE.hasOwnProperty(r.key)) VAULT_ACTIVE[r.key]=!!r.published;
+  if(r.published) publishVaultKey(r.key); else unpublishVaultKey(r.key);
 }
 function publishVaultKey(k){
-  const slot=VAULT_SLOTS[k];
+  const slot=WEAPON_EDITOR_SLOTS[k];
   if(VAULT_WEAPONS[k] && !WEAPONS[k]) WEAPONS[k]=VAULT_WEAPONS[k];
   if(VAULT_UTILITIES[k] && !UTILITIES[k]) UTILITIES[k]=VAULT_UTILITIES[k];
   const r = slot==='primary'?PRIMARIES : slot==='secondary'?SECONDARIES : slot==='melee'?MELEES : null;
@@ -2813,7 +2881,7 @@ function openWeaponEdit(k){
   weaponEditDraft={};
   for(const f of WFIELDS) if(typeof def[f.k]==='number') weaponEditDraft[f.k]=def[f.k];
   const pr=weaponPrice(k); if(pr!==null) weaponEditDraft.price=pr;
-  weaponEditDraft.published = VAULT_ACTIVE.hasOwnProperty(k) ? !!VAULT_ACTIVE[k] : true;
+  weaponEditDraft.published = savedWeaponPublished(k); // editing during test mode must not publish by accident
   showWeaponForm();
 }
 function showWeaponForm(){
@@ -2829,6 +2897,7 @@ function showWeaponForm(){
          +' \u00b7 type straight into the boxes',
     fields,
     saveLabel:'SAVE',
+    onCancel:()=>{ weaponEditKey=null; weaponEditDraft=null; storageOpen=true; },
     extraButton:{
       label: d.published?'\u2193 UNPUBLISH (back to storage)':'\u2191 PUBLISH (make it live)',
       onClick:()=>{                                  // keep what is typed, flip the state, redraw
@@ -2845,19 +2914,27 @@ function showWeaponForm(){
   });
 }
 async function saveWeaponEdit(){
-  if(!isMainAdmin() || !weaponEditKey) return;
+  if(!isMainAdmin() || !weaponEditKey){ formError('main-admin access required'); return; }
   const k=weaponEditKey, d=weaponEditDraft;
   const stats={};
   for(const f of WFIELDS) if(typeof d[f.k]==='number') stats[f.k]=d[f.k];
   const row={key:k, stats, price:null, published:!!d.published, updated_by:adminEmail()};
-  applyWeaponDef(row);                                 // apply locally right away
-  // the gem price lives in weapon_prices (its own table; the old gem editor screen is gone)
-  if(typeof d.price==='number' && d.price!==weaponPrice(k)) saveGemPrice(k, d.price);
-  if(sb){ try{ await sb.from('weapon_defs').upsert(row); }catch(e){} }
-  weaponDefs[k]=row;
-  weaponEditOpen=false; closeForm(); storageOpen=true;
-  storageTab = row.published ? 'published' : 'storage';
-  sfx('pickup');
+  $('formstatus').textContent='saving...';
+  try{
+    if(sb){
+      const {error}=await sb.from('weapon_defs').upsert(row,{onConflict:'key'});
+      if(error) throw error;
+      if(typeof d.price==='number' && d.price!==weaponPrice(k)) await saveGemPrice(k,d.price);
+    } else if(typeof d.price==='number' && d.price!==weaponPrice(k)) setGemPrice(k,d.price);
+    weaponDefs[k]=row;
+    applyWeaponDef(row);                              // change live state only after the save succeeds
+    weaponEditOpen=false; closeForm(); storageOpen=true;
+    storageTab = row.published ? 'published' : 'storage';
+    sfx('pickup');
+  }catch(e){
+    const msg=String((e&&e.message)||e||'save failed');
+    formError('SAVE FAILED: '+msg.slice(0,120)); sfx('dry');
+  }
 }
 function drawWeaponEdit(){
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
@@ -2963,13 +3040,12 @@ function drawStorage(){
   storageRects=[];
   const x0=px+16, rw=pw-32; let y=py+54;
 
-  const rows=[];
-  // published: anything a player can actually get hold of
-  for(const k of WKEYS) if(WEAPONS[k]) rows.push({k, def:WEAPONS[k], pub:true});
-  for(const k of UTILKEYS) if(UTILITIES[k]) rows.push({k, def:UTILITIES[k], pub:true});
-  // storage: vault entries not yet live
-  for(const k in VAULT_WEAPONS) if(!WKEYS.includes(k)) rows.push({k, def:VAULT_WEAPONS[k], pub:false});
-  for(const k in VAULT_UTILITIES) if(!UTILKEYS.includes(k)) rows.push({k, def:VAULT_UTILITIES[k], pub:false});
+  const rows=[], seen=new Set();
+  // Publish state comes from the saved editor record, never from test-mode roster injection.
+  for(const k in WEAPON_EDITOR_SLOTS){
+    const def=weaponDefOf(k); if(!def||seen.has(k)) continue;
+    seen.add(k); rows.push({k,def,pub:weaponIsPublished(k)});
+  }
 
   // tabs: each list gets the whole panel instead of one crowding the other out
   const pubList=rows.filter(r=>r.pub), stoList=rows.filter(r=>!r.pub);
@@ -3043,7 +3119,7 @@ function storageClick(){
   for(const r of storageRects){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       const id=String(r.id||'');
-      if(id==='close'){ storageOpen=false; sfx('swap'); return; }
+      if(id==='close'){ storageOpen=false; adminPanelOpen=true; sfx('swap'); return; }
       if(id.indexOf('tab:')===0){ storageTab=id.slice(4); sfx('aim'); return; }
       if(id.indexOf('edit:')===0){
         if(!isMainAdmin()){ sfx('dry'); return; }
@@ -3508,6 +3584,22 @@ function drawScores(){
       ctx.textAlign='center'; ctx.fillStyle='#e0a8a0'; ctx.font='700 11px ui-monospace,Consolas,monospace';
       ctx.fillText(peBusy?'looking up...':'player not found', W/2, y+16); y+=40;
     } else {
+      const infoRow=(label,value)=>{
+        const h=22; ctx.fillStyle='rgba(0,0,0,0.28)'; ctx.fillRect(x0,y,rw,h);
+        ctx.strokeStyle='#4a4634'; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
+        ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle='#8a9268'; ctx.font='700 8px ui-monospace,Consolas,monospace';
+        ctx.fillText(label,x0+9,y+h/2); ctx.textAlign='right'; ctx.fillStyle='#e8d9a8';
+        ctx.fillText(fitLine(String(value),rw*0.62),x0+rw-9,y+h/2); ctx.textBaseline='alphabetic'; y+=h+4;
+      };
+      let loginText='unknown';
+      if(peData.lastLogin){ const d=new Date(peData.lastLogin); if(!isNaN(+d)) loginText=d.toLocaleString(); }
+      infoRow('LAST LOGIN',loginText);
+      infoRow('CURRENT STREAK',peData.streak+' days');
+      infoRow('LONGEST STREAK',peData.longestStreak+' days');
+      if(canSeeStats()){
+        infoRow('READY WHEEL SPINS',peData.wheelSpins||0);
+        infoRow('COSMETICS / ANIMATIONS',(peData.cosmetics||0)+' / '+(peData.animations||0));
+      }
       // numeric rows
       const numRow=(id,label,val,was)=>{
         const h=26;
@@ -3530,10 +3622,8 @@ function drawScores(){
       };
       const pre=canEditPlayer()?'EDIT ':'';
       numRow('n_score',pre+'HIGH SCORE', peEdit.score, peData.score);
-      if(canSeeStats()){
-        numRow('n_gems', pre+'GEMS',  peEdit.gems,  peData.gems);
-        numRow('n_coins',pre+'COINS', peEdit.coins, peData.coins);
-      }
+      numRow('n_gems', pre+'GEMS',  peEdit.gems,  peData.gems);
+      numRow('n_coins',pre+'COINS', peEdit.coins, peData.coins);
       y+=4;
       if(!canSeeStats()) return peFooter(px,py,pw,ph);   // players see the score and nothing else
       // toggle: weapons and upgrades are both long lists, so they share the panel by turns
@@ -4118,7 +4208,7 @@ addEventListener('keydown', e=>{
   if(scoreEditOpen){ if(e.key==='Escape') closeScoreEdit(); return; }
   if(appealOpen){ if(e.key==='Escape') closeAppeal(); return; }
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
-  if(formOpen){ if(e.key==='Escape') closeForm(); return; }
+  if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
   if(alignOpen && e.key==='Escape'){ alignOpen=false; sfx('swap'); return; }
   if(textMode && e.key==='Escape'){ textMode=false; textSel=null; sfx('swap'); return; }
   if(adminPanelOpen||updatesOpen||adminsOpen||msgsOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||readerOpen){ if(e.key==='Escape'){ if(wheelSpinning) return; if(readerOpen){ readerOpen=false; sfx('swap'); return; } wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; adminPanelOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
@@ -4371,6 +4461,9 @@ function clickSelect(){
   // details arrows (only on a category page)
   for(const b of detailBtns){ if(inR(b)){ detailKey=b.key; sfx('aim'); return; } }
   if(selPage==='hub'){
+    for(const r of leaderboardRowRects) if(inR(r)){
+      scoresOpen=true; peStep='panel'; peMode='edit'; peData=null; peEdit=null; peTarget=r.name; lookupPlayer(r.userId); sfx('swap'); return;
+    }
     if(inR(adLeftRect)){ try{ window.open(adLeftRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
     if(inR(adRightRect)){ try{ window.open(adRightRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
     if(inR(promoBtnRect)){ openPromo(); sfx('swap'); return; }
@@ -7539,6 +7632,9 @@ function drawStreakBoard(){
     ctx.font='9px ui-monospace,Consolas,monospace';
     for(let i=0;i<rows;i++){
       const y=py+36+i*17, me=authUser&&streakBoard[i].name===displayName(authUser);
+      leaderboardRowRects.push({x:px+5,y:y-10,w:pw-10,h:16,userId:streakBoard[i].user_id,name:streakBoard[i].name});
+      const hot=mouse.x>=px+5&&mouse.x<=px+pw-5&&mouse.y>=y-10&&mouse.y<=y+6;
+      if(hot){ ctx.fillStyle='rgba(255,176,87,0.13)'; ctx.fillRect(px+5,y-10,pw-10,16); }
       ctx.fillStyle=me?'#a7c15e':(i<3?'#ffe08a':'#8a9268'); ctx.textAlign='left';
       ctx.fillText((i+1)+'. '+String(streakBoard[i].name).slice(0,12),px+9,y);
       ctx.textAlign='right'; ctx.fillText(streakBoard[i].score+'d',px+pw-9,y);
@@ -7552,6 +7648,7 @@ function drawStreakBoard(){
 }
 function drawHub(){
   selBg();
+  leaderboardRowRects=[];
   drawStreakBoard();
   compactStatus = W<680;
   pendingCancelRect=null;
@@ -7913,9 +8010,13 @@ function drawHub(){
       ctx.font='11px ui-monospace,Consolas,monospace';
       for(let i=0;i<rows;i++){
         const me = authUser && board[i].name===displayName(authUser);
+        const pub=publicProfileCache[board[i].user_id]||{}, publicName=pub.email||board[i].name;
+        leaderboardRowRects.push({x:lbX+6,y:ly-12,w:lbW-12,h:17,userId:board[i].user_id,name:publicName});
+        const hot=mouse.x>=lbX+6&&mouse.x<=lbX+lbW-6&&mouse.y>=ly-12&&mouse.y<=ly+5;
+        if(hot){ ctx.fillStyle='rgba(127,216,255,0.12)'; ctx.fillRect(lbX+6,ly-12,lbW-12,17); }
         ctx.fillStyle = me ? '#a7c15e' : (i<3?'#cdd6b0':'#8a9268');
         ctx.textAlign='left';
-        ctx.fillText((i+1)+'. '+String(board[i].name).slice(0,12), lbX+12, ly);
+        ctx.fillText((i+1)+'. '+String(publicName).slice(0,16), lbX+12, ly);
         ctx.textAlign='right';
         ctx.fillText(String(board[i].score), lbX+lbW-12, ly);
         ly+=18;
@@ -8552,7 +8653,7 @@ const TEXT_FONTS=[
   {id:'serif',  name:'SERIF',  css:'Georgia,Times New Roman,serif'},
 ];
 const TEXT_COLOURS=['#f2f2e8','#e8b658','#a7c15e','#7fd8ff','#d05548','#bfa8ff','#ff9ad5'];
-let customText=[], textMode=false, textRects=[], textSel=null, textDrag=null, textDirty=false;
+let customText=[], textMode=false, textRects=[], textSel=null, textDrag=null, textDirty=false, editGuides={x:null,y:null};
 // editing covers both the hub blocks and free text; one undo stack for the lot
 let editHist=[], editFuture=[], layoutStandard=null, textStandard=null, editSuggestOpen=false;
 let multiMode=false, textSelMany=[];                 // MULTI: tap several bits of text, then act on the lot
@@ -8778,10 +8879,11 @@ async function submitEditSuggestion(){
 }
 async function publishEdits(){
   if(isCreator()){
-    await saveLayout(); await saveCustomText();
-    await saveAsStandard();                          // what you publish becomes the new baseline
+    const a=await saveLayout(), b=await saveCustomText();
+    if(a&&b) await saveAsStandard();                 // what you publish becomes the new baseline
+    return !!(a&&b);
   }
-  else await submitEditSuggestion();
+  await submitEditSuggestion(); return !(layoutDirty||textDirty);
 }
 function fontCss(id,size,weight){
   const f=TEXT_FONTS.find(x=>x.id===id)||TEXT_FONTS[0];
@@ -8819,17 +8921,22 @@ function drawCustomText(){
   }
 }
 async function fetchCustomText(){
+  try{ const v=JSON.parse(localStorage.getItem('oz_ui_text')||'null'); if(Array.isArray(v)) customText=v; }catch(e){}
   if(!sb) return;
   try{
     const { data } = await sb.from('ui_layout').select('data').eq('id','text').maybeSingle();
-    if(data && data.data && Array.isArray(data.data.items)) customText=data.data.items;
+    if(data && data.data && Array.isArray(data.data.items)){
+      customText=data.data.items; localStorage.setItem('oz_ui_text',JSON.stringify(customText));
+    }
   }catch(e){}
 }
 async function saveCustomText(){
-  if(!isMainAdmin() || !sb) return;
-  try{ await sb.from('ui_layout').upsert({id:'text', data:{items:customText}, updated_by:adminEmail()});
-       textDirty=false; sfx('pickup'); }
-  catch(e){ sfx('dry'); }
+  if(!isMainAdmin()) return false;
+  try{
+    localStorage.setItem('oz_ui_text',JSON.stringify(customText));
+    if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'text',data:{items:customText},updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
+    textDirty=false; sfx('pickup'); return true;
+  }catch(e){ waveMsg='TEXT SAVE FAILED: '+String((e&&e.message)||e).slice(0,80); waveMsgT=now+4000; sfx('dry'); return false; }
 }
 function addCustomText(){
   const id='t'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
@@ -8880,6 +8987,11 @@ function drawTextOverlay(){
     ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h);
     ctx.setLineDash([]);
   }
+  // Google Slides-style live alignment guides while an item is being dragged.
+  ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#ff4fb8'; ctx.lineWidth=1.5;
+  if(editGuides.x!==null){ ctx.beginPath(); ctx.moveTo(editGuides.x,0); ctx.lineTo(editGuides.x,H); ctx.stroke(); }
+  if(editGuides.y!==null){ ctx.beginPath(); ctx.moveTo(0,editGuides.y); ctx.lineTo(W,editGuides.y); ctx.stroke(); }
+  ctx.restore();
   // solid backing for the toolbar area: without it the hub text underneath reads through
   {
     const sel0=selectedText() || (textSelMany.length? customText.find(t=>t.id===textSelMany[0]) : null);
@@ -8978,7 +9090,11 @@ function textMouseDown(){
         textSel=null; textSelMany=[]; textDirty=true; sfx('dry'); return true;
       }
       if(id==='tt:save'){ publishEdits(); return true; }
-      if(id==='tt:done'){ textMode=false; textSel=null; textDrag=null; multiMode=false; textSelMany=[]; sfx('swap'); return true; }
+      if(id==='tt:done'){
+        const finish=()=>{ textMode=false; textSel=null; textDrag=null; multiMode=false; textSelMany=[]; sfx('swap'); };
+        if(textDirty||layoutDirty) publishEdits().then(ok=>{ if(ok) finish(); }); else finish();
+        return true;
+      }
       if(id.indexOf('tc:')===0){ const ids=selectedTextIds(); if(ids.length){ editPush();
         for(const t of customText) if(ids.includes(t.id)) t.col=id.slice(3);
         textDirty=true; sfx('aim'); } return true; }
@@ -9022,14 +9138,29 @@ function textMouseDown(){
   return true;
 }
 function textMouseMove(){
-  if(layoutDrag){ layoutMouseMove(); return; }
+  if(layoutDrag){
+    const oldDx=offX(layoutDrag.id), oldDy=offY(layoutDrag.id);
+    layoutMouseMove(); editGuides={x:null,y:null};
+    const r=layoutRects.find(x=>!x.tool&&x.id===layoutDrag.id);
+    if(r){
+      const cur=layout[layoutDrag.id]||{}, cx=r.x+r.w/2+(cur.dx||0)-oldDx, cy=r.y+r.h/2+(cur.dy||0)-oldDy;
+      const targets=[{cx:W/2,cy:H/2},...collectAlignTargets(layoutDrag.id)];
+      for(const a of targets){ if(Math.abs(cx-a.cx)<=6){ layout[layoutDrag.id].dx+=(a.cx-cx); editGuides.x=a.cx; break; } }
+      for(const a of targets){ if(Math.abs(cy-a.cy)<=6){ layout[layoutDrag.id].dy+=(a.cy-cy); editGuides.y=a.cy; break; } }
+    }
+    return;
+  }
   if(!textDrag) return;
   const t=customText.find(x=>x.id===textDrag.id); if(!t) return;
-  t.x=clamp((mouse.x-textDrag.ox)/W, 0.02, 0.98);
-  t.y=clamp((mouse.y-textDrag.oy)/H, 0.02, 0.98);
+  let cx=mouse.x-textDrag.ox, cy=mouse.y-textDrag.oy; editGuides={x:null,y:null};
+  const targets=[{cx:W/2,cy:H/2},...collectAlignTargets(textDrag.id)];
+  for(const a of targets){ if(Math.abs(cx-a.cx)<=6){ cx=a.cx; editGuides.x=a.cx; break; } }
+  for(const a of targets){ if(Math.abs(cy-a.cy)<=6){ cy=a.cy; editGuides.y=a.cy; break; } }
+  t.x=clamp(cx/W, 0.02, 0.98);
+  t.y=clamp(cy/H, 0.02, 0.98);
   textDirty=true;
 }
-function textMouseUp(){ textDrag=null; layoutDrag=null; }
+function textMouseUp(){ textDrag=null; layoutDrag=null; editGuides={x:null,y:null}; }
 let leftColTop=104;                       // pushed down when the hub's top rows are in the way
 let compactStatus=false;                  // narrow: gems/coins/sign-in on one line under the title
 const AD_LLR_URL   = 'https://www.youtube.com/@AsrtsbLLR';
