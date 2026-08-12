@@ -253,7 +253,7 @@
 const SUPABASE_URL = 'https://edvurrilylypgfyvjyas.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
-let sb = null, authUser = null, board = [], boardT = 0, recovering = false;
+let sb = null, authUser = null, board = [], streakBoard = [], boardT = 0, recovering = false;
 const $ = id => document.getElementById(id);
 
 function displayName(u){
@@ -284,6 +284,7 @@ async function initAuth(){
         fetchAdmins(); fetchBanners(); fetchMsgs(); fetchPrices();
         profileLoaded=false;
         fetchProfile().then(()=>{                       // wait for the streak before deciding
+          processReferral();
           if(!openDailyGate()) maybeFirstRunTutorial();
         });
         fetchScoreReqs(); fetchMyBan(); fetchWeaponDefs(); fetchOwnBest();
@@ -370,7 +371,25 @@ async function fetchBoard(){
       .eq('game','outpost-zero').order('score',{ascending:false}).limit(10);
     board = data || []; boardT = Date.now();
     syncFallAccess();
+    fetchStreakBoard();
   }catch(err){ console.warn('board fetch failed', err); }
+}
+async function fetchStreakBoard(){
+  if(!sb) return;
+  try{
+    const { data } = await sb.from('scores').select('name,score')
+      .eq('game','outpost-zero-streak').order('score',{ascending:false}).limit(10);
+    streakBoard=data||[];
+  }catch(err){ console.warn('streak board fetch failed',err); }
+}
+async function submitStreak(){
+  if(!sb||!authUser||streakDays<1) return;
+  try{
+    await sb.from('scores').upsert(
+      {user_id:authUser.id,name:displayName(authUser),game:'outpost-zero-streak',score:streakDays},
+      {onConflict:'user_id,game'});
+    fetchStreakBoard();
+  }catch(err){ console.warn('streak submit failed',err); }
 }
 // ---- report a problem: small form -> Supabase 'reports' table (write-only) ----
 let reportOpen=false, lastReportT=0;
@@ -709,7 +728,7 @@ const WEAPONS = {
              blurb:'Bouncing solar bolts \u2014 hits ignite, infinite reach & ammo. Slow, kicks hard, wild spread.' },
   smg    : { name:'MP7 SMG',      dmg:11,  mag:55, reload:1400, fireRate:65,  auto:true,  pellets:1, fg:14,
              spread:0.135, aimSpread:0.05,  speed:15, len:26, kick:1.6, zoom:1.30, scoped:false,
-             moveMod:1.05, range:340,  fall:0.85, sndF:1800, sndD:0.05,
+             moveMod:1.05, range:340,  fall:0.8155, sndF:1800, sndD:0.05,
              blurb:'Pure spam. Huge mag, forgiving aim, holds up at range.' },
   shotgun: { name:'M870 SHOTGUN', dmg:30,  mag:8,  reload:1900, fireRate:760, auto:false, pellets:7, fg:10,
              spread:0.21,  aimSpread:0.10,  speed:13, len:30, kick:8,  zoom:1.25, scoped:false,
@@ -877,6 +896,7 @@ const WKEYS = [...PRIMARIES, ...SECONDARIES, ...MELEES, ...TEMP_PRIMARY, ...TEMP
 
 /* ---------------- DAILY TASKS + GEMS + GEM SHOP ---------------- */
 let gems=0, dailyTasks=[], tasksDate='', gemOwned={};
+const GEM_ECONOMY_VERSION=2;
 // ---- HUB LAYOUT: main admins can drag these blocks; the offsets apply for every player ----
 const LAYOUT_BLOCKS={
   banner:  'SEASON BANNER',
@@ -1036,13 +1056,67 @@ function layoutMouseMove(){
 function layoutMouseUp(){ layoutDrag=null; }
 // daily login streak: rolls over at 12:00 UTC like the tasks, and must be COLLECTED by hand
 let streakDays=0, streakLastDay='', streakBtnRect=null, streakMsgT=0, streakMsg='';
+let referralUsed=false, referralPaid=0, referralMsg='', referralMsgT=0, shareBtnRect=null;
+const REFERRAL_GEMS=5;
+function referralLink(){ return location.origin+location.pathname+'?ref='+encodeURIComponent(authUser.id); }
+async function shareReferral(){
+  if(!authUser){ referralMsg='SIGN IN TO GET YOUR SHARE LINK'; referralMsgT=now+2400; sfx('dry'); return; }
+  const url=referralLink(), text='Play OUTPOST ZERO with me! We both get 5 gems.';
+  try{
+    if(navigator.share) await navigator.share({title:'OUTPOST ZERO',text,url});
+    else await navigator.clipboard.writeText(url);
+    referralMsg=navigator.share?'SHARE LINK READY':'LINK COPIED \u2014 YOU BOTH GET 5 GEMS';
+  }catch(e){
+    try{ await navigator.clipboard.writeText(url); referralMsg='LINK COPIED \u2014 YOU BOTH GET 5 GEMS'; }
+    catch(e2){ window.prompt('Copy your share link:',url); referralMsg='SHARE THIS LINK \u2014 YOU BOTH GET 5 GEMS'; }
+  }
+  referralMsgT=now+3000; sfx('pickup');
+}
+async function payReferralClaims(){
+  if(!sb||!authUser) return;
+  try{
+    const game='outpost-zero-referral:'+authUser.id;
+    const {count}=await sb.from('scores').select('user_id',{count:'exact',head:true}).eq('game',game);
+    const total=count||0, unpaid=Math.max(0,total-referralPaid);
+    if(unpaid){ referralPaid=total; addGems(unpaid*REFERRAL_GEMS); saveMeta();
+      referralMsg='FRIEND JOINED! +'+(unpaid*REFERRAL_GEMS)+' GEMS'; referralMsgT=now+4000; }
+  }catch(e){ console.warn('referral payout failed',e); }
+}
+async function processReferral(){
+  if(!sb||!authUser){ return; }
+  await payReferralClaims();
+  const ref=new URLSearchParams(location.search).get('ref');
+  if(!ref||referralUsed||ref===authUser.id||!/^[0-9a-f-]{36}$/i.test(ref)) return;
+  try{
+    const {data:prior}=await sb.from('scores').select('game').eq('user_id',authUser.id)
+      .like('game','outpost-zero-referral:%').limit(1);
+    referralUsed=true;
+    if(prior&&prior.length){ saveMeta(); return; }
+    const {error}=await sb.from('scores').upsert(
+      {user_id:authUser.id,name:displayName(authUser),game:'outpost-zero-referral:'+ref,score:REFERRAL_GEMS},
+      {onConflict:'user_id,game'});
+    if(error) throw error;
+    addGems(REFERRAL_GEMS); saveMeta();
+    referralMsg='WELCOME GIFT! +5 GEMS \u00b7 YOUR FRIEND GETS 5 TOO'; referralMsgT=now+5000;
+    history.replaceState({},'',location.pathname+location.hash);
+  }catch(e){ referralUsed=false; console.warn('referral claim failed',e); }
+}
 // WHEEL SPIN: one every 15 minutes, claimed by hand
-const WHEEL=[{t:'3 \uD83D\uDC8E', gems:3, coins:0},
-             {t:'15 \uD83E\uDE99', gems:0, coins:15},
-             {t:'5 \uD83D\uDC8E', gems:5, coins:0},
-             {t:'30 \uD83E\uDE99', gems:0, coins:30}];
+const WHEEL=[{t:'6 \uD83D\uDC8E', gems:6, coins:0},
+             {t:'30 \uD83E\uDE99', gems:0, coins:30},
+             {t:'10 \uD83D\uDC8E', gems:10, coins:0},
+             {t:'60 \uD83E\uDE99', gems:0, coins:60}];
 const WHEEL_MS=15*60*1000;
 let wheelReady=0, wheelAcc=0, wheelOpen=false, wheelBtnRect=null, wheelRects=[];
+function countdownText(ms){
+  const sec=Math.max(0,Math.ceil(ms/1000)), m=Math.floor(sec/60), s=sec%60;
+  return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
+}
+function wheelCountdown(){ return wheelReady>0 ? 'READY' : countdownText(WHEEL_MS-wheelAcc); }
+function dailyCountdown(){
+  const next=(Number(todayIndex())+1)*86400000+43200000;
+  return countdownText(next-Date.now());
+}
 // ---- PROMO CODES ----
 let promoOpen=false, promoBtnRect=null, promoList=[], promoAdminOpen=false, promoRects=[];
 let formOpen=false, formSave=null, formFields=[];
@@ -1264,7 +1338,7 @@ function streakNext(){
 }
 function streakReward(day){                          // coins every day, gems on every 7th
   const coinsR=Math.min(300, 25+ (day-1)*25);
-  const gemsR = day%7===0 ? 10 : 0;
+  const gemsR = day%7===0 ? 100 : 0;
   return {coins:coinsR, gems:gemsR};
 }
 function collectStreak(){
@@ -1276,6 +1350,7 @@ function collectStreak(){
   addCoins(r.coins);
   if(r.gems) addGems(r.gems);
   saveMeta();
+  submitStreak();
   streakMsg = (broke?'streak reset \u2014 ':'')+'+'+r.coins+' \uD83E\uDE99'+(r.gems?('  +'+r.gems+' \uD83D\uDC8E'):'');
   streakMsgT=now+2400;
   sfx('pickup');
@@ -1345,7 +1420,28 @@ const POWERUPS=[
 ];
 let powerStock={};                 // persistent: how many of each you own
 let powerUsed={};                  // per-run: how many used this game (capped by max)
-let invincUntil=0, waveSkipPending=0, coinTimeAcc=0, killCoinAcc=0, powerMenuOpen=false, respawnPromptT=0, powerMenuRects=[], respawnRects=[];
+let invincUntil=0, waveSkipPending=0, coinTimeAcc=0, killCoinAcc=0, coinTrickles=[], coinTricklePopT=0,
+    chestRewardOpen=null, chestRewardBtn=null, powerMenuOpen=false, respawnPromptT=0, powerMenuRects=[], respawnRects=[];
+const COIN_TRICKLE_MS=3000;
+function startCoinTrickle(amount,label){
+  amount=Math.max(0,Math.round(amount)); if(!amount) return;
+  const wall=performance.now(), last=coinTrickles[coinTrickles.length-1];
+  const start=last?Math.max(wall,last.start+last.dur):wall;
+  const q={total:amount,credited:0,start,dur:COIN_TRICKLE_MS,label:label||'REWARD'};
+  coinTrickles.push(q); return q;
+}
+function tickCoinTrickles(wall){
+  if(!coinTrickles.length) return;
+  const q=coinTrickles[0]; if(wall<q.start) return;
+  const target=Math.min(q.total,Math.floor(q.total*Math.min(1,(wall-q.start)/q.dur)));
+  const delta=target-q.credited;
+  if(delta>0){ q.credited=target; addCoins(delta); coinTricklePopT=wall+650; }
+  if(wall>=q.start+q.dur){
+    if(q.credited<q.total) addCoins(q.total-q.credited);
+    coinTrickles.shift(); coinTricklePopT=wall+650;
+  }
+}
+function coinTrickleRemaining(){ return coinTrickles.reduce((n,q)=>n+q.total-q.credited,0); }
 let upgradePowerRect=null, upgradeAdRect=null, upgradeDonateRect=null;
 // external promo links (open in a new tab) — swap these for the real URLs
 // accounts with admin powers (lowercase emails). preview builds (!sb) always have admin for testing.
@@ -1811,18 +1907,19 @@ const LLR_URL   = 'https://www.youtube.com/@AsrtsbLLR';
 const MOVES_URL = 'https://movesforamission.org/donate-now/#1740457740469-d24153b1-38c1';
 function powerupMax(id){ return (POWERUPS.find(x=>x.id===id)||{}).max||0; }
 const GEM_SHOP=[
-  {key:'ar',      cost:120, slot:'primary'},
-  {key:'volt',    cost:400, slot:'secondary'},
-  {key:'dart',    cost:75,  slot:'secondary'},
-  {key:'hammer',  cost:400, slot:'melee'},
-  {key:'twinsai', cost:90,  slot:'melee'},
-  {key:'railgun', cost:60,  slot:'primary'},
-  {key:'medkit',  cost:200, slot:'utility'},
-  {key:'grenade', cost:30,  slot:'utility'},
-  {key:'freezer', cost:30,  slot:'utility'},
+  {key:'ar',      cost:1200, slot:'primary'},
+  {key:'volt',    cost:4000, slot:'secondary'},
+  {key:'dart',    cost:750,  slot:'secondary'},
+  {key:'hammer',  cost:4000, slot:'melee'},
+  {key:'twinsai', cost:900,  slot:'melee'},
+  {key:'railgun', cost:600,  slot:'primary'},
+  {key:'medkit',  cost:2000, slot:'utility'},
+  {key:'grenade', cost:300,  slot:'utility'},
+  {key:'freezer', cost:300,  slot:'utility'},
 ];
 const GEM_PRICE_DEFAULTS={};                        // filled below; lets us reset/compare
 for(const it of GEM_SHOP) GEM_PRICE_DEFAULTS[it.key]=it.cost;
+const GEM_PRICE_SCALE=10;                           // database keeps the legacy base prices
 function setGemPrice(key,cost){
   const it=GEM_SHOP.find(i=>i.key===key); if(!it) return false;
   cost=Math.max(0, Math.min(9999, Math.round(+cost||0)));
@@ -1832,26 +1929,30 @@ async function fetchPrices(){
   if(!sb) return;
   try{
     const { data } = await sb.from('weapon_prices').select('key,cost');
-    for(const r of (data||[])) setGemPrice(r.key, r.cost);
+    for(const r of (data||[])) setGemPrice(r.key, r.cost*GEM_PRICE_SCALE);
   }catch(e){}
 }
 async function saveGemPrice(key,cost){
   if(!setGemPrice(key,cost)) return;
   if(!sb) return;                                    // preview: local only
-  try{ await sb.from('weapon_prices').upsert({key, cost:GEM_SHOP.find(i=>i.key===key).cost}); }catch(e){}
+  try{ await sb.from('weapon_prices').upsert({key, cost:Math.round(GEM_SHOP.find(i=>i.key===key).cost/GEM_PRICE_SCALE)}); }catch(e){}
 }
 const TASK_POOL=[
-  {id:'kills',  d:'Defeat 40 enemies', goal:40, reward:25},
-  {id:'waves',  d:'Clear 8 waves',     goal:8,  reward:30},
-  {id:'bosses', d:'Defeat 3 warlords', goal:3,  reward:35},
-  {id:'chests', d:'Open 2 mod chests', goal:2,  reward:40},
+  {id:'kills',  d:'Defeat 40 enemies', goal:40, reward:250},
+  {id:'waves',  d:'Clear 8 waves',     goal:8,  reward:300},
+  {id:'bosses', d:'Defeat 3 warlords', goal:3,  reward:350},
+  {id:'chests', d:'Open 2 mod chests', goal:2,  reward:400},
 ];
-function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkDay:streakLastDay, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); }catch(e){} }
+const DAILY_REWARDS={kills:50, waves:100, bosses:350, chests:200};
+function normalizeDailyRewards(){
+  for(const t of dailyTasks) if(DAILY_REWARDS[t.id]!=null) t.reward=DAILY_REWARDS[t.id];
+}
+function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, gv:GEM_ECONOMY_VERSION, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); }catch(e){} }
 function saveMeta(){ saveMetaLocal(); queueProfileSave(); }
 // ---- account progress sync: purchases + currency live with the account, not the device ----
 let profileLoaded=false, profileSaveT=0, profilePending=false;
 function metaPayload(){
-  return {gems, coins, device:deviceId(), stk:streakDays, stkDay:streakLastDay, wr:wheelReady, wa:Math.round(wheelAcc),
+  return {gems, gv:GEM_ECONOMY_VERSION, coins, device:deviceId(), stk:streakDays, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
           hi:hiScore, mv:musicVol, sv:sfxVol};
@@ -1866,7 +1967,7 @@ function applyProfile(m){
   animOwned     = take(m.anim,  animOwned);
   dropUnownedFromLoadout();
   // the account is the source of truth for spendable balances
-  if(typeof m.gems==='number')  gems=m.gems;
+  if(typeof m.gems==='number')  gems=m.gems*(m.gv===GEM_ECONOMY_VERSION?1:10);
   if(typeof m.coins==='number') coins=m.coins;
   // ---- daily tasks: the account is the record, so finishing them twice on two devices is impossible ----
   if(typeof m.date==='string' && Array.isArray(m.tasks)){
@@ -1890,6 +1991,8 @@ function applyProfile(m){
   try{ if(musicGain) musicGain.gain.value=musicVol*0.7; if(sfxGain) sfxGain.gain.value=sfxVol; }catch(e){}
   if(typeof m.wr==='number') wheelReady=m.wr;
   if(typeof m.wa==='number') wheelAcc=m.wa;
+  referralUsed=!!(referralUsed||m.refUsed);
+  if(typeof m.refPaid==='number') referralPaid=Math.max(referralPaid,m.refPaid);
   // take the account's streak only when it is at least as far along as this device's,
   // so a profile landing after a local collect cannot hand out the same reward twice
   if(typeof m.stkDay==='string' && (+(m.stkDay||-1) >= +(streakLastDay||-1))){
@@ -1899,6 +2002,7 @@ function applyProfile(m){
   if(m.cosEq) cosmeticEquipped=m.cosEq;
   if(m.animEq && typeof m.animEq==='object') animEquipped=m.animEq;
   if(m.pow) powerStock=m.pow;
+  normalizeDailyRewards();
   for(const k in animEquipped){ const id=animEquipped[k];
     if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }
   syncOwnedWeapons();                                 // otherwise a synced purchase has no card
@@ -1916,7 +2020,12 @@ async function fetchProfile(){
   if(!sb || !authUser) return;
   try{
     const { data } = await sb.from('profiles').select('data').eq('user_id', authUser.id).maybeSingle();
-    if(data && data.data){ applyProfile(data.data); profileLoaded=true; saveMetaLocal(); }
+    if(data && data.data){
+      const migrateGems=data.data.gv!==GEM_ECONOMY_VERSION;
+      applyProfile(data.data); profileLoaded=true; saveMetaLocal();
+      if(migrateGems) await saveProfile(true);        // write v2 once so the 10x conversion cannot repeat
+      if(streakDays>0) submitStreak();                // seed/update the public streak board for existing accounts
+    }
     else { profileLoaded=true; saveProfile(true); }   // first sign-in: seed the cloud from this device
   }catch(e){ profileLoaded=false; }
 }
@@ -1933,10 +2042,11 @@ function queueProfileSave(){                          // debounce: batch rapid c
 function loadMeta(){
   try{
     const m=JSON.parse(localStorage.getItem('oz_meta')||'{}');
-    gems=m.gems||0; gemOwned=m.owned||{}; tasksDate=m.date||''; dailyTasks=m.tasks||[];
+    gems=(m.gems||0)*(m.gv===GEM_ECONOMY_VERSION?1:10); gemOwned=m.owned||{}; tasksDate=m.date||''; dailyTasks=m.tasks||[];
     coins=m.coins||0; cosmeticOwned=m.cos||{}; cosmeticEquipped=m.cosEq||{}; powerStock=m.pow||{};
     animOwned=m.anim||{}; animEquipped=(m.animEq && typeof m.animEq==='object') ? m.animEq : {};
     streakDays=m.stk||0; streakLastDay=m.stkDay||'';
+    referralUsed=!!m.refUsed; referralPaid=m.refPaid||0;
     wheelReady=m.wr||0; wheelAcc=m.wa||0;
     hiScore=m.hi||0;
     if(typeof m.mv==='number') musicVol=m.mv;
@@ -1950,12 +2060,14 @@ function loadMeta(){
     tasksDate=today;
     // fixed dailies: same three every day
     dailyTasks=[
-      {id:'kills',  d:'Defeat 40 enemies', goal:40, reward:5,  prog:0, done:false},
-      {id:'waves',  d:'Clear 8 waves',     goal:8,  reward:10, prog:0, done:false},
-      {id:'chests', d:'Open a mod chest',  goal:1,  reward:20, prog:0, done:false},
+      {id:'kills',  d:'Defeat 40 enemies', goal:40, reward:50,  prog:0, done:false},
+      {id:'waves',  d:'Clear 8 waves',     goal:8,  reward:100, prog:0, done:false},
+      {id:'chests', d:'Open a mod chest',  goal:1,  reward:200, prog:0, done:false},
     ];
     saveMeta();
   }
+  normalizeDailyRewards();
+  saveMetaLocal();                                  // persist one-time gem conversion and reward normalization
   syncOwnedWeapons();
 }
 function dropUnownedFromLoadout(){                    // a removed weapon must leave your hands too
@@ -2126,7 +2238,7 @@ let flameFuel=100, flameLock=false, daggersOut=null, splitBalls=[], flames=[], c
 let timeStopUntil=0, timeStopArm=0, fistFlurryUntil=0, fistNextT=0, fistUsesThisWave=0, parryUntil=0;
 let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
 let utilReadyT=0, medChan=0, medChanHeal=0, medCharges=Infinity, medRegenT=0, medCanChannel=true, medCdUntil=0, medUsesThisWave=0, MED_CD=60000, MED_USES=3, balls=[], grenades=[], pearls=[], utilityOut=false;
-const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, terafists:0, twinsai:6400, warpwave:18000, timeturner:12000};   // -20% vs daggers on all; terafists = no cd, gated by 5 uses/wave instead
+const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:6400, warpwave:18000, timeturner:12000};
 let wmods={}, bossBounty=false;
 function wm(k){ return wmods[k] || (wmods[k]={dmg:1,rate:1,mag:1,pellets:0,pierce:0,drain:1,cdAdd:1,slamR:1,range:1,fall:1,spread:1,arc:1}); }
 function abilityCdOf(k){ return Math.max(1500, (ABILITY_CD[k]||0) * wm(k).cdAdd); }
@@ -2171,12 +2283,12 @@ function rollUpgrades(){
   if(bossBounty){
     const mine=[loadout.primary, loadout.secondary, loadout.melee];
     const mods=WEAPON_MODS.filter(m => mine.includes(m.wkey) && !perkCounts[m.n]);
-    while(out.length<3 && mods.length) out.push(mods.splice((Math.random()*mods.length)|0,1)[0]);
+    while(out.length<4 && mods.length) out.push(mods.splice((Math.random()*mods.length)|0,1)[0]);
     if(out.length) return out;          // mod level: ONLY weapon mods, nothing else
     bossBounty=false;                   // no applicable mods left — fall back to perks
   }
   const pool=UPGRADES.filter(u => (!u.req || perkCounts[u.req]) && !(u.once && perkCounts[u.n]));
-  while(out.length<3 && pool.length) out.push(pool.splice((Math.random()*pool.length)|0,1)[0]);
+  while(out.length<4 && pool.length) out.push(pool.splice((Math.random()*pool.length)|0,1)[0]);
   return out;
 }
 function chooseUpgrade(i){
@@ -3039,7 +3151,7 @@ function drawWheel(){
   ctx.fillText('\uD83C\uDFA1 WHEEL SPIN', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(wheelReady>0?(wheelReady+' spin'+(wheelReady>1?'s':'')+' ready')
-                                   :'one spin every 15 minutes of play', pw-24), W/2, py+42);
+                                   :('next spin in '+wheelCountdown()), pw-24), W/2, py+42);
   wheelRects=[];
   // the wheel itself
   const cx=W/2, cy=py+56+Math.min(120,(ph-160)/2), R=Math.min(110,(ph-190)/2, pw/2-30);
@@ -3962,9 +4074,10 @@ function meleeAbility(){
     abilityCD[k]=now+abilityCdOf(k);
     noiseBurst(0.2,0.3,300);
   } else if(k==='bdaggers'){                         // hurl both flaming blades straight at the crosshair
-    if(daggersOut){ sfx('dry'); return; }            // already thrown
+    if(!ready || daggersOut){ sfx('dry'); return; }
     const a=aimAngle();
-    daggersOut = { t:now+1500, blades:[] };           // return in 1.5s
+    abilityCD[k]=now+abilityCdOf(k);
+    daggersOut = { t:now+1500, end:abilityCD[k], blades:[] }; // fixed 3s cooldown
     // both blades fly along the exact aim line, offset only slightly side-to-side so they don't overlap
     for(const perp of [-6, 6]){
       const ox=Math.cos(a+Math.PI/2)*perp, oy=Math.sin(a+Math.PI/2)*perp;
@@ -3987,6 +4100,7 @@ function typingInField(e){
 }
 addEventListener('keydown', e=>{
   if(typingInField(e)) return;          // don't eat keys while typing in the auth form
+  if(chestRewardOpen) return;            // chest menu stays open for the full three-second count-up
   if(reportOpen){ if(e.key==='Escape') closeReport(); return; }
   if(postOpen){ if(e.key==='Escape') closePost(); return; }
   if(msgOpen){ if(e.key==='Escape') closeMsgCompose(); return; }
@@ -4028,7 +4142,7 @@ addEventListener('keydown', e=>{
   }
   if(state==='upgrade'){
     const i = parseInt(k)-1;
-    if(i>=0 && i<3) chooseUpgrade(i);
+    if(i>=0 && i<4) chooseUpgrade(i);
     return;
   }
   if(state!=='play') return;
@@ -4068,6 +4182,7 @@ cv.addEventListener('mousedown', e=>{
   initAudio();
   if(e.button===0){
     mouse.down=true;
+    if(chestRewardOpen){ chestRewardClick(); return; }
     if(respawnPromptT){ respawnPromptClick(); return; }        // modal
     if(powerMenuOpen){ powerMenuClick(); return; }
     if(mouse.x>=gearRect.x && mouse.x<=gearRect.x+gearRect.w && mouse.y>=gearRect.y && mouse.y<=gearRect.y+gearRect.h){
@@ -4125,6 +4240,7 @@ cv.addEventListener('touchstart', e=>{
   e.preventDefault(); initAudio();
   for(const t of e.changedTouches){
     const x=px(t.clientX), y=t.clientY;
+    if(chestRewardOpen){ mouse.x=x; mouse.y=y; chestRewardClick(); continue; }
     if(respawnPromptT){ mouse.x=x; mouse.y=y; respawnPromptClick(); continue; }
     if(powerMenuOpen){ mouse.x=x; mouse.y=y; powerMenuClick(); continue; }
     if(x>=gearRect.x&&x<=gearRect.x+gearRect.w&&y>=gearRect.y&&y<=gearRect.y+gearRect.h){
@@ -4247,6 +4363,7 @@ function clickSelect(){
     if(inR(adLeftRect)){ try{ window.open(adLeftRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
     if(inR(adRightRect)){ try{ window.open(adRightRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
     if(inR(promoBtnRect)){ openPromo(); sfx('swap'); return; }
+    if(inR(shareBtnRect)){ shareReferral(); return; }
     if(inR(wheelBtnRect)){ openWheel(); sfx('swap'); return; }
     if(inR(streakBtnRect)){ collectStreak(); return; }
     if(inR(lookupBtnRect)){ if(isAdmin()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
@@ -4432,7 +4549,8 @@ function startGame(){
   bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; spawnQueue=[];
   wave=0; score=0; kills=0; betweenTimer=1400; prevBest=hiScore;
   practiceMode=null; practiceSpawns=[];
-  powerUsed={}; invincUntil=0; waveSkipPending=0; coinTimeAcc=0; killCoinAcc=0; powerMenuOpen=false; respawnPromptT=0;
+  powerUsed={}; invincUntil=0; waveSkipPending=0; coinTimeAcc=0; killCoinAcc=0;
+  coinTrickles=[]; coinTricklePopT=0; chestRewardOpen=null; powerMenuOpen=false; respawnPromptT=0;
   adminOpen=false; adminUsed = testMode ? true : false;
   cam.x=player.x; cam.y=player.y; zoom=1;
   state='play';
@@ -4507,7 +4625,7 @@ function spawnOne(type){
     else { x=WORLD.w-50; y=rand(60,WORLD.h-60); }
     tries++;
   } while(dist2(x,y,player.x,player.y) < 550*550 && tries<12);
-  const t=ETYPES[type], hpMul=(1+(wave-1)*0.12)*DIFFS[diffMode].hp;
+  const t=ETYPES[type], hpMul=(1+(wave-1)*0.047)*DIFFS[diffMode].hp;
   enemies.push({ type, x, y, r:t.r, hp:t.hp*hpMul, maxhp:t.hp*hpMul,
                  spd:t.spd*rand(0.9,1.1), fireT:now+rand(400,1400), hitT:0,
                  burnUntil:0, burnActiveUntil:0, fleeUntil:0, frozenUntil:0,
@@ -5134,6 +5252,7 @@ function update(dtms){
     meleeSwing(WEAPONS[player.cur], 1);
   }
   // thrown burning daggers: fly out, then home back to the hand; return at t
+  if(daggersOut && now>=daggersOut.end) daggersOut=null;
   if(daggersOut){
     const back = now>=daggersOut.t;
     for(const bl of daggersOut.blades){
@@ -5214,7 +5333,7 @@ function update(dtms){
   } else if(!practiceMode && !enemies.length){
     if(wave>=1 && !upgradeOffered){
       taskProgress('waves',1);
-      addCoins(5);                      // small bonus for clearing a wave
+      startCoinTrickle(5,'WAVE CLEAR'); // count the clear bonus in over exactly three seconds
       bossBounty = wave%10===0;   // weapon-mod level every 10 waves
       upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
       state='upgrade'; sfx('wave');
@@ -5331,14 +5450,14 @@ function update(dtms){
           const pa=Math.atan2(player.y-e.y, player.x-e.x);
           for(const off of [-0.14,0,0.14]){
             const a=pa+off+rand(-0.04,0.04);
-            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*6.5,vy:Math.sin(a)*6.5,life:2400,dmg:18,king:true});
+            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*6.5,vy:Math.sin(a)*6.5,life:2400,dmg:20.7,king:true});
           }
         }
         if(now>=e.ringT){                        // ring in every direction like RED, double damage
           e.ringT=now+4000;
           for(let i=0;i<14;i++){
             const a=i/14*TAU + rand(-0.05,0.05);
-            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,life:2600,dmg:18,king:true});
+            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,life:2600,dmg:20.7,king:true});
           }
           sfx('shoot',{sndF:180,sndD:0.2});
         }
@@ -5525,29 +5644,30 @@ function update(dtms){
         if(sawLock&&sawFuel>=100) sawLock=false;
         sfx('ammo');
       } else if(p.type==='chest'){
-        // chest reward: an instant weapon mod + 50-300 coins + 0-3 GEMS (0: 2/3, 1: 1/4, 2: 1/20, 3: rest)
+        // chest reward: an instant weapon mod + 50-300 coins + 0-30 GEMS (gem economy is 10x)
         const r=Math.random();
-        const gemDrop = r<2/3 ? 0 : r<11/12 ? 1 : r<11/12+1/20 ? 2 : 3;
-        const coinDrop = 50 + ((Math.random()*251)|0);          // 50-300 coins
+        const gemDrop = r<2/3 ? 0 : r<11/12 ? 10 : r<11/12+1/20 ? 20 : 30;
+        const coinDrop = p.coins || (50 + ((Math.random()*251)|0));
         if(practiceMode){
           waveMsg='\uD83C\uDF81 CHEST (no rewards in practice)'; waveMsgT=now+2000;
         } else {
           // every chest instantly grants a weapon mod for an equipped weapon
           const mine=[loadout.primary, loadout.secondary, loadout.melee];
           const mods=WEAPON_MODS.filter(m => mine.includes(m.wkey) && !perkCounts[m.n]);
-          let modTxt='';
+          let modTxt='', modName='NO NEW MOD';
           if(mods.length){
             const m=mods[(Math.random()*mods.length)|0];
             m.f(); perkCounts[m.n]=(perkCounts[m.n]||0)+1;
-            modTxt=m.n+'  \u00b7  ';
+            modName=m.n; modTxt=m.n+'  \u00b7  ';
           }
-          addCoins(coinDrop);
+          const trickle=startCoinTrickle(coinDrop,'MOD CHEST');
           if(sb && !authUser){
             waveMsg='\uD83C\uDF81 '+modTxt+'+'+coinDrop+' \uD83E\uDE99 (sign in for \uD83D\uDC8E)'; waveMsgT=now+2600;
           } else {
             if(gemDrop>0) addGems(gemDrop);
             waveMsg='\uD83C\uDF81 '+modTxt+'+'+gemDrop+' \uD83D\uDC8E  +'+coinDrop+' \uD83E\uDE99'; waveMsgT=now+2600;
           }
+          chestRewardOpen={coins:coinDrop,gems:gemDrop,mod:modName,trickle,end:trickle.start+trickle.dur};
         }
         burst(p.x,p.y,'#ffd24d',18,5); sfx('pickup');
         taskProgress('chests',1);
@@ -5561,7 +5681,8 @@ function update(dtms){
 }
 function hurtPlayer(dmg){
   if(now<invincUntil) return;                       // invincibility powerup: no damage
-  player.hp-=dmg*perks.armor*DIFFS[diffMode].dmg; player.hurtCd=550; player.hurtFlash=1;
+  const waveDmg=1+Math.max(0,wave-1)*0.053;
+  player.hp-=dmg*waveDmg*perks.armor*DIFFS[diffMode].dmg; player.hurtCd=550; player.hurtFlash=1;
   addShake(6); sfx('hurt');
   if(player.hp<=0){
     if(practiceMode){
@@ -5610,11 +5731,11 @@ function usePowerup(id){
     enemies=[]; ebullets=[]; spawnQueue=[];
     waveMsg='\u23ED\uFE0F WAVE SKIPPER \u2014 3 free upgrades'; waveMsgT=now+2000;
   } else if(id==='airdrop'){
-    // 90% ammo crate, 9% medkit, 1% 10 gems
+    // 90% ammo crate, 9% medkit, 1% 100 gems
     const r=Math.random();
     if(r<0.90){ pickups.push({x:player.x+rand(-30,30),y:player.y+rand(-30,30),type:'ammo'}); waveMsg='\uD83D\uDCE6 AMMO CRATE'; }
     else if(r<0.99){ pickups.push({x:player.x+rand(-30,30),y:player.y+rand(-30,30),type:'med'}); waveMsg='\uD83D\uDCE6 MEDKIT'; }
-    else { addGems(10); waveMsg='\uD83D\uDCE6 JACKPOT +10 \uD83D\uDC8E'; }
+    else { addGems(100); waveMsg='\uD83D\uDCE6 JACKPOT +100 \uD83D\uDC8E'; }
     waveMsgT=now+1600; burst(player.x,player.y,'#cdd6b0',14,4);
   }
   sfx('pickup');
@@ -5846,9 +5967,10 @@ function drawWorld(){
       ctx.fillStyle='rgba(255,240,200,'+hpf+')';
       ctx.beginPath(); ctx.arc(b.x,b.y,2.4,0,TAU); ctx.fill();
     } else if(b.king){
-      ctx.fillStyle='#b45af0';
+      const flashGreen=Math.sin(now/85)>0;
+      ctx.fillStyle='#ff3030';
       ctx.beginPath(); ctx.arc(b.x,b.y,8,0,TAU); ctx.fill();
-      ctx.fillStyle='#e9c8ff';
+      ctx.fillStyle=flashGreen?'#5cff55':'#ffb0b0';
       ctx.beginPath(); ctx.arc(b.x,b.y,3.5,0,TAU); ctx.fill();
     } else {
       ctx.strokeStyle='#e05b52'; ctx.lineWidth=3/zoom;
@@ -6212,9 +6334,9 @@ function drawHUD(){
       const cdMax=abilityCdOf('timeturner')||1;
       frac=clamp(1-((abilityCD.timeturner||0)-now)/cdMax, 0, 1);
     } else if(player.cur==='bdaggers'){
-      // daggers "cooldown" is the throw-and-return window
       lbl='E: HURL';
-      frac = daggersOut ? clamp(1-(daggersOut.t-now)/1500, 0, 1) : 1;
+      const cdMax=abilityCdOf('bdaggers')||1;
+      frac=clamp(1-((abilityCD.bdaggers||0)-now)/cdMax,0,1);
     } else {
       const cdMax=abilityCdOf(player.cur)||1;
       frac=clamp(1-((abilityCD[player.cur]||0)-now)/cdMax, 0, 1);
@@ -6693,7 +6815,7 @@ function drawSelect(){
   layoutRects=[]; if(!(layoutMode||textMode)) textRects=[];   // one registry per frame
   cardRects=[]; detailBtns=[]; catBtns=[]; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
-  adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null;
+  adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
   // swallow a click meant for the page you are on (stale shop/practice/feed buttons)
   shopRects=[]; shopTabRects=[]; practiceRects=[]; feedXRects=[];
@@ -7394,8 +7516,32 @@ function drawPractice(){
   ctx.fillStyle=hov?'#101208':'#e8b658'; ctx.font='700 15px ui-monospace,Consolas,monospace';
   ctx.fillText('\u2039 BACK', W/2, by+(bh-15)/2);
 }
+function drawStreakBoard(){
+  const pw=Math.min(210,Math.max(165,W*0.27)), px=14, py=14;
+  const rows=Math.min(10,streakBoard.length), ph=38+Math.max(1,rows)*17+10;
+  ctx.fillStyle='rgba(0,0,0,0.52)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#ffb057'; ctx.lineWidth=1; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#ffb057'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83D\uDD25 TOP 10 STREAKS',px+pw/2,py+16);
+  if(rows){
+    ctx.font='9px ui-monospace,Consolas,monospace';
+    for(let i=0;i<rows;i++){
+      const y=py+36+i*17, me=authUser&&streakBoard[i].name===displayName(authUser);
+      ctx.fillStyle=me?'#a7c15e':(i<3?'#ffe08a':'#8a9268'); ctx.textAlign='left';
+      ctx.fillText((i+1)+'. '+String(streakBoard[i].name).slice(0,12),px+9,y);
+      ctx.textAlign='right'; ctx.fillText(streakBoard[i].score+'d',px+pw-9,y);
+    }
+  } else {
+    ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
+    ctx.fillText(sb?'collect a reward to rank':'leaderboard offline',px+pw/2,py+39);
+  }
+  ctx.textBaseline='alphabetic'; ctx.textAlign='center';
+  return py+ph;
+}
 function drawHub(){
   selBg();
+  drawStreakBoard();
   compactStatus = W<680;
   pendingCancelRect=null;
   // the leaderboard panel hosts the lookup when it is shown; otherwise the bottom row does
@@ -7570,7 +7716,7 @@ function drawHub(){
   ctx.textBaseline='top';
   // ---- HOW TO PLAY / SHOP / PRACTICE row, right below DEPLOY ----
   const hbGap=8, hbH=40;                             // bigger, easier targets
-  const hbN=(lbShown?3:4)+2;                          // +CODE +SPIN (and the lookup when narrow)
+  const hbN=(lbShown?3:4)+3;                          // +CODE +SPIN +SHARE (and lookup when narrow)
   const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
   const hbY=Math.min(dy+dh+10, H-hbH-8);           // sits under DEPLOY, never off the bottom
   let hbX=W/2-(hbW*hbN+hbGap*(hbN-1))/2;
@@ -7594,9 +7740,14 @@ function drawHub(){
   shopBtnRect=hubBtn('\uD83D\uDC8E SHOP \u00b7 '+gems,'#7fd8ff','#bfe8ff');
   pracBtnRect=hubBtn('\uD83C\uDFAF PRACTICE','#a7c15e','#cfe0a8');
   promoBtnRect=hubBtn('\uD83C\uDF81 CODE','#a7c15e','#cfe0a8');
-  wheelBtnRect=hubBtn('\uD83C\uDFA1 SPIN'+(wheelReady>0?' ('+wheelReady+')':''),
+  shareBtnRect=hubBtn('\uD83D\uDD17 SHARE +5','#bfa8ff','#d8c8ff');
+  wheelBtnRect=hubBtn('\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+')':wheelCountdown()),
                       wheelReady>0?'#e8b658':'#5a5648', wheelReady>0?'#e8d9a8':'#8a9268');
   if(!lbShown) lookupBtnRect=hubBtn('\uD83D\uDD0D LOOKUP','#7fd8ff','#bfe8ff');
+  if(now<referralMsgT){
+    ctx.fillStyle='#bfa8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(referralMsg,W-30),W/2,Math.max(12,dy-13));
+  }
   if(pendingPractice){
     ctx.fillStyle='#a7c15e'; ctx.font='700 11px ui-monospace,Consolas,monospace';
     ctx.fillText('\uD83C\uDFAF pick PRIMARY + SIDEARM + MELEE to start practice', W/2, Math.min(hbY+hbH+12, H-12));
@@ -7709,7 +7860,7 @@ function drawHub(){
     ctx.fillText('\uD83D\uDCCB DAILY TASKS', tpX+10, tpY+7);
     ctx.textAlign='right';
     ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText('resets 12:00 UTC', tpX+tpW-10, tpY+8);
+    ctx.fillText('new quests in '+dailyCountdown(), tpX+tpW-10, tpY+8);
     ctx.textAlign='left';
     if(signedOut){
       ctx.fillStyle='#d0a548'; ctx.font='10px ui-monospace,Consolas,monospace';
@@ -8082,14 +8233,14 @@ function drawUpgrade(){
     return;
   }
 
-  // ---------- WIDE: original 3-across layout ----------
-  const cw=Math.min(250,(W-100)/3), ch=180, gap=20;
-  const x0=W/2-(cw*3+gap*2)/2, y0=H*0.34;
+  // ---------- WIDE: four choices across ----------
+  const gap=16, cw=Math.min(230,(W-80-(n-1)*gap)/n), ch=180;
+  const totalW=cw*n+gap*(n-1), x0=W/2-totalW/2, y0=H*0.34;
 
   // promo row: [ SUBSCRIBE LLR ] [ big POWERUPS ] [ DONATE MOVES ]
   {
     const rowY = y0-70, rowH = 52;
-    const midW = Math.min(300, (W-100)*0.42), sideW = Math.min(190, ((cw*3+gap*2)-midW)/2 - 10);
+    const midW = Math.min(300, totalW*0.42), sideW = Math.min(190, (totalW-midW)/2 - 10);
     const midX = W/2-midW/2, adX = midX-sideW-14, dnX = midX+midW+14;
     upgradeAdRect={x:adX,y:rowY,w:sideW,h:rowH};
     let hv=mouse.x>=adX&&mouse.x<=adX+sideW&&mouse.y>=rowY&&mouse.y<=rowY+rowH;
@@ -8261,6 +8412,12 @@ function drawDailyGate(){
   if(r.coins) parts.push(r.coins+' \uD83E\uDE99');
   ctx.fillStyle='#cfe0a8'; ctx.font='700 '+(W<520?24:34)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(parts.join('   +   '), W-40), W/2, y); y+=42;
+  const bannerW=Math.min(560,W-32), bannerH=34, bannerX=W/2-bannerW/2;
+  ctx.fillStyle='rgba(127,216,255,0.12)'; ctx.fillRect(bannerX,y-18,bannerW,bannerH);
+  ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(bannerX+0.5,y-17.5,bannerW,bannerH);
+  ctx.fillStyle='#bfe8ff'; ctx.font='700 '+(W<520?10:13)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('SIGN IN TOMORROW FOR A GROWING REWARD!',bannerW-18),W/2,y-1);
+  y+=40;
   if(r.day%7!==0){
     ctx.fillStyle='#6b7455'; ctx.font='10px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine('keep the streak going \u2014 day '+(r.day+1)+' pays more, and every 7th day pays gems', W-40), W/2, y);
@@ -8983,17 +9140,84 @@ function drawCurrencyHUD(){
   ctx.textAlign='left'; ctx.textBaseline='middle';
   ctx.font='700 13px ui-monospace,Consolas,monospace';
   const gt='\uD83D\uDC8E '+gems, ct='\uD83E\uDE99 '+coins;
-  const bw=Math.max(ctx.measureText(gt).width, ctx.measureText(ct).width)+22, bh=48,
-        bx=52+offX('coins'), by=Math.max(104, leftColTop)+offY('coins');
+  const spinTxt='\uD83C\uDFA1 '+wheelCountdown();
+  const bw=Math.max(ctx.measureText(gt).width,ctx.measureText(ct).width,ctx.measureText(spinTxt).width)+22, bh=64,
+        bx=52+offX('coins'), hubBelowStreak=(state==='select'&&selPage==='hub')?250:0,
+        by=Math.max(104,leftColTop,hubBelowStreak)+offY('coins');
   layoutBlock('coins',bx,by,bw,bh);
   const paintCoins=()=>{
   ctx.fillStyle='rgba(8,10,5,0.78)'; ctx.fillRect(bx,by,bw,bh);
   ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,by+0.5,bw,bh);
   ctx.fillStyle='#bfe8ff'; ctx.fillText(gt, bx+11, by+15);
   ctx.fillStyle='#ffe08a'; ctx.fillText(ct, bx+11, by+33);
+  ctx.fillStyle=wheelReady>0?'#e8b658':'#8a9268'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+  ctx.fillText(spinTxt, bx+11, by+51);
+  if(performance.now()<coinTricklePopT){
+    ctx.fillStyle='#ffe08a'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+    ctx.fillText('\u2191  '+coinTrickleRemaining()+' coming', bx+bw+8, by+33);
+  }
   };
   withBlockColour('coins', paintCoins);
   ctx.restore();
+}
+function drawPlayQuests(){
+  if(state!=='play' && state!=='upgrade') return;
+  const signedOut=sb&&!authUser, rows=signedOut?1:dailyTasks.length;
+  const pw=Math.min(280,Math.max(210,W*0.28)), rh=25, ph=30+rows*rh;
+  const px=16, py=Math.max(72,H/2-ph/2);
+  ctx.save(); ctx.globalAlpha=0.72;
+  ctx.fillStyle='rgba(5,7,4,0.68)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  ctx.textBaseline='middle'; ctx.textAlign='left';
+  ctx.fillStyle='#e8b658'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83D\uDCCB DAILY QUESTS',px+9,py+14);
+  ctx.textAlign='right'; ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
+  ctx.fillText(dailyCountdown(),px+pw-9,py+14);
+  ctx.textAlign='left';
+  if(signedOut){
+    ctx.fillStyle='#d0a548'; ctx.font='9px ui-monospace,Consolas,monospace';
+    ctx.fillText('SIGN IN TO EARN GEMS',px+9,py+30+rh/2);
+  } else for(let i=0;i<dailyTasks.length;i++){
+    const t=dailyTasks[i], y=py+30+i*rh+rh/2;
+    ctx.fillStyle=t.done?'#a7c15e':'#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine((t.done?'\u2714 ':'')+t.d,pw-92),px+9,y);
+    ctx.textAlign='right'; ctx.fillStyle=t.done?'#a7c15e':'#8a9268';
+    ctx.fillText(t.done?('\uD83D\uDC8E'+t.reward):(t.prog+'/'+t.goal+'  \uD83D\uDC8E'+t.reward),px+pw-9,y);
+    ctx.textAlign='left';
+  }
+  ctx.restore();
+}
+function drawChestReward(){
+  if(!chestRewardOpen) return;
+  const r=chestRewardOpen, done=performance.now()>=r.end;
+  const pw=Math.min(390,W-24), ph=245, px=W/2-pw/2, py=H/2-ph/2;
+  ctx.save();
+  ctx.fillStyle='rgba(3,5,2,0.88)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#101208'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#ffd24d'; ctx.lineWidth=2; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#ffd24d'; ctx.font='700 20px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83C\uDF81 MOD CHEST',W/2,py+34);
+  ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace'; ctx.fillText('BOSS REWARD',W/2,py+56);
+  ctx.fillStyle='#cfe0a8'; ctx.font='700 14px ui-monospace,Consolas,monospace';
+  ctx.fillText(r.mod,W/2,py+91);
+  ctx.fillStyle='#ffe08a'; ctx.font='700 18px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83E\uDE99 '+Math.min(r.coins,r.trickle.credited)+' / '+r.coins,W/2,py+126);
+  ctx.fillStyle='#bfe8ff'; ctx.font='700 13px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83D\uDC8E +'+r.gems,W/2,py+151);
+  const bw=150,bh=32,bx=W/2-bw/2,by=py+190;
+  chestRewardBtn=done?{x:bx,y:by,w:bw,h:bh}:null;
+  ctx.fillStyle=done?'rgba(94,196,106,0.7)':'rgba(74,70,52,0.45)'; ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle=done?'#7dff8c':'#5a5648'; ctx.strokeRect(bx+0.5,by+0.5,bw,bh);
+  ctx.fillStyle=done?'#06210a':'#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+  ctx.fillText(done?'CONTINUE':('COUNTING... '+countdownText(r.end-performance.now())),W/2,by+bh/2);
+  ctx.restore();
+}
+function chestRewardClick(){
+  if(!chestRewardBtn) return;
+  if(mouse.x>=chestRewardBtn.x&&mouse.x<=chestRewardBtn.x+chestRewardBtn.w&&mouse.y>=chestRewardBtn.y&&mouse.y<=chestRewardBtn.y+chestRewardBtn.h){
+    chestRewardOpen=null; chestRewardBtn=null; sfx('swap');
+  }
 }
 // account chip: was an HTML overlay that sat on top of the game text on every page
 function drawAccountChip(){
@@ -9064,9 +9288,12 @@ function frame(){
 
   // `now` is a GAME clock. It freezes while the pause menu (or a modal) is open, so
   // utility cooldowns, reloads, ability timers and burn/freeze don't tick while paused.
-  const frozen = menuOpen || powerMenuOpen || respawnPromptT || reportOpen || postOpen || msgOpen || scoreEditOpen || appealOpen || promoOpen || formOpen;
+  const frozen = menuOpen || powerMenuOpen || respawnPromptT || chestRewardOpen || reportOpen || postOpen || msgOpen || scoreEditOpen || appealOpen || promoOpen || formOpen;
   if(!frozen) now += dtms;
+  tickCoinTrickles(wall);                         // reward count-ups continue inside the reward menu
   if(state==='play' && !frozen) update(dtms);
+  // Daily quests reset at noon UTC even if the player stays inside a run.
+  if(String(Math.floor((Date.now()-43200000)/86400000))!==tasksDate) loadMeta();
 
   // show the OS mouse pointer while any menu/popup is open (so buttons are easy to click);
   // otherwise hide it and use the in-game crosshair
@@ -9090,8 +9317,6 @@ function frame(){
         boardT=Date.now(); fetchBoard(); fetchBanners(); fetchPrices(); if(isAdmin()) fetchMsgs();
       }
     }
-    // roll daily tasks over at 12:00 UTC even mid-session
-    if(String(Math.floor((Date.now()-43200000)/86400000))!==tasksDate) loadMeta();
     drawSelect();
   }
   else {
@@ -9108,8 +9333,10 @@ function frame(){
   if(powerMenuOpen) drawPowerMenu();
   if(respawnPromptT) drawRespawnPrompt();
   if(state==='select' && selPage==='hub') drawSideAds();   // stationary ads beside the menu
+  drawPlayQuests();                       // semi-transparent quest tracker during a run
   drawCurrencyHUD();                      // gems + coins: always visible, left side
   drawAccountChip();                      // sign in / out
+  drawChestReward();                      // boss chest reward menu sits above the run and HUD
   if(state==='select') drawCustomText();          // admin-placed text, on whichever page it belongs to
   if(layoutMode && state==='select' && selPage==='hub') drawLayoutOverlay();   // last: everything has registered
   if(textMode && state==='select') drawTextOverlay();
