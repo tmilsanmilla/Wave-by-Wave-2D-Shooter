@@ -1119,12 +1119,12 @@ async function processReferral(){
     history.replaceState({},'',location.pathname+location.hash);
   }catch(e){ referralUsed=false; console.warn('referral claim failed',e); }
 }
-// WHEEL SPIN: one every 15 minutes, claimed by hand
+// WHEEL SPIN: one every 20 minutes spent anywhere on the site, claimed by hand
 const WHEEL=[{t:'6 \uD83D\uDC8E', gems:6, coins:0},
              {t:'30 \uD83E\uDE99', gems:0, coins:30},
              {t:'10 \uD83D\uDC8E', gems:10, coins:0},
              {t:'60 \uD83E\uDE99', gems:0, coins:60}];
-const WHEEL_MS=15*60*1000;
+const WHEEL_MS=20*60*1000;
 let wheelReady=0, wheelAcc=0, wheelOpen=false, wheelBtnRect=null, wheelRects=[];
 function countdownText(ms){
   const sec=Math.max(0,Math.ceil(ms/1000)), m=Math.floor(sec/60), s=sec%60;
@@ -1316,9 +1316,9 @@ function promoExpired(pc){
 let wheelSpinning=false, wheelStart=0, wheelDur=0, wheelTarget=0, wheelAngle=0, wheelResult=-1;
 function wheelTick(dtms){
   if(sb && !authUser) return;                      // rewards are sign-in only, like everything else
-  if(state!=='play') return;                       // earned by playing
-  wheelAcc+=dtms;
-  while(wheelAcc>=WHEEL_MS){ wheelAcc-=WHEEL_MS; wheelReady++; }
+  if(wheelReady>0){ wheelReady=1; wheelAcc=0; return; } // only one spin may be held at a time
+  wheelAcc+=Math.max(0,dtms);                      // menus, armory, play, and open modals all count
+  if(wheelAcc>=WHEEL_MS){ wheelAcc=0; wheelReady=1; }
 }
 function openWheel(){
   if(wheelReady<1){ sfx('dry'); return; }
@@ -1440,7 +1440,7 @@ const POWERUPS=[
 ];
 let powerStock={};                 // persistent: how many of each you own
 let powerUsed={};                  // per-run: how many used this game (capped by max)
-let invincUntil=0, waveSkipPending=0, coinTimeAcc=0, killCoinAcc=0, coinTrickles=[], coinTricklePopT=0,
+let invincUntil=0, waveSkipPending=0, coinTimeAcc=0, killCoinAcc=0, waveCoinBank=0, coinTrickles=[], coinTricklePopT=0,
     chestRewardOpen=null, chestRewardBtn=null, powerMenuOpen=false, respawnPromptT=0, powerMenuRects=[], respawnRects=[];
 const COIN_TRICKLE_MS=3000;
 function startCoinTrickle(amount,label){
@@ -1462,6 +1462,13 @@ function tickCoinTrickles(wall){
   }
 }
 function coinTrickleRemaining(){ return coinTrickles.reduce((n,q)=>n+q.total-q.credited,0); }
+function recordWaveCoinReward(){
+  waveCoinBank+=5;
+  if(wave>0 && wave%5===0){
+    startCoinTrickle(waveCoinBank,'5-WAVE PAYOUT');
+    waveCoinBank=0;
+  }
+}
 let upgradePowerRect=null, upgradeAdRect=null, upgradeDonateRect=null;
 // external promo links (open in a new tab) — swap these for the real URLs
 // accounts with admin powers (lowercase emails). preview builds (!sb) always have admin for testing.
@@ -2044,8 +2051,8 @@ function applyProfile(m){
   if(typeof m.mv==='number') musicVol=m.mv;
   if(typeof m.sv==='number') sfxVol=m.sv;
   try{ if(musicGain) musicGain.gain.value=musicVol*0.7; if(sfxGain) sfxGain.gain.value=sfxVol; }catch(e){}
-  if(typeof m.wr==='number') wheelReady=m.wr;
-  if(typeof m.wa==='number') wheelAcc=m.wa;
+  if(typeof m.wr==='number') wheelReady=m.wr>0?1:0;
+  if(typeof m.wa==='number') wheelAcc=wheelReady?0:clamp(m.wa,0,WHEEL_MS-1);
   referralUsed=!!(referralUsed||m.refUsed);
   if(typeof m.stkMax==='number') streakLongest=Math.max(streakLongest,m.stkMax);
   if(typeof m.refPaid==='number') referralPaid=Math.max(referralPaid,m.refPaid);
@@ -2104,7 +2111,7 @@ function loadMeta(){
     animOwned=m.anim||{}; animEquipped=(m.animEq && typeof m.animEq==='object') ? m.animEq : {};
     streakDays=m.stk||0; streakLongest=m.stkMax||streakDays; streakLastDay=m.stkDay||'';
     referralUsed=!!m.refUsed; referralPaid=m.refPaid||0;
-    wheelReady=m.wr||0; wheelAcc=m.wa||0;
+    wheelReady=m.wr>0?1:0; wheelAcc=wheelReady?0:clamp(m.wa||0,0,WHEEL_MS-1);
     hiScore=m.hi||0;
     if(typeof m.mv==='number') musicVol=m.mv;
     if(typeof m.sv==='number') sfxVol=m.sv;
@@ -2276,7 +2283,7 @@ let bullets=[], ebullets=[], enemies=[], particles=[], pickups=[];
 let cam={x:WORLD.w/2,y:WORLD.h/2}, zoom=1, shakeMag=0, shakeX=0, shakeY=0;
 let wave=0, score=0, kills=0, waveMsg='', waveMsgT=0, hiScore=0, prevBest=0;
 let diffMode='normal';
-let practiceMode=null, practiceSpawns=[], practiceRects=[], pracBtnRect=null, dpsLog=[], dpsPrevHp=0, dpsTotal=0, dpsStart=0, pracLockMsgT=0, pracNeedMsgT=0, pendingPractice=null;
+let practiceMode=null, practiceSpawns=[], practiceRects=[], pracBtnRect=null, arenaBtnRect=null, dpsLog=[], dpsPrevHp=0, dpsTotal=0, dpsStart=0, pracLockMsgT=0, pracNeedMsgT=0, pendingPractice=null;
 const DIFFS={easy:{hp:0.75,dmg:0.7,label:'EASY'}, normal:{hp:1,dmg:1,label:'NORMAL'}, hard:{hp:1.35,dmg:1.3,label:'HARD'}};
 let spawnQueue=[], spawnTimer=0, betweenTimer=1500;
 let loadout={primary:null,secondary:null,melee:null,utility:null}, cardRects=[], deployRect=null;
@@ -2296,23 +2303,34 @@ let timeStopUntil=0, timeStopArm=0, fistFlurryUntil=0, fistNextT=0, fistUsesThis
 let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
 let utilReadyT=0, medChan=0, medChanHeal=0, medCharges=Infinity, medRegenT=0, medCanChannel=true, medCdUntil=0, medUsesThisWave=0, MED_CD=60000, MED_USES=3, balls=[], grenades=[], pearls=[], utilityOut=false;
 const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:6400, warpwave:18000, timeturner:12000};
-let wmods={}, bossBounty=false;
+let wmods={}, utilMods={}, bossBounty=false;
 function wm(k){ return wmods[k] || (wmods[k]={dmg:1,rate:1,mag:1,pellets:0,pierce:0,drain:1,cdAdd:1,slamR:1,range:1,fall:1,spread:1,arc:1}); }
+function um(k){ return utilMods[k] || (utilMods[k]={cd:1}); }
 function abilityCdOf(k){ return Math.max(1500, (ABILITY_CD[k]||0) * wm(k).cdAdd); }
-const WEAPON_MODS=[
-  {wkey:'ar',      n:'MATCH RECEIVER', d:'SCAR-H: +20% damage, +15% range',     f:()=>{wm('ar').dmg*=1.20; wm('ar').range*=1.15;}},
-  {wkey:'smg',     n:'OVERCLOCK KIT',  d:'MP7: +15% fire rate, +15% mag',       f:()=>{wm('smg').rate*=0.85; wm('smg').mag*=1.15;}},
-  {wkey:'shotgun', n:'CHOKE BARREL',   d:'M870: -35% damage falloff, tighter', f:()=>{wm('shotgun').fall*=0.65; wm('shotgun').spread*=0.8;}},
-  {wkey:'sniper',  n:'DEPLETED CORE',  d:'AWM: +1 pierce, +15% damage',        f:()=>{wm('sniper').pierce+=1; wm('sniper').dmg*=1.15;}},
-  {wkey:'m9',      n:'RACE TRIGGER',   d:'M9: +25% fire rate, +20% mag',       f:()=>{wm('m9').rate*=0.80; wm('m9').mag*=1.20;}},
-  {wkey:'revolver',n:'HOT LOADS',      d:'.357: +25% damage, +20% range',      f:()=>{wm('revolver').dmg*=1.25; wm('revolver').range*=1.20;}},
-  {wkey:'g18',     n:'DRUM FEED',      d:'G18: +25% mag, +10% fire rate',      f:()=>{wm('g18').mag*=1.25; wm('g18').rate*=0.90;}},
-  {wkey:'volt',    n:'FOCUSING COIL',  d:'VOLT: +20% damage, +15% mag',        f:()=>{wm('volt').dmg*=1.20; wm('volt').mag*=1.15;}},
-  {wkey:'chainsaw',n:'LEAN ENGINE',    d:'CHAINSAW: +15% damage, -25% fuel drain', f:()=>{wm('chainsaw').dmg*=1.15; wm('chainsaw').drain*=0.75;}},
-  {wkey:'knife',   n:'ASSASSIN TEMPO', d:'KNIFE: +20% swing speed, execute recharges 25% faster', f:()=>{wm('knife').rate*=0.80; wm('knife').cdAdd*=0.75;}},
-  {wkey:'scythe',  n:'REAPER PACT',    d:'SCYTHE: +20% damage, +20% arc',      f:()=>{wm('scythe').dmg*=1.20; wm('scythe').arc*=1.20;}},
-  {wkey:'hammer',  n:'SEISMIC HEAD',   d:'HAMMER: +20% dmg, +25% slam radius', f:()=>{wm('hammer').dmg*=1.20; wm('hammer').slamR*=1.25;}},
-];
+function utilityCdOf(k){ return (k==='medkit'?MED_CD:UTILITIES[k].cd)*um(k).cd; }
+const ROMAN=['','I','II','III'];
+const WEAPON_MODS=[];
+const MOD_KEYS=[...new Set([...Object.keys(WEAPONS),...Object.keys(UTILITIES)])];
+for(const k of MOD_KEYS){
+  const isUtil=!!UTILITIES[k], isMelee=!isUtil&&!!WEAPONS[k].melee;
+  const base=isUtil?'UTILITY CORE':isMelee?'MELEE EDGE':'WEAPON TUNING';
+  for(let tier=1;tier<=3;tier++){
+    const n=(isUtil?UTILITIES[k].name:WEAPONS[k].name)+' '+base+' '+ROMAN[tier];
+    const prev=tier>1?(isUtil?UTILITIES[k].name:WEAPONS[k].name)+' '+base+' '+ROMAN[tier-1]:null;
+    WEAPON_MODS.push({wkey:k,n,base,tier,req:prev,
+      d:isUtil?('cooldown '+[0,12,16,20][tier]+'% faster'):
+        isMelee?('+'+[0,12,16,20][tier]+'% damage, faster swing and ability'):
+                ('+'+[0,12,16,20][tier]+'% damage, magazine and range'),
+      f:()=>{
+        if(isUtil) um(k).cd*=[0,.88,.84,.80][tier];
+        else if(isMelee){ wm(k).dmg*=[0,1.12,1.16,1.20][tier]; wm(k).rate*=[0,.94,.91,.88][tier]; wm(k).cdAdd*=[0,.94,.91,.88][tier]; }
+        else { wm(k).dmg*=[0,1.12,1.16,1.20][tier]; wm(k).mag*=[0,1.08,1.12,1.16][tier]; wm(k).range*=[0,1.06,1.09,1.12][tier]; }
+      }});
+  }
+}
+function availableEquipmentMods(keys){
+  return WEAPON_MODS.filter(m=>keys.includes(m.wkey) && (!m.req||perkCounts[m.req]) && !perkCounts[m.n]);
+}
 const magSize = k => Math.round(WEAPONS[k].mag*perks.mag*wm(k).mag);
 const TIER_CHAINS=[
   {n:'HOLLOW POINTS', ds:['+15% weapon damage','+20% more weapon damage','+25% more weapon damage'], fs:[()=>perks.dmg*=1.15,()=>perks.dmg*=1.20,()=>perks.dmg*=1.25]},
@@ -2326,7 +2344,6 @@ const TIER_CHAINS=[
   {n:'KEVLAR WEAVE', ds:['take 20% less damage','take 25% less damage again','take 30% less and unlock Second Wind'], fs:[()=>perks.armor*=0.80,()=>perks.armor*=0.75,()=>{perks.armor*=0.70;perks.secondWind=1;}]},
   {n:'FRAG SHELLS', ds:['enemies explode on death','explosions deal +50% damage','explosions deal double damage'], fs:[()=>perks.explode=1,()=>perks.explode=1.5,()=>perks.explode=2]},
 ];
-const ROMAN=['','I','II','III'];
 const UPGRADES=[];
 for(const c of TIER_CHAINS) for(let tier=1;tier<=3;tier++){
   const n=c.n+' '+ROMAN[tier];
@@ -2336,8 +2353,8 @@ for(const c of TIER_CHAINS) for(let tier=1;tier<=3;tier++){
 function rollUpgrades(){
   const out=[];
   if(bossBounty){
-    const mine=[loadout.primary, loadout.secondary, loadout.melee];
-    const mods=WEAPON_MODS.filter(m => mine.includes(m.wkey) && !perkCounts[m.n]);
+    const mine=[loadout.primary, loadout.secondary, loadout.melee, loadout.utility].filter(Boolean);
+    const mods=availableEquipmentMods(mine);
     while(out.length<4 && mods.length) out.push(mods.splice((Math.random()*mods.length)|0,1)[0]);
     if(out.length) return out;          // mod level: ONLY weapon mods, nothing else
     bossBounty=false;                   // no applicable mods left — fall back to perks
@@ -3235,7 +3252,7 @@ function drawWheel(){
   ctx.fillStyle='#e8b658'; ctx.font='700 17px ui-monospace,Consolas,monospace';
   ctx.fillText('\uD83C\uDFA1 WHEEL SPIN', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(wheelReady>0?(wheelReady+' spin'+(wheelReady>1?'s':'')+' ready')
+  ctx.fillText(fitLine(wheelReady>0?'1 spin ready \u00b7 use it before earning another'
                                    :('next spin in '+wheelCountdown()), pw-24), W/2, py+42);
   wheelRects=[];
   // the wheel itself
@@ -4472,6 +4489,7 @@ function clickSelect(){
     if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
     if(inR(shopBtnRect)){ selPage='shop'; sfx('swap'); return; }
     if(inR(pracBtnRect)){ selPage='practice'; sfx('swap'); return; }
+    if(inR(arenaBtnRect)){ selPage='arena'; sfx('swap'); return; }
     if(pendingPractice && pendingCancelRect && inR(pendingCancelRect)){
       pendingPractice=null; sfx('swap'); return;
     }
@@ -4625,7 +4643,7 @@ function burst(x,y,col,n,pow){
 function startGame(){
   selPage='hub';
   perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,vamp:0,pierce:0,acc:1,drop:0.05,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
-  perkCounts={}; upgradeOffered=false; upgradeChoices=[]; wmods={}; bossBounty=false;
+  perkCounts={}; upgradeOffered=false; upgradeChoices=[]; wmods={}; utilMods={}; bossBounty=false;
   surgeT=0; windReadyWave=0; dashReadyT=0; sawFuel=100; sawLock=false; player.lastSaw=0;
   flameFuel=100; flameLock=false; daggersOut=null; splitBalls=[]; flames=[]; comboStep=0; comboNextT=0; freezeFx=[];
   timeStopUntil=0; timeStopArm=0; fistFlurryUntil=0; fistNextT=0; fistUsesThisWave=0; parryUntil=0;
@@ -4651,7 +4669,7 @@ function startGame(){
   bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; spawnQueue=[];
   wave=0; score=0; kills=0; betweenTimer=1400; prevBest=hiScore;
   practiceMode=null; practiceSpawns=[];
-  powerUsed={}; invincUntil=0; waveSkipPending=0; coinTimeAcc=0; killCoinAcc=0;
+  powerUsed={}; invincUntil=0; waveSkipPending=0; coinTimeAcc=0; killCoinAcc=0; waveCoinBank=0;
   coinTrickles=[]; coinTricklePopT=0; chestRewardOpen=null; powerMenuOpen=false; respawnPromptT=0;
   adminOpen=false; adminUsed = testMode ? true : false;
   cam.x=player.x; cam.y=player.y; zoom=1;
@@ -4944,7 +4962,7 @@ function medDeny(why){
 }
 function medFinish(){         // called when a heal completes: burn the use, start the 60s cooldown
   medUsesThisWave++;
-  medCdUntil=now+MED_CD;
+  medCdUntil=now+utilityCdOf('medkit');
 }
 function medQuick(){          // E / G: the fast heal, 5% over 1s
   const why=medBlocked(); if(why){ medDeny(why); return; }
@@ -4967,7 +4985,7 @@ function utilCast(u){
   if(u==='grenade'){
     const a=aimAngle();
     grenades.push({x:player.x,y:player.y,vx:Math.cos(a)*14,vy:Math.sin(a)*14,t:now+950});
-    utilReadyT=now+UTILITIES.grenade.cd; sfx('swap');
+    utilReadyT=now+utilityCdOf('grenade'); sfx('swap');
   } else if(u==='freezer'){
     const sw=swayScreen();
     const t=screenToWorld(mouse.x+sw.x, mouse.y+sw.y);      // freeze lands at the crosshair
@@ -4979,32 +4997,32 @@ function utilCast(u){
         burst(e.x,e.y,'#9fe6ff',6,3);
       }
     }
-    utilReadyT=now+UTILITIES.freezer.cd; sfx('pickup');      // 25s recharge
+    utilReadyT=now+utilityCdOf('freezer'); sfx('pickup');      // 25s recharge
   } else if(u==='portal'){
     // ENDER PEARL: hurl a warp pearl toward the crosshair; you teleport to wherever it lands
     const a=aimAngle();
     pearls.push({x:player.x, y:player.y, vx:Math.cos(a)*10, vy:Math.sin(a)*10,
                  dist:0, rng:WEAPONS.fireworks.range});    // max range = firework launcher (620)
-    utilReadyT=now+UTILITIES.portal.cd; sfx('swap');
+    utilReadyT=now+utilityCdOf('portal'); sfx('swap');
   } else if(u==='timecapsule'){
     ebullets.length=0;                                    // wipe every projectile off the field
     timeStopUntil=now+15000; timeStopArm=player.moveT||0; // moving breaks the stillness
     burst(player.x,player.y,'#7fd8ff',24,6); addShake(4);
     waveMsg='\u23F3 TIME CAPSULE \u2014 don\u0027t move'; waveMsgT=now+2400;
-    utilReadyT=now+UTILITIES.timecapsule.cd; sfx('pickup');
+    utilReadyT=now+utilityCdOf('timecapsule'); sfx('pickup');
   } else if(u==='redball'){
     const a=aimAngle();
     // launch it out ahead of you so the swarm it lures gathers away from your position
     const sx=player.x+Math.cos(a)*90, sy=player.y+Math.sin(a)*90;
     balls.push({x:sx,y:sy,vx:Math.cos(a)*6,vy:Math.sin(a)*6,life:3000,hitT:0,taunt:750});
-    utilReadyT=now+UTILITIES.redball.cd; sfx('swap');
+    utilReadyT=now+utilityCdOf('redball'); sfx('swap');
   } else if(u==='beachball'){
     const a=aimAngle();
     const sx=player.x+Math.cos(a)*80, sy=player.y+Math.sin(a)*80;
     // flaming repel-ball: lives 3s, splits into 2 every 1s, 3 generations
     balls.push({x:sx,y:sy,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:3000,hitT:0,
                 flee:true, fire:true, dmg:8, gen:0, splitT:now+1000});
-    utilReadyT=now+UTILITIES.beachball.cd; sfx('swap');
+    utilReadyT=now+utilityCdOf('beachball'); sfx('swap');
   }
 }
 function spendMedCharge(n){ /* medkit is infinite-use: charges never deplete */ }
@@ -5118,7 +5136,6 @@ function update(dtms){
     sawFuel=Math.min(100, sawFuel + 7*dtms/1000);
     if(sawLock && sawFuel>=100){ sawLock=false; sfx('loaded'); }
   }
-  wheelTick(dtms);
   // battery weapons (warpwave): cells trickle back once you stop firing
   for(const k of WKEYS){
     const wk=WEAPONS[k];
@@ -5210,7 +5227,7 @@ function update(dtms){
   // medkit charge regen: one charge per 75s
   if(medCharges<2 && medRegenT>0 && now>=medRegenT){
     medCharges++;
-    medRegenT = medCharges<2 ? now+UTILITIES.medkit.cd : 0;
+    medRegenT = medCharges<2 ? now+utilityCdOf('medkit') : 0;
     sfx('loaded');
   }
   // quick heal drip (tap): 5% spread over 1s
@@ -5429,13 +5446,14 @@ function update(dtms){
     // WAVE SKIPPER: grant an upgrade with no combat, up to 3 times
     waveSkipPending--;
     taskProgress('waves',1);
+    recordWaveCoinReward();
     bossBounty = wave%10===0;
     upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
     state='upgrade'; sfx('wave');
   } else if(!practiceMode && !enemies.length){
     if(wave>=1 && !upgradeOffered){
       taskProgress('waves',1);
-      startCoinTrickle(5,'WAVE CLEAR'); // count the clear bonus in over exactly three seconds
+      recordWaveCoinReward(); // bank each clear; pay the whole bank exactly every fifth wave
       bossBounty = wave%10===0;   // weapon-mod level every 10 waves
       upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
       state='upgrade'; sfx('wave');
@@ -5754,13 +5772,19 @@ function update(dtms){
           waveMsg='\uD83C\uDF81 CHEST (no rewards in practice)'; waveMsgT=now+2000;
         } else {
           // every chest instantly grants a weapon mod for an equipped weapon
-          const mine=[loadout.primary, loadout.secondary, loadout.melee];
-          const mods=WEAPON_MODS.filter(m => mine.includes(m.wkey) && !perkCounts[m.n]);
-          let modTxt='', modName='NO NEW MOD';
-          if(mods.length){
-            const m=mods[(Math.random()*mods.length)|0];
+          const mine=[loadout.primary, loadout.secondary, loadout.melee, loadout.utility].filter(Boolean);
+          const fresh=availableEquipmentMods(mine);
+          let modName='', modTxt='';
+          if(fresh.length){
+            const m=fresh[(Math.random()*fresh.length)|0];
             m.f(); perkCounts[m.n]=(perkCounts[m.n]||0)+1;
-            modName=m.n; modTxt=m.n+'  \u00b7  ';
+            modName=m.n; modTxt=modName+'  \u00b7  ';
+          } else {
+            // All named tier paths are complete: the chest still grants a permanent run upgrade.
+            const k=mine[(Math.random()*mine.length)|0];
+            if(UTILITIES[k]){ um(k).cd*=.95; modName=UTILITIES[k].name+' FIELD TUNING'; }
+            else { wm(k).dmg*=1.10; modName=WEAPONS[k].name+' FIELD TUNING'; }
+            modTxt=modName+'  \u00b7  ';
           }
           const trickle=startCoinTrickle(coinDrop,'MOD CHEST');
           if(sb && !authUser){
@@ -6457,7 +6481,7 @@ function drawHUD(){
     const isMed=loadout.utility==='medkit';
     const room=(W-pad)-cdX;
     const shortHud=room<150;
-    const frac = isMed ? 1 : clamp(1-(utilReadyT-now)/u.cd, 0, 1);
+    const frac = isMed ? 1 : clamp(1-(utilReadyT-now)/utilityCdOf(loadout.utility), 0, 1);
     ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace'; ctx.textAlign='left';
     ctx.fillText('G: '+u.name.split(' ').pop()+(isMed?' \u221E':''), cdX, H-124);
     ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(cdX, H-112, 70, 6);
@@ -6922,11 +6946,11 @@ function drawSelect(){
   // swallow a click meant for the page you are on (stale shop/practice/feed buttons)
   shopRects=[]; shopTabRects=[]; practiceRects=[]; feedXRects=[];
   cosPrevRect=null; cosNextRect=null; animPrevRect=null; animNextRect=null; pendingCancelRect=null;
-  tutBtnRect=null; shopBtnRect=null; pracBtnRect=null; tempBtnRect=null; deployRect=null;
+  tutBtnRect=null; shopBtnRect=null; pracBtnRect=null; arenaBtnRect=null; tempBtnRect=null; deployRect=null;
   if(banBlocksPlay()){ drawBanPage(); return; }      // blocked accounts see only the ban page
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else drawCategory(selPage);
+  if(selPage==='hub') drawHub(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArenaComingSoon(); else drawCategory(selPage);
   drawDetail();
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
@@ -7618,6 +7642,30 @@ function drawPractice(){
   ctx.fillStyle=hov?'#101208':'#e8b658'; ctx.font='700 15px ui-monospace,Consolas,monospace';
   ctx.fillText('\u2039 BACK', W/2, by+(bh-15)/2);
 }
+function drawArenaComingSoon(){
+  selBg();
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#d05548'; ctx.font='700 '+(W<440?25:36)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('\u2694 ONLINE ARENA', W/2, H*0.22);
+  const pw=Math.min(520,W-34), ph=190, px=W/2-pw/2, py=H/2-ph/2;
+  ctx.fillStyle='rgba(8,10,5,0.82)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#d05548'; ctx.lineWidth=2; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  ctx.fillStyle='#e8b658'; ctx.font='700 '+(W<440?27:42)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('COMING SOON',W/2,py+70);
+  ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('1v1 \u00b7 2v2 \u00b7 CASUAL \u00b7 RANKED',pw-30),W/2,py+113);
+  ctx.fillStyle='#6b7455'; ctx.font='10px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('Online matchmaking is not enabled yet.',pw-30),W/2,py+142);
+  const bw=Math.min(260,W-40), bh=44, bx=W/2-bw/2, by=Math.min(H-bh-18,py+ph+24);
+  backRect={x:bx,y:by,w:bw,h:bh};
+  const hov=mouse.x>=bx&&mouse.x<=bx+bw&&mouse.y>=by&&mouse.y<=by+bh;
+  ctx.fillStyle=hov?'#e8b658':'rgba(232,182,88,0.14)'; ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle='#e8b658'; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,by+0.5,bw,bh);
+  ctx.fillStyle=hov?'#101208':'#e8b658'; ctx.font='700 14px ui-monospace,Consolas,monospace';
+  ctx.fillText('\u2039 BACK TO MENU',W/2,by+bh/2);
+  ctx.textBaseline='alphabetic';
+}
+let streakBoardBottom=0;
 function drawStreakBoard(){
   const pw=Math.min(210,Math.max(165,W*0.27)), px=14, py=14;
   const rows=Math.min(10,streakBoard.length), ph=38+Math.max(1,rows)*17+10;
@@ -7642,7 +7690,8 @@ function drawStreakBoard(){
     ctx.fillText(sb?'collect a reward to rank':'leaderboard offline',px+pw/2,py+39);
   }
   ctx.textBaseline='alphabetic'; ctx.textAlign='center';
-  return py+ph;
+  streakBoardBottom=py+ph;
+  return streakBoardBottom;
 }
 function drawHub(){
   selBg();
@@ -7822,7 +7871,7 @@ function drawHub(){
   ctx.textBaseline='top';
   // ---- HOW TO PLAY / SHOP / PRACTICE row, right below DEPLOY ----
   const hbGap=8, hbH=40;                             // bigger, easier targets
-  const hbN=(lbShown?3:4)+3;                          // +CODE +SPIN +SHARE (and lookup when narrow)
+  const hbN=(lbShown?4:5)+3;                          // +PLAY +CODE +SPIN +SHARE (and lookup when narrow)
   const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
   const hbY=Math.min(dy+dh+10, H-hbH-8);           // sits under DEPLOY, never off the bottom
   let hbX=W/2-(hbW*hbN+hbGap*(hbN-1))/2;
@@ -7845,6 +7894,7 @@ function drawHub(){
   tutBtnRect =hubBtn('\u2753 HOW TO PLAY','#8a9268','#cdd6b0');
   shopBtnRect=hubBtn('\uD83D\uDC8E SHOP \u00b7 '+gems,'#7fd8ff','#bfe8ff');
   pracBtnRect=hubBtn('\uD83C\uDFAF PRACTICE','#a7c15e','#cfe0a8');
+  arenaBtnRect=hubBtn('\u2694 PLAY','#d05548','#e0a8a0');
   promoBtnRect=hubBtn('\uD83C\uDF81 CODE','#a7c15e','#cfe0a8');
   shareBtnRect=hubBtn('\uD83D\uDD17 SHARE +5','#bfa8ff','#d8c8ff');
   wheelBtnRect=hubBtn('\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+')':wheelCountdown()),
@@ -8651,7 +8701,13 @@ const TEXT_FONTS=[
   {id:'serif',  name:'SERIF',  css:'Georgia,Times New Roman,serif'},
 ];
 const TEXT_COLOURS=['#f2f2e8','#e8b658','#a7c15e','#7fd8ff','#d05548','#bfa8ff','#ff9ad5'];
-let customText=[], textMode=false, textRects=[], textSel=null, textDrag=null, textDirty=false, editGuides={x:null,y:null};
+let customText=[], textMode=false, textRects=[], textSel=null, textDrag=null, textDirty=false, textLocalSaveT=0, editGuides={x:null,y:null};
+function persistTextDraft(){
+  try{
+    localStorage.setItem('oz_ui_text',JSON.stringify(customText));
+    localStorage.setItem('oz_ui_text_draft','1');
+  }catch(e){}
+}
 // editing covers both the hub blocks and free text; one undo stack for the lot
 let editHist=[], editFuture=[], layoutStandard=null, textStandard=null, editSuggestOpen=false;
 let multiMode=false, textSelMany=[];                 // MULTI: tap several bits of text, then act on the lot
@@ -8919,11 +8975,15 @@ function drawCustomText(){
   }
 }
 async function fetchCustomText(){
-  try{ const v=JSON.parse(localStorage.getItem('oz_ui_text')||'null'); if(Array.isArray(v)) customText=v; }catch(e){}
+  let hasDraft=false;
+  try{
+    const v=JSON.parse(localStorage.getItem('oz_ui_text')||'null'); if(Array.isArray(v)) customText=v;
+    hasDraft=localStorage.getItem('oz_ui_text_draft')==='1';
+  }catch(e){}
   if(!sb) return;
   try{
     const { data } = await sb.from('ui_layout').select('data').eq('id','text').maybeSingle();
-    if(data && data.data && Array.isArray(data.data.items)){
+    if(!hasDraft && data && data.data && Array.isArray(data.data.items)){
       customText=data.data.items; localStorage.setItem('oz_ui_text',JSON.stringify(customText));
     }
   }catch(e){}
@@ -8933,6 +8993,7 @@ async function saveCustomText(){
   try{
     localStorage.setItem('oz_ui_text',JSON.stringify(customText));
     if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'text',data:{items:customText},updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
+    localStorage.removeItem('oz_ui_text_draft');
     textDirty=false; sfx('pickup'); return true;
   }catch(e){ waveMsg='TEXT SAVE FAILED: '+String((e&&e.message)||e).slice(0,80); waveMsgT=now+4000; sfx('dry'); return false; }
 }
@@ -9282,7 +9343,7 @@ function drawCurrencyHUD(){
   const gt='\uD83D\uDC8E '+gems, ct='\uD83E\uDE99 '+coins;
   const spinTxt='\uD83C\uDFA1 '+wheelCountdown();
   const bw=Math.max(ctx.measureText(gt).width,ctx.measureText(ct).width,ctx.measureText(spinTxt).width)+22, bh=64,
-        bx=52+offX('coins'), hubBelowStreak=(state==='select'&&selPage==='hub')?250:0,
+        bx=52+offX('coins'), hubBelowStreak=(state==='select'&&selPage==='hub')?streakBoardBottom+12:0,
         by=Math.max(104,leftColTop,hubBelowStreak)+offY('coins');
   layoutBlock('coins',bx,by,bw,bh);
   const paintCoins=()=>{
@@ -9351,6 +9412,31 @@ function drawChestReward(){
   ctx.strokeStyle=done?'#7dff8c':'#5a5648'; ctx.strokeRect(bx+0.5,by+0.5,bw,bh);
   ctx.fillStyle=done?'#06210a':'#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
   ctx.fillText(done?'CONTINUE':('COUNTING... '+countdownText(r.end-performance.now())),W/2,by+bh/2);
+  ctx.restore();
+}
+function drawWaveCoinTracker(){
+  const q=coinTrickles.find(v=>v.label==='5-WAVE PAYOUT');
+  if(!q || performance.now()<q.start) return;
+  const wall=performance.now(), p=clamp((wall-q.start)/q.dur,0,1);
+  const cx=W/2, cy=H/2, pw=Math.min(330,W-28), ph=116, px=cx-pw/2, py=cy-ph/2;
+  ctx.save();
+  ctx.fillStyle='rgba(5,7,3,0.82)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#ffd24d'; ctx.lineWidth=2; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#ffd24d'; ctx.font='700 13px ui-monospace,Consolas,monospace';
+  ctx.fillText('5-WAVE COIN PAYOUT',cx,py+23);
+  ctx.fillStyle='#ffe08a'; ctx.font='700 22px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83E\uDE99 '+Math.min(q.total,q.credited)+' / '+q.total,cx,cy+18);
+  for(let i=0;i<10;i++){
+    const lag=i/10*.22, t=clamp((p-lag)/(1-lag),0,1);
+    const a=t*TAU*3+i*TAU/10, radius=(1-t)*Math.min(125,pw*.38)+8;
+    const x=cx+Math.cos(a)*radius, y=cy+Math.sin(a)*radius*.38+Math.sin(wall/95+i)*4;
+    ctx.save(); ctx.translate(x,y); ctx.rotate(a+wall/180);
+    ctx.fillStyle='#ffd24d'; ctx.beginPath(); ctx.arc(0,0,6,0,TAU); ctx.fill();
+    ctx.strokeStyle='#fff0a0'; ctx.lineWidth=1; ctx.stroke();
+    ctx.fillStyle='#8b5b12'; ctx.font='700 8px ui-monospace,monospace'; ctx.fillText('$',0,0);
+    ctx.restore();
+  }
   ctx.restore();
 }
 function chestRewardClick(){
@@ -9424,7 +9510,9 @@ function frame(){
   let dtms = clamp(wall-last, 4, 42);
   const raw = wall-last;
   last = wall;
+  wheelTick(Math.min(Math.max(raw,0),60000));       // total site time; tolerate background tabs without clock jumps
   if(raw>0){ const inst=1000/raw; fpsEMA += (inst-fpsEMA)*0.1; }
+  if(textDirty && Date.now()>textLocalSaveT){ persistTextDraft(); textLocalSaveT=Date.now()+250; }
 
   // `now` is a GAME clock. It freezes while the pause menu (or a modal) is open, so
   // utility cooldowns, reloads, ability timers and burn/freeze don't tick while paused.
@@ -9476,6 +9564,7 @@ function frame(){
   drawPlayQuests();                       // semi-transparent quest tracker during a run
   drawCurrencyHUD();                      // gems + coins: always visible, left side
   drawAccountChip();                      // sign in / out
+  drawWaveCoinTracker();                  // every fifth wave: coins spin and spiral into the total
   drawChestReward();                      // boss chest reward menu sits above the run and HUD
   if(state==='select') drawCustomText();          // admin-placed text, on whichever page it belongs to
   if(layoutMode && state==='select' && selPage==='hub') drawLayoutOverlay();   // last: everything has registered
