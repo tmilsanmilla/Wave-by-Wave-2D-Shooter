@@ -256,7 +256,7 @@
 const SUPABASE_URL = 'https://edvurrilylypgfyvjyas.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
-let sb = null, authUser = null, board = [], boardT = 0, recovering = false;
+let sb = null, authUser = null, board = [], arenaBoard = [], boardT = 0, recovering = false;
 let arenaAuthPending=false, arena=null;
 let leaderboardRowRects=[];
 let publicProfileCache={};
@@ -282,14 +282,14 @@ async function initAuth(){
         authUser = sess ? sess.user : null;
         paintUserbar();
         if(!authUser){
-          if(arena && (arena.matchChannel||arena.queueChannel||arena.active)) leaveArena('Signed out.');
+          if(arena && !isBotArena() && (arena.matchChannel||arena.queueChannel||arena.active)) leaveArena('Signed out.');
           for(const slot of ['primary','secondary','melee'])
             if(loadout[slot] && LOCKED_KEYS.includes(loadout[slot])) loadout[slot]=null;
           loadout.utility=null;
         } else if(arenaAuthPending){
           arenaAuthPending=false;
           $('aguest').style.display='block';
-          pendingGameMode='arena';
+          pendingGameMode='arena'; modeBoardMode='arena';
           loadout={primary:null,secondary:null,melee:null,utility:null};
           selPage='loadout';
         }
@@ -378,15 +378,36 @@ async function submitScore(sc){
     fetchBoard();
   }catch(err){ console.warn('score submit failed', err); }
 }
+async function submitArenaWin(){
+  if(banBlocksBoard()||unrankedRun||adminUsed||!sb||!authUser) return;
+  try{
+    const game='outpost-zero-arena-wins';
+    const {data,error:readError}=await sb.from('scores').select('score')
+      .eq('user_id',authUser.id).eq('game',game).maybeSingle();
+    if(readError) throw readError;
+    const wins=Math.max(0,Math.floor(+(data&&data.score)||0))+1;
+    const {error}=await sb.from('scores').upsert(
+      {user_id:authUser.id,name:displayName(authUser),game,score:wins},
+      {onConflict:'user_id,game'});
+    if(error) throw error;
+    fetchBoard();
+  }catch(err){ console.warn('arena win submit failed',err); }
+}
 async function fetchBoard(){
   if(!sb) return;
-  try{
-    const { data } = await sb.from('scores').select('user_id,name,score')
-      .eq('game','outpost-zero').order('score',{ascending:false}).limit(10);
-    board = data || []; boardT = Date.now();
-    syncFallAccess();
-    fetchPublicProfiles();
-  }catch(err){ console.warn('board fetch failed', err); }
+  const read=async(game,setter)=>{
+    try{
+      const {data,error}=await sb.from('scores').select('user_id,name,score')
+        .eq('game',game).order('score',{ascending:false}).limit(10);
+      if(error) throw error;
+      setter(data||[]);
+    }catch(err){ console.warn(game+' board fetch failed',err); }
+  };
+  await Promise.all([
+    read('outpost-zero',rows=>{ board=rows; }),
+    read('outpost-zero-arena-wins',rows=>{ arenaBoard=rows; })
+  ]);
+  boardT=Date.now(); syncFallAccess(); fetchPublicProfiles();
 }
 async function fetchPublicProfiles(){
   if(!sb) return;
@@ -909,8 +930,15 @@ const TEMP_UTIL_KEYS = ['beachball'];
 const WKEYS = [...PRIMARIES, ...SECONDARIES, ...MELEES, ...TEMP_PRIMARY, ...TEMP_SECONDARY, ...TEMP_MELEE];
 
 /* ---------------- DAILY TASKS + GEMS + GEM SHOP ---------------- */
-let gems=0, dailyTasks=[], tasksDate='', gemOwned={};
+let gems=0, dailyTasks=[], tasksDate='', gemOwned={}, gemResetVersion=0;
 const GEM_ECONOMY_VERSION=2;
+const GEM_RESET_VERSION=1;                           // v1: every pre-reset wallet starts again at zero
+const GEM_REWARD_SCALE=10, WHEEL_GEM_SCALE=2;
+function savedGemBalance(m){
+  if(!m || (+m.gre||0)<GEM_RESET_VERSION) return 0;
+  const n=(+m.gems||0)*(m.gv===GEM_ECONOMY_VERSION?1:10);
+  return Math.max(0,Math.round(n));
+}
 // ---- HUB LAYOUT: main admins can drag these blocks; the offsets apply for every player ----
 const LAYOUT_BLOCKS={
   banner:  'SEASON BANNER',
@@ -1106,12 +1134,12 @@ async function payReferralClaims(){
     const game='outpost-zero-referral:'+authUser.id;
     const {count}=await sb.from('scores').select('user_id',{count:'exact',head:true}).eq('game',game);
     const total=count||0, unpaid=Math.max(0,total-referralPaid);
-    if(unpaid){ referralPaid=total; addGems(unpaid*REFERRAL_GEMS); saveMeta();
+    if(unpaid&&gemRewardsEnabled()){ referralPaid=total; addGems(unpaid*REFERRAL_GEMS); saveMeta();
       referralMsg='FRIEND JOINED! +'+(unpaid*REFERRAL_GEMS)+' GEMS'; referralMsgT=now+4000; }
   }catch(e){ console.warn('referral payout failed',e); }
 }
 async function processReferral(){
-  if(!sb||!authUser){ return; }
+  if(!sb||!authUser||!gemRewardsEnabled()){ return; }
   await payReferralClaims();
   const ref=new URLSearchParams(location.search).get('ref');
   if(!ref||referralUsed||ref===authUser.id||!/^[0-9a-f-]{36}$/i.test(ref)) return;
@@ -1130,9 +1158,9 @@ async function processReferral(){
   }catch(e){ referralUsed=false; console.warn('referral claim failed',e); }
 }
 // WHEEL SPIN: one every 20 minutes spent anywhere on the site, claimed by hand
-const WHEEL=[{t:'6 \uD83D\uDC8E', gems:6, coins:0},
+const WHEEL=[{t:'6 \uD83D\uDC8E', gems:3*WHEEL_GEM_SCALE, coins:0},
              {t:'30 \uD83E\uDE99', gems:0, coins:30},
-             {t:'10 \uD83D\uDC8E', gems:10, coins:0},
+             {t:'10 \uD83D\uDC8E', gems:5*WHEEL_GEM_SCALE, coins:0},
              {t:'60 \uD83E\uDE99', gems:0, coins:60}];
 const WHEEL_MS=20*60*1000;
 let wheelReady=0, wheelAcc=0, wheelOpen=false, wheelBtnRect=null, wheelRects=[];
@@ -1331,12 +1359,12 @@ function wheelTick(dtms){
   if(wheelAcc>=WHEEL_MS){ wheelAcc=0; wheelReady=1; }
 }
 function openWheel(){
-  if(wheelReady<1){ sfx('dry'); return; }
+  if(wheelReady<1||testMode){ sfx('dry'); return; }
   wheelOpen=true; wheelSpinning=false; wheelResult=-1; wheelAngle=0;
 }
 function closeWheel(){ if(wheelSpinning) return; wheelOpen=false; }
 function spinWheel(){
-  if(wheelSpinning || wheelResult>=0 || wheelReady<1) return;
+  if(wheelSpinning || wheelResult>=0 || wheelReady<1 || testMode) return;
   wheelReady--;
   wheelTarget=Math.floor(Math.random()*WHEEL.length);
   wheelSpinning=true; wheelStart=now; wheelDur=2600;
@@ -1367,11 +1395,12 @@ function streakNext(){
 }
 function streakReward(day){                          // coins every day, gems on every 7th
   const coinsR=Math.min(300, 25+ (day-1)*25);
-  const gemsR = day%7===0 ? 100 : 0;
+  const gemsR = day%7===0 ? 10*GEM_REWARD_SCALE : 0;
   return {coins:coinsR, gems:gemsR};
 }
 function collectStreak(){
   if(!streakClaimable()){ sfx('dry'); return; }
+  if(testMode){ streakMsg='TEST MODE DOES NOT CONSUME DAILY REWARDS'; streakMsgT=now+1800; sfx('dry'); return; }
   if(sb && !authUser){ streakMsg='sign in to start a streak'; streakMsgT=now+1800; sfx('dry'); return; }
   const day=streakNext(), r=streakReward(day);
   const broke = day===1 && streakDays>0;
@@ -1524,14 +1553,15 @@ async function lookupPlayer(target){
     const row=(data||[])[0]; if(!row) throw new Error('not found');
     let p={}; try{ p=JSON.parse(row.name||'{}'); }catch(e){}
     const owned={}; for(const k of (p.owned||[])) owned[k]=true;
-    peData={score:p.highScore||0,gems:p.gems||0,coins:p.coins||0,streak:p.streak||0,longestStreak:p.longestStreak||p.streak||0,
+    const resetWallet=(+p.gre||0)>=GEM_RESET_VERSION;
+    peData={score:p.highScore||0,gems:resetWallet?(p.gems||0):0,coins:p.coins||0,streak:p.streak||0,longestStreak:p.longestStreak||p.streak||0,
             lastLogin:p.lastLogin||new Date((row.score||0)*1000).toISOString(),owned,pow:p.powerups||{},
             cosmetics:p.cosmetics||0,animations:p.animations||0,daily:p.daily||[],wheelSpins:p.wheelSpins||0,ban:null};
     if(isAdmin()&&p.email){
       try{
         const {data:ad,error:ae}=await sb.rpc('admin_get_player',{target_email:p.email}); if(ae) throw ae;
         const d=Array.isArray(ad)?ad[0]:ad;
-        if(d){ peData.score=d.score||peData.score; peData.gems=d.gems||0; peData.coins=d.coins||0;
+        if(d){ peData.score=d.score||peData.score; if(resetWallet) peData.gems=d.gems||0; peData.coins=d.coins||0;
           peData.owned=d.owned||{}; peData.pow=d.pow||{}; peData.ban=d.ban||null; }
       }catch(e){}
     }
@@ -1986,23 +2016,34 @@ async function saveGemPrice(key,cost){
   if(!sb) return;                                    // preview: local only
   try{ await sb.from('weapon_prices').upsert({key, cost:Math.round(GEM_SHOP.find(i=>i.key===key).cost/GEM_PRICE_SCALE)}); }catch(e){}
 }
-const TASK_POOL=[
-  {id:'kills',  d:'Defeat 40 enemies', goal:40, reward:250},
-  {id:'waves',  d:'Clear 8 waves',     goal:8,  reward:300},
-  {id:'bosses', d:'Defeat 3 warlords', goal:3,  reward:350},
-  {id:'chests', d:'Open 2 mod chests', goal:2,  reward:400},
-];
-const DAILY_REWARDS={kills:50, waves:100, bosses:350, chests:200};
-function normalizeDailyRewards(){
-  for(const t of dailyTasks) if(DAILY_REWARDS[t.id]!=null) t.reward=DAILY_REWARDS[t.id];
+const DAILY_TASK_DEFS=[
+  {id:'kills',  d:'Defeat 40 enemies', goal:40, baseReward:5},
+  {id:'waves',  d:'Clear 8 waves',     goal:8,  baseReward:10},
+  {id:'bosses', d:'Defeat 3 warlords', goal:3,  baseReward:35},
+  {id:'chests', d:'Open a mod chest',  goal:1,  baseReward:20},
+].map(t=>Object.assign({},t,{reward:t.baseReward*GEM_REWARD_SCALE}));
+const DAILY_ACTIVE_IDS=['kills','waves','chests'];
+const DAILY_REWARDS=Object.fromEntries(DAILY_TASK_DEFS.map(t=>[t.id,t.reward]));
+function freshDailyTasks(){
+  return DAILY_ACTIVE_IDS.map(id=>{
+    const t=DAILY_TASK_DEFS.find(x=>x.id===id);
+    return {id:t.id,d:t.d,goal:t.goal,reward:t.reward,prog:0,done:false};
+  });
 }
-function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, gv:GEM_ECONOMY_VERSION, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); }catch(e){} }
+function normalizeDailyRewards(){
+  for(const t of dailyTasks){
+    const d=DAILY_TASK_DEFS.find(x=>x.id===t.id); if(!d) continue;
+    t.d=d.d; t.goal=d.goal; t.reward=d.reward;
+    t.prog=clamp(+t.prog||0,0,t.goal); if(t.done) t.prog=t.goal;
+  }
+}
+function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); }catch(e){} }
 function saveMeta(){ saveMetaLocal(); queueProfileSave(); }
 // ---- account progress sync: purchases + currency live with the account, not the device ----
 let profileLoaded=false, profileSaveT=0, profilePending=false;
 let currentLoginAt='';
 function metaPayload(){
-  return {gems, gv:GEM_ECONOMY_VERSION, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
+  return {gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
           hi:hiScore, mv:musicVol, sv:sfxVol};
@@ -2010,7 +2051,7 @@ function metaPayload(){
 function publicProfilePayload(){
   return {
     v:1, email:String((authUser&&authUser.email)||'').toLowerCase(), display:displayName(authUser),
-    lastLogin:currentLoginAt||new Date().toISOString(), gems, coins, streak:streakDays, longestStreak:streakLongest, highScore:hiScore,
+    lastLogin:currentLoginAt||new Date().toISOString(), gems, gre:gemResetVersion, coins, streak:streakDays, longestStreak:streakLongest, highScore:hiScore,
     owned:Object.keys(gemOwned).filter(k=>gemOwned[k]),
     powerups:Object.fromEntries(Object.entries(powerStock).filter(([,v])=>v>0)),
     cosmetics:Object.keys(cosmeticOwned).filter(k=>cosmeticOwned[k]).length,
@@ -2039,7 +2080,7 @@ function applyProfile(m){
   animOwned     = take(m.anim,  animOwned);
   dropUnownedFromLoadout();
   // the account is the source of truth for spendable balances
-  if(typeof m.gems==='number')  gems=m.gems*(m.gv===GEM_ECONOMY_VERSION?1:10);
+  gems=savedGemBalance(m); gemResetVersion=Math.max(GEM_RESET_VERSION,+m.gre||0);
   if(typeof m.coins==='number') coins=m.coins;
   // ---- daily tasks: the account is the record, so finishing them twice on two devices is impossible ----
   if(typeof m.date==='string' && Array.isArray(m.tasks)){
@@ -2095,10 +2136,14 @@ async function fetchProfile(){
     const { data } = await sb.from('profiles').select('data').eq('user_id', authUser.id).maybeSingle();
     if(data && data.data){
       const migrateGems=data.data.gv!==GEM_ECONOMY_VERSION;
+      const resetGems=(+data.data.gre||0)<GEM_RESET_VERSION;
       applyProfile(data.data); profileLoaded=true; saveMetaLocal();
-      if(migrateGems) await saveProfile(true);        // write v2 once so the 10x conversion cannot repeat
+      if(migrateGems||resetGems) await saveProfile(true); // write the reset marker so an old balance cannot return
     }
-    else { profileLoaded=true; saveProfile(true); }   // first sign-in: seed the cloud from this device
+    else {                                            // a new account never inherits another account's device gems
+      gems=0; gemResetVersion=GEM_RESET_VERSION; saveMetaLocal();
+      profileLoaded=true; saveProfile(true);
+    }
   }catch(e){ profileLoaded=false; }
 }
 async function saveProfile(force){
@@ -2115,7 +2160,7 @@ function queueProfileSave(){                          // debounce: batch rapid c
 function loadMeta(){
   try{
     const m=JSON.parse(localStorage.getItem('oz_meta')||'{}');
-    gems=(m.gems||0)*(m.gv===GEM_ECONOMY_VERSION?1:10); gemOwned=m.owned||{}; tasksDate=m.date||''; dailyTasks=m.tasks||[];
+    gems=savedGemBalance(m); gemResetVersion=Math.max(GEM_RESET_VERSION,+m.gre||0); gemOwned=m.owned||{}; tasksDate=m.date||''; dailyTasks=m.tasks||[];
     coins=m.coins||0; cosmeticOwned=m.cos||{}; cosmeticEquipped=m.cosEq||{}; powerStock=m.pow||{};
     animOwned=m.anim||{}; animEquipped=(m.animEq && typeof m.animEq==='object') ? m.animEq : {};
     streakDays=m.stk||0; streakLongest=m.stkMax||streakDays; streakLastDay=m.stkDay||'';
@@ -2127,20 +2172,16 @@ function loadMeta(){
     for(const k in animEquipped){ const id=animEquipped[k];
       if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }
   }catch(e){}
+  if(gemResetVersion<GEM_RESET_VERSION){ gems=0; gemResetVersion=GEM_RESET_VERSION; }
   // the daily period rolls over at 12:00 UTC
   const today=String(Math.floor((Date.now()-43200000)/86400000));
   if(tasksDate!==today){
     tasksDate=today;
-    // fixed dailies: same three every day
-    dailyTasks=[
-      {id:'kills',  d:'Defeat 40 enemies', goal:40, reward:50,  prog:0, done:false},
-      {id:'waves',  d:'Clear 8 waves',     goal:8,  reward:100, prog:0, done:false},
-      {id:'chests', d:'Open a mod chest',  goal:1,  reward:200, prog:0, done:false},
-    ];
+    dailyTasks=freshDailyTasks();                    // one definition controls both the UI and payout
     saveMeta();
   }
   normalizeDailyRewards();
-  saveMetaLocal();                                  // persist one-time gem conversion and reward normalization
+  saveMetaLocal();                                  // persist the reset marker and reward normalization
   syncOwnedWeapons();
 }
 function dropUnownedFromLoadout(){                    // a removed weapon must leave your hands too
@@ -2216,7 +2257,8 @@ function buyGem(it){
   gems-=it.cost; gemOwned[it.key]=true; gemUnlock(it); saveMeta(); sfx('pickup');
 }
 function addCoins(n){ if(sb && !authUser) return; coins+=n; saveMeta(); }   // coins are sign-in only
-function addGems(n){ if(sb && !authUser) return; if(testMode) return; gems+=n; saveMeta(); }   // gems count the same way
+function gemRewardsEnabled(){ return !testMode && (!sb||!!authUser); }
+function addGems(n){ if(!gemRewardsEnabled()) return false; gems+=Math.max(0,Math.round(+n||0)); saveMeta(); return true; }
 function buyPowerup(pu){
   if(coins<pu.cost){ sfx('dry'); return; }
   coins-=pu.cost; powerStock[pu.id]=(powerStock[pu.id]||0)+1; saveMeta(); sfx('pickup');
@@ -2235,7 +2277,7 @@ function weaponColor(wkey, fallback){
   return fallback;
 }
 function taskProgress(id,n){
-  if(sb && !authUser) return;              // gems are for signed-in players only
+  if(!gemRewardsEnabled()) return;         // never consume a quest when its gem payout is disabled
   for(const t of dailyTasks){
     if(t.id===id && !t.done){
       t.prog+=n;
@@ -2327,19 +2369,20 @@ let wave=0, score=0, kills=0, waveMsg='', waveMsgT=0, hiScore=0, prevBest=0;
 let diffMode='normal';
 let practiceMode=null, practiceSpawns=[], practiceRects=[], pracBtnRect=null, arenaBtnRect=null, dpsLog=[], dpsPrevHp=0, dpsTotal=0, dpsStart=0, pracLockMsgT=0, pracNeedMsgT=0, pendingPractice=null;
 const ARENA_TARGET=5, ARENA_HP=250, ARENA_ROUND_MS=90000, ARENA_SYNC_MS=50;
+const LOCAL_DUEL_PLAYER='local-player', LOCAL_DUEL_BOT='local-bot';
 let arenaRects=[];
 function freshArena(status){
   return {phase:'menu',mode:null,room:'',status:status||'',queueChannel:null,matchChannel:null,
     expectedIds:null,queueCandidate:null,queueOffer:null,wantsHost:false,hostId:null,opponent:null,localReady:false,remoteReady:false,
     networkHold:false,disconnectAt:0,disconnectTimer:null,
-    active:false,matchEpoch:0,round:0,scores:{},roundStartAt:0,roundEndAt:0,nextRoundAt:0,roundResolved:false,
+    active:false,matchEpoch:0,round:0,scores:{},roundStartAt:0,roundEndAt:0,nextRoundAt:0,roundResolved:false,winRecorded:false,
     syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),rematchVotes:new Set(),savedUtility:undefined};
 }
 arena=freshArena('Sign in, choose a loadout, then enter Casual 1v1.');
 const DIFFS={easy:{hp:0.75,dmg:0.7,label:'EASY'}, normal:{hp:1,dmg:1,label:'NORMAL'}, hard:{hp:1.35,dmg:1.3,label:'HARD'}};
 let spawnQueue=[], spawnTimer=0, betweenTimer=1500;
 let loadout={primary:null,secondary:null,melee:null,utility:null}, cardRects=[], deployRect=null;
-let selPage='hub', pendingGameMode=null, catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modes | loadout | party | tutorial | shop
+let selPage='hub', pendingGameMode=null, modeBoardMode=null, modeBoardContinueRect=null, modeBoardActionRects=[], catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modeboard | loadout | party | tutorial | shop
 let detailKey=null, detailBtns=[], detailRects={};
 const CATS=[['PRIMARY','primary',()=>PRIMARIES,()=>TEMP_PRIMARY],
             ['SIDEARM','secondary',()=>SECONDARIES,()=>TEMP_SECONDARY],
@@ -2459,6 +2502,7 @@ function menuClick(){
   if(hit(menuRects.resume)){ menuOpen=false; sfx('swap'); return; }
   if(hit(menuRects.report)){ openReport(); sfx('swap'); return; }
   if(hit(menuRects.exit)){
+    if(isBotArena()){ leaveArena('Left Offline 1v1.',false); sfx('swap'); return; }
     if(practiceMode==='arena'){ leaveArena('You left the Arena.',true); sfx('swap'); return; }
     menuOpen=false; state='select'; selPage='hub'; practiceMode=null; tutorialTeardown(); restoreTryLoadout(); aiming=false; rmbAim=false; sfx('swap'); return;
   }
@@ -4504,8 +4548,8 @@ function touchEnd(e){
 cv.addEventListener('touchend', touchEnd, {passive:false});
 cv.addEventListener('touchcancel', touchEnd, {passive:false});
 addEventListener('blur', ()=>{
-  if(state==='play'&&practiceMode!=='arena') menuOpen=true;
-  if(practiceMode==='arena') for(const k in keys) keys[k]=false;
+  if(state==='play'&&(practiceMode!=='arena'||isBotArena())) menuOpen=true;
+  if(practiceMode==='arena'&&!isBotArena()) for(const k in keys) keys[k]=false;
 });
 
 function pickWeapon(k){
@@ -4544,6 +4588,10 @@ function topModal(){
 }
 function clickSelect(){
   const inR=r=>r&&mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
+  const openBoardPlayer=r=>{
+    scoresOpen=true; peStep='panel'; peMode='edit'; peData=null; peEdit=null;
+    peTarget=r.name; lookupPlayer(r.userId); sfx('swap');
+  };
   const top=topModal();
   if(top){ top.click(); return; }                    // whatever is on top owns the click
   if(banBlocksPlay()){ banPageClick(); return; }     // nothing else is reachable while blocked
@@ -4563,7 +4611,7 @@ function clickSelect(){
   for(const b of detailBtns){ if(inR(b)){ detailKey=b.key; sfx('aim'); return; } }
   if(selPage==='hub'){
     for(const r of leaderboardRowRects) if(inR(r)){
-      scoresOpen=true; peStep='panel'; peMode='edit'; peData=null; peEdit=null; peTarget=r.name; lookupPlayer(r.userId); sfx('swap'); return;
+      openBoardPlayer(r); return;
     }
     if(inR(adLeftRect)){ try{ window.open(adLeftRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
     if(inR(adRightRect)){ try{ window.open(adRightRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
@@ -4573,8 +4621,8 @@ function clickSelect(){
     if(inR(streakBtnRect)){ collectStreak(); return; }
     if(inR(lookupBtnRect)){ if(isAdmin()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
     for(const r of homePlayRects) if(inR(r)){
-      if(r.id==='online') chooseGameMode('arena');
-      else if(r.id==='offline') chooseGameMode('endless');
+      if(r.id==='online') openModeLeaderboard('arena');
+      else if(r.id==='offline') openModeLeaderboard('endless');
       else if(r.id==='party'){ selPage='party'; sfx('swap'); }
       return;
     }
@@ -4584,7 +4632,14 @@ function clickSelect(){
   }
   if(selPage==='modes'){
     if(inR(backRect)){ navigateSelectBack(); return; }
-    for(const r of modeRects) if(inR(r)){ chooseGameMode(r.id); return; }
+    for(const r of modeRects) if(inR(r)){ openModeLeaderboard(r.id); return; }
+    return;
+  }
+  if(selPage==='modeboard'){
+    for(const r of leaderboardRowRects) if(inR(r)){ openBoardPlayer(r); return; }
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of modeBoardActionRects) if(inR(r)){ chooseGameMode(r.mode); return; }
+    if(inR(modeBoardContinueRect)){ chooseGameMode(modeBoardMode); return; }
     return;
   }
   if(selPage==='party'){
@@ -4959,6 +5014,144 @@ function startPractice(mode){
   for(let i=0;i<practiceSpawns.length;i++) spawnPracticeEnemy(practiceSpawns[i], i);
 }
 
+/* ---------------- offline arena: one-device 1v1 vs AI ---------------- */
+function isBotArena(){ return !!(arena&&arena.mode==='bot'); }
+function arenaMeId(){ return isBotArena()?LOCAL_DUEL_PLAYER:(authUser&&authUser.id); }
+function arenaOpponentId(){ return isBotArena()?LOCAL_DUEL_BOT:(arena&&arena.opponent&&arena.opponent.id); }
+function startBotArena(){
+  // This is a fully local match: no sign-in, channel, score submission, or reward calls.
+  if(arena&&(arena.queueChannel||arena.matchChannel)) leaveArena('',false);
+  else if(arena&&arena.savedUtility!==undefined) loadout.utility=arena.savedUtility;
+  arena=freshArena('Offline 1v1 vs AI ready.');
+  arena.mode='bot'; arena.phase='lobby'; arena.active=true;
+  arena.scores={[LOCAL_DUEL_PLAYER]:0,[LOCAL_DUEL_BOT]:0};
+  arena.savedUtility=loadout.utility; loadout.utility=null;
+  arena.opponent={id:LOCAL_DUEL_BOT,name:'OUTPOST BOT',r:15,hp:ARENA_HP,
+    loadout:{primary:'ar',secondary:'m9',melee:'knife'},cur:'ar',
+    x:WORLD.w/2+500,y:WORLD.h/2,tx:WORLD.w/2+500,ty:WORLD.h/2,angle:Math.PI};
+  startGame();
+  practiceMode='arena'; arena.active=true;
+  arenaBotStartRound();
+}
+function arenaBotStartRound(){
+  if(!isBotArena()||!arena.opponent) return;
+  arena.round++; arena.roundResolved=false; arena.phase='countdown'; arena.nextRoundAt=0;
+  arena.roundStartAt=now+3000; arena.roundEndAt=arena.roundStartAt+ARENA_ROUND_MS;
+  perks.maxhp=ARENA_HP; player.hp=ARENA_HP; player.hurtCd=0; player.hurtFlash=0;
+  bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[];
+  abilityCD={}; sawFuel=100; sawLock=false; daggersOut=null; comboStep=0; comboNextT=0;
+  fanShots=0; fanNextT=0; fanBurstUntil=0; parryUntil=0; fistFlurryUntil=0; sawChargeUntil=0;
+  player.cur=loadout.primary; player.reloadEnd=0; player.equipEnd=now+600; player.bloom=0; player.lastShot=0;
+  for(const k of [loadout.primary,loadout.secondary,loadout.melee]) if(k&&WEAPONS[k]){
+    player.mags[k]=magSize(k); player.reserve[k]=WEAPONS[k].melee?Infinity:magSize(k)*5;
+  }
+  const cx=WORLD.w/2, cy=WORLD.h/2, b=arena.opponent, bw=WEAPONS.ar;
+  player.x=cx-500; player.y=cy; cam.x=player.x; cam.y=player.y;
+  Object.assign(b,{x:cx+500,y:cy,tx:cx+500,ty:cy,angle:Math.PI,hp:ARENA_HP,cur:'ar',
+    mag:bw.mag,reloadEnd:0,lastShot:0,flash:0,hitT:0,thinkAt:now,aimNoiseAt:now,
+    aimNoise:0,strafe:Math.random()<0.5?-1:1,strafeUntil:now+rand(900,1500),
+    reactionAt:arena.roundStartAt+350,moveX:0,moveY:0,lastThinkX:cx+500,lastThinkY:cy});
+  state='play'; menuOpen=false; aiming=false; rmbAim=false;
+  waveMsg='ROUND '+arena.round+' — GET READY'; waveMsgT=now+2800; sfx('wave');
+}
+function arenaBotRoundTick(){
+  if(!isBotArena()||!arena.active) return;
+  if(arena.phase==='countdown'&&now>=arena.roundStartAt){
+    arena.phase='fight'; waveMsg='FIGHT'; waveMsgT=now+800;
+  }
+  if(arena.phase==='fight'&&now>=arena.roundEndAt){
+    const bhp=arena.opponent?arena.opponent.hp:0;
+    arenaBotResolve(player.hp===bhp?null:(player.hp>bhp?LOCAL_DUEL_PLAYER:LOCAL_DUEL_BOT));
+  }
+  if(arena.phase==='round_end'&&arena.nextRoundAt&&now>=arena.nextRoundAt) arenaBotStartRound();
+}
+function arenaBotResolve(winnerId){
+  if(!isBotArena()||arena.roundResolved||arena.phase!=='fight') return;
+  arena.roundResolved=true;
+  if(winnerId) arena.scores[winnerId]=(arena.scores[winnerId]||0)+1;
+  // A knockout can happen from inside a projectile loop. Defer cleanup until
+  // that update finishes so a shotgun's remaining pellets cannot read a slot
+  // from an array that was replaced mid-loop.
+  arena.clearProjectiles=true;
+  const over=winnerId&&(arena.scores[winnerId]||0)>=ARENA_TARGET;
+  if(over){
+    arena.phase='match_end'; arena.active=false; arena.nextRoundAt=0;
+    if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
+    practiceMode='arena'; state='select'; selPage='arena'; menuOpen=false; aiming=false; rmbAim=false;
+    pendingGameMode='ai1v1'; modeBoardMode='endless';
+    arena.status=winnerId===LOCAL_DUEL_PLAYER?'YOU BEAT THE BOT!':'THE BOT WON. RUN IT BACK!';
+    sfx(winnerId===LOCAL_DUEL_PLAYER?'pickup':'die');
+  } else {
+    arena.phase='round_end'; arena.nextRoundAt=now+2600;
+    waveMsg=winnerId?(winnerId===LOCAL_DUEL_PLAYER?'ROUND WON':'ROUND LOST'):'ROUND DRAW'; waveMsgT=now+2200;
+    sfx(winnerId===LOCAL_DUEL_PLAYER?'pickup':'die');
+  }
+}
+function arenaHitOpponent(dmg,kind){
+  if(!isBotArena()){ arenaSendHit(dmg,kind); return; }
+  if(!arenaCanAct()||!arena.opponent||arena.roundResolved) return;
+  const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
+  arena.opponent.hp=Math.max(0,arena.opponent.hp-hit); arena.opponent.hitT=now+90;
+  if(arena.opponent.hp<=0) arenaBotResolve(LOCAL_DUEL_PLAYER);
+}
+function arenaBotHitPlayer(dmg){
+  if(!isBotArena()||!arenaCanAct()||arena.roundResolved) return;
+  const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
+  player.hp=Math.max(0,player.hp-hit); player.hurtFlash=1; player.hurtCd=140;
+  burst(player.x,player.y,'#d05548',6,3); addShake(3); sfx('hurt');
+  if(player.hp<=0) arenaBotResolve(LOCAL_DUEL_BOT);
+}
+function arenaBotFlushProjectiles(){
+  if(!isBotArena()||!arena.clearProjectiles) return;
+  bullets.length=0; ebullets.length=0; grenades.length=0; pearls.length=0;
+  balls.length=0; flames.length=0; freezeFx.length=0;
+  daggersOut=null; splitBalls.length=0; arena.clearProjectiles=false;
+}
+function updateArenaBot(dtms){
+  if(!isBotArena()||!arenaCanAct()||!arena.opponent) return;
+  const b=arena.opponent, w=WEAPONS.ar, dt=dtms/16.667;
+  if(b.reloadEnd&&now>=b.reloadEnd){ b.reloadEnd=0; b.mag=w.mag; }
+
+  if(now>=b.thinkAt){
+    const moved=Math.hypot(b.x-(b.lastThinkX||b.x),b.y-(b.lastThinkY||b.y));
+    if(moved<2) b.strafe*=-1;
+    b.lastThinkX=b.x; b.lastThinkY=b.y; b.thinkAt=now+150;
+    if(now>=b.strafeUntil){ if(Math.random()<0.75) b.strafe*=-1; b.strafeUntil=now+rand(900,1500); }
+    if(now>=b.aimNoiseAt){ b.aimNoise=rand(-0.095,0.095); b.aimNoiseAt=now+rand(450,750); }
+    const dx=player.x-b.x, dy=player.y-b.y, d=Math.hypot(dx,dy)||1;
+    const fx=dx/d, fy=dy/d, px=-fy*b.strafe, py=fx*b.strafe;
+    const blocked=losBlocked(b.x,b.y,player.x,player.y);
+    let forward=blocked?1:(d>430?0.72:(d<280?-0.9:0));
+    let mx=fx*forward+px*(blocked?0.28:0.82), my=fy*forward+py*(blocked?0.28:0.82);
+    const m=Math.hypot(mx,my)||1; b.moveX=mx/m; b.moveY=my/m;
+  }
+
+  const desired=Math.atan2(player.y-b.y,player.x-b.x)+(b.aimNoise||0);
+  const turn=Math.atan2(Math.sin(desired-b.angle),Math.cos(desired-b.angle));
+  b.angle+=clamp(turn,-0.07*dt,0.07*dt);
+  const spd=2.9*dt, nx=b.x+b.moveX*spd, ny=b.y+b.moveY*spd;
+  if(!pointInRects(nx,b.y)) b.x=nx;
+  if(!pointInRects(b.x,ny)) b.y=ny;
+  b.x=clamp(b.x,40,WORLD.w-40); b.y=clamp(b.y,40,WORLD.h-40); collideRects(b);
+  const pdx=b.x-player.x,pdy=b.y-player.y,rr=b.r+player.r+3,d2=pdx*pdx+pdy*pdy;
+  if(d2>0&&d2<rr*rr){ const d=Math.sqrt(d2),p=(rr-d)/d; b.x+=pdx*p; b.y+=pdy*p; }
+  b.x=clamp(b.x,40,WORLD.w-40); b.y=clamp(b.y,40,WORLD.h-40); b.tx=b.x; b.ty=b.y;
+
+  if(now<b.reactionAt||b.reloadEnd||losBlocked(b.x,b.y,player.x,player.y)) return;
+  const dx=player.x-b.x,dy=player.y-b.y,d=Math.hypot(dx,dy)||1;
+  const targetA=Math.atan2(dy,dx), aimErr=Math.abs(Math.atan2(Math.sin(targetA-b.angle),Math.cos(targetA-b.angle)));
+  if(d>850||aimErr>0.13) return;
+  if(b.mag<=0){ b.reloadEnd=now+w.reload; b.cur='ar'; return; }
+  const interval=w.fireRate*1.35;
+  if(now-b.lastShot<interval) return;
+  b.lastShot=b.lastShot>0&&now-b.lastShot<interval*4?b.lastShot+interval:now;
+  b.mag--; b.flash=now+55;
+  const a=b.angle+rand(-0.035,0.035), sx=b.x+Math.cos(a)*7, sy=b.y+Math.sin(a)*7;
+  ebullets.push({x:sx,y:sy,vx:Math.cos(a)*w.speed,vy:Math.sin(a)*w.speed,life:1200,dmg:w.dmg,
+    botArena:true,dist:0,rng:w.range,fall:w.fall,fg:w.fg||0});
+  if(b.mag<=0) b.reloadEnd=now+w.reload;
+}
+
 /* ---------------- online arena: signed-in casual 1v1 ----------------
    Supabase Presence/Broadcast carries the live match. This first version is
    intentionally CASUAL: ranked ratings need a trusted game server, not a
@@ -4967,7 +5160,7 @@ function arenaLoadoutReady(){ return !!(loadout.primary&&loadout.secondary&&load
 function arenaGuard(){
   if(!sb||!authUser){
     arenaAuthPending=true; $('aguest').style.display='none';
-    $('authmsg').textContent='Sign in is required for online PLAY.';
+    $('authmsg').textContent='Sign in is required for Online multiplayer on different devices.';
     $('authwrap').style.display='flex'; sfx('dry'); return false;
   }
   if(!arenaLoadoutReady()){
@@ -5255,7 +5448,7 @@ function arenaApplyRematchStart(p){
   if(!authUser||!arena.opponent||p.from!==arena.hostId||epoch<=arena.matchEpoch) return false;
   arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
-  arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.hitSeq=0;
+  arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.hitSeq=0; arena.winRecorded=false;
   arena.phase='lobby'; arena.status='Rematch confirmed. Starting round 1...';
   return true;
 }
@@ -5287,9 +5480,13 @@ function arenaApplyRoundStart(p){
   state='play'; menuOpen=false; aiming=false; rmbAim=false;
   waveMsg='ROUND '+arena.round+' \u2014 GET READY'; waveMsgT=now+2800; sfx('wave');
 }
-function arenaCanAct(){ return !!(arena&&arena.active&&!arena.networkHold&&arena.phase==='fight'&&Date.now()<arena.roundEndAt&&player.hp>0); }
+function arenaCanAct(){
+  const clock=isBotArena()?now:Date.now();
+  return !!(arena&&arena.active&&!arena.networkHold&&arena.phase==='fight'&&clock<arena.roundEndAt&&player.hp>0);
+}
 function arenaWallTick(wall){
   if(!arena) return;
+  if(isBotArena()) return;                              // local duel uses the pausable fixed-step game clock
   const elapsed=arena.wallTickAt?clamp(wall-arena.wallTickAt,0,250):16.667;
   arena.wallTickAt=wall;
   if(arena.opponent){
@@ -5310,7 +5507,7 @@ function arenaWallTick(wall){
   }
 }
 function arenaSyncTick(wall){
-  if(!arena||!arena.active||arena.networkHold) return;
+  if(!arena||!arena.active||arena.networkHold||isBotArena()) return;
   if(wall>=arena.syncAt&&arena.matchChannel&&authUser){
     arena.syncAt=arena.syncAt?arena.syncAt+ARENA_SYNC_MS:wall+ARENA_SYNC_MS;
     if(arena.syncAt<wall-ARENA_SYNC_MS) arena.syncAt=wall+ARENA_SYNC_MS;
@@ -5356,6 +5553,7 @@ function arenaApplyRoundResult(p){
   arena.nextRoundAt=p.matchOver?0:Date.now()+nextDelay;
   if(p.matchOver){
     arena.phase='match_end'; arena.active=false; arena.rematchVotes=new Set();
+    if(p.winner===authUser.id&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(); }
     if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
     practiceMode=null; state='select'; selPage='arena'; menuOpen=false;
     arena.status=p.winner===authUser.id?'MATCH WON!':'MATCH LOST.'; sfx(p.winner===authUser.id?'pickup':'die');
@@ -5382,14 +5580,24 @@ function arenaCheckRematch(){
 function arenaPlayAgain(){ leaveArena('',false); arenaQuickMatch(); }
 function leaveArena(status,toHub){
   if(!arena) return;
+  const wasBot=isBotArena();
   if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
   if(arena.matchChannel&&authUser) arenaSend('leave',{});
   arenaDropChannel(arena.queueChannel); arenaDropChannel(arena.matchChannel);
   if(arena.savedUtility!==undefined) loadout.utility=arena.savedUtility;
-  if(practiceMode==='arena'){ practiceMode=null; enemies=[]; bullets=[]; ebullets=[]; pickups=[]; }
+  if(practiceMode==='arena'){
+    practiceMode=null;
+    enemies=[]; bullets=[]; ebullets=[]; pickups=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[]; splitBalls=[];
+    daggersOut=null; comboStep=0; comboNextT=0; parryUntil=0; fistFlurryUntil=0; sawChargeUntil=0;
+  }
   const msg=status||''; arena=freshArena(msg||'Casual 1v1 ready.');
   if(state==='play'||state==='over'||state==='upgrade') state='select';
-  if(toHub) pendingGameMode=null;
+  if(wasBot){
+    pendingGameMode=null; modeBoardMode=toHub?null:'endless';
+    selPage=toHub?'hub':'modeboard'; menuOpen=false; aiming=false; rmbAim=false;
+    return;
+  }
+  if(toHub){ pendingGameMode=null; modeBoardMode=null; }
   selPage=toHub?'hub':'arena'; menuOpen=false; aiming=false; rmbAim=false;
 }
 function arenaCopyCode(){
@@ -5452,7 +5660,7 @@ function meleeSwing(w, mul, flurryGenerated=false){
       let da=Math.atan2(e.y-player.y,e.x-player.x)-base;
       da=Math.atan2(Math.sin(da),Math.cos(da));
       if(Math.abs(da)<=arc/2+Math.asin(Math.min(1,er/(d+1)))*0.8){
-        arenaSendHit(w.dmg*perks.dmg*wm(player.cur).dmg*mul,'melee');
+        arenaHitOpponent(w.dmg*perks.dmg*wm(player.cur).dmg*mul,'melee');
         arenaMeleeHit=true; burst(e.x,e.y,'#d05548',5,3);
       }
     }
@@ -5757,6 +5965,10 @@ function update(dtms){
   player.y=clamp(player.y,40,WORLD.h-40);
   collideRects(player);
 
+  // The Offline 1v1 opponent lives in the same fixed 60 Hz simulation as the
+  // player, so low or very high render FPS never changes its speed or fire rate.
+  if(isBotArena()) updateArenaBot(dtms);
+
   // chainsaw rip charge: constant damage around the player
   if(now < sawChargeUntil && now >= sawChargeTick){
     sawChargeTick = now + 90;
@@ -5859,7 +6071,7 @@ function update(dtms){
         const d2g=dist2(arena.opponent.x,arena.opponent.y,g.x,g.y);
         if(d2g<rad*rad){
           const falloff=1-Math.sqrt(d2g)/(rad*1.3);
-          arenaSendHit(180*falloff,'firework');
+          arenaHitOpponent(180*falloff,'firework');
         }
       }
       // BIG rainbow firework burst on detonation
@@ -6274,7 +6486,7 @@ function update(dtms){
         const ar=arena.opponent.r||15, rr=ar+4+(b.fg||0);
         if(dist2(b.x,b.y,arena.opponent.x,arena.opponent.y)<rr*rr){
           const hdmg=b.dmg*dmgMul(b);
-          arenaSendHit(hdmg,'shot'); b.arenaHit=true;
+          arenaHitOpponent(hdmg,'shot'); b.arenaHit=true;
           burst(b.x,b.y,'#d05548',5,3); sfx('hit');
           if(b.pierce>0) b.pierce--; else dead=true;
           if(dead) break;
@@ -6328,6 +6540,7 @@ function update(dtms){
     let dead=b.life<=0;
     for(let s=0;s<steps&&!dead;s++){
       b.x+=moveX/steps; b.y+=moveY/steps;
+      if(b.botArena) b.dist=(b.dist||0)+Math.hypot(moveX,moveY)/steps;
       const edgeRadius=b.h?(b.r||9):(b.king?8:3);
       if(projectileOutsideArena(b,edgeRadius)){
         clampProjectileToArena(b,edgeRadius); dead=true; break;
@@ -6346,8 +6559,11 @@ function update(dtms){
         parryUntil=0; dead=true;                         // one reflect per activation
         break;
       }
-      if(dist2(b.x,b.y,player.x,player.y)<(player.r+3)*(player.r+3)){
-        dead=true; if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg);
+      const shotR=3+(b.botArena?(b.fg||0):0);
+      if(dist2(b.x,b.y,player.x,player.y)<(player.r+shotR)*(player.r+shotR)){
+        dead=true;
+        if(b.botArena) arenaBotHitPlayer((b.dmg||WEAPONS.ar.dmg)*dmgMul(b));
+        else if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg);
       }
     }
     if(dead) ebullets.splice(i,1);
@@ -6376,9 +6592,9 @@ function update(dtms){
         if(sawLock&&sawFuel>=100) sawLock=false;
         sfx('ammo');
       } else if(p.type==='chest'){
-        // chest reward: an instant weapon mod + 50-300 coins + 0-30 GEMS (gem economy is 10x)
+        // chest reward: an instant weapon mod + 50-300 coins + 0/1/2/3 base gems, scaled 10x
         const r=Math.random();
-        const gemDrop = r<2/3 ? 0 : r<11/12 ? 10 : r<11/12+1/20 ? 20 : 30;
+        const gemDrop = (r<2/3 ? 0 : r<11/12 ? 1 : r<11/12+1/20 ? 2 : 3)*GEM_REWARD_SCALE;
         const coinDrop = p.coins || (50 + ((Math.random()*251)|0));
         if(practiceMode){
           waveMsg='\uD83C\uDF81 CHEST (no rewards in practice)'; waveMsgT=now+2000;
@@ -6399,13 +6615,14 @@ function update(dtms){
             modTxt=modName+'  \u00b7  ';
           }
           const trickle=startCoinTrickle(coinDrop,'MOD CHEST');
-          if(sb && !authUser){
-            waveMsg='\uD83C\uDF81 '+modTxt+'+'+coinDrop+' \uD83E\uDE99 (sign in for \uD83D\uDC8E)'; waveMsgT=now+2600;
+          const awardedGems=gemRewardsEnabled()?gemDrop:0;
+          if(!gemRewardsEnabled()){
+            waveMsg='\uD83C\uDF81 '+modTxt+'+'+coinDrop+' \uD83E\uDE99 ('+(testMode?'no gems in Test Mode':'sign in for gems')+')'; waveMsgT=now+2600;
           } else {
-            if(gemDrop>0) addGems(gemDrop);
-            waveMsg='\uD83C\uDF81 '+modTxt+'+'+gemDrop+' \uD83D\uDC8E  +'+coinDrop+' \uD83E\uDE99'; waveMsgT=now+2600;
+            if(awardedGems>0) addGems(awardedGems);
+            waveMsg='\uD83C\uDF81 '+modTxt+'+'+awardedGems+' \uD83D\uDC8E  +'+coinDrop+' \uD83E\uDE99'; waveMsgT=now+2600;
           }
-          chestRewardOpen={coins:coinDrop,gems:gemDrop,mod:modName,trickle,end:trickle.start+trickle.dur};
+          chestRewardOpen={coins:coinDrop,gems:awardedGems,mod:modName,trickle,end:trickle.start+trickle.dur};
         }
         burst(p.x,p.y,'#ffd24d',18,5); sfx('pickup');
         taskProgress('chests',1);
@@ -6470,11 +6687,15 @@ function usePowerup(id){
     enemies=[]; ebullets=[]; spawnQueue=[];
     waveMsg='\u23ED\uFE0F WAVE SKIPPER \u2014 3 free upgrades'; waveMsgT=now+2000;
   } else if(id==='airdrop'){
-    // 90% ammo crate, 9% medkit, 1% 100 gems
+    // 90% ammo crate, 9% medkit, 1% 10-base-gem jackpot (scaled 10x)
     const r=Math.random();
     if(r<0.90){ pickups.push({x:player.x+rand(-30,30),y:player.y+rand(-30,30),type:'ammo'}); waveMsg='\uD83D\uDCE6 AMMO CRATE'; }
     else if(r<0.99){ pickups.push({x:player.x+rand(-30,30),y:player.y+rand(-30,30),type:'med'}); waveMsg='\uD83D\uDCE6 MEDKIT'; }
-    else { addGems(100); waveMsg='\uD83D\uDCE6 JACKPOT +100 \uD83D\uDC8E'; }
+    else if(gemRewardsEnabled()){
+      const jackpotGems=10*GEM_REWARD_SCALE; addGems(jackpotGems);
+      waveMsg='\uD83D\uDCE6 JACKPOT +'+jackpotGems+' \uD83D\uDC8E';
+    }
+    else waveMsg='\uD83D\uDCE6 JACKPOT \u2014 '+(testMode?'NO GEMS IN TEST MODE':'SIGN IN FOR GEMS');
     waveMsgT=now+1600; burst(player.x,player.y,'#cdd6b0',14,4);
   }
   sfx('pickup');
@@ -6558,11 +6779,14 @@ function drawArenaOpponentWorld(){
   if(practiceMode!=='arena'||!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
   ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU); ctx.fill();
-  ctx.fillStyle='#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
+  ctx.fillStyle=now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   ctx.strokeStyle='#ff8b80'; ctx.lineWidth=2/zoom; ctx.stroke();
   const wk=WEAPONS[e.cur]||WEAPONS.ar, len=Math.min(38,wk.len||24);
   ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0'); ctx.lineWidth=(wk.melee?4:5)/zoom; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6); ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8)); ctx.stroke();
+  if(now<(e.flash||0)){
+    ctx.fillStyle='#ffd98a'; ctx.beginPath(); ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU); ctx.fill();
+  }
   ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(e.x-31,e.y-r-23,62,6);
   ctx.fillStyle='#d05548'; ctx.fillRect(e.x-31,e.y-r-23,62*clamp(e.hp/ARENA_HP,0,1),6);
   ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillStyle='#ffd9d2'; ctx.font='700 9px ui-monospace,Consolas,monospace';
@@ -7024,14 +7248,23 @@ function drawHUD(){
   // score / wave
   ctx.textAlign='left'; ctx.textBaseline='top';
   if(practiceMode==='arena'){
-    const me=authUser?(arena.scores[authUser.id]||0):0, them=arena.opponent?(arena.scores[arena.opponent.id]||0):0;
-    const clock=Date.now(), timer=arena.phase==='countdown'?Math.ceil((arena.roundStartAt-clock)/1000):Math.ceil((arena.roundEndAt-clock)/1000);
+    const myId=arenaMeId(), oppId=arenaOpponentId();
+    const me=myId?(arena.scores[myId]||0):0, them=oppId?(arena.scores[oppId]||0):0;
+    const clock=isBotArena()?now:Date.now(), timer=arena.phase==='countdown'?Math.ceil((arena.roundStartAt-clock)/1000):Math.ceil((arena.roundEndAt-clock)/1000);
     const scoreLine='YOU  '+me+'  \u2014  '+them+'  '+String((arena.opponent&&arena.opponent.name)||'OPPONENT').slice(0,12);
     ctx.textAlign='center'; ctx.fillStyle='#e8b658'; ctx.font='700 '+clamp(Math.floor(W/30),13,24)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(scoreLine,W-110),W/2,pad);
     ctx.fillStyle=arena.networkHold?'#ff8b80':(arena.phase==='fight'?'#cdd6b0':'#ffd24d'); ctx.font='700 12px ui-monospace,Consolas,monospace';
     const roundLine=arena.networkHold?'OPPONENT RECONNECTING \u00b7 MATCH HELD':('ROUND '+arena.round+'  \u00b7  FIRST TO 5  \u00b7  '+(arena.phase==='countdown'?('STARTS IN '+Math.max(1,timer)):arena.phase==='fight'?('TIME '+Math.max(0,timer)+'s'):'ROUND COMPLETE'));
     ctx.fillText(fitLine(roundLine,W-36),W/2,pad+32);
+    if(isBotArena()&&arena.opponent){
+      const bw=Math.min(190,W*0.34), bx=W/2-bw/2, by=pad+51;
+      ctx.fillStyle='rgba(0,0,0,0.58)'; ctx.fillRect(bx,by,bw,8);
+      ctx.fillStyle='#d05548'; ctx.fillRect(bx,by,bw*clamp(arena.opponent.hp/ARENA_HP,0,1),8);
+      ctx.strokeStyle='#5a302c'; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,by+0.5,bw,8);
+      ctx.fillStyle='#e0a8a0'; ctx.font='700 8px ui-monospace,Consolas,monospace';
+      ctx.fillText('BOT INTEGRITY '+Math.ceil(arena.opponent.hp)+' / '+ARENA_HP,W/2,by+11);
+    }
     ctx.textAlign='left';
   } else {
     ctx.fillStyle='#e8b658'; ctx.font='700 22px ui-monospace,Consolas,monospace';
@@ -7615,7 +7848,7 @@ function drawBanNotice(){
 }
 function drawSelect(){
   layoutRects=[]; if(!(layoutMode||textMode)) textRects=[];   // one registry per frame
-  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; partyRects=[]; backRect=null;
+  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; partyRects=[]; leaderboardRowRects=[]; modeBoardContinueRect=null; modeBoardActionRects=[]; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
   adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
@@ -7626,7 +7859,7 @@ function drawSelect(){
   if(banBlocksPlay()){ drawBanPage(); return; }      // blocked accounts see only the ban page
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='modes') drawModes(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='party') drawPartyComingSoon(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
+  if(selPage==='hub') drawHub(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='party') drawPartyComingSoon(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
   drawDetail();
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
@@ -8320,13 +8553,16 @@ function drawPractice(){
 }
 function drawArena(){
   selBg(); arenaRects=[];
+  const botMode=isBotArena();
   const tiny=H<430, dense=H<620;
   const titleY=tiny?19:(dense?28:42), subY=tiny?41:(dense?53:70);
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle='#d05548'; ctx.font='700 '+(tiny?20:(W<440?25:34))+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('\u2694 ONLINE ARENA',W/2,titleY);
+  ctx.fillStyle=botMode?'#7fd8ff':'#d05548'; ctx.font='700 '+(tiny?20:(W<440?25:34))+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(botMode?'\u2694 OFFLINE 1v1 VS AI':'\u2694 ONLINE MULTIPLAYER',W/2,titleY);
   ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(tiny?'SIGN-IN ONLY \u00b7 CASUAL 1v1 \u00b7 FIRST TO 5':'SIGNED-IN CASUAL 1v1 \u00b7 FIRST TO 5 \u00b7 NO UPGRADES OR REWARDS',W-16),W/2,subY);
+  const arenaSub=botMode?'ONE DEVICE ONLY \u00b7 FIRST TO 5 \u00b7 NO UPGRADES OR REWARDS':
+                   (tiny?'DIFFERENT DEVICES \u00b7 SIGN-IN ONLY \u00b7 FIRST TO 5':'ONLINE \u00b7 MULTIPLAYER ON DIFFERENT DEVICES \u00b7 FIRST TO 5 \u00b7 NO REWARDS');
+  ctx.fillText(fitLine(arenaSub,W-16),W/2,subY);
   const pw=Math.min(560,W-20), px=W/2-pw/2, gap=tiny?4:(dense?7:10);
   const button=(id,label,y,col,sub)=>{
     const h=tiny?32:(dense?(sub?44:36):(sub?58:42)), r={id,x:px,y,w:pw,h}; arenaRects.push(r);
@@ -8342,13 +8578,23 @@ function drawArena(){
   const ly=tiny?49:(dense?65:86), lh=tiny?42:(dense?50:64), bodyY=ly+lh+(tiny?6:(dense?10:20));
   ctx.fillStyle='rgba(0,0,0,0.38)'; ctx.fillRect(px,ly,pw,lh);
   ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,ly+0.5,pw,lh);
-  ctx.textAlign='left'; ctx.fillStyle=authUser?'#a7c15e':'#d05548'; ctx.font='700 '+(tiny?9:10)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(authUser?('\u25CF '+displayName(authUser)):'\u25CF SIGN IN REQUIRED',px+10,ly+(tiny?12:18));
+  ctx.textAlign='left'; ctx.fillStyle=botMode?'#7fd8ff':authUser?'#a7c15e':'#d05548'; ctx.font='700 '+(tiny?9:10)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(botMode?'\u25CF LOCAL PLAYER \u00b7 ONE DEVICE ONLY':authUser?('\u25CF '+displayName(authUser)):'\u25CF SIGN IN REQUIRED',px+10,ly+(tiny?12:18));
   const names=arenaLoadoutReady()?[loadout.primary,loadout.secondary,loadout.melee].map(k=>WEAPONS[k].name).join('  \u00b7  '):'Choose PRIMARY + SIDEARM + MELEE on the loadout screen';
   ctx.fillStyle=arenaLoadoutReady()?'#cdd6b0':'#d0a548'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(names,pw-20),px+10,ly+(tiny?29:43)); ctx.textAlign='center';
 
-  if(!authUser){
+  if(botMode&&arena.phase==='match_end'){
+    const me=arena.scores[LOCAL_DUEL_PLAYER]||0, them=arena.scores[LOCAL_DUEL_BOT]||0;
+    ctx.fillStyle=me>them?'#a7c15e':'#d05548'; ctx.font='700 '+(tiny?18:24)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(me>them?'YOU BEAT THE BOT':'BOT WINS',W/2,bodyY+12);
+    ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace'; ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
+    ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
+    let y=bodyY+(tiny?72:116);
+    y=button('botrematch','PLAY AGAIN',y,'#a7c15e','New first-to-5 match against the AI.');
+    y=button('botloadout','CHANGE WEAPONS',y,'#7fd8ff');
+    button('botleave','BACK TO OFFLINE \u00b7 ONE DEVICE ONLY',y,'#8a9268');
+  } else if(!authUser){
     let y=bodyY; y=button('signin','SIGN IN TO PLAY',y,'#e8b658','Online Arena does not allow guest play.');
     button('back','\u2039 BACK TO MENU',y,'#8a9268');
   } else if(arena.phase==='queue'){
@@ -8400,8 +8646,13 @@ function drawArena(){
 function arenaClick(){
   const hit=r=>mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
   for(const r of arenaRects) if(hit(r)){
-    if(r.id==='signin'){
-      arenaAuthPending=true; $('aguest').style.display='none'; $('authmsg').textContent='Sign in is required for online PLAY.'; $('authwrap').style.display='flex';
+    if(r.id==='botrematch') startBotArena();
+    else if(r.id==='botloadout'){
+      leaveArena('',false); pendingGameMode='ai1v1'; modeBoardMode='endless'; loadout.utility=null; selPage='loadout';
+    }
+    else if(r.id==='botleave') leaveArena('',false);
+    else if(r.id==='signin'){
+      arenaAuthPending=true; $('aguest').style.display='none'; $('authmsg').textContent='Sign in is required for Online multiplayer on different devices.'; $('authwrap').style.display='flex';
     } else if(r.id==='quick') arenaQuickMatch();
     else if(r.id==='copy') arenaCopyCode();
     else if(r.id==='ready') arenaSetReady(true);
@@ -8416,14 +8667,22 @@ function arenaClick(){
 function onlinePlayReady(){
   return !!(sb && authUser && navigator.onLine!==false);
 }
+function onlineServiceAvailable(){ return !!(sb && navigator.onLine!==false); }
+function openModeLeaderboard(mode){
+  if(mode==='arena'&&!onlineServiceAvailable()){
+    arena.status='Online games are unavailable. Reconnect and try again.'; sfx('dry'); return false;
+  }
+  modeBoardMode=mode; pendingGameMode=mode; loadout={primary:null,secondary:null,melee:null,utility:null};
+  selPage='modeboard'; fetchBoard(); sfx('swap'); return true;
+}
 function chooseGameMode(mode){
   if(mode==='arena' && !onlinePlayReady()){
     if(navigator.onLine===false || !sb){ arena.status='Online games are unavailable. Reconnect and try again.'; sfx('dry'); return; }
     arenaAuthPending=true; $('aguest').style.display='none';
-    $('authmsg').textContent='Sign in is required for Online 1v1.';
+    $('authmsg').textContent='Sign in is required for Online multiplayer on different devices.';
     $('authwrap').style.display='flex'; sfx('dry'); return;
   }
-  pendingGameMode=mode;
+  pendingGameMode=mode; modeBoardMode=mode==='arena'?'arena':'endless';
   loadout={primary:null,secondary:null,melee:null,utility:null};
   selPage='loadout'; sfx('swap');
 }
@@ -8435,27 +8694,99 @@ function launchSelectedMode(){
     if(!onlinePlayReady()){ chooseGameMode('arena'); return false; }
     loadout.utility=null; selPage='arena'; arena.status='Loadout ready. Choose Quick Match.'; sfx('swap'); return true;
   }
+  if(pendingGameMode==='ai1v1'){
+    loadout.utility=null; startBotArena(); sfx('wave'); return true;
+  }
   if(pendingGameMode==='practice'){
     const mode=pendingPractice||'range'; pendingPractice=null; pendingGameMode=null; startPractice(mode); sfx('wave'); return true;
   }
-  pendingGameMode=null; pendingPractice=null; startGame(); return true;
+  pendingGameMode=null; pendingPractice=null; modeBoardMode=null; startGame(); return true;
 }
 function navigateSelectBack(){
   if(detailKey){ detailKey=null; sfx('swap'); return; }
   if(CATS.some(c=>c[0]===selPage)){ selPage=pendingGameMode?'loadout':'hub'; sfx('swap'); return; }
   if(selPage==='loadout'){
-    const returnTo=pendingGameMode==='practice'?'practice':'hub';
+    const returnTo=pendingGameMode==='practice'?'practice':(modeBoardMode?'modeboard':'hub');
     pendingGameMode=null; pendingPractice=null; selPage=returnTo; sfx('swap'); return;
   }
+  if(selPage==='modeboard'){ pendingGameMode=null; modeBoardMode=null; selPage='hub'; sfx('swap'); return; }
   if(selPage==='party'){ selPage='hub'; sfx('swap'); return; }
   if(selPage==='modes'){ selPage='hub'; sfx('swap'); return; }
   if(selPage==='arena'){
+    if(isBotArena()){ leaveArena('',false); sfx('swap'); return; }
     leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'hub'; sfx('swap'); return;
   }
   if(selPage==='shop' && pendingGameMode){ selPage='loadout'; sfx('swap'); return; }
   if(selPage==='tutorial'){ selPage='howto'; sfx('swap'); return; }
   if(selPage!=='hub'){ selPage='hub'; sfx('swap'); return; }
   menuOpen=!menuOpen; sfx('swap');
+}
+function drawModeLeaderboard(){
+  selBg(); leaderboardRowRects=[];
+  const arenaMode=modeBoardMode==='arena', rows=arenaMode?arenaBoard:board;
+  const col=arenaMode?'#d05548':'#a7c15e', compact=H<560;
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillStyle=col; ctx.font='700 '+(compact?23:32)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(arenaMode?'PLAY ONLINE':'PLAY OFFLINE',W/2,H*0.035);
+  ctx.fillStyle='#8a9268'; ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
+  const sub=arenaMode?'MULTIPLAYER \u00b7 DIFFERENT DEVICES \u00b7 1v1 WINS':'ONE DEVICE ONLY \u00b7 ENDLESS + 1v1 VS AI';
+  ctx.fillText(fitLine(sub,W-24),W/2,H*0.035+(compact?30:41));
+
+  const buttonsH=compact?34:42, buttonsY=H-buttonsH-12;
+  const pw=Math.min(560,W-24), px=W/2-pw/2, py=H*0.035+(compact?51:66);
+  const panelBottom=buttonsY-(compact?8:14), ph=Math.max(120,panelBottom-py);
+  ctx.fillStyle='rgba(0,0,0,0.44)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  const headH=compact?28:36, rowH=Math.max(16,Math.min(compact?23:30,Math.floor((ph-headH-8)/10)));
+  ctx.fillStyle=col; ctx.font='700 '+(compact?10:12)+'px ui-monospace,Consolas,monospace';
+  ctx.textAlign='left'; ctx.fillText(arenaMode?'TOP 10 OPERATORS':'ENDLESS TOP 10 OPERATORS',px+12,py+(compact?9:12));
+  ctx.textAlign='right'; ctx.fillText(arenaMode?'WINS':'SCORE',px+pw-12,py+(compact?9:12));
+  if(rows.length){
+    for(let i=0;i<Math.min(10,rows.length);i++){
+      const r=rows[i], y=py+headH+i*rowH, pub=publicProfileCache[r.user_id]||{};
+      const name=pub.email||r.name||'operator';
+      leaderboardRowRects.push({x:px+6,y,w:pw-12,h:rowH,userId:r.user_id,name});
+      const hot=mouse.x>=px+6&&mouse.x<=px+pw-6&&mouse.y>=y&&mouse.y<=y+rowH;
+      ctx.fillStyle=hot?'rgba(127,216,255,0.13)':(i%2?'rgba(255,255,255,0.025)':'rgba(255,255,255,0.055)'); ctx.fillRect(px+6,y,pw-12,rowH);
+      ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.fillStyle=i<3?'#e8d9a8':'#8a9268';
+      ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine((i+1)+'. '+name,pw-116),px+13,y+rowH/2);
+      ctx.textAlign='right'; ctx.fillStyle=i<3?col:'#8a9268'; ctx.font='700 '+(compact?'10':'12')+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(String(r.score||0),px+pw-13,y+rowH/2);
+    }
+  } else {
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#6b7455'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText(sb?(arenaMode?'NO 1v1 WINS YET \u2014 BE THE FIRST!':'NO ENDLESS SCORES YET'):'LEADERBOARD UNAVAILABLE',W/2,py+headH+(ph-headH)/2);
+  }
+
+  const gap=compact?6:10, totalW=Math.min(560,W-24), backW=Math.max(92,Math.floor(totalW*0.30));
+  const startX=W/2-totalW/2;
+  backRect={x:startX,y:buttonsY,w:backW,h:buttonsH};
+  const drawButton=(r,label,c)=>{
+    const hot=mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
+    ctx.fillStyle=hot?c:'rgba(0,0,0,0.42)'; ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle=c; ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h);
+    ctx.fillStyle=hot?'#101208':'#e8d9a8'; ctx.font='700 '+(compact?10:13)+'px ui-monospace,Consolas,monospace';
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(fitLine(label,r.w-10),r.x+r.w/2,r.y+r.h/2);
+  };
+  drawButton(backRect,'\u2039 HOME','#8a9268');
+  if(arenaMode){
+    modeBoardContinueRect={x:startX+backW+gap,y:buttonsY,w:totalW-backW-gap,h:buttonsH};
+    drawButton(modeBoardContinueRect,'CHOOSE 1v1 WEAPONS \u203A',col);
+  } else {
+    const actionW=(totalW-backW-gap*2)/2;
+    modeBoardActionRects=[
+      {mode:'endless',x:startX+backW+gap,y:buttonsY,w:actionW,h:buttonsH},
+      {mode:'ai1v1',x:startX+backW+gap*2+actionW,y:buttonsY,w:actionW,h:buttonsH}
+    ];
+    drawButton(modeBoardActionRects[0],'ENDLESS \u203A','#a7c15e');
+    drawButton(modeBoardActionRects[1],'1v1 VS AI \u203A','#7fd8ff');
+  }
+  if(arenaMode&&!authUser&&onlineServiceAvailable()){
+    ctx.fillStyle='#d0a548'; ctx.font='700 8px ui-monospace,Consolas,monospace'; ctx.textAlign='right'; ctx.textBaseline='alphabetic';
+    ctx.fillText('SIGN IN REQUIRED AFTER CONTINUE',W-14,buttonsY-4);
+  }
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 }
 function drawModes(){
   selBg(); modeRects=[];
@@ -8479,10 +8810,10 @@ function drawModes(){
     ctx.textAlign='center';
   };
   const y0=H*0.055+(H<560?62:86), gap=H<560?14:20;
-  card('endless','OFFLINE','ENDLESS','Classic waves, upgrades, bosses, rewards, and no internet required.',y0,'#a7c15e',true);
+  card('endless','OFFLINE \u00b7 ONE DEVICE ONLY','ENDLESS + 1v1 VS AI','Choose waves or a first-to-5 local duel against the bot.',y0,'#a7c15e',true);
   const online=onlinePlayReady();
-  const why=(navigator.onLine===false||!sb)?'OFFLINE \u2014 reconnect to enable Online games':(!authUser?'SIGN IN REQUIRED \u2014 Online games do not allow guests':'Casual first-to-5 Arena on separate devices.');
-  card('arena','ONLINE','CASUAL 1v1',why,y0+ch+gap,'#d05548',online);
+  const why=(navigator.onLine===false||!sb)?'NO CONNECTION \u2014 different-device multiplayer unavailable':(!authUser?'SIGN IN REQUIRED \u2014 multiplayer uses different devices':'Casual first-to-5 multiplayer on different devices.');
+  card('arena','ONLINE \u00b7 MULTIPLAYER','CASUAL 1v1',why,y0+ch+gap,'#d05548',online);
   const bw=Math.min(260,W-40), bh=42, bx=W/2-bw/2, by=Math.min(H-bh-14,y0+ch*2+gap+22);
   backRect={x:bx,y:by,w:bw,h:bh};
   const hot=mouse.x>=bx&&mouse.x<=bx+bw&&mouse.y>=by&&mouse.y<=by+bh;
@@ -8542,15 +8873,19 @@ function drawPartyComingSoon(){
 }
 function drawLoadout(){
   selBg(); catBtns=[];
-  const arenaMode=pendingGameMode==='arena';
+  const arenaMode=pendingGameMode==='arena', aiMode=pendingGameMode==='ai1v1', duelMode=arenaMode||aiMode;
+  const modeCol=arenaMode?'#d05548':aiMode?'#7fd8ff':'#e8b658';
   ctx.textAlign='center'; ctx.textBaseline='top';
-  ctx.fillStyle=arenaMode?'#d05548':'#e8b658'; ctx.font='700 '+(H<600?24:32)+'px ui-monospace,Consolas,monospace';
+  ctx.fillStyle=modeCol; ctx.font='700 '+(H<600?24:32)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('CHOOSE YOUR WEAPONS',W/2,H*0.035);
-  ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
-  ctx.fillText(arenaMode?'ONLINE 1v1 \u00b7 PRIMARY + SIDEARM + MELEE \u00b7 NO UPGRADES':'OFFLINE ENDLESS \u00b7 THREE WEAPONS REQUIRED \u00b7 UTILITY OPTIONAL',W/2,H*0.035+40);
-  const rows=arenaMode?CATS.slice(0,3):CATS;
+  ctx.fillStyle='#8a9268'; ctx.font=(W<430?'9':'11')+'px ui-monospace,Consolas,monospace';
+  const loadoutSub=arenaMode?'ONLINE MULTIPLAYER \u00b7 DIFFERENT DEVICES \u00b7 1v1':
+                   aiMode?'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 1v1 VS AI \u00b7 NO UPGRADES':
+                          'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 ENDLESS \u00b7 UTILITY OPTIONAL';
+  ctx.fillText(fitLine(loadoutSub,W-24),W/2,H*0.035+40);
+  const rows=duelMode?CATS.slice(0,3):CATS;
   const bw=Math.min(540,W-40), x0=W/2-bw/2, gap=H<600?9:14;
-  const top=H*0.035+68, footer=104;
+  const top=H*0.035+68, footer=112;
   const rowH=clamp(Math.floor((H-top-footer-gap*(rows.length-1))/rows.length),H<420?32:H<500?40:48,78);
   let y=top;
   for(const [cat,slot] of rows){
@@ -8569,14 +8904,14 @@ function drawLoadout(){
   const ready=!!(loadout.primary&&loadout.secondary&&loadout.melee), dh=48, dw=Math.min(360,W-34), dx=W/2-dw/2;
   const dy=Math.min(H-dh-58,y+5); deployRect={x:dx,y:dy,w:dw,h:dh};
   const hot=ready&&mouse.x>=dx&&mouse.x<=dx+dw&&mouse.y>=dy&&mouse.y<=dy+dh;
-  ctx.fillStyle=hot?(arenaMode?'#d05548':'#e8b658'):ready?(arenaMode?'rgba(208,85,72,0.18)':'rgba(232,182,88,0.16)'):'rgba(0,0,0,0.35)'; ctx.fillRect(dx,dy,dw,dh);
-  ctx.strokeStyle=ready?(arenaMode?'#d05548':'#e8b658'):'#4a4634'; ctx.lineWidth=1.5; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
+  ctx.fillStyle=hot?modeCol:ready?(aiMode?'rgba(127,216,255,0.16)':arenaMode?'rgba(208,85,72,0.18)':'rgba(232,182,88,0.16)'):'rgba(0,0,0,0.35)'; ctx.fillRect(dx,dy,dw,dh);
+  ctx.strokeStyle=ready?modeCol:'#4a4634'; ctx.lineWidth=1.5; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
   ctx.fillStyle=hot?'#101208':ready?'#e8d9a8':'#6b7455'; ctx.font='700 16px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
-  ctx.fillText(ready?(arenaMode?'CONTINUE TO 1v1':'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
+  ctx.fillText(ready?(arenaMode?'CONTINUE TO ONLINE 1v1':aiMode?'START 1v1 VS AI':'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
   const bbW=120, bbH=30, bbX=16, bbY=H-bbH-14; backRect={x:bbX,y:bbY,w:bbW,h:bbH};
   const backHot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
   ctx.fillStyle=backHot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH); ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
-  const backLabel=pendingGameMode==='practice'?'\u2039 PRACTICE':'\u2039 HOME';
+  const backLabel=pendingGameMode==='practice'?'\u2039 PRACTICE':(modeBoardMode?'\u2039 LEADERBOARD':'\u2039 HOME');
   ctx.fillStyle=backHot?'#101208':'#cdd6b0'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(backLabel,bbX+bbW/2,bbY+bbH/2);
   if(now<pracNeedMsgT){ ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('PRIMARY + SIDEARM + MELEE ARE REQUIRED',W/2,dy-18); }
   ctx.textBaseline='alphabetic';
@@ -8697,10 +9032,10 @@ function drawHub(){
   const cardH=wideActions?Math.max(30,Math.min(targetActionH,actionBottom-actionTop)):
                               Math.max(27,Math.min(targetActionH,Math.floor((actionBottom-actionTop-actionGap*2)/3)));
   const noConnection=navigator.onLine===false||!sb;
-  const onlineSub=noConnection?'OFFLINE \u00b7 RECONNECT':(!authUser?'SIGN IN REQUIRED \u00b7 CASUAL 1v1':'CASUAL 1v1 \u00b7 FIRST TO 5');
+  const onlineSub=noConnection?'NO CONNECTION \u00b7 DIFFERENT DEVICES':(!authUser?'DIFFERENT DEVICES \u00b7 SIGN IN':'MULTIPLAYER \u00b7 DIFFERENT DEVICES');
   const actions=[
-    {id:'online', title:'PLAY ONLINE', sub:onlineSub, col:'#d05548', enabled:onlinePlayReady()},
-    {id:'offline',title:'PLAY OFFLINE',sub:'ENDLESS WAVES \u00b7 UPGRADES',col:'#a7c15e',enabled:true},
+    {id:'online', title:'PLAY ONLINE', sub:onlineSub, col:'#d05548', enabled:onlineServiceAvailable()},
+    {id:'offline',title:'PLAY OFFLINE',sub:'ONE DEVICE ONLY \u00b7 ENDLESS OR AI 1v1',col:'#a7c15e',enabled:true},
     {id:'party',  title:'CREATE/JOIN PARTY',sub:'ENDLESS \u00b7 1v1 \u00b7 2v2 \u00b7 COMING SOON',col:'#bfa8ff',enabled:true}
   ];
   for(let i=0;i<actions.length;i++){
@@ -10393,7 +10728,9 @@ function frame(){
     let steps=0;
     while(simAcc>=SIM_STEP && steps<MAX_SIM_STEPS){
       now+=SIM_STEP;
+      if(isBotArena()) arenaBotRoundTick();             // countdown/round clock pauses with the local game
       if(state==='play' && (practiceMode!=='arena'||arenaCanAct())) update(SIM_STEP);
+      arenaBotFlushProjectiles();                       // safe point after every projectile loop has finished
       simAcc-=SIM_STEP; steps++;
     }
     if(steps===MAX_SIM_STEPS&&simAcc>=SIM_STEP) simAcc=0; // discard only a true background-tab backlog
