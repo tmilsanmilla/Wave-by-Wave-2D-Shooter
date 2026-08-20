@@ -727,7 +727,7 @@ function sfx(k,w){
 /* ---------------- weapons ---------------- */
 const WEAPONS = {
   /* primaries */
-  ar     : { name:'SCAR-H RIFLE', dmg:48,  mag:25, reload:1600, fireRate:145, auto:true,  pellets:1, fg:14,
+  ar     : { name:'SCAR-H RIFLE', dmg:48,  mag:25, reload:1600, fireRate:145, auto:true,  pellets:1, fg:15.4,
              spread:0.05,  aimSpread:0.016, speed:19, len:34, kick:2.6, zoom:1.55, scoped:false,
              moveMod:0.95, range:620,  fall:0.781, sndF:950,  sndD:0.08,
              blurb:'Measured full-auto. Heavy hitter with forgiving aim.' },
@@ -737,14 +737,14 @@ const WEAPONS = {
              moveMod:0.95, range:99999, fall:1, sndF:1100, sndD:0.08,
              blurb:'Bouncing solar bolts \u2014 hits ignite, infinite reach & ammo. Slow, kicks hard, wild spread.' },
   smg    : { name:'MP7 SMG',      dmg:11,  mag:55, reload:1400, fireRate:65,  auto:true,  pellets:1, fg:14,
-             spread:0.135, aimSpread:0.05,  speed:15, len:26, kick:1.6, zoom:1.30, scoped:false,
-             moveMod:1.05, range:340,  fall:0.8155, sndF:1800, sndD:0.05,
+             spread:0.134325, aimSpread:0.04975, speed:15, len:26, kick:1.6, zoom:1.30, scoped:false,
+             moveMod:1.05, range:340,  fall:0.83527, sndF:1800, sndD:0.05,
              blurb:'Pure spam. Huge mag, forgiving aim, holds up at range.' },
-  shotgun: { name:'M870 SHOTGUN', dmg:30,  mag:8,  reload:1900, fireRate:760, auto:false, pellets:7, fg:10,
+  shotgun: { name:'M870 SHOTGUN', dmg:30,  mag:8,  reload:1900, fireRate:760, auto:false, pellets:9, fg:10,
              spread:0.21,  aimSpread:0.10,  speed:13, len:30, kick:8,  zoom:1.25, scoped:false,
              moveMod:0.92, range:340,  fall:0.70, sndF:520,  sndD:0.17,
-             blurb:'Seven pellets of persuasion. Devastating up close.' },
-  sniper : { name:'AWM SNIPER',   dmg:170, mag:6,  reload:2300, fireRate:1150,auto:false, pellets:1, pierce:5, fg:1,
+             blurb:'Nine pellets of persuasion. Devastating up close.' },
+  sniper : { name:'AWM SNIPER',   dmg:204, mag:6,  reload:2300, fireRate:1150,auto:false, pellets:1, pierce:5, fg:1,
              spread:0.28,  aimSpread:0.0,   speed:28, len:42, kick:10, zoom:3.0,  scoped:true,
              moveMod:0.85, range:99999,fall:1.0,  sndF:340,  sndD:0.24,
              blurb:'Full damage at any range, pierces 5. Precise \u2014 no forgiving hits.' },
@@ -783,7 +783,7 @@ const WEAPONS = {
   twinsai: { name:'TWIN SAI',      melee:true, dmg:22, mag:Infinity, reload:0, fireRate:150, auto:true,
              pellets:1, spread:0, aimSpread:0, len:14, kick:1.2, zoom:1.12, scoped:false, combo:true, sai:true,
              moveMod:1.12, range:96,  arc:0.6,
-             blurb:'Fast dual blades — quick left-right jabs. F / melee RMB: PARRY reflects the next shot.' },
+             blurb:'Fast dual blades. F / melee RMB: 2.5s PARRY sends the next shot toward your aim.' },
   knife  : { name:'KA-BAR KNIFE', melee:true, dmg:48, mag:Infinity, reload:0, fireRate:380, auto:true,
              pellets:1, spread:0, aimSpread:0, len:16, kick:2.5, zoom:1.15, scoped:false,
              moveMod:1.08, range:130, arc:0.35,
@@ -870,6 +870,9 @@ const VAULT_ACTIVE = {
   portal:     false,   // FALL UPDATE
   timecapsule:false,   // shelved dormant
 };
+// Unreleased next-season equipment is never part of the public roster. Admins
+// can inspect it in the editor and can equip it only while Test Mode is active.
+const FALL_KEYS=['warpwave','timeturner','terafists','portal'];
 /* utilities: G/RMB to quick-use; equip the Medkit and LMB for its long heal */
 const UTILITIES = {
   medkit : { name:'FIELD MEDKIT', cd:75000,
@@ -890,6 +893,7 @@ const TEMP_UTIL_KEYS = ['beachball'];
 (function activateVault(){
   const rosters = { primary:PRIMARIES, secondary:SECONDARIES, melee:MELEES };
   for(const key in VAULT_ACTIVE){
+    if(FALL_KEYS.includes(key)) continue;            // next season stays admin-preview only
     if(!VAULT_ACTIVE[key]) continue;
     const slot = VAULT_SLOTS[key];
     if(slot==='utility'){
@@ -1859,6 +1863,7 @@ async function fetchAdmins(){
     const { data } = await sb.from('admins').select('email,role');
     adminRoles={}; (data||[]).forEach(r=>{ adminRoles[String(r.email||'').toLowerCase()]=r.role; });
   }catch(e){}
+  syncFallAccess();                                  // role changes immediately grant/revoke admin preview
 }
 async function fetchBanners(){
   if(!sb) return;
@@ -2161,15 +2166,31 @@ function gemUnlock(it){
   if(!r.includes(it.key)) r.push(it.key);
   if(!WKEYS.includes(it.key)) WKEYS.push(it.key);
 }
-/* ---- #1 EARLY ACCESS: the top name on the global leaderboard unlocks the FALL set ---- */
-const FALL_KEYS=['warpwave','timeturner','terafists','portal'];
+/* ---- NEXT-SEASON PREVIEW: admins may play this set only in TEST MODE ---- */
 let fallInjected=false;
 function fallEligible(){
-  return !!(sb && authUser && board && board.length && board[0].name===displayName(authUser));
+  return !!(isAdmin() && testMode);
 }
 function syncFallAccess(){
   const rosters={warpwave:PRIMARIES, timeturner:SECONDARIES, terafists:MELEES};
-  if(fallEligible() && !fallInjected){
+  const liveFallRun=(state==='play'||state==='upgrade'||state==='over') &&
+    (FALL_KEYS.includes(player.cur) ||
+     [loadout.primary,loadout.secondary,loadout.melee,loadout.utility].some(k=>FALL_KEYS.includes(k)));
+  if(!isAdmin()){
+    testMode=false;
+    adminPanelOpen=false; storageOpen=false; weaponEditOpen=false;
+    if(formOpen && weaponEditKey) closeForm();
+    weaponEditKey=null; weaponEditDraft=null;
+  }
+  if(!fallEligible() && liveFallRun){
+    if(practiceMode==='arena') leaveArena('Admin preview access ended.',true);
+    else {
+      state='select'; selPage='hub'; pendingGameMode=null; practiceMode=null; menuOpen=false;
+      bullets=[]; ebullets=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; daggersOut=null;
+      utilityOut=false; aiming=false; rmbAim=false;
+    }
+  }
+  if(fallEligible()){
     for(const k of ['warpwave','timeturner','terafists']){
       if(!WEAPONS[k]) WEAPONS[k]=VAULT_WEAPONS[k];
       if(!rosters[k].includes(k)) rosters[k].push(k);
@@ -2178,15 +2199,13 @@ function syncFallAccess(){
     if(!UTILITIES.portal) UTILITIES.portal=VAULT_UTILITIES.portal;
     if(!UTILKEYS.includes('portal')) UTILKEYS.push('portal');
     fallInjected=true;
-  } else if(!fallEligible() && fallInjected){
+  } else if(!fallEligible()){
     for(const k of ['warpwave','timeturner','terafists']){
       const r=rosters[k], i=r.indexOf(k); if(i>=0) r.splice(i,1);
       const wi=WKEYS.indexOf(k); if(wi>=0) WKEYS.splice(wi,1);
-      delete WEAPONS[k];
       for(const slot of ['primary','secondary','melee']) if(loadout[slot]===k) loadout[slot]=null;
     }
     const ui=UTILKEYS.indexOf('portal'); if(ui>=0) UTILKEYS.splice(ui,1);
-    delete UTILITIES.portal;
     if(loadout.utility==='portal') loadout.utility=null;
     fallInjected=false;
   }
@@ -2230,6 +2249,7 @@ loadMeta();
 const LOCKED_KEYS = ['fireworks','solarrifle','bdaggers','beachball'];   // seasonal = sign-in only
 const TEMP_KEYS = ['flamethrower','fireworks','bdaggers','beachball'];  // Summer Flaming Update
 function isLocked(k){
+  if(FALL_KEYS.includes(k)) return !fallEligible();  // unreleased: admins in Test Mode only
   if(!sb) return false;                              // preview/offline: everything open
   if(testMode) return false;                         // TEST MODE: every weapon free + usable
   if(GEM_SHOP.some(it=>it.key===k)) return !gemOwned[k];   // shop weapons: unlocked once bought
@@ -2238,6 +2258,24 @@ function isLocked(k){
 
 /* ---------------- world ---------------- */
 const WORLD = { w:2400, h:1800 };
+const ARENA_EDGE=20;                                // matches the visible gold playfield fence
+function projectileOutsideArena(p,r=0){
+  return p.x-r<ARENA_EDGE || p.y-r<ARENA_EDGE ||
+         p.x+r>WORLD.w-ARENA_EDGE || p.y+r>WORLD.h-ARENA_EDGE;
+}
+function clampProjectileToArena(p,r=0){
+  p.x=clamp(p.x,ARENA_EDGE+r,WORLD.w-ARENA_EDGE-r);
+  p.y=clamp(p.y,ARENA_EDGE+r,WORLD.h-ARENA_EDGE-r);
+}
+function bounceProjectileAtArenaEdge(p,r=0,damp=1){
+  const lo=ARENA_EDGE+r, hiX=WORLD.w-ARENA_EDGE-r, hiY=WORLD.h-ARENA_EDGE-r;
+  let hit=false;
+  if(p.x<lo){ p.x=lo; if(p.vx<0) p.vx=-p.vx*damp; hit=true; }
+  else if(p.x>hiX){ p.x=hiX; if(p.vx>0) p.vx=-p.vx*damp; hit=true; }
+  if(p.y<lo){ p.y=lo; if(p.vy<0) p.vy=-p.vy*damp; hit=true; }
+  else if(p.y>hiY){ p.y=hiY; if(p.vy>0) p.vy=-p.vy*damp; hit=true; }
+  return hit;
+}
 const obstacles = [
   {x: 420, y: 320, w:150, h: 90}, {x:1830, y: 300, w: 90, h:170},
   {x: 350, y:1380, w: 90, h:160}, {x:1900, y:1400, w:170, h: 90},
@@ -2301,7 +2339,7 @@ arena=freshArena('Sign in, choose a loadout, then enter Casual 1v1.');
 const DIFFS={easy:{hp:0.75,dmg:0.7,label:'EASY'}, normal:{hp:1,dmg:1,label:'NORMAL'}, hard:{hp:1.35,dmg:1.3,label:'HARD'}};
 let spawnQueue=[], spawnTimer=0, betweenTimer=1500;
 let loadout={primary:null,secondary:null,melee:null,utility:null}, cardRects=[], deployRect=null;
-let selPage='hub', pendingGameMode=null, catBtns=[], modeRects=[], playBtnRect=null, backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modes | loadout | tutorial | shop
+let selPage='hub', pendingGameMode=null, catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modes | loadout | party | tutorial | shop
 let detailKey=null, detailBtns=[], detailRects={};
 const CATS=[['PRIMARY','primary',()=>PRIMARIES,()=>TEMP_PRIMARY],
             ['SIDEARM','secondary',()=>SECONDARIES,()=>TEMP_SECONDARY],
@@ -2318,6 +2356,7 @@ let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
 const MED_KILLS_REQUIRED=10, TERA_HITS_REQUIRED=15, MED_CHANNEL_MS=8000;
 let utilReadyT=0, medChan=0, medChanHeal=0, medKillCharge=MED_KILLS_REQUIRED, balls=[], grenades=[], pearls=[], utilityOut=false;
 const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:6400, warpwave:18000, timeturner:12000};
+const TWIN_SAI_PARRY_MS=2500;
 let wmods={}, utilMods={}, bossBounty=false;
 function wm(k){ return wmods[k] || (wmods[k]={dmg:1,rate:1,mag:1,pellets:0,pierce:0,drain:1,cdAdd:1,slamR:1,range:1,fall:1,spread:1,arc:1}); }
 function um(k){ return utilMods[k] || (utilMods[k]={cd:1}); }
@@ -2448,9 +2487,12 @@ function injectVault(){
   }
 }
 function setTestMode(on){
+  if(on && !isAdmin()){ testMode=false; syncFallAccess(); sfx('dry'); return; }
   testMode=!!on;
-  if(testMode){ adminUsed=true; injectVault(); }     // every weapon appears published, free, and usable
-  else for(const k in VAULT_SLOTS) if(!savedWeaponPublished(k)) unpublishVaultKey(k); // restore real publish state
+  if(testMode){ adminUsed=true; injectVault(); }     // admin-only: every weapon free and usable for testing
+  else for(const k in VAULT_SLOTS)
+    if(FALL_KEYS.includes(k) || !savedWeaponPublished(k)) unpublishVaultKey(k); // restore public roster
+  syncFallAccess();
   waveMsg='\uD83E\uDDEA TEST MODE '+(testMode?'ON \u2014 every weapon free':'OFF'); waveMsgT=now+1600;
 }
 function isStorageKey(k){ return !!(VAULT_WEAPONS[k] || VAULT_UTILITIES[k]); }
@@ -2870,11 +2912,12 @@ for(const k of TEMP_MELEE) WEAPON_EDITOR_SLOTS[k]='melee';
 for(const k of TEMP_UTILITY) WEAPON_EDITOR_SLOTS[k]='utility';
 for(const k in VAULT_SLOTS) WEAPON_EDITOR_SLOTS[k]=VAULT_SLOTS[k];
 function savedWeaponPublished(k){
+  if(FALL_KEYS.includes(k)) return false;            // next season cannot be made public from saved data
   if(weaponDefs[k] && typeof weaponDefs[k].published==='boolean') return weaponDefs[k].published;
   if(VAULT_ACTIVE.hasOwnProperty(k)) return !!VAULT_ACTIVE[k];
   return true;                                       // built-in weapons start published unless an admin saves otherwise
 }
-function weaponIsPublished(k){ return testMode ? true : savedWeaponPublished(k); }
+function weaponIsPublished(k){ return savedWeaponPublished(k); } // Test Mode never changes saved publish state
 function weaponDefOf(k){ return WEAPONS[k] || VAULT_WEAPONS[k] || UTILITIES[k] || VAULT_UTILITIES[k] || null; }
 function weaponPrice(k){ const it=GEM_SHOP.find(i=>i.key===k); return it? it.cost : null; }
 async function fetchWeaponDefs(){
@@ -2891,10 +2934,17 @@ async function fetchWeaponDefs(){
 function applyWeaponDef(r){
   const def=weaponDefOf(r.key); if(!def) return;
   if(r.stats) for(const f of WFIELDS) if(typeof r.stats[f.k]==='number') def[f.k]=r.stats[f.k];
+  if(FALL_KEYS.includes(r.key)){
+    VAULT_ACTIVE[r.key]=false;                       // ignore stale/accidental public publish records
+    unpublishVaultKey(r.key);
+    if(fallEligible()) publishVaultKey(r.key);
+    return;
+  }
   if(VAULT_ACTIVE.hasOwnProperty(r.key)) VAULT_ACTIVE[r.key]=!!r.published;
   if(r.published) publishVaultKey(r.key); else unpublishVaultKey(r.key);
 }
 function publishVaultKey(k){
+  if(FALL_KEYS.includes(k) && !fallEligible()){ unpublishVaultKey(k); return; }
   const slot=WEAPON_EDITOR_SLOTS[k];
   if(VAULT_WEAPONS[k] && !WEAPONS[k]) WEAPONS[k]=VAULT_WEAPONS[k];
   if(VAULT_UTILITIES[k] && !UTILITIES[k]) UTILITIES[k]=VAULT_UTILITIES[k];
@@ -2916,11 +2966,13 @@ function openWeaponEdit(k){
   weaponEditDraft={};
   for(const f of WFIELDS) if(typeof def[f.k]==='number') weaponEditDraft[f.k]=def[f.k];
   const pr=weaponPrice(k); if(pr!==null) weaponEditDraft.price=pr;
-  weaponEditDraft.published = savedWeaponPublished(k); // editing during test mode must not publish by accident
+  weaponEditDraft.published = FALL_KEYS.includes(k) ? false : savedWeaponPublished(k);
   showWeaponForm();
 }
 function showWeaponForm(){
   const k=weaponEditKey, def=weaponDefOf(k)||{}, d=weaponEditDraft;
+  const nextSeason=FALL_KEYS.includes(k);
+  if(nextSeason) d.published=false;
   const fields=[];
   for(const f of WFIELDS) if(typeof d[f.k]==='number')
     fields.push({id:f.k, label:f.label, min:f.min, max:f.max, value:d[f.k], was:def[f.k]});
@@ -2928,12 +2980,13 @@ function showWeaponForm(){
     fields.push({id:'price', label:'GEM PRICE', min:0, max:9999, value:d.price, was:weaponPrice(k)});
   openForm({
     title:'\u2699 '+(def.name||k),
-    hint:(d.published?'PUBLISHED \u00b7 players can use it':'IN STORAGE \u00b7 not live yet')
+    hint:(nextSeason?'NEXT SEASON \u00b7 ADMIN PREVIEW ONLY'
+                    :(d.published?'PUBLISHED \u00b7 players can use it':'IN STORAGE \u00b7 not live yet'))
          +' \u00b7 type straight into the boxes',
     fields,
     saveLabel:'SAVE',
     onCancel:()=>{ weaponEditKey=null; weaponEditDraft=null; storageOpen=true; },
-    extraButton:{
+    extraButton:nextSeason ? null : {
       label: d.published?'\u2193 UNPUBLISH (back to storage)':'\u2191 PUBLISH (make it live)',
       onClick:()=>{                                  // keep what is typed, flip the state, redraw
         const v=formValues();
@@ -2950,10 +3003,11 @@ function showWeaponForm(){
 }
 async function saveWeaponEdit(){
   if(!isMainAdmin() || !weaponEditKey){ formError('main-admin access required'); return; }
-  const k=weaponEditKey, d=weaponEditDraft;
+  const k=weaponEditKey, d=weaponEditDraft, nextSeason=FALL_KEYS.includes(weaponEditKey);
+  if(nextSeason) d.published=false;
   const stats={};
   for(const f of WFIELDS) if(typeof d[f.k]==='number') stats[f.k]=d[f.k];
-  const row={key:k, stats, price:null, published:!!d.published, updated_by:adminEmail()};
+  const row={key:k, stats, price:null, published:nextSeason?false:!!d.published, updated_by:adminEmail()};
   $('formstatus').textContent='saving...';
   try{
     if(sb){
@@ -2963,7 +3017,7 @@ async function saveWeaponEdit(){
     } else if(typeof d.price==='number' && d.price!==weaponPrice(k)) setGemPrice(k,d.price);
     weaponDefs[k]=row;
     applyWeaponDef(row);                              // change live state only after the save succeeds
-    weaponEditOpen=false; closeForm(); storageOpen=true;
+    weaponEditOpen=false; closeForm(); weaponEditKey=null; weaponEditDraft=null; storageOpen=true;
     storageTab = row.published ? 'published' : 'storage';
     sfx('pickup');
   }catch(e){
@@ -2981,7 +3035,8 @@ function drawWeaponEdit(){
   ctx.fillStyle='#d8c8ff'; ctx.font='700 16px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine('\u2699 '+(def.name||weaponEditKey), pw-24), W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText(weaponEditDraft.published?'PUBLISHED \u00b7 players can use it':'IN STORAGE \u00b7 not live yet', W/2, py+42);
+  ctx.fillText(FALL_KEYS.includes(weaponEditKey)?'NEXT SEASON \u00b7 ADMIN PREVIEW ONLY'
+               :(weaponEditDraft.published?'PUBLISHED \u00b7 players can use it':'IN STORAGE \u00b7 not live yet'), W/2, py+42);
   weaponEditRects=[];
   const x0=px+16, rw=pw-32; let y=py+54;
   const row=(id,label,val,suffix)=>{
@@ -3007,18 +3062,20 @@ function drawWeaponEdit(){
   }
   if(typeof weaponEditDraft.price==='number') row('f:price','GEM PRICE', weaponEditDraft.price, ' \uD83D\uDC8E');
 
-  // publish toggle
+  // Next-season entries stay private; every other item keeps the publish toggle.
   const th=30;
-  weaponEditRects.push({x:x0,y,w:rw,h:th,id:'pub'});
+  const nextSeason=FALL_KEYS.includes(weaponEditKey);
+  if(!nextSeason) weaponEditRects.push({x:x0,y,w:rw,h:th,id:'pub'});
   const phv=mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+th;
-  const on=!!weaponEditDraft.published;
+  const on=!nextSeason && !!weaponEditDraft.published;
   ctx.fillStyle= on ? (phv?'rgba(208,85,72,0.34)':'rgba(208,85,72,0.16)')
-                    : (phv?'rgba(167,193,94,0.34)':'rgba(167,193,94,0.16)');
+                    : nextSeason?'rgba(191,168,255,0.12)'
+                    :(phv?'rgba(167,193,94,0.34)':'rgba(167,193,94,0.16)');
   ctx.fillRect(x0,y,rw,th);
-  ctx.strokeStyle= on?'#d05548':'#a7c15e'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,th);
+  ctx.strokeStyle= nextSeason?'#bfa8ff':on?'#d05548':'#a7c15e'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,th);
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle= on?'#e0a8a0':'#cfe0a8'; ctx.font='700 11px ui-monospace,Consolas,monospace';
-  ctx.fillText(on?'\u2193 UNPUBLISH (back to storage)':'\u2191 PUBLISH (make it live)', W/2, y+th/2);
+  ctx.fillStyle= nextSeason?'#d8c8ff':on?'#e0a8a0':'#cfe0a8'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+  ctx.fillText(nextSeason?'\uD83E\uDDEA TEST MODE ONLY':on?'\u2193 UNPUBLISH (back to storage)':'\u2191 PUBLISH (make it live)', W/2, y+th/2);
   ctx.textBaseline='alphabetic';
   y+=th+10;
 
@@ -3044,7 +3101,10 @@ function weaponEditClick(){
       const id=String(r.id||'');
       if(id==='cancel'){ weaponEditOpen=false; storageOpen=true; sfx('swap'); return; }
       if(id==='save'){ saveWeaponEdit(); return; }
-      if(id==='pub'){ weaponEditDraft.published=!weaponEditDraft.published; sfx('swap'); return; }
+      if(id==='pub'){
+        if(FALL_KEYS.includes(weaponEditKey)){ weaponEditDraft.published=false; sfx('dry'); return; }
+        weaponEditDraft.published=!weaponEditDraft.published; sfx('swap'); return;
+      }
       if(id.indexOf('f:')===0){
         const key=id.slice(2);
         const f=WFIELDS.find(x=>x.k===key);
@@ -4191,7 +4251,7 @@ function meleeAbility(){
     abilityCD[k]=now+abilityCdOf(k);
   } else if(k==='twinsai'){                          // PARRY stance: reflect the next incoming shot
     if(!ready){ sfx('dry'); return; }
-    parryUntil=now+1400;                             // 1.4s window to catch a projectile
+    parryUntil=now+TWIN_SAI_PARRY_MS;                // generous window; first caught shot consumes it
     player.swingT=now; player.swingA=0; player.swingArc=6.3; player.swingR=60; player.swingDur=200;
     for(let i=0;i<14;i++) particles.push({x:player.x,y:player.y,
       vx:Math.cos(i/14*TAU)*rand(1.5,4), vy:Math.sin(i/14*TAU)*rand(1.5,4),
@@ -4512,7 +4572,12 @@ function clickSelect(){
     if(inR(wheelBtnRect)){ openWheel(); sfx('swap'); return; }
     if(inR(streakBtnRect)){ collectStreak(); return; }
     if(inR(lookupBtnRect)){ if(isAdmin()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
-    if(inR(playBtnRect)){ selPage='modes'; sfx('swap'); return; }
+    for(const r of homePlayRects) if(inR(r)){
+      if(r.id==='online') chooseGameMode('arena');
+      else if(r.id==='offline') chooseGameMode('endless');
+      else if(r.id==='party'){ selPage='party'; sfx('swap'); }
+      return;
+    }
     if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
     if(inR(shopBtnRect)){ selPage='shop'; sfx('swap'); return; }
     return;
@@ -4521,6 +4586,10 @@ function clickSelect(){
     if(inR(backRect)){ navigateSelectBack(); return; }
     for(const r of modeRects) if(inR(r)){ chooseGameMode(r.id); return; }
     return;
+  }
+  if(selPage==='party'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    return;                                             // Party code and mode cards are previews only.
   }
   if(selPage==='loadout'){
     if(inR(backRect)){ navigateSelectBack(); return; }
@@ -5499,14 +5568,16 @@ function utilCast(u){
     const a=aimAngle();
     // launch it out ahead of you so the swarm it lures gathers away from your position
     const sx=player.x+Math.cos(a)*90, sy=player.y+Math.sin(a)*90;
-    balls.push({x:sx,y:sy,vx:Math.cos(a)*6,vy:Math.sin(a)*6,life:3000,hitT:0,taunt:750});
+    const ball={x:sx,y:sy,vx:Math.cos(a)*6,vy:Math.sin(a)*6,life:3000,hitT:0,taunt:750};
+    clampProjectileToArena(ball,9); balls.push(ball);
     utilReadyT=now+utilityCdOf('redball'); sfx('swap');
   } else if(u==='beachball'){
     const a=aimAngle();
     const sx=player.x+Math.cos(a)*80, sy=player.y+Math.sin(a)*80;
     // flaming repel-ball: lives 3s, splits into 2 every 1s, 3 generations
-    balls.push({x:sx,y:sy,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:3000,hitT:0,
-                flee:true, fire:true, dmg:8, gen:0, splitT:now+1000});
+    const ball={x:sx,y:sy,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:3000,hitT:0,
+                flee:true, fire:true, dmg:8, gen:0, splitT:now+1000};
+    clampProjectileToArena(ball,11); balls.push(ball);
     utilReadyT=now+utilityCdOf('beachball'); sfx('swap');
   }
 }
@@ -5569,7 +5640,9 @@ function tryFire(carryCadence=false){
     player.lastShot=shotStamp; player.mags[player.cur]--; if(tutorialOn) tutFired++;
     const sw=swayScreen();
     const tw=screenToWorld(mouse.x+sw.x, mouse.y+sw.y);
-    let tdx=tw.x-player.x, tdy=tw.y-player.y;
+    const targetX=clamp(tw.x,ARENA_EDGE+12,WORLD.w-ARENA_EDGE-12);
+    const targetY=clamp(tw.y,ARENA_EDGE+12,WORLD.h-ARENA_EDGE-12);
+    let tdx=targetX-player.x, tdy=targetY-player.y;
     let tdist=Math.hypot(tdx,tdy)||1;
     const maxR=w.range;                                  // do NOT exceed the weapon's range
     if(tdist>maxR){ tdx*=maxR/tdist; tdy*=maxR/tdist; tdist=maxR; }
@@ -5760,6 +5833,8 @@ function update(dtms){
     const g=grenades[i];
     g.x+=g.vx*dt; g.y+=g.vy*dt;
     if(!g.firework){ g.vx*=0.94; g.vy*=0.94; }   // grenades slow down; fireworks hold a straight arc to the target
+    const edgeHit=bounceProjectileAtArenaEdge(g,12,g.firework?1:0.5);
+    if(edgeHit&&g.firework) g.t=now;              // firecrackers burst on the fence, never beyond it
     if(pointInRects(g.x,g.y)){ g.vx*=-0.5; g.vy*=-0.5; }
     // firecracker detonates on its fixed fuse (consistent timing near or far);
     // the reached-target check only matters as a safety net once the fuse is nearly up
@@ -5820,8 +5895,8 @@ function update(dtms){
   for(let i=balls.length-1;i>=0;i--){
     const b=balls[i];
     b.x+=b.vx*dt; b.y+=b.vy*dt; b.life-=dtms;
-    if(b.x<40||b.x>WORLD.w-40) b.vx*=-1;
-    if(b.y<40||b.y>WORLD.h-40) b.vy*=-1;
+    const br = b.fire ? Math.max(6, 11-(b.gen||0)*2) : 9;
+    bounceProjectileAtArenaEdge(b,br,1);
     for(const o of obstacles){
       if(b.x>o.x-8&&b.x<o.x+o.w+8&&b.y>o.y-8&&b.y<o.y+o.h+8){
         const cx=clamp(b.x,o.x,o.x+o.w), cy=clamp(b.y,o.y,o.y+o.h);
@@ -5829,7 +5904,6 @@ function update(dtms){
         b.x+=b.vx*dt; b.y+=b.vy*dt;
       }
     }
-    const br = b.fire ? Math.max(6, 11-(b.gen||0)*2) : 9;
     if(b.fire && Math.random()<0.4) burst(b.x,b.y,'#ff8a2e',1,3);
     if(now>=b.hitT) for(let j=enemies.length-1;j>=0;j--){
       const e=enemies[j];
@@ -5845,9 +5919,10 @@ function update(dtms){
     if(b.fire && b.splitT && now>=b.splitT && (b.gen||0)<3){
       for(let k=0;k<2;k++){
         const a=Math.random()*TAU;
-        balls.push({x:b.x,y:b.y,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:1000,hitT:0,
-                    flee:true,fire:true,dmg:(b.dmg||8)/2,gen:(b.gen||0)+1,
-                    splitT:(b.gen||0)+1<3 ? now+1000 : 0});
+        const child={x:b.x,y:b.y,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:1000,hitT:0,
+                     flee:true,fire:true,dmg:(b.dmg||8)/2,gen:(b.gen||0)+1,
+                     splitT:(b.gen||0)+1<3 ? now+1000 : 0};
+        clampProjectileToArena(child,Math.max(6,11-child.gen*2)); balls.push(child);
       }
       burst(b.x,b.y,'#ffb84d',10,5);
       balls.splice(i,1); continue;
@@ -5860,7 +5935,7 @@ function update(dtms){
     f.x+=f.vx*dt; f.y+=f.vy*dt; f.r+=f.grow*dt; f.life-=dtms;
     // kill at the weapon's actual reach, on wall hit, or when the puff fades
     const past = f.reach && ((f.x-f.ox)*(f.x-f.ox)+(f.y-f.oy)*(f.y-f.oy)) > f.reach*f.reach;
-    if(f.life<=0 || past || pointInRects(f.x,f.y)) flames.splice(i,1);
+    if(f.life<=0 || past || pointInRects(f.x,f.y) || projectileOutsideArena(f,f.r)) flames.splice(i,1);
   }
   // freeze rings fade out
   for(let i=freezeFx.length-1;i>=0;i--){
@@ -5882,6 +5957,11 @@ function update(dtms){
         bl.vx=dx/d*17; bl.vy=dy/d*17;
       }
       bl.x+=bl.vx*dt; bl.y+=bl.vy*dt;
+      if(projectileOutsideArena(bl,9)){
+        clampProjectileToArena(bl,9); bl.returning=true;
+        const dx=player.x-bl.x, dy=player.y-bl.y, d=Math.hypot(dx,dy)||1;
+        bl.vx=dx/d*17; bl.vy=dy/d*17;
+      }
       // damage + ignite enemies in their path
       for(let j=enemies.length-1;j>=0;j--){
         const e=enemies[j];
@@ -6146,12 +6226,13 @@ function update(dtms){
         b.x=b.ox+Math.cos(b.ba)*b.dist - Math.sin(b.ba)*A*Math.sin(b.dist*K);
         b.y=b.oy+Math.sin(b.ba)*b.dist + Math.cos(b.ba)*A*Math.sin(b.dist*K);
       }
-      // world edges: bounce if the bullet has bounces left, else die
-      if(b.x<0||b.y<0||b.x>WORLD.w||b.y>WORLD.h){
+      // visible arena fence: bounce ricochets here; every other shot dies here
+      if(projectileOutsideArena(b)){
         if(b.bounce>0){
-          if(b.x<0||b.x>WORLD.w) b.vx*=-1;
-          if(b.y<0||b.y>WORLD.h) b.vy*=-1;
-          b.x=clamp(b.x,1,WORLD.w-1); b.y=clamp(b.y,1,WORLD.h-1);
+          if(b.x<ARENA_EDGE||b.x>WORLD.w-ARENA_EDGE) b.vx*=-1;
+          if(b.y<ARENA_EDGE||b.y>WORLD.h-ARENA_EDGE) b.vy*=-1;
+          b.x=clamp(b.x,ARENA_EDGE+1,WORLD.w-ARENA_EDGE-1);
+          b.y=clamp(b.y,ARENA_EDGE+1,WORLD.h-ARENA_EDGE-1);
           b.bounce--; burst(b.x,b.y,'#ffd24d',6,3); sfx('hit');
           if(b.hits) b.hits.clear();               // can re-hit enemies after a bounce
           continue;
@@ -6208,6 +6289,7 @@ function update(dtms){
             const sp=Math.hypot(b.vx,b.vy);
             b.vx=Math.cos(na)*sp; b.vy=Math.sin(na)*sp;
             b.x=e.x+Math.cos(na)*(e.r+8); b.y=e.y+Math.sin(na)*(e.r+8);
+            clampProjectileToArena(b,1);              // a shield beside the fence cannot throw shots outside
             burst(b.x,b.y,'#9fd0ff',5,3); sfx('hit');
             break;                                      // no damage; bullet flies off deflected
           }
@@ -6246,10 +6328,18 @@ function update(dtms){
     let dead=b.life<=0;
     for(let s=0;s<steps&&!dead;s++){
       b.x+=moveX/steps; b.y+=moveY/steps;
+      const edgeRadius=b.h?(b.r||9):(b.king?8:3);
+      if(projectileOutsideArena(b,edgeRadius)){
+        clampProjectileToArena(b,edgeRadius); dead=true; break;
+      }
       if(!b.h&&pointInRects(b.x,b.y)){ dead=true; break; }
       if(now<parryUntil&&dist2(b.x,b.y,player.x,player.y)<(player.r+42)*(player.r+42)){
-        // PARRY: convert the incoming shot into a fast player bullet flung away from you
-        const a=Math.atan2(b.y-player.y,b.x-player.x);
+        // PARRY: aim from the intercept point to the live crosshair, so the
+        // reflected bolt goes exactly where the player is pointing.
+        const target=screenToWorld(mouse.x,mouse.y);
+        target.x=clamp(target.x,ARENA_EDGE+1,WORLD.w-ARENA_EDGE-1);
+        target.y=clamp(target.y,ARENA_EDGE+1,WORLD.h-ARENA_EDGE-1);
+        const a=Math.atan2(target.y-b.y,target.x-b.x);
         bullets.push({x:b.x,y:b.y,vx:Math.cos(a)*22,vy:Math.sin(a)*22,dmg:120,pierce:2,
                       life:900,rng:900,dist:0,fall:1,fg:4,col:'#bfe8ff'});
         burst(b.x,b.y,'#bfe8ff',10,4); sfx('hit'); addShake(3);
@@ -6559,6 +6649,11 @@ function drawWorld(){
     }
   }
 
+  // Projectiles are clipped to the same gold fence used by physics. Long
+  // tracer tails therefore cannot visually poke outside after a ricochet.
+  ctx.save();
+  ctx.beginPath(); ctx.rect(ARENA_EDGE,ARENA_EDGE,WORLD.w-ARENA_EDGE*2,WORLD.h-ARENA_EDGE*2); ctx.clip();
+
   // ender pearls
   for(const p of pearls){
     ctx.fillStyle='rgba(63,217,163,0.35)';
@@ -6654,6 +6749,7 @@ function drawWorld(){
     ctx.strokeStyle='#fff5da'; ctx.lineWidth=1.2/zoom;
     ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*0.9,b.y-b.vy*0.9); ctx.stroke();
   }
+  ctx.restore();
 
   // enemies
   for(const e of enemies){
@@ -6718,6 +6814,12 @@ function drawWorld(){
 
   // player
   const w=WEAPONS[player.cur], ang=aimAngle();
+  if(now<parryUntil){                               // Twin Sai parry remains visibly active
+    const remain=clamp((parryUntil-now)/TWIN_SAI_PARRY_MS,0,1);
+    ctx.strokeStyle='rgba(191,232,255,'+(0.45+remain*0.45)+')';
+    ctx.lineWidth=3/zoom; ctx.beginPath();
+    ctx.arc(player.x,player.y,player.r+10+Math.sin(now*0.018)*2,0,TAU); ctx.stroke();
+  }
   ctx.fillStyle='rgba(0,0,0,0.3)';
   ctx.beginPath(); ctx.ellipse(player.x+3,player.y+5,player.r,player.r*0.7,0,0,TAU); ctx.fill();
   ctx.save();
@@ -7025,6 +7127,10 @@ function drawHUD(){
       const req=teraHitsRequired(), left=Math.max(0,req-teraHitCharge);
       frac=clamp(teraHitCharge/req,0,1);
       lbl=left ? left+' HIT'+(left===1?'':'S') : 'FLURRY READY';
+    } else if(player.cur==='twinsai' && now<parryUntil){
+      const left=Math.max(0,parryUntil-now);
+      frac=clamp(left/TWIN_SAI_PARRY_MS,0,1);
+      lbl='PARRY '+(left/1000).toFixed(1)+'s';
     } else {
       const cdMax=abilityCdOf(player.cur)||1;
       frac=clamp(1-((abilityCD[player.cur]||0)-now)/cdMax, 0, 1);
@@ -7285,7 +7391,7 @@ function drawGunIcon(x,y,key,col,sc){
 function weaponDetails(k){
   const rows=[];
   if(isLocked(k)) rows.push(['ACCESS','\u{1F512} SIGN IN TO UNLOCK']);
-  if(FALL_KEYS.includes(k)) rows.push(['\uD83C\uDF42 FALL SET','#1 leaderboard early access']);
+  if(FALL_KEYS.includes(k)) rows.push(['\uD83C\uDF42 NEXT SEASON','admins \u00b7 Test Mode/editor only']);
   if(UTILKEYS.includes(k) || TEMP_UTILITY.includes(k)){
     const u=UTILITIES[k];
     rows.push(['RECHARGE',k==='medkit' ? MED_KILLS_REQUIRED+' enemy kills' : (u.cd/1000)+'s']);
@@ -7351,7 +7457,7 @@ function weaponDetails(k){
               terafists:['F / MELEE RMB: FLURRY','1.6s punches \u00b7 lifesteal \u00b7 recharge with '+TERA_HITS_REQUIRED+' normal hits'],
               scythe:['F / MELEE RMB: DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 9.6s'],
               hammer:['F / MELEE RMB: SLAM','110 dmg \u00b7 radius 160 \u00b7 8s'],
-              twinsai:['F / MELEE RMB: PARRY','reflect the next shot as a 120-dmg bolt \u00b7 6.4s'],
+              twinsai:['F / MELEE RMB: PARRY','2.5s window \u00b7 next shot aims at crosshair \u00b7 120 dmg \u00b7 6.4s cd'],
               bdaggers:['F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite']}[k];
     if(ab) rows.push(ab);
     return rows;
@@ -7509,7 +7615,7 @@ function drawBanNotice(){
 }
 function drawSelect(){
   layoutRects=[]; if(!(layoutMode||textMode)) textRects=[];   // one registry per frame
-  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; playBtnRect=null; backRect=null;
+  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; partyRects=[]; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
   adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
@@ -7520,7 +7626,7 @@ function drawSelect(){
   if(banBlocksPlay()){ drawBanPage(); return; }      // blocked accounts see only the ban page
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='modes') drawModes(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
+  if(selPage==='hub') drawHub(); else if(selPage==='modes') drawModes(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='party') drawPartyComingSoon(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
   drawDetail();
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
@@ -8272,8 +8378,12 @@ function drawArena(){
   } else {
     let y=bodyY;
     y=button('quick','CASUAL 1v1 \u00b7 QUICK MATCH',y,'#e8b658','Find another signed-in player. First to 5 rounds wins.');
-    y=button('create','CREATE PRIVATE ROOM',y,'#7fd8ff','Get a 6-character code to send to a friend.');
-    y=button('join','JOIN WITH ROOM CODE',y,'#bfa8ff','Paste your friend\u0027s code and connect on separate devices.');
+    const partyH=tiny?32:(dense?44:58);
+    ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(px,y,pw,partyH); ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,y+0.5,pw,partyH);
+    ctx.fillStyle='#6b7455'; ctx.font='700 '+(tiny?9:12)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText('CREATE / JOIN PARTY \u2014 COMING SOON',W/2,y+(tiny?partyH/2:15));
+    if(!tiny){ ctx.font=(dense?'8':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine('Party codes for Endless, 1v1, and 2v2 are not open yet.',pw-20),W/2,y+(dense?32:39)); }
+    y+=partyH+gap;
     const dh=tiny?32:(dense?44:58);
     ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(px,y,pw,dh); ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,y+0.5,pw,dh);
     ctx.fillStyle='#6b7455'; ctx.font='700 '+(tiny?10:13)+'px ui-monospace,Consolas,monospace'; ctx.fillText('RANKED + 2v2 \u2014 COMING LATER',W/2,y+(tiny?dh/2:15));
@@ -8293,15 +8403,13 @@ function arenaClick(){
     if(r.id==='signin'){
       arenaAuthPending=true; $('aguest').style.display='none'; $('authmsg').textContent='Sign in is required for online PLAY.'; $('authwrap').style.display='flex';
     } else if(r.id==='quick') arenaQuickMatch();
-    else if(r.id==='create') arenaCreatePrivate();
-    else if(r.id==='join') arenaPromptJoin();
     else if(r.id==='copy') arenaCopyCode();
     else if(r.id==='ready') arenaSetReady(true);
     else if(r.id==='cancel') leaveArena('Left matchmaking.',false);
     else if(r.id==='rematch') arenaVoteRematch();
     else if(r.id==='again') arenaPlayAgain();
     else if(r.id==='leave') leaveArena('',true);
-    else if(r.id==='back'){ leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'modes'; }
+    else if(r.id==='back'){ leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'hub'; }
     sfx('swap'); return;
   }
 }
@@ -8325,7 +8433,7 @@ function launchSelectedMode(){
   }
   if(pendingGameMode==='arena'){
     if(!onlinePlayReady()){ chooseGameMode('arena'); return false; }
-    loadout.utility=null; selPage='arena'; arena.status='Loadout ready. Choose Quick Match or a private room.'; sfx('swap'); return true;
+    loadout.utility=null; selPage='arena'; arena.status='Loadout ready. Choose Quick Match.'; sfx('swap'); return true;
   }
   if(pendingGameMode==='practice'){
     const mode=pendingPractice||'range'; pendingPractice=null; pendingGameMode=null; startPractice(mode); sfx('wave'); return true;
@@ -8335,10 +8443,14 @@ function launchSelectedMode(){
 function navigateSelectBack(){
   if(detailKey){ detailKey=null; sfx('swap'); return; }
   if(CATS.some(c=>c[0]===selPage)){ selPage=pendingGameMode?'loadout':'hub'; sfx('swap'); return; }
-  if(selPage==='loadout'){ pendingGameMode=null; selPage='modes'; sfx('swap'); return; }
+  if(selPage==='loadout'){
+    const returnTo=pendingGameMode==='practice'?'practice':'hub';
+    pendingGameMode=null; pendingPractice=null; selPage=returnTo; sfx('swap'); return;
+  }
+  if(selPage==='party'){ selPage='hub'; sfx('swap'); return; }
   if(selPage==='modes'){ selPage='hub'; sfx('swap'); return; }
   if(selPage==='arena'){
-    leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'modes'; sfx('swap'); return;
+    leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'hub'; sfx('swap'); return;
   }
   if(selPage==='shop' && pendingGameMode){ selPage='loadout'; sfx('swap'); return; }
   if(selPage==='tutorial'){ selPage='howto'; sfx('swap'); return; }
@@ -8379,6 +8491,55 @@ function drawModes(){
   ctx.fillStyle=hot?'#101208':'#cdd6b0'; ctx.font='700 14px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle'; ctx.fillText('\u2039 BACK TO HOME',W/2,by+bh/2);
   ctx.textBaseline='alphabetic';
 }
+function drawPartyComingSoon(){
+  selBg(); partyRects=[];
+  const compact=H<560, wide=W>=640;
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?24:34)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('CREATE / JOIN PARTY',W/2,H*0.045);
+  ctx.fillStyle='#8a9268'; ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('Party codes will let friends enter the same game from different devices.',W-28),W/2,H*0.045+(compact?32:44));
+
+  const pw=Math.min(600,W-28), px=W/2-pw/2;
+  const codeY=H*0.045+(compact?56:76), codeH=compact?46:62;
+  ctx.fillStyle='rgba(25,23,29,0.72)'; ctx.fillRect(px,codeY,pw,codeH);
+  ctx.strokeStyle='#5c526d'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,codeY+0.5,pw,codeH);
+  ctx.fillStyle='#716982'; ctx.font='700 '+(compact?11:14)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('ENTER PARTY CODE',W/2,codeY+(compact?8:12));
+  ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?10:12)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('COMING SOON',W/2,codeY+(compact?27:38));
+
+  const bbW=Math.min(260,W-36), bbH=compact?34:42, bbX=W/2-bbW/2, bbY=H-bbH-14;
+  const cardsTop=codeY+codeH+(compact?8:14), cardsBottom=bbY-(compact?8:14), gap=compact?6:10;
+  const modes=[
+    {id:'endless',title:'ENDLESS',sub:'CO-OP WAVES',col:'#a7c15e'},
+    {id:'one',title:'1v1',sub:'PRIVATE DUEL',col:'#d05548'},
+    {id:'two',title:'2v2',sub:'TEAM BATTLE',col:'#7fd8ff'}
+  ];
+  const cardsW=wide?pw:(Math.min(430,W-28)), cardsX=W/2-cardsW/2;
+  const cw=wide?(cardsW-gap*2)/3:cardsW;
+  const ch=wide?Math.max(30,Math.min(compact?58:82,cardsBottom-cardsTop)):
+                       Math.max(28,Math.min(compact?42:56,Math.floor((cardsBottom-cardsTop-gap*2)/3)));
+  for(let i=0;i<modes.length;i++){
+    const m=modes[i], x=wide?cardsX+i*(cw+gap):cardsX, y=wide?cardsTop:cardsTop+i*(ch+gap);
+    const r={id:m.id,x,y,w:cw,h:ch,enabled:false}; partyRects.push(r);
+    ctx.fillStyle='rgba(32,32,34,0.70)'; ctx.fillRect(x,y,cw,ch);
+    ctx.strokeStyle='#4a4a4d'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,cw,ch);
+    ctx.fillStyle='#66666a'; ctx.font='700 '+(ch<42?12:(wide?18:15))+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(m.title,x+cw/2,y+(ch<42?5:10));
+    if(ch>=42){ ctx.fillStyle='#56565a'; ctx.font='8px ui-monospace,Consolas,monospace'; ctx.fillText(m.sub,x+cw/2,y+(wide?34:28)); }
+    ctx.fillStyle=m.col; ctx.globalAlpha=0.48; ctx.font='700 '+(ch<42?8:9)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText('COMING SOON',x+cw/2,y+ch-(ch<42?11:15)); ctx.globalAlpha=1;
+  }
+
+  backRect={x:bbX,y:bbY,w:bbW,h:bbH};
+  const hot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
+  ctx.fillStyle=hot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH);
+  ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
+  ctx.fillStyle=hot?'#101208':'#cdd6b0'; ctx.font='700 13px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
+  ctx.fillText('\u2039 BACK TO HOME',W/2,bbY+bbH/2);
+  ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+}
 function drawLoadout(){
   selBg(); catBtns=[];
   const arenaMode=pendingGameMode==='arena';
@@ -8415,7 +8576,8 @@ function drawLoadout(){
   const bbW=120, bbH=30, bbX=16, bbY=H-bbH-14; backRect={x:bbX,y:bbY,w:bbW,h:bbH};
   const backHot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
   ctx.fillStyle=backHot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH); ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
-  ctx.fillStyle=backHot?'#101208':'#cdd6b0'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('\u2039 MODES',bbX+bbW/2,bbY+bbH/2);
+  const backLabel=pendingGameMode==='practice'?'\u2039 PRACTICE':'\u2039 HOME';
+  ctx.fillStyle=backHot?'#101208':'#cdd6b0'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(backLabel,bbX+bbW/2,bbY+bbH/2);
   if(now<pracNeedMsgT){ ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('PRIMARY + SIDEARM + MELEE ARE REQUIRED',W/2,dy-18); }
   ctx.textBaseline='alphabetic';
 }
@@ -8514,26 +8676,48 @@ function drawHub(){
   withBlockColour('banner', ()=>ctx.fillText(fitLine('\uD83D\uDD25 SUMMER FLAMING UPDATE \uD83D\uDD25', bnW-16), W/2, bnY+bnH/2));
   ctx.textBaseline='top';
 
-  // Home is intentionally simple: updates, one large PLAY button, and service links.
-  // All weapon choices now live after the player chooses a game mode.
+  // Home play choices are explicit; weapon choices still live on the next screen.
   diffRects=[];
+  homePlayRects=[];
   hubPostsRect=null;
-  const boardTop=bnY+bnH+8;
-  const boardBottom=drawHubPosts(boardTop, H-190);
   const hbH=H<600?30:40, hbGap=W<520?5:8;
   const hbN=5+(lbShown?0:1);
   const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
   const hbY=H-hbH-8;
-  const pw=Math.min(430,W-40), ph=H<560?52:66, px=W/2-pw/2;
-  const py=Math.min(hbY-ph-14,Math.max(boardBottom+(hubPostsRect?12:6),bnY+bnH+18));
-  playBtnRect={x:px,y:py,w:pw,h:ph};
-  const playHot=mouse.x>=px&&mouse.x<=px+pw&&mouse.y>=py&&mouse.y<=py+ph;
-  ctx.fillStyle=playHot?'#e8b658':'rgba(232,182,88,0.18)'; ctx.fillRect(px,py,pw,ph);
-  ctx.strokeStyle='#e8b658'; ctx.lineWidth=2; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
-  ctx.fillStyle=playHot?'#101208':'#e8d9a8'; ctx.font='700 '+(H<560?22:28)+'px ui-monospace,Consolas,monospace';
-  ctx.textBaseline='middle'; ctx.fillText('\u25B6  PLAY',W/2,py+ph/2-5);
-  ctx.fillStyle=playHot?'#303818':'#8a9268'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-  ctx.fillText('CHOOSE A MODE, THEN CHOOSE YOUR WEAPONS',W/2,py+ph-11); ctx.textBaseline='top';
+  const wideActions=W>=720, actionGap=H<560?5:8, targetActionH=H<560?42:62;
+  const actionReserve=wideActions?targetActionH+18:targetActionH*3+actionGap*2+18;
+  const boardTop=bnY+bnH+8;
+  const boardBottom=drawHubPosts(boardTop, hbY-actionReserve);
+  const actionBottom=hbY-10;
+  const minimumBlock=wideActions?30:(3*27+actionGap*2);
+  const wantedTop=Math.max(boardBottom+(hubPostsRect?10:5),bnY+bnH+15);
+  const actionTop=Math.min(wantedTop,actionBottom-minimumBlock);
+  const groupW=Math.min(460,W-30), groupX=W/2-groupW/2;
+  const cardW=wideActions?(groupW-actionGap*2)/3:groupW;
+  const cardH=wideActions?Math.max(30,Math.min(targetActionH,actionBottom-actionTop)):
+                              Math.max(27,Math.min(targetActionH,Math.floor((actionBottom-actionTop-actionGap*2)/3)));
+  const noConnection=navigator.onLine===false||!sb;
+  const onlineSub=noConnection?'OFFLINE \u00b7 RECONNECT':(!authUser?'SIGN IN REQUIRED \u00b7 CASUAL 1v1':'CASUAL 1v1 \u00b7 FIRST TO 5');
+  const actions=[
+    {id:'online', title:'PLAY ONLINE', sub:onlineSub, col:'#d05548', enabled:onlinePlayReady()},
+    {id:'offline',title:'PLAY OFFLINE',sub:'ENDLESS WAVES \u00b7 UPGRADES',col:'#a7c15e',enabled:true},
+    {id:'party',  title:'CREATE/JOIN PARTY',sub:'ENDLESS \u00b7 1v1 \u00b7 2v2 \u00b7 COMING SOON',col:'#bfa8ff',enabled:true}
+  ];
+  for(let i=0;i<actions.length;i++){
+    const a=actions[i], x=wideActions?groupX+i*(cardW+actionGap):groupX;
+    const y=wideActions?actionTop:actionTop+i*(cardH+actionGap);
+    const r={id:a.id,x,y,w:cardW,h:cardH,enabled:a.enabled}; homePlayRects.push(r);
+    const inside=mouse.x>=x&&mouse.x<=x+cardW&&mouse.y>=y&&mouse.y<=y+cardH;
+    const hot=inside&&a.enabled;
+    ctx.fillStyle=a.enabled?(hot?a.col:'rgba(0,0,0,0.42)'):'rgba(38,38,38,0.72)'; ctx.fillRect(x,y,cardW,cardH);
+    ctx.strokeStyle=a.enabled?a.col:'#4a4a45'; ctx.lineWidth=a.enabled?1.7:1; ctx.strokeRect(x+0.5,y+0.5,cardW,cardH);
+    ctx.fillStyle=a.enabled?(hot?'#101208':'#e8d9a8'):'#66665f';
+    ctx.font='700 '+(cardW<170?11:(cardH<40?13:16))+'px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
+    ctx.fillText(fitLine(a.title,cardW-12),x+cardW/2,y+cardH/2-(cardH<38?5:8));
+    ctx.fillStyle=a.enabled?(hot?'#25291d':'#8a9268'):'#555550'; ctx.font='700 '+(cardW<170?7:8)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(a.sub,cardW-12),x+cardW/2,y+cardH/2+(cardH<38?8:12));
+    ctx.textBaseline='top';
+  }
 
   // ---- Menu actions. ----
   let hbX=W/2-(hbW*hbN+hbGap*(hbN-1))/2;
@@ -8559,22 +8743,22 @@ function drawHub(){
   if(!lbShown) lookupBtnRect=hubBtn('\uD83D\uDD0D LOOKUP','#7fd8ff','#bfe8ff');
   if(now<referralMsgT){
     ctx.fillStyle='#bfa8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(referralMsg,W-30),W/2,Math.max(12,py-13));
+    ctx.fillText(fitLine(referralMsg,W-30),W/2,Math.max(12,actionTop-13));
   }
   if(now<utilLockMsgT){
     ctx.fillStyle='#d05548'; ctx.font='700 12px ui-monospace,Consolas,monospace';
     ctx.fillText('SIGN-IN ONLY \u2014 use the SIGN IN button top-left', W/2, hbY+hbH+12);
   }
   if(fallInjected){
-    // #1 crown badge, left column under the currency chip
+    // Admin preview badge, left column under the currency chip
     const ex=52, ey=164, ew=92, eh=44;
     ctx.fillStyle='rgba(8,10,5,0.78)'; ctx.fillRect(ex,ey,ew,eh);
     ctx.strokeStyle='#e8b658'; ctx.lineWidth=1; ctx.strokeRect(ex+0.5,ey+0.5,ew,eh);
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillStyle='#ffd24d'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-    ctx.fillText('\uD83D\uDC51 RANK #1', ex+ew/2, ey+13);
+    ctx.fillText('\uD83E\uDDEA ADMIN TEST', ex+ew/2, ey+13);
     ctx.fillStyle='#d0763e'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-    ctx.fillText('\uD83C\uDF42 FALL SET ON', ex+ew/2, ey+30);
+    ctx.fillText('\uD83C\uDF42 NEXT SEASON ON', ex+ew/2, ey+30);
     ctx.textBaseline='alphabetic';
   }
   // ---- DAILY STREAK, then the tasks, stacked under the button row ----
