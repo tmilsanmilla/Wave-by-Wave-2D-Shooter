@@ -256,7 +256,7 @@
 const SUPABASE_URL = 'https://edvurrilylypgfyvjyas.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
-let sb = null, authUser = null, board = [], streakBoard = [], boardT = 0, recovering = false;
+let sb = null, authUser = null, board = [], boardT = 0, recovering = false;
 let arenaAuthPending=false, arena=null;
 let leaderboardRowRects=[];
 let publicProfileCache={};
@@ -289,7 +289,9 @@ async function initAuth(){
         } else if(arenaAuthPending){
           arenaAuthPending=false;
           $('aguest').style.display='block';
-          selPage='arena';
+          pendingGameMode='arena';
+          loadout={primary:null,secondary:null,melee:null,utility:null};
+          selPage='loadout';
         }
         syncFallAccess();
         fetchAdmins(); fetchBanners(); fetchMsgs(); fetchPrices();
@@ -384,7 +386,6 @@ async function fetchBoard(){
     board = data || []; boardT = Date.now();
     syncFallAccess();
     fetchPublicProfiles();
-    fetchStreakBoard();
   }catch(err){ console.warn('board fetch failed', err); }
 }
 async function fetchPublicProfiles(){
@@ -394,23 +395,6 @@ async function fetchPublicProfiles(){
     const next={}; for(const r of (data||[])){ try{ next[r.user_id]=JSON.parse(r.name||'{}'); }catch(e){} }
     publicProfileCache=next;
   }catch(e){}
-}
-async function fetchStreakBoard(){
-  if(!sb) return;
-  try{
-    const { data } = await sb.from('scores').select('user_id,name,score')
-      .eq('game','outpost-zero-streak').order('score',{ascending:false}).limit(10);
-    streakBoard=data||[];
-  }catch(err){ console.warn('streak board fetch failed',err); }
-}
-async function submitStreak(){
-  if(!sb||!authUser||streakDays<1) return;
-  try{
-    await sb.from('scores').upsert(
-      {user_id:authUser.id,name:displayName(authUser),game:'outpost-zero-streak',score:streakDays},
-      {onConflict:'user_id,game'});
-    fetchStreakBoard();
-  }catch(err){ console.warn('streak submit failed',err); }
 }
 // ---- report a problem: small form -> Supabase 'reports' table (write-only) ----
 let reportOpen=false, lastReportT=0;
@@ -537,7 +521,11 @@ $('rsave').onclick = async ()=>{
 $('rdone').onclick = ()=>{ $('authwrap').style.display='none'; };
 for(const id of ['rpass1','rpass2'])
   $(id).addEventListener('keydown', e=>{ if(e.key==='Enter') $('rsave').click(); });
-initAuth();
+initAuth().finally(()=>{
+  // The local file must still restore editor work when the Supabase script or
+  // network is unavailable. This microtask runs after all editor state exists.
+  if(!sb){ fetchLayout(); fetchCustomText(); }
+});
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
 let state = 'select';                 // select | play | over (menu is an overlay)
@@ -585,7 +573,7 @@ let W = 0, H = 0;
 let DPR=1;
 function resize(){
   // fit the canvas to the viewport EXACTLY (no overflow), crisp on retina via devicePixelRatio
-  DPR = Math.min(2, window.devicePixelRatio||1);          // cap at 2x so huge retina screens stay fast
+  DPR = Math.min(1.5, window.devicePixelRatio||1);        // keep retina clarity without asking slower GPUs to draw 4x the pixels
   const vw = Math.max(1, window.innerWidth);
   const vh = Math.max(1, window.innerHeight);
   W = vw; H = vh;                                          // logical (CSS) pixels == the whole viewport
@@ -791,23 +779,23 @@ const WEAPONS = {
   chainsaw:{ name:'CHAINSAW',     melee:true, saw:true, drain:5, dmg:42, mag:Infinity, reload:0, fireRate:130, auto:true,
              pellets:1, spread:0, aimSpread:0, len:18, kick:1, zoom:1.15, scoped:false,
              moveMod:1.05, range:72,  arc:6.3,
-             blurb:'Shreds everything nearby, hits hard. E: rip charge through the horde.' },
+             blurb:'Shreds everything nearby, hits hard. F / melee RMB: rip charge through the horde.' },
   twinsai: { name:'TWIN SAI',      melee:true, dmg:22, mag:Infinity, reload:0, fireRate:150, auto:true,
              pellets:1, spread:0, aimSpread:0, len:14, kick:1.2, zoom:1.12, scoped:false, combo:true, sai:true,
              moveMod:1.12, range:96,  arc:0.6,
-             blurb:'Fast dual blades — quick left-right jabs. E: PARRY stance reflects the next shot.' },
+             blurb:'Fast dual blades — quick left-right jabs. F / melee RMB: PARRY reflects the next shot.' },
   knife  : { name:'KA-BAR KNIFE', melee:true, dmg:48, mag:Infinity, reload:0, fireRate:380, auto:true,
              pellets:1, spread:0, aimSpread:0, len:16, kick:2.5, zoom:1.15, scoped:false,
              moveMod:1.08, range:130, arc:0.35,
-             blurb:'Long thrust. E: execute EVERYTHING in close range.' },
+             blurb:'Long thrust. F / melee RMB: execute EVERYTHING in close range.' },
   bdaggers:{ name:'BURNING DAGGERS', melee:true, dmg:34, mag:Infinity, reload:0, fireRate:340, auto:true,
              pellets:1, spread:0, aimSpread:0, len:15, kick:2, zoom:1.15, scoped:false, fire:true, combo:true,
              moveMod:1.1, range:100, arc:0.785,
-             blurb:'Twin flaming blades — left-right combo, each a 45° arc. E: hurl both, return in 1.5s.' },
+             blurb:'Twin flaming blades — left-right combo. F / melee RMB: hurl both.' },
   scythe : { name:'REAPER SCYTHE',melee:true, dmg:75, mag:Infinity, reload:0, fireRate:950, auto:true,
              pellets:1, spread:0, aimSpread:0, len:26, kick:5, zoom:1.15, scoped:false,
              moveMod:0.95, range:82,  arc:3.8, 
-             blurb:'Wide harvest, slow wind-up. E: long reaper dash.' },
+             blurb:'Wide harvest, slow wind-up. F / melee RMB: long reaper dash.' },
   hammer : { name:'WAR HAMMER',   melee:true, dmg:80, mag:Infinity, reload:0, fireRate:900, auto:true,
              pellets:1, spread:0, aimSpread:0, len:22, kick:6, zoom:1.15, scoped:false,
              moveMod:0.92, range:70,  arc:2.2, kitBuff:true,
@@ -848,7 +836,7 @@ const VAULT_WEAPONS = {
   terafists:{ name:'TERA FISTS', melee:true, dmg:8, mag:Infinity, reload:0, fireRate:160, auto:true,
               pellets:1, spread:0, aimSpread:0, len:12, kick:1.5, zoom:1.1, scoped:false, combo:true, fists:true,
               moveMod:1.1, range:115, arc:0.9,
-              blurb:'Long sweeping arc punches. E: FLURRY steals a cut of damage dealt \u00b7 5 uses/wave.' },
+              blurb:'Long sweeping arc punches. F / melee RMB: FLURRY. Recharge by landing normal hits.' },
 };
 const VAULT_UTILITIES = {
   // EXAMPLE (shelved).
@@ -882,10 +870,10 @@ const VAULT_ACTIVE = {
   portal:     false,   // FALL UPDATE
   timecapsule:false,   // shelved dormant
 };
-/* utilities: recharge-based, G to use, hold G for medkit channel */
+/* utilities: G/RMB to quick-use; equip the Medkit and LMB for its long heal */
 const UTILITIES = {
   medkit : { name:'FIELD MEDKIT', cd:75000,
-             blurb:'E: quick 5% heal. Equip [4] + press once: slow 20% heal. 3 per wave, 60s cooldown.' },
+             blurb:'Quick 5% heal, or equip [4] + LMB for a 20% heal over 8s. Recharge by killing enemies.' },
   grenade: { name:'FRAG GRENADE', cd:20000,
              blurb:'Tap to throw at your crosshair. Big blast, friendly to you only.' },
   freezer: { name:'FREEZER',      cd:25000,
@@ -956,19 +944,29 @@ function offY(id){ const o=layout[id]; return (o&&+o.dy)||0; }
 // register a block so layout mode can outline and drag it
 function layoutBlock(id,x,y,w,h){ if(layoutMode||textMode) layoutRects.push({id,x,y,w,h}); }
 async function fetchLayout(){
-  try{ const v=JSON.parse(localStorage.getItem('oz_ui_layout')||'null'); if(v&&typeof v==='object') layout=v; }catch(e){}
-  if(!sb) return;
+  const draft=readEditorDraft();
+  if(draft&&draft.layout&&typeof draft.layout==='object'){
+    layout=draft.layout; layoutDirty=true; textDirty=true; // recovered work still needs publishing
+  }
+  else try{ const v=JSON.parse(localStorage.getItem('oz_ui_layout')||'null'); if(v&&typeof v==='object') layout=v; }catch(e){}
+  if(!sb||draft) return;                            // never replace an unsaved local edit with an older server copy
   try{
     const { data } = await sb.from('ui_layout').select('data').eq('id','hub').maybeSingle();
+    if(layoutDirty||textDirty||readEditorDraft()) return; // an edit may have begun before its draft flush
     if(data && data.data && typeof data.data==='object'){ layout=data.data; localStorage.setItem('oz_ui_layout',JSON.stringify(layout)); }
   }catch(e){}
 }
 async function saveLayout(){
   if(!isMainAdmin()) return false;
+  const snapshot=JSON.stringify(layout), savedLayout=JSON.parse(snapshot);
+  persistEditorDraft();                             // secure the edit before waiting for the network
+  try{ localStorage.setItem('oz_ui_layout',snapshot); }catch(e){}
   try{
-    localStorage.setItem('oz_ui_layout',JSON.stringify(layout));
-    if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'hub',data:layout,updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
-    layoutDirty=false; sfx('pickup'); return true;
+    if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'hub',data:savedLayout,updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
+    const current=JSON.stringify(layout)===snapshot;
+    layoutDirty=!current;
+    if(current&&!textDirty) clearEditorDraft(); else if(!current) persistEditorDraft();
+    sfx(current?'pickup':'aim'); return current;
   }catch(e){ waveMsg='LAYOUT SAVE FAILED: '+String((e&&e.message)||e).slice(0,80); waveMsgT=now+4000; sfx('dry'); return false; }
 }
 function resetLayout(){ layout={}; layoutPick=null; layoutDirty=true; sfx('dry'); }
@@ -1378,7 +1376,6 @@ function collectStreak(){
   addCoins(r.coins);
   if(r.gems) addGems(r.gems);
   saveMeta();
-  submitStreak();
   streakMsg = (broke?'streak reset \u2014 ':'')+'+'+r.coins+' \uD83E\uDE99'+(r.gems?('  +'+r.gems+' \uD83D\uDC8E'):'');
   streakMsgT=now+2400;
   sfx('pickup');
@@ -1953,20 +1950,20 @@ async function addCoAdmin(){
 const LLR_URL   = 'https://www.youtube.com/@AsrtsbLLR';
 const MOVES_URL = 'https://movesforamission.org/donate-now/#1740457740469-d24153b1-38c1';
 function powerupMax(id){ return (POWERUPS.find(x=>x.id===id)||{}).max||0; }
+const GEM_PRICE_SCALE=10;                           // the whole gem economy uses 10x legacy values
 const GEM_SHOP=[
-  {key:'ar',      cost:1200, slot:'primary'},
-  {key:'volt',    cost:4000, slot:'secondary'},
-  {key:'dart',    cost:750,  slot:'secondary'},
-  {key:'hammer',  cost:4000, slot:'melee'},
-  {key:'twinsai', cost:900,  slot:'melee'},
-  {key:'railgun', cost:600,  slot:'primary'},
-  {key:'medkit',  cost:2000, slot:'utility'},
-  {key:'grenade', cost:300,  slot:'utility'},
-  {key:'freezer', cost:300,  slot:'utility'},
+  {key:'ar',      cost:120*GEM_PRICE_SCALE, slot:'primary'},
+  {key:'volt',    cost:400*GEM_PRICE_SCALE, slot:'secondary'},
+  {key:'dart',    cost:75*GEM_PRICE_SCALE,  slot:'secondary'},
+  {key:'hammer',  cost:400*GEM_PRICE_SCALE, slot:'melee'},
+  {key:'twinsai', cost:90*GEM_PRICE_SCALE,  slot:'melee'},
+  {key:'railgun', cost:60*GEM_PRICE_SCALE,  slot:'primary'},
+  {key:'medkit',  cost:200*GEM_PRICE_SCALE, slot:'utility'},
+  {key:'grenade', cost:30*GEM_PRICE_SCALE,  slot:'utility'},
+  {key:'freezer', cost:30*GEM_PRICE_SCALE,  slot:'utility'},
 ];
 const GEM_PRICE_DEFAULTS={};                        // filled below; lets us reset/compare
 for(const it of GEM_SHOP) GEM_PRICE_DEFAULTS[it.key]=it.cost;
-const GEM_PRICE_SCALE=10;                           // database keeps the legacy base prices
 function setGemPrice(key,cost){
   const it=GEM_SHOP.find(i=>i.key===key); if(!it) return false;
   cost=Math.max(0, Math.min(9999, Math.round(+cost||0)));
@@ -2095,7 +2092,6 @@ async function fetchProfile(){
       const migrateGems=data.data.gv!==GEM_ECONOMY_VERSION;
       applyProfile(data.data); profileLoaded=true; saveMetaLocal();
       if(migrateGems) await saveProfile(true);        // write v2 once so the 10x conversion cannot repeat
-      if(streakDays>0) submitStreak();                // seed/update the public streak board for existing accounts
     }
     else { profileLoaded=true; saveProfile(true); }   // first sign-in: seed the cloud from this device
   }catch(e){ profileLoaded=false; }
@@ -2299,13 +2295,13 @@ function freshArena(status){
     expectedIds:null,queueCandidate:null,queueOffer:null,wantsHost:false,hostId:null,opponent:null,localReady:false,remoteReady:false,
     networkHold:false,disconnectAt:0,disconnectTimer:null,
     active:false,matchEpoch:0,round:0,scores:{},roundStartAt:0,roundEndAt:0,nextRoundAt:0,roundResolved:false,
-    syncAt:0,shotSeq:0,lastRemoteShot:0,remoteTracers:[],seenHits:new Set(),rematchVotes:new Set(),savedUtility:undefined};
+    syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),rematchVotes:new Set(),savedUtility:undefined};
 }
 arena=freshArena('Sign in, choose a loadout, then enter Casual 1v1.');
 const DIFFS={easy:{hp:0.75,dmg:0.7,label:'EASY'}, normal:{hp:1,dmg:1,label:'NORMAL'}, hard:{hp:1.35,dmg:1.3,label:'HARD'}};
 let spawnQueue=[], spawnTimer=0, betweenTimer=1500;
 let loadout={primary:null,secondary:null,melee:null,utility:null}, cardRects=[], deployRect=null;
-let selPage='hub', catBtns=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + tutorial | shop
+let selPage='hub', pendingGameMode=null, catBtns=[], modeRects=[], playBtnRect=null, backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modes | loadout | tutorial | shop
 let detailKey=null, detailBtns=[], detailRects={};
 const CATS=[['PRIMARY','primary',()=>PRIMARIES,()=>TEMP_PRIMARY],
             ['SIDEARM','secondary',()=>SECONDARIES,()=>TEMP_SECONDARY],
@@ -2317,15 +2313,18 @@ let perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,vamp:0,pierce:0,a
 let perkCounts={}, upgradeChoices=[], upgradeRects=[], upgradeOffered=false;
 let surgeT=0, windReadyWave=0, dashReadyT=0, sawFuel=100, sawLock=false, sawChargeUntil=0, sawChargeTick=0;
 let flameFuel=100, flameLock=false, daggersOut=null, splitBalls=[], flames=[], comboStep=0, comboNextT=0, freezeFx=[];
-let timeStopUntil=0, timeStopArm=0, fistFlurryUntil=0, fistNextT=0, fistUsesThisWave=0, parryUntil=0;
+let timeStopUntil=0, timeStopArm=0, fistFlurryUntil=0, fistNextT=0, teraHitCharge=15, parryUntil=0;
 let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
-let utilReadyT=0, medChan=0, medChanHeal=0, medCharges=Infinity, medRegenT=0, medCanChannel=true, medCdUntil=0, medUsesThisWave=0, MED_CD=60000, MED_USES=3, balls=[], grenades=[], pearls=[], utilityOut=false;
+const MED_KILLS_REQUIRED=10, TERA_HITS_REQUIRED=15, MED_CHANNEL_MS=8000;
+let utilReadyT=0, medChan=0, medChanHeal=0, medKillCharge=MED_KILLS_REQUIRED, balls=[], grenades=[], pearls=[], utilityOut=false;
 const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:6400, warpwave:18000, timeturner:12000};
 let wmods={}, utilMods={}, bossBounty=false;
 function wm(k){ return wmods[k] || (wmods[k]={dmg:1,rate:1,mag:1,pellets:0,pierce:0,drain:1,cdAdd:1,slamR:1,range:1,fall:1,spread:1,arc:1}); }
 function um(k){ return utilMods[k] || (utilMods[k]={cd:1}); }
 function abilityCdOf(k){ return Math.max(1500, (ABILITY_CD[k]||0) * wm(k).cdAdd); }
-function utilityCdOf(k){ return (k==='medkit'?MED_CD:UTILITIES[k].cd)*um(k).cd; }
+function utilityCdOf(k){ return UTILITIES[k].cd*um(k).cd; }
+function medKillsRequired(){ return Math.max(5,Math.ceil(MED_KILLS_REQUIRED*um('medkit').cd)); }
+function teraHitsRequired(){ return Math.max(8,Math.ceil(TERA_HITS_REQUIRED*wm('terafists').cdAdd)); }
 const ROMAN=['','I','II','III'];
 const WEAPON_MODS=[];
 const MOD_KEYS=[...new Set([...Object.keys(WEAPONS),...Object.keys(UTILITIES)])];
@@ -2336,7 +2335,7 @@ for(const k of MOD_KEYS){
     const n=(isUtil?UTILITIES[k].name:WEAPONS[k].name)+' '+base+' '+ROMAN[tier];
     const prev=tier>1?(isUtil?UTILITIES[k].name:WEAPONS[k].name)+' '+base+' '+ROMAN[tier-1]:null;
     WEAPON_MODS.push({wkey:k,n,base,tier,req:prev,
-      d:isUtil?('cooldown '+[0,12,16,20][tier]+'% faster'):
+      d:isUtil?(k==='medkit'?('needs '+[0,12,16,20][tier]+'% fewer kills'):('cooldown '+[0,12,16,20][tier]+'% faster')):
         isMelee?('+'+[0,12,16,20][tier]+'% damage, faster swing and ability'):
                 ('+'+[0,12,16,20][tier]+'% damage, magazine and range'),
       f:()=>{
@@ -4147,12 +4146,13 @@ function meleeAbility(){
       vx:-player.ddx*rand(1,4)+rand(-1,1), vy:-player.ddy*rand(1,4)+rand(-1,1),
       life:360,max:360,col:'#8fb3c9',size:2.8});
     noiseBurst(0.14,0.25,600);
-  } else if(k==='terafists'){                        // FLURRY: consecutive lifesteal punches, 5 per wave
-    if(!ready){ sfx('dry'); return; }
-    if(fistUsesThisWave>=5){ sfx('dry'); waveMsg='FLURRY SPENT \u2014 refreshes next wave'; waveMsgT=now+1200; return; }
-    fistUsesThisWave++;
+  } else if(k==='terafists'){                        // FLURRY: recharge by landing normal Tera-Fist hits
+    const req=teraHitsRequired(), left=Math.max(0,req-teraHitCharge);
+    if(left){
+      sfx('dry'); waveMsg='FLURRY \u2014 LAND '+left+' MORE HIT'+(left===1?'':'S'); waveMsgT=now+1400; return;
+    }
+    teraHitCharge=0;
     fistFlurryUntil=now+1600; fistNextT=0;
-    abilityCD[k]=now+abilityCdOf(k);
     sfx('crit');
   } else if(k==='knife'){                            // execute: kills EVERYTHING in close range
     const R=70;
@@ -4260,16 +4260,12 @@ addEventListener('keydown', e=>{
   if(powerMenuOpen){ if(k==='escape'||k==='p'||k==='v'){ powerMenuOpen=false; sfx('swap'); } return; }
   if(k==='v' && state==='upgrade'){ powerMenuOpen=true; sfx('swap'); return; }
 
+  if(k==='escape' && state==='select'){ navigateSelectBack(); return; }
   if(k==='p' || k==='escape'){ menuOpen=!menuOpen; sfx('swap'); return; }
   if(menuOpen) return;
 
   if(state==='select'){
-    const i = parseInt(k)-1;
-    if(i>=0 && i<WKEYS.length) pickWeapon(WKEYS[i]);
-    if(k==='enter'){
-      if(loadout.primary && loadout.secondary && loadout.melee) startGame();
-      else sfx('dry');
-    }
+    if(k==='enter' && selPage==='loadout') launchSelectedMode();
     return;
   }
   if(state==='over'){
@@ -4287,9 +4283,9 @@ addEventListener('keydown', e=>{
   if(k==='e'){
     if(practiceMode==='arena'&&(WEAPONS[player.cur].melee||player.cur==='warpwave'||player.cur==='timeturner')) sfx('dry');
     else if(utilityOut) utilQuick();                       // holding the medkit: E is the quick med
-    else if(WEAPONS[player.cur].melee) meleeAbility();
     else if(player.cur==='warpwave') warpStun();
     else if(player.cur==='timeturner') timeDragField();
+    else if(WEAPONS[player.cur].melee) sfx('dry');         // melee specials are F, or RMB with melee held
     else { aiming=!aiming; sfx('aim'); }
   }
   if(k==='r') startReload();
@@ -4340,7 +4336,10 @@ cv.addEventListener('mousedown', e=>{
     }
     if(state==='play' && (!WEAPONS[player.cur].auto || WEAPONS[player.cur].melee)) tryFire();
   } else if(e.button===2 && state==='play'){
-    if(WEAPONS[player.cur].melee){ if(practiceMode==='arena') sfx('dry'); else meleeAbility(); }
+    if(utilityOut){                                      // the visible utility owns RMB, never the hidden melee
+      if(loadout.utility==='medkit') medQuick(); else utilQuick();
+    }
+    else if(WEAPONS[player.cur].melee){ if(practiceMode==='arena') sfx('dry'); else meleeAbility(); }
     else { rmbAim=true; aiming=true; sfx('aim'); }
   }
 });
@@ -4356,7 +4355,7 @@ const touchUI = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
 const STICK_R=60;
 const sticks={ move:{id:null,cx:0,cy:0,dx:0,dy:0}, aim:{id:null,cx:0,cy:0,dx:0,dy:0} };
 let touchButtons=[], pressedBtn=null, menuTouchId=null;
-let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null;
+let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null, touchUtilityUsed=false;
 function buttonAt(x,y){
   // magnet: snap to the nearest button within a generous radius, so hurried
   // boss-fight taps don't get swallowed by the aim stick
@@ -4370,7 +4369,8 @@ function buttonAt(x,y){
 function doButton(k){
   if(k==='rld') startReload();
   else if(k==='swp') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
-  else if(k==='e'){ if(practiceMode==='arena'&&(WEAPONS[player.cur].melee||player.cur==='warpwave'||player.cur==='timeturner')) sfx('dry'); else if(utilityOut) utilQuick(); else if(WEAPONS[player.cur].melee) meleeAbility(); else if(player.cur==='warpwave') warpStun(); else if(player.cur==='timeturner') timeDragField(); else { aiming=!aiming; sfx('aim'); } }
+  else if(k==='e'){ if(practiceMode==='arena'&&(WEAPONS[player.cur].melee||player.cur==='warpwave'||player.cur==='timeturner')) sfx('dry'); else if(utilityOut) utilQuick(); else if(player.cur==='warpwave') warpStun(); else if(player.cur==='timeturner') timeDragField(); else if(WEAPONS[player.cur].melee) sfx('dry'); else { aiming=!aiming; sfx('aim'); } }
+  else if(k==='g') utilQuick();
   else if(k==='dsh') doDash();
   else if(k==='f'&&practiceMode!=='arena') quickMelee();
 }
@@ -4405,6 +4405,7 @@ cv.addEventListener('touchstart', e=>{
     mouse.x=x; mouse.y=y;
     tapShootUntil=now+220;              // brief fire window per tap
     aimStickId=t.identifier;            // drag to keep firing along the finger
+    touchUtilityUsed=false;
   }
 },{passive:false});
 cv.addEventListener('touchmove', e=>{
@@ -4435,7 +4436,7 @@ function touchEnd(e){
   e.preventDefault();
   for(const t of e.changedTouches){
     if(t.identifier===menuTouchId){ menuTouchId=null; mouse.down=false; dragSlider=null; }
-    if(t.identifier===aimStickId){ aimStickId=null; }
+    if(t.identifier===aimStickId){ aimStickId=null; touchUtilityUsed=false; }
     if(sticks.move.id===t.identifier){ sticks.move.id=null; sticks.move.dx=0; sticks.move.dy=0; }
   }
   pressedBtn=null;
@@ -4511,48 +4512,25 @@ function clickSelect(){
     if(inR(wheelBtnRect)){ openWheel(); sfx('swap'); return; }
     if(inR(streakBtnRect)){ collectStreak(); return; }
     if(inR(lookupBtnRect)){ if(isAdmin()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
+    if(inR(playBtnRect)){ selPage='modes'; sfx('swap'); return; }
     if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
     if(inR(shopBtnRect)){ selPage='shop'; sfx('swap'); return; }
-    if(inR(pracBtnRect)){ selPage='practice'; sfx('swap'); return; }
-    if(inR(arenaBtnRect)){
-      if(!sb||!authUser){
-        arenaAuthPending=true; $('aguest').style.display='none';
-        $('authmsg').textContent='Sign in is required for online PLAY.';
-        $('authwrap').style.display='flex'; sfx('dry'); return;
-      }
-      selPage='arena'; sfx('swap'); return;
-    }
-    if(pendingPractice && pendingCancelRect && inR(pendingCancelRect)){
-      pendingPractice=null; sfx('swap'); return;
-    }
-    if(inR(tempBtnRect)){
-      // one-tap equip the full Summer Flaming loadout (sign-in only)
-      if(sb && !authUser){ utilLockMsgT=now+2200; sfx('dry'); return; }
-      loadout.primary='fireworks';
-      loadout.secondary='solarrifle';
-      loadout.melee='bdaggers';
-      loadout.utility='beachball';
-      sfx('pickup'); return;
-    }
-    for(const c of catBtns){
-      if(inR(c)){ selPage=c.cat; sfx('swap'); return; }
-    }
-    const d=deployRect;
-    if(inR(d)){
-      if(banBlocksPlay()){ banMsgT=now+2600; sfx('dry'); return; }
-      if(sb && !authUser && now>signUpLater){         // signed out: show what an account gets them
-        pendingDeploy=true;
-        openSignUpPrompt('sign in before you deploy and this run can actually count');
-        sfx('swap'); return;
-      }
-      if(loadout.primary && loadout.secondary && loadout.melee){ pendingPractice=null; pendingDeploy=false; startGame(); }
-      else sfx('dry');
-    }
+    return;
+  }
+  if(selPage==='modes'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of modeRects) if(inR(r)){ chooseGameMode(r.id); return; }
+    return;
+  }
+  if(selPage==='loadout'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const c of catBtns) if(inR(c)){ selPage=c.cat; sfx('swap'); return; }
+    if(inR(deployRect)){ launchSelectedMode(); return; }
     return;
   }
   if(selPage==='arena'){ arenaClick(); return; }
   // category / tutorial / shop pages
-  if(inR(backRect)){ selPage='hub'; sfx('swap'); return; }
+  if(inR(backRect)){ navigateSelectBack(); return; }
   // shop: tabs, weapon picker arrows, then buy/equip rects
   if(selPage==='howto'){ howToClick(); return; }
   if(selPage==='shop'){
@@ -4587,9 +4565,9 @@ function clickSelect(){
   if(selPage==='practice')
   for(const r of practiceRects){ if(inR(r)){
     if(r.mode!=='range' && sb && !authUser){ pracLockMsgT=now+2200; sfx('dry'); return; }
-    // always pick fresh: clear the loadout and send them to the armory before every practice run
+    // always pick fresh: clear the loadout and send them through the shared loadout screen
     loadout={primary:null,secondary:null,melee:null,utility:null};
-    pendingPractice=r.mode; selPage='hub'; sfx('swap'); return;
+    pendingPractice=r.mode; pendingGameMode='practice'; selPage='loadout'; sfx('swap'); return;
   } }
   for(const r of cardRects){                      // PRACTICE + BUY IN SHOP take priority over equipping
     if(r.tryIt && inR(r)){ openPracticePick(r.key); sfx('swap'); return; }
@@ -4637,7 +4615,10 @@ function dmgMul(b){
   const t=Math.min(1,(b.dist-b.rng)/b.rng);   // linear falloff from range to 2x range
   return 1-(1-b.fall)*t;
 }
-function addShake(m){ shakeMag = Math.min(18, shakeMag + m); }
+function addShake(m){
+  if(practiceMode==='arena') return;                      // keep online fights clear and inexpensive
+  shakeMag = Math.min(18, shakeMag + m);
+}
 function collideRects(e){
   for(const o of obstacles){
     const cx = clamp(e.x, o.x, o.x+o.w), cy = clamp(e.y, o.y, o.y+o.h);
@@ -4666,6 +4647,7 @@ function losBlocked(x0,y0,x1,y1){
   return false;
 }
 function burst(x,y,col,n,pow){
+  if(practiceMode==='arena') n=Math.min(n,2);             // Arena favors readable hits over particle storms
   for(let i=0;i<n;i++){
     const a=rand(0,TAU), s=rand(0.5,pow);
     particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:rand(280,520),max:520,col,size:rand(1.5,3.5)});
@@ -4679,9 +4661,9 @@ function startGame(){
   perkCounts={}; upgradeOffered=false; upgradeChoices=[]; wmods={}; utilMods={}; bossBounty=false;
   surgeT=0; windReadyWave=0; dashReadyT=0; sawFuel=100; sawLock=false; player.lastSaw=0;
   flameFuel=100; flameLock=false; daggersOut=null; splitBalls=[]; flames=[]; comboStep=0; comboNextT=0; freezeFx=[];
-  timeStopUntil=0; timeStopArm=0; fistFlurryUntil=0; fistNextT=0; fistUsesThisWave=0; parryUntil=0;
+  timeStopUntil=0; timeStopArm=0; fistFlurryUntil=0; fistNextT=0; teraHitCharge=teraHitsRequired(); parryUntil=0;
   sawChargeUntil=0; sawChargeTick=0; abilityCD={}; quickReadyT=0; player.dashSpd=14; player.spinT=0; player.animT=0;
-  utilReadyT=0; medChan=0; medChanHeal=0; medCharges=Infinity; medRegenT=0; medCdUntil=0; medUsesThisWave=0; balls=[]; grenades=[]; pearls=[]; utilityOut=false;
+  utilReadyT=0; medChan=0; medChanHeal=0; medKillCharge=medKillsRequired(); balls=[]; grenades=[]; pearls=[]; utilityOut=false;
   player.dashUntil=0; player.regenT=0; player.ddx=0; player.ddy=0; player.swingDur=130;
   player.x=WORLD.w/2; player.y=WORLD.h/2; player.hp=perks.maxhp;
   player.cur=loadout.primary;
@@ -4729,8 +4711,6 @@ function bossComposition(w){
 }
 function nextWave(){
   wave++;
-  fistUsesThisWave=0;                               // tera fists flurry refreshes every wave
-  medUsesThisWave=0;                                // medkit: 3 uses per wave
   const bossWave = wave%5===0;
   waveMsg = bossWave ? 'WAVE '+wave+' \u2014 WARLORDS INBOUND' : 'WAVE '+wave;
   waveMsgT=now+2200;
@@ -4888,7 +4868,7 @@ function startPractice(mode){
     if(!loadout.melee)     loadout.melee='knife';
   }
   startGame();
-  practiceMode=mode; practiceSpawns=[]; dpsLog=[]; dpsPrevHp=0; dpsTotal=0; dpsStart=0; fistUsesThisWave=0;
+  practiceMode=mode; practiceSpawns=[]; dpsLog=[]; dpsPrevHp=0; dpsTotal=0; dpsStart=0;
   if(tryStartWeapon && !WEAPONS[tryStartWeapon].melee){ player.cur=tryStartWeapon; player.equipEnd=0; }
   for(const k of WKEYS) player.reserve[k]=Infinity;       // endless ammo on the range
   const cx=WORLD.w/2, cy=WORLD.h/2;
@@ -4922,7 +4902,7 @@ function arenaGuard(){
     $('authwrap').style.display='flex'; sfx('dry'); return false;
   }
   if(!arenaLoadoutReady()){
-    arena.status='Pick a PRIMARY, SIDEARM, and MELEE on the main menu first.'; sfx('dry'); return false;
+    arena.status='Pick a PRIMARY, SIDEARM, and MELEE on the loadout screen first.'; sfx('dry'); return false;
   }
   return true;
 }
@@ -5177,12 +5157,6 @@ function arenaReceive(event,p){
     r.tx=clamp(+p.x||r.tx,40,WORLD.w-40); r.ty=clamp(+p.y||r.ty,40,WORLD.h-40);
     r.angle=Number.isFinite(+p.angle)?+p.angle:r.angle; r.cur=WEAPONS[p.cur]?p.cur:r.cur;
     r.hp=clamp(+p.hp||0,0,ARENA_HP); r.lastSeen=Date.now();
-    if((p.shotSeq||0)>arena.lastRemoteShot){
-      const wall=performance.now(), wk=WEAPONS[r.cur]||WEAPONS.ar, len=wk.melee?85:260;
-      arena.lastRemoteShot=p.shotSeq||0; r.flashUntil=wall+90;
-      arena.remoteTracers.push({x:r.x,y:r.y,a:r.angle||0,len,melee:!!wk.melee,start:wall,end:wall+(wk.melee?150:110)});
-      if(arena.remoteTracers.length>24) arena.remoteTracers.splice(0,arena.remoteTracers.length-24);
-    }
     if(authUser.id===arena.hostId && arena.phase==='fight' && r.hp<=0) arenaHostResolve(authUser.id);
     return;
   }
@@ -5212,7 +5186,7 @@ function arenaApplyRematchStart(p){
   if(!authUser||!arena.opponent||p.from!==arena.hostId||epoch<=arena.matchEpoch) return false;
   arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
-  arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.shotSeq=0; arena.lastRemoteShot=0; arena.remoteTracers=[];
+  arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.hitSeq=0;
   arena.phase='lobby'; arena.status='Rematch confirmed. Starting round 1...';
   return true;
 }
@@ -5241,16 +5215,18 @@ function arenaApplyRoundStart(p){
   player.x=cx+(left?-500:500); player.y=cy; cam.x=player.x; cam.y=player.y;
   arena.opponent.x=cx+(left?500:-500); arena.opponent.y=cy; arena.opponent.tx=arena.opponent.x; arena.opponent.ty=cy;
   arena.opponent.hp=ARENA_HP; arena.opponent.cur=arena.opponent.loadout.primary||'ar';
-  arena.remoteTracers=[];
   state='play'; menuOpen=false; aiming=false; rmbAim=false;
   waveMsg='ROUND '+arena.round+' \u2014 GET READY'; waveMsgT=now+2800; sfx('wave');
 }
 function arenaCanAct(){ return !!(arena&&arena.active&&!arena.networkHold&&arena.phase==='fight'&&Date.now()<arena.roundEndAt&&player.hp>0); }
 function arenaWallTick(wall){
   if(!arena) return;
+  const elapsed=arena.wallTickAt?clamp(wall-arena.wallTickAt,0,250):16.667;
+  arena.wallTickAt=wall;
   if(arena.opponent){
-    arena.opponent.x+=(arena.opponent.tx-arena.opponent.x)*0.22;
-    arena.opponent.y+=(arena.opponent.ty-arena.opponent.y)*0.22;
+    const alpha=1-Math.pow(0.78,elapsed/16.667);           // same smoothing at 20, 60, or 144 FPS
+    arena.opponent.x+=(arena.opponent.tx-arena.opponent.x)*alpha;
+    arena.opponent.y+=(arena.opponent.ty-arena.opponent.y)*alpha;
   }
   if(!arena.active) return;
   if(arena.networkHold) return;
@@ -5263,17 +5239,20 @@ function arenaWallTick(wall){
   if(arena.phase==='round_end'&&arena.nextRoundAt&&clock>=arena.nextRoundAt&&authUser&&authUser.id===arena.hostId){
     arena.nextRoundAt=0; arenaHostStartRound();
   }
+}
+function arenaSyncTick(wall){
+  if(!arena||!arena.active||arena.networkHold) return;
   if(wall>=arena.syncAt&&arena.matchChannel&&authUser){
-    arena.syncAt=wall+ARENA_SYNC_MS;
-    arenaSend('state',{x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,hp:Math.max(0,player.hp),shotSeq:arena.shotSeq});
+    arena.syncAt=arena.syncAt?arena.syncAt+ARENA_SYNC_MS:wall+ARENA_SYNC_MS;
+    if(arena.syncAt<wall-ARENA_SYNC_MS) arena.syncAt=wall+ARENA_SYNC_MS;
+    arenaSend('state',{x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,hp:Math.max(0,player.hp)});
   }
 }
 function arenaSendHit(dmg,kind){
   if(!arenaCanAct()||!arena.opponent) return;
-  const id=authUser.id+':'+arena.round+':'+(++arena.shotSeq);
+  const id=authUser.id+':'+arena.round+':'+(++arena.hitSeq);
   arenaSend('hit',{to:arena.opponent.id,id,dmg:clamp(dmg,1,ARENA_HP),kind:kind||'shot'});
 }
-function arenaMarkShot(){ if(practiceMode==='arena'&&arenaCanAct()) arena.shotSeq++; }
 function arenaTakeHit(p){
   if(Math.floor(+p.epoch||0)!==arena.matchEpoch||p.round!==arena.round||!arenaCanAct()||arena.seenHits.has(p.id)) return;
   arena.seenHits.add(p.id); if(arena.seenHits.size>500) arena.seenHits=new Set([...arena.seenHits].slice(-250));
@@ -5341,6 +5320,7 @@ function leaveArena(status,toHub){
   if(practiceMode==='arena'){ practiceMode=null; enemies=[]; bullets=[]; ebullets=[]; pickups=[]; }
   const msg=status||''; arena=freshArena(msg||'Casual 1v1 ready.');
   if(state==='play'||state==='over'||state==='upgrade') state='select';
+  if(toHub) pendingGameMode=null;
   selPage=toHub?'hub':'arena'; menuOpen=false; aiming=false; rmbAim=false;
 }
 function arenaCopyCode(){
@@ -5352,14 +5332,19 @@ function arenaCopyCode(){
   }catch(e){ arena.status='Room code: '+code; }
   sfx('pickup');
 }
-addEventListener('beforeunload',()=>{ try{ if(arena&&arena.matchChannel) arenaSend('leave',{}); }catch(e){} });
+function flushEditorDraftOnExit(){ if(textDirty||layoutDirty) persistEditorDraft(); }
+addEventListener('pagehide',flushEditorDraftOnExit);
+addEventListener('beforeunload',()=>{
+  flushEditorDraftOnExit();
+  try{ if(arena&&arena.matchChannel) arenaSend('leave',{}); }catch(e){}
+});
 
 /* ---------------- combat ---------------- */
 function switchWeapon(k){
   if(tutorialOn && k!==player.cur) tutSwapped=true;
-  if(medChan){ sfx('dry'); return; }                 // channeling the medkit locks your weapon
   if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
   if(state!=='play') return;
+  cancelMedHeal();                                   // swapping away always interrupts either Medkit heal
   if(utilityOut){                                     // stow the utility, even back to the same gun
     utilityOut=false; player.equipEnd=now+EQUIP_WAIT; sfx('swap');
     if(k===player.cur) return;
@@ -5370,7 +5355,7 @@ function switchWeapon(k){
   aiming=false; rmbAim=false;
   sfx('swap');
 }
-function meleeSwing(w, mul){
+function meleeSwing(w, mul, flurryGenerated=false){
   if(player.equipEnd>now) return;                    // still drawing the weapon
   const arc=w.arc*wm(player.cur).arc;
   let base=aimAngle();
@@ -5405,6 +5390,8 @@ function meleeSwing(w, mul){
   }
   for(const e of targets){
     if(!enemies.includes(e)) continue;          // may already be gone via frag chains
+    if(player.cur==='terafists' && !flurryGenerated && practiceMode!=='arena')
+      teraHitCharge=Math.min(teraHitsRequired(),teraHitCharge+1);
     let hdmg=w.dmg*perks.dmg*wm(player.cur).dmg*mul;
     if(perks.crit && Math.random()<perks.crit){ hdmg*=3; burst(e.x,e.y,'#ffe08a',8,4); }
     e.hp-=hdmg*freezeHit(e); e.hitT=now+70;
@@ -5431,37 +5418,46 @@ function meleeSwing(w, mul){
 }
 function equipUtility(){
   if(state!=='play' || !loadout.utility) return;
-  if(medChan){ sfx('dry'); return; }
   utilityOut=true;
   player.equipEnd=now+EQUIP_WAIT; aiming=false; rmbAim=false;
   sfx('swap');
 }
-// one gate for every medkit heal: 3 uses a wave, and a 60s cooldown that starts when the heal FINISHES
+function cancelMedHeal(){
+  if(!medChan && !medChanHeal) return false;
+  medChan=0; medChanHeal=0; medHealPct=0;
+  return true;
+}
+// A successful heal spends the one ready charge; kills refill it for the next use.
 function medBlocked(){
   if(medChan || medChanHeal) return 'busy';
-  if(medUsesThisWave>=MED_USES) return 'spent';
-  if(now < medCdUntil) return 'cooling';
+  if(medKillCharge < medKillsRequired()) return 'charging';
   if(player.hp>=perks.maxhp) return 'full';
   return '';
 }
 function medDeny(why){
   sfx('dry');
-  if(why==='spent'){ waveMsg='\u2695 MEDKIT SPENT \u2014 refreshes next wave'; waveMsgT=now+1200; }
-  else if(why==='cooling'){ waveMsg='\u2695 MEDKIT '+Math.ceil((medCdUntil-now)/1000)+'s'; waveMsgT=now+900; }
+  if(why==='charging'){
+    const left=Math.max(0,medKillsRequired()-medKillCharge);
+    waveMsg='\u2695 MEDKIT \u2014 KILL '+left+' MORE ENEM'+(left===1?'Y':'IES'); waveMsgT=now+1400;
+  } else if(why==='busy'){
+    waveMsg='\u2695 MEDKIT \u2014 HEAL ALREADY ACTIVE'; waveMsgT=now+1000;
+  } else if(why==='full'){
+    waveMsg='\u2695 MEDKIT \u2014 INTEGRITY FULL'; waveMsgT=now+1000;
+  }
 }
-function medFinish(){         // called when a heal completes: burn the use, start the 60s cooldown
-  medUsesThisWave++;
-  medCdUntil=now+utilityCdOf('medkit');
+function medFinish(){         // spend the ready charge: quick-heal start or long-heal completion
+  medKillCharge=0;
 }
 function medQuick(){          // E / G: the fast heal, 5% over 1s
   const why=medBlocked(); if(why){ medDeny(why); return; }
-  medChanHeal=now+1000; medHealPct=0.05; medHealT0=now;
+  medFinish();                // it grants health immediately over time, so cancellation cannot refund the charge
+  medChanHeal=now+1000; medHealPct=0.05;
   sfx('aim');
 }
-function medChannelStart(){   // equipped: ONE press starts the slow heal; press again to cancel
-  if(medChan){ medChan=0; sfx('dry'); return; }        // cancelled: nothing spent, no cooldown
+function medChannelStart(){   // equipped LMB: repeated held/touch events do not toggle it back off
+  if(medChan) return;
   const why=medBlocked(); if(why){ medDeny(why); return; }
-  medChan=now; medCanChannel=true;
+  medChan=now;
   waveMsg='\u2695 FIELD MEDKIT \u2014 healing'; waveMsgT=now+1000;
 }
 function utilQuick(){         // G (or E/LMB-tap when equipped): instant cast at the crosshair
@@ -5518,13 +5514,17 @@ function spendMedCharge(n){ /* medkit is infinite-use: charges never deplete */ 
 function utilRelease(){
   // the slow heal is press-to-start now, so letting go of the mouse must not cancel it
 }
-let medHealPct=0, medHealT0=0;
+let medHealPct=0;
 function quickMelee(){
-  if(state!=='play') return;
-  const saved=player.cur;
+  if(state!=='play' || !loadout.melee) return;
+  cancelMedHeal();
+  utilityOut=false;
+  const saved=player.cur, savedEquip=player.equipEnd;
   player.cur=loadout.melee;    // F = the equipped melee's ability (scythe dash also cleaves on launch)
+  player.equipEnd=0;
   meleeAbility();
   player.cur=saved;
+  player.equipEnd=savedEquip;
 }
 
 function startReload(){
@@ -5538,12 +5538,17 @@ function startReload(){
   aiming=false; rmbAim=false;
   sfx('reload');
 }
-function tryFire(){
+function tryFire(carryCadence=false){
   if(state!=='play' || now<fireSuppressT) return;
   if(practiceMode==='arena' && !arenaCanAct()) return;
   const w=WEAPONS[player.cur];
   if(player.reloadEnd>now || player.equipEnd>now) return;
-  if(now - player.lastShot < w.fireRate*perks.rate*wm(player.cur).rate*(now<surgeT?0.77:1)) return;
+  const shotInterval=w.fireRate*perks.rate*wm(player.cur).rate*(now<surgeT?0.77:1);
+  if(now-player.lastShot<shotInterval) return;
+  // Held automatic fire keeps the fractional timer remainder instead of losing
+  // it to the 60 Hz step. Fresh presses and shots after an idle gap still fire now.
+  const shotStamp=carryCadence&&player.lastShot>0&&now-player.lastShot<shotInterval*4
+    ? player.lastShot+shotInterval : now;
   if(w.melee){
     if(w.combo && daggersOut){ sfx('dry'); return; }   // can't swing while daggers are thrown
     if(w.saw){
@@ -5552,8 +5557,7 @@ function tryFire(){
       player.lastSaw=now;
       if(sawFuel<=0) sawLock=true;
     }
-    arenaMarkShot();
-    player.lastShot=now;
+    player.lastShot=shotStamp;
     meleeSwing(w, 1);
     return;
   }
@@ -5562,8 +5566,7 @@ function tryFire(){
   }
   // fireworks: lobbed firecracker that detonates at the crosshair (within range)
   if(w.firework){
-    arenaMarkShot();
-    player.lastShot=now; player.mags[player.cur]--; if(tutorialOn) tutFired++;
+    player.lastShot=shotStamp; player.mags[player.cur]--; if(tutorialOn) tutFired++;
     const sw=swayScreen();
     const tw=screenToWorld(mouse.x+sw.x, mouse.y+sw.y);
     let tdx=tw.x-player.x, tdy=tw.y-player.y;
@@ -5579,7 +5582,7 @@ function tryFire(){
     player.flash=now+55; sfx('shot',w);
     return;
   }
-  arenaMarkShot(); player.lastShot=now;
+  player.lastShot=shotStamp;
   player.mags[player.cur]--; if(tutorialOn) tutFired++;
   // aimed revolver shot fans the hammer: 5 fast follow-up shots
   if(w.fan && aiming && fanShots<=0 && now>=fanBurstUntil){
@@ -5645,9 +5648,12 @@ function update(dtms){
     waveMsg='\u23F3 TIME RESUMED'; waveMsgT=now+1200; sfx('hit');
   }
   // tera fists flurry: rapid consecutive punches
-  if(now<fistFlurryUntil && state==='play' && player.cur==='terafists' && now>=fistNextT){
+  if(now<fistFlurryUntil && state==='play' && loadout.melee==='terafists' && now>=fistNextT){
     fistNextT=now+90;
-    meleeSwing(WEAPONS.terafists, 1);
+    const held=player.cur, heldEquip=player.equipEnd;
+    player.cur='terafists'; player.equipEnd=0;
+    meleeSwing(WEAPONS.terafists, 1, true);           // Flurry's own punches cannot recharge Flurry
+    player.cur=held; player.equipEnd=heldEquip;
   }
   // revolver fan-the-hammer: rapid follow-up shots
   if(fanShots>0 && now>=fanNextT){
@@ -5658,7 +5664,7 @@ function update(dtms){
     } else fanShots=0;
   }
   // full-auto
-  if(!utilityOut && (w.auto || perks.autoAll) && mouse.down) tryFire();
+  if(!utilityOut && (w.auto || perks.autoAll) && mouse.down) tryFire(true);
 
   // movement
   let mx=0,my=0;
@@ -5702,30 +5708,26 @@ function update(dtms){
     if(now<tapShootUntil){
       mouse.x=(tapAimX-cam.x)*zoom+W/2;
       mouse.y=(tapAimY-cam.y)*zoom+H/2;
-      if(utilityOut){ if(loadout.utility==='medkit') medChannelStart(); else utilQuick(); }
-      else tryFire();
+      if(utilityOut){
+        if(!touchUtilityUsed){ if(loadout.utility==='medkit') medChannelStart(); else utilQuick(); touchUtilityUsed=true; }
+      }
+      else tryFire(true);                              // same accurate held-fire cadence as mouse controls
     }
   }
 
   // --- utilities ---
-  // medkit hold-channel: 10s for 20% (both charges); -10% speed; switching cancels
+  // medkit long heal: 8s for 20%; damage or switching cancels without spending it
   if(medChan){
-    if(now-medChan>=10000){
+    if(now-medChan>=MED_CHANNEL_MS){
       player.hp=Math.min(perks.maxhp, player.hp+perks.maxhp*0.20);
       burst(player.x,player.y,'#5ec46a',16,4); sfx('pickup');
-      medChan=0; medFinish();                          // 60s cooldown starts now that it is done
+      medChan=0; medFinish();
     }
-  }
-  // medkit charge regen: one charge per 75s
-  if(medCharges<2 && medRegenT>0 && now>=medRegenT){
-    medCharges++;
-    medRegenT = medCharges<2 ? now+utilityCdOf('medkit') : 0;
-    sfx('loaded');
   }
   // quick heal drip (tap): 5% spread over 1s
   if(medChanHeal){
     if(now>=medChanHeal){
-      medChanHeal=0; medFinish();                      // 60s cooldown starts when the heal is done
+      medChanHeal=0;
     }
     player.hp=Math.min(perks.maxhp, player.hp + perks.maxhp*medHealPct*(dtms/1000));
   }
@@ -5786,7 +5788,7 @@ function update(dtms){
         }
       }
       // BIG rainbow firework burst on detonation
-      if(fw){
+      if(fw&&practiceMode!=='arena'){
         const RAINBOW=['#ff3b3b','#ff9a3b','#ffe23b','#4cd964','#34aadc','#5856d6','#ff2d95','#ffffff'];
         // dense scatter of sparks
         for(let s=0;s<70;s++){
@@ -6119,11 +6121,12 @@ function update(dtms){
       if(cdx*cdx+cdy*cdy < (e.r+player.r+2)*(e.r+player.r+2) && player.hurtCd<=0) hurtPlayer(t.dmg);
     }
   }
-  // simple separation
+  // Enemy count is deliberately capped, so this exact all-pairs pass stays
+  // cheap and never misses a collision after earlier pairs push enemies apart.
   for(let i=0;i<enemies.length;i++) for(let j=i+1;j<enemies.length;j++){
     const a=enemies[i],b=enemies[j];
     const dx=b.x-a.x, dy=b.y-a.y, rr=a.r+b.r, d2=dx*dx+dy*dy;
-    if(d2>0 && d2<rr*rr){
+    if(d2>0&&d2<rr*rr){
       const d=Math.sqrt(d2), p=(rr-d)/d*0.5;
       a.x-=dx*p; a.y-=dy*p; b.x+=dx*p; b.y+=dy*p;
     }
@@ -6237,23 +6240,30 @@ function update(dtms){
       ca += clamp(da,-mt,mt);
       b.vx=Math.cos(ca)*b.spd; b.vy=Math.sin(ca)*b.spd;
     }
-    b.x+=b.vx*dt*ebSm; b.y+=b.vy*dt*ebSm; b.life-=dtms;
-    let dead = b.life<=0 || (!b.h && pointInRects(b.x,b.y));
-    if(!dead && now<parryUntil && dist2(b.x,b.y,player.x,player.y) < (player.r+42)*(player.r+42)){
-      // PARRY: convert the incoming shot into a fast player bullet flung away from you
-      const a=Math.atan2(b.y-player.y, b.x-player.x);
-      bullets.push({x:b.x, y:b.y, vx:Math.cos(a)*22, vy:Math.sin(a)*22, dmg:120, pierce:2,
-                    life:900, rng:900, dist:0, fall:1, fg:4, col:'#bfe8ff'});
-      burst(b.x,b.y,'#bfe8ff',10,4); sfx('hit'); addShake(3);
-      parryUntil=0;                                  // one reflect per activation
-      ebullets.splice(i,1); continue;
-    }
-    if(!dead && dist2(b.x,b.y,player.x,player.y) < (player.r+3)*(player.r+3)){
-      dead=true; if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg);
+    const moveX=b.vx*dt*ebSm, moveY=b.vy*dt*ebSm;
+    const steps=Math.max(1,Math.ceil(Math.hypot(moveX,moveY)/7));
+    b.life-=dtms;
+    let dead=b.life<=0;
+    for(let s=0;s<steps&&!dead;s++){
+      b.x+=moveX/steps; b.y+=moveY/steps;
+      if(!b.h&&pointInRects(b.x,b.y)){ dead=true; break; }
+      if(now<parryUntil&&dist2(b.x,b.y,player.x,player.y)<(player.r+42)*(player.r+42)){
+        // PARRY: convert the incoming shot into a fast player bullet flung away from you
+        const a=Math.atan2(b.y-player.y,b.x-player.x);
+        bullets.push({x:b.x,y:b.y,vx:Math.cos(a)*22,vy:Math.sin(a)*22,dmg:120,pierce:2,
+                      life:900,rng:900,dist:0,fall:1,fg:4,col:'#bfe8ff'});
+        burst(b.x,b.y,'#bfe8ff',10,4); sfx('hit'); addShake(3);
+        parryUntil=0; dead=true;                         // one reflect per activation
+        break;
+      }
+      if(dist2(b.x,b.y,player.x,player.y)<(player.r+3)*(player.r+3)){
+        dead=true; if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg);
+      }
     }
     if(dead) ebullets.splice(i,1);
   }
   // particles
+  if(particles.length>320) particles.splice(0,particles.length-320);
   for(let i=particles.length-1;i>=0;i--){
     const p=particles[i];
     p.x+=p.vx*dt; p.y+=p.vy*dt; p.vx*=0.96; p.vy*=0.96; p.life-=dtms;
@@ -6319,6 +6329,7 @@ function update(dtms){
 }
 function hurtPlayer(dmg){
   if(now<invincUntil) return;                       // invincibility powerup: no damage
+  cancelMedHeal();                                  // a real hit interrupts both quick and long Medkit heals
   const waveDmg=1+Math.max(0,wave-1)*0.053;
   player.hp-=dmg*waveDmg*perks.armor*DIFFS[diffMode].dmg; player.hurtCd=550; player.hurtFlash=1;
   addShake(6); sfx('hurt');
@@ -6411,6 +6422,12 @@ function freezeHit(e){
 function killEnemy(j){
   const e=enemies[j], t=ETYPES[e.type];
   burst(e.x,e.y,t.col,16,4.5);
+  if(loadout.utility==='medkit' && practiceMode!=='arena' && medKillCharge<medKillsRequired()){
+    medKillCharge=Math.min(medKillsRequired(),medKillCharge+1);
+    if(medKillCharge>=medKillsRequired()){
+      waveMsg='\u2695 MEDKIT READY'; waveMsgT=now+1300; sfx('loaded');
+    }
+  }
   if(practiceMode){
     // practice kills give no score, loot, or task credit; mark the slot for its 3s respawn
     if(tutorialOn) tutKilled++;                        // the tutorial still counts them
@@ -6450,15 +6467,8 @@ function killEnemy(j){
 function drawArenaOpponentWorld(){
   if(practiceMode!=='arena'||!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
-  const wall=performance.now();
-  arena.remoteTracers=(arena.remoteTracers||[]).filter(f=>wall<f.end);
-  for(const f of arena.remoteTracers){
-    const alpha=clamp((f.end-wall)/(f.end-f.start||1),0,1);
-    ctx.save(); ctx.globalAlpha=alpha; ctx.strokeStyle=f.melee?'#ff8b80':'#ffd24d'; ctx.lineWidth=(f.melee?5:2)/zoom; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(f.x+Math.cos(f.a)*18,f.y+Math.sin(f.a)*18); ctx.lineTo(f.x+Math.cos(f.a)*f.len,f.y+Math.sin(f.a)*f.len); ctx.stroke(); ctx.restore();
-  }
   ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU); ctx.fill();
-  ctx.fillStyle=performance.now()<(e.flashUntil||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
+  ctx.fillStyle='#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   ctx.strokeStyle='#ff8b80'; ctx.lineWidth=2/zoom; ctx.stroke();
   const wk=WEAPONS[e.cur]||WEAPONS.ar, len=Math.min(38,wk.len||24);
   ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0'); ctx.lineWidth=(wk.melee?4:5)/zoom; ctx.lineCap='round';
@@ -6834,7 +6844,7 @@ function drawWorld(){
     ctx.beginPath(); ctx.arc(player.x,player.y,player.r+14,0,TAU); ctx.stroke();
   }
   if(medChan){
-    const frac=Math.min(1,(now-medChan)/10000);
+    const frac=Math.min(1,(now-medChan)/MED_CHANNEL_MS);
     ctx.strokeStyle='#5ec46a'; ctx.lineWidth=4/zoom;
     ctx.beginPath(); ctx.arc(player.x,player.y,player.r+18,-Math.PI/2,-Math.PI/2+frac*TAU); ctx.stroke();
   }
@@ -6964,7 +6974,7 @@ function drawHUD(){
   ctx.font='700 30px ui-monospace,Consolas,monospace';
   ctx.fillStyle = w.saw ? (sawLock ? '#d05548' : '#e8b658') : (mag===0 ? '#d05548' : '#e8b658');
   const ammoTxt = utilityOut
-                ? (loadout.utility==='medkit' ? '\u221E HEALS'
+                ? (loadout.utility==='medkit' ? (medKillCharge>=medKillsRequired()?'MEDKIT READY':(medKillsRequired()-medKillCharge)+' KILLS')
                    : now<utilReadyT ? 'RECHARGING' : 'READY')
                 : w.infinite ? (player.reloadEnd>now ? 'RELOADING' : '\u2600 '+mag+' / \u221E')
                 : w.saw ? (sawLock ? 'RECHARGING' : 'FUEL '+Math.ceil(sawFuel)+'%')
@@ -6996,7 +7006,7 @@ function drawHUD(){
   let cdX = pad + slots.length*66 + 16;
   const CDW=104;                                // column stride (70px bar + gap, wide enough for labels)
   const cdFits=()=>cdX+96<=W-pad;               // narrow screens: drop columns that would run off
-  // melee E ability cooldown
+  // melee ability charge/cooldown (F, or RMB while that melee is held)
   if(practiceMode!=='arena' && (w.melee || player.cur==='warpwave' || player.cur==='timeturner') && cdFits()){
     let frac, lbl;
     if(player.cur==='warpwave'){
@@ -7008,13 +7018,17 @@ function drawHUD(){
       const cdMax=abilityCdOf('timeturner')||1;
       frac=clamp(1-((abilityCD.timeturner||0)-now)/cdMax, 0, 1);
     } else if(player.cur==='bdaggers'){
-      lbl='E: HURL';
+      lbl='F/RMB: HURL';
       const cdMax=abilityCdOf('bdaggers')||1;
       frac=clamp(1-((abilityCD.bdaggers||0)-now)/cdMax,0,1);
+    } else if(player.cur==='terafists'){
+      const req=teraHitsRequired(), left=Math.max(0,req-teraHitCharge);
+      frac=clamp(teraHitCharge/req,0,1);
+      lbl=left ? left+' HIT'+(left===1?'':'S') : 'FLURRY READY';
     } else {
       const cdMax=abilityCdOf(player.cur)||1;
       frac=clamp(1-((abilityCD[player.cur]||0)-now)/cdMax, 0, 1);
-      lbl = player.cur==='scythe' ? 'E: DASH' : player.cur==='knife' ? 'E: CRIT' : player.cur==='hammer' ? 'E: SLAM' : player.cur==='twinsai' ? 'E: PARRY' : player.cur==='terafists' ? (fistUsesThisWave>=5 ? 'E: SPENT' : 'E: FLURRY '+(5-fistUsesThisWave)) : 'E: RIP';
+      lbl = player.cur==='scythe' ? 'F/RMB: DASH' : player.cur==='knife' ? 'F/RMB: CRIT' : player.cur==='hammer' ? 'F/RMB: SLAM' : player.cur==='twinsai' ? 'F/RMB: PARRY' : 'F/RMB: RIP';
     }
     ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace'; ctx.textAlign='left';
     ctx.fillText(lbl, cdX, H-124);
@@ -7027,23 +7041,24 @@ function drawHUD(){
   if(loadout.utility && cdFits()){
     const u=UTILITIES[loadout.utility];
     const isMed=loadout.utility==='medkit';
-    const room=(W-pad)-cdX;
-    const shortHud=room<150;
-    const frac = isMed ? 1 : clamp(1-(utilReadyT-now)/utilityCdOf(loadout.utility), 0, 1);
+    const medReq=isMed?medKillsRequired():1;
+    const frac = isMed ? clamp(medKillCharge/medReq,0,1) : clamp(1-(utilReadyT-now)/utilityCdOf(loadout.utility), 0, 1);
     ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace'; ctx.textAlign='left';
-    ctx.fillText('G: '+u.name.split(' ').pop()+(isMed?' \u221E':''), cdX, H-124);
+    ctx.fillText('G/RMB: '+u.name.split(' ').pop(), cdX, H-124);
     ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(cdX, H-112, 70, 6);
     ctx.fillStyle = frac>=1 ? '#c98fb8' : '#6b7455';
     ctx.fillRect(cdX, H-112, 70*frac, 6);
-    if(medChan){
-      ctx.fillStyle='#5ec46a';
-      ctx.fillText('HEALING '+Math.ceil((10000-(now-medChan))/1000)+'s', cdX, H-100);
-    } else if(medUsesThisWave>=MED_USES){
-      ctx.fillStyle='#6b7455'; ctx.fillText(shortHud?'SPENT':'SPENT THIS WAVE', cdX, H-100);
-    } else if(now<medCdUntil){
-      ctx.fillStyle='#6b7455'; ctx.fillText((shortHud?'':'READY IN ')+Math.ceil((medCdUntil-now)/1000)+'s', cdX, H-100);
-    } else if(isMed){
-      ctx.fillStyle='#5ec46a'; ctx.fillText((MED_USES-medUsesThisWave)+(shortHud?' LEFT':' LEFT THIS WAVE'), cdX, H-100);
+    if(isMed){
+      if(medChan){
+        ctx.fillStyle='#5ec46a';
+        ctx.fillText('HEALING '+Math.max(0,Math.ceil((MED_CHANNEL_MS-(now-medChan))/1000))+'s', cdX, H-100);
+      } else if(medChanHeal){
+        ctx.fillStyle='#5ec46a'; ctx.fillText('QUICK HEAL',cdX,H-100);
+      } else {
+        const left=Math.max(0,medReq-medKillCharge);
+        ctx.fillStyle=left?'#6b7455':'#5ec46a';
+        ctx.fillText(left?(left+' KILL'+(left===1?'':'S')):'READY',cdX,H-100);
+      }
     }
     cdX += CDW;
   }
@@ -7063,7 +7078,7 @@ function drawHUD(){
   if(W>=900){
     const help=practiceMode==='arena'
       ? 'WASD move · LMB fire · R reload · 1-3 / Q swap · ESC menu'
-      : 'WASD move · LMB fire · '+(utilityOut&&loadout.utility==='medkit'?'E quick med':'E scope')+' · R reload · 1-4 / Q swap · G utility'+(perks.dash?' · SPACE dash':'')+' · F melee ability · ESC menu';
+      : 'WASD move · LMB fire · '+(utilityOut&&loadout.utility==='medkit'?'RMB quick med':'E scope')+' · R reload · 1-4 / Q swap · G/RMB utility'+(perks.dash?' · SPACE dash':'')+' · F melee ability · ESC menu';
     ctx.fillText(fitLine(help,W-pad-300),W-pad,H-26);
   }
   ctx.textAlign='left';
@@ -7159,7 +7174,7 @@ function drawHUD(){
     const wq=WEAPONS[player.cur];
     ctx.fillStyle='#cdd6b0'; ctx.font='700 12px ui-monospace,Consolas,monospace';
     let atxt;
-    if(utilityOut) atxt = loadout.utility==='medkit' ? 'MEDKIT \u221E' : (now<utilReadyT?'RECHARGING':'READY');
+    if(utilityOut) atxt = loadout.utility==='medkit' ? (medKillCharge>=medKillsRequired()?'MEDKIT READY':(medKillsRequired()-medKillCharge)+' KILLS') : (now<utilReadyT?'RECHARGING':'READY');
     else if(wq.saw) atxt = sawLock?'RECHARGING':'FUEL '+Math.ceil(sawFuel)+'%';
     else if(wq.melee) atxt='MELEE';
     else atxt = player.reloadEnd>now ? 'RELOADING' : ((isFinite(player.mags[player.cur])?player.mags[player.cur]:'\u221E')+' / '+(isFinite(player.reserve[player.cur])?player.reserve[player.cur]:'\u221E'));
@@ -7273,9 +7288,9 @@ function weaponDetails(k){
   if(FALL_KEYS.includes(k)) rows.push(['\uD83C\uDF42 FALL SET','#1 leaderboard early access']);
   if(UTILKEYS.includes(k) || TEMP_UTILITY.includes(k)){
     const u=UTILITIES[k];
-    rows.push(['RECHARGE',(u.cd/1000)+'s']);
-    if(k==='medkit') rows.push(['QUICK HEAL','5% max HP over 1s'],['CHANNEL HEAL','20% max HP over 10s'],
-      ['HEAL PENALTY','-10% move speed'],['CHANNEL LOCK','no weapon swap'],['USES','unlimited']);
+    rows.push(['RECHARGE',k==='medkit' ? MED_KILLS_REQUIRED+' enemy kills' : (u.cd/1000)+'s']);
+    if(k==='medkit') rows.push(['QUICK HEAL','G / utility RMB \u00b7 5% max HP over 1s'],['CHANNEL HEAL','equip + LMB \u00b7 20% max HP over 8s'],
+      ['HEAL PENALTY','-10% move speed'],['INTERRUPTED BY','taking damage or switching'],['CHARGES','one ready at a time']);
     if(k==='grenade') rows.push(['DAMAGE','up to 300 at center'],['VS BOSS','up to 180'],
       ['BLAST RADIUS','170'],['FUSE','0.95s'],['THROW SPEED','14']);
     if(k==='portal') rows.push(['EFFECT','teleport to crosshair'],['I-FRAMES','0.35s']);
@@ -7331,13 +7346,13 @@ function weaponDetails(k){
     if(w.fire) rows.push(['\uD83D\uDD25 SUMMER','temporary'],['ON HIT','ignites (burn DoT)']);
     if(w.saw) rows.push(['FUEL DRAIN','5% per tick (~2.6s/tank)'],
       ['RECHARGE','7%/s idle \u00b7 lockout when empty']);
-    const ab={chainsaw:['E: RIP CHARGE','0.4s dash \u00b7 42/90ms \u00b7 i-frames \u00b7 16s'],
-              knife:['E: EXECUTE','kills ALL in range, 90% boss \u00b7 rng 70 \u00b7 4.8s'],
-              terafists:['E: FLURRY','1.6s of punches \u00b7 heals 12.5% of dmg dealt \u00b7 5 uses/wave'],
-              scythe:['E: REAPER DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 9.6s'],
-              hammer:['E: GROUND SLAM','110 dmg \u00b7 radius 160 \u00b7 8s'],
-              twinsai:['E: PARRY','reflect the next shot as a 120-dmg bolt \u00b7 6.4s'],
-              bdaggers:['E: HURL BLADES','throw both \u00b7 return in 1.5s \u00b7 ignite']}[k];
+    const ab={chainsaw:['F / MELEE RMB: RIP','0.4s dash \u00b7 42/90ms \u00b7 i-frames \u00b7 16s'],
+              knife:['F / MELEE RMB: EXECUTE','kills ALL in range, 90% boss \u00b7 rng 70 \u00b7 4.8s'],
+              terafists:['F / MELEE RMB: FLURRY','1.6s punches \u00b7 lifesteal \u00b7 recharge with '+TERA_HITS_REQUIRED+' normal hits'],
+              scythe:['F / MELEE RMB: DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 9.6s'],
+              hammer:['F / MELEE RMB: SLAM','110 dmg \u00b7 radius 160 \u00b7 8s'],
+              twinsai:['F / MELEE RMB: PARRY','reflect the next shot as a 120-dmg bolt \u00b7 6.4s'],
+              bdaggers:['F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite']}[k];
     if(ab) rows.push(ab);
     return rows;
   }
@@ -7494,7 +7509,7 @@ function drawBanNotice(){
 }
 function drawSelect(){
   layoutRects=[]; if(!(layoutMode||textMode)) textRects=[];   // one registry per frame
-  cardRects=[]; detailBtns=[]; catBtns=[]; backRect=null;
+  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; playBtnRect=null; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
   adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
@@ -7505,7 +7520,7 @@ function drawSelect(){
   if(banBlocksPlay()){ drawBanPage(); return; }      // blocked accounts see only the ban page
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
+  if(selPage==='hub') drawHub(); else if(selPage==='modes') drawModes(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
   drawDetail();
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
@@ -7535,7 +7550,7 @@ const TUT_STEPS=[
    why:'Targets here respawn. Real enemies do not.',
    watch:'{n}/1 target down'},
   {id:'melee',  title:'MELEE ABILITY',how:'press F',
-   why:'Your melee has a special move on a cooldown. Watch the cooldown bar.',
+   why:'Your melee has a special move. Tera Fists recharge from normal hits; others use a timer.',
    watch:'waiting for F'},
 ];
 function startTutorial(){
@@ -7731,8 +7746,8 @@ function drawTutorial(){
     ['AIM / SCOPE','hold right mouse or E (guns)'],
     ['RELOAD','R \u00b7 touch: reload button'],
     ['SWAP WEAPON','1-4 or Q \u00b7 touch: swap button'],
-    ['MELEE ABILITY','E with melee out \u00b7 or F anytime'],
-    ['UTILITY','G = quick cast at crosshair \u00b7 4 = equip it'],
+    ['MELEE ABILITY','F anytime \u00b7 or right-click with melee out'],
+    ['UTILITY','G = quick cast \u00b7 right-click while equipped \u00b7 4 = equip'],
     ['PICKUPS','walk over medkits & ammo \u2014 they stay put'],
     ['WAVES','clear a wave \u2192 choose an upgrade'],
     ['MOD LEVELS','every 10th wave offers ONLY weapon mods'],
@@ -8223,7 +8238,7 @@ function drawArena(){
   ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,ly+0.5,pw,lh);
   ctx.textAlign='left'; ctx.fillStyle=authUser?'#a7c15e':'#d05548'; ctx.font='700 '+(tiny?9:10)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(authUser?('\u25CF '+displayName(authUser)):'\u25CF SIGN IN REQUIRED',px+10,ly+(tiny?12:18));
-  const names=arenaLoadoutReady()?[loadout.primary,loadout.secondary,loadout.melee].map(k=>WEAPONS[k].name).join('  \u00b7  '):'Choose PRIMARY + SIDEARM + MELEE on the main menu';
+  const names=arenaLoadoutReady()?[loadout.primary,loadout.secondary,loadout.melee].map(k=>WEAPONS[k].name).join('  \u00b7  '):'Choose PRIMARY + SIDEARM + MELEE on the loadout screen';
   ctx.fillStyle=arenaLoadoutReady()?'#cdd6b0':'#d0a548'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(names,pw-20),px+10,ly+(tiny?29:43)); ctx.textAlign='center';
 
@@ -8286,42 +8301,127 @@ function arenaClick(){
     else if(r.id==='rematch') arenaVoteRematch();
     else if(r.id==='again') arenaPlayAgain();
     else if(r.id==='leave') leaveArena('',true);
-    else if(r.id==='back') leaveArena('',true);
+    else if(r.id==='back'){ leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'modes'; }
     sfx('swap'); return;
   }
 }
-let streakBoardBottom=0;
-function drawStreakBoard(){
-  const pw=Math.min(210,Math.max(165,W*0.27)), px=14, py=14;
-  const rows=Math.min(10,streakBoard.length), ph=38+Math.max(1,rows)*17+10;
-  ctx.fillStyle='rgba(0,0,0,0.52)'; ctx.fillRect(px,py,pw,ph);
-  ctx.strokeStyle='#ffb057'; ctx.lineWidth=1; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle='#ffb057'; ctx.font='700 11px ui-monospace,Consolas,monospace';
-  ctx.fillText('\uD83D\uDD25 TOP 10 STREAKS',px+pw/2,py+16);
-  if(rows){
-    ctx.font='9px ui-monospace,Consolas,monospace';
-    for(let i=0;i<rows;i++){
-      const y=py+36+i*17, me=authUser&&streakBoard[i].name===displayName(authUser);
-      leaderboardRowRects.push({x:px+5,y:y-10,w:pw-10,h:16,userId:streakBoard[i].user_id,name:streakBoard[i].name});
-      const hot=mouse.x>=px+5&&mouse.x<=px+pw-5&&mouse.y>=y-10&&mouse.y<=y+6;
-      if(hot){ ctx.fillStyle='rgba(255,176,87,0.13)'; ctx.fillRect(px+5,y-10,pw-10,16); }
-      ctx.fillStyle=me?'#a7c15e':(i<3?'#ffe08a':'#8a9268'); ctx.textAlign='left';
-      ctx.fillText((i+1)+'. '+String(streakBoard[i].name).slice(0,12),px+9,y);
-      ctx.textAlign='right'; ctx.fillText(streakBoard[i].score+'d',px+pw-9,y);
-    }
-  } else {
-    ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText(sb?'collect a reward to rank':'leaderboard offline',px+pw/2,py+39);
+function onlinePlayReady(){
+  return !!(sb && authUser && navigator.onLine!==false);
+}
+function chooseGameMode(mode){
+  if(mode==='arena' && !onlinePlayReady()){
+    if(navigator.onLine===false || !sb){ arena.status='Online games are unavailable. Reconnect and try again.'; sfx('dry'); return; }
+    arenaAuthPending=true; $('aguest').style.display='none';
+    $('authmsg').textContent='Sign in is required for Online 1v1.';
+    $('authwrap').style.display='flex'; sfx('dry'); return;
   }
-  ctx.textBaseline='alphabetic'; ctx.textAlign='center';
-  streakBoardBottom=py+ph;
-  return streakBoardBottom;
+  pendingGameMode=mode;
+  loadout={primary:null,secondary:null,melee:null,utility:null};
+  selPage='loadout'; sfx('swap');
+}
+function launchSelectedMode(){
+  if(!(loadout.primary&&loadout.secondary&&loadout.melee)){
+    pracNeedMsgT=now+1600; sfx('dry'); return false;
+  }
+  if(pendingGameMode==='arena'){
+    if(!onlinePlayReady()){ chooseGameMode('arena'); return false; }
+    loadout.utility=null; selPage='arena'; arena.status='Loadout ready. Choose Quick Match or a private room.'; sfx('swap'); return true;
+  }
+  if(pendingGameMode==='practice'){
+    const mode=pendingPractice||'range'; pendingPractice=null; pendingGameMode=null; startPractice(mode); sfx('wave'); return true;
+  }
+  pendingGameMode=null; pendingPractice=null; startGame(); return true;
+}
+function navigateSelectBack(){
+  if(detailKey){ detailKey=null; sfx('swap'); return; }
+  if(CATS.some(c=>c[0]===selPage)){ selPage=pendingGameMode?'loadout':'hub'; sfx('swap'); return; }
+  if(selPage==='loadout'){ pendingGameMode=null; selPage='modes'; sfx('swap'); return; }
+  if(selPage==='modes'){ selPage='hub'; sfx('swap'); return; }
+  if(selPage==='arena'){
+    leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'modes'; sfx('swap'); return;
+  }
+  if(selPage==='shop' && pendingGameMode){ selPage='loadout'; sfx('swap'); return; }
+  if(selPage==='tutorial'){ selPage='howto'; sfx('swap'); return; }
+  if(selPage!=='hub'){ selPage='hub'; sfx('swap'); return; }
+  menuOpen=!menuOpen; sfx('swap');
+}
+function drawModes(){
+  selBg(); modeRects=[];
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillStyle='#e8b658'; ctx.font='700 '+(H<560?25:34)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('CHOOSE GAME MODE',W/2,H*0.055);
+  ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
+  ctx.fillText('Choose where to play. Your loadout comes next.',W/2,H*0.055+(H<560?34:44));
+  const cw=Math.min(560,W-32), cx=W/2-cw/2, ch=H<560?86:112;
+  const card=(id,group,title,desc,y,col,enabled)=>{
+    const r={id,x:cx,y,w:cw,h:ch,enabled}; modeRects.push(r);
+    const hot=enabled&&mouse.x>=cx&&mouse.x<=cx+cw&&mouse.y>=y&&mouse.y<=y+ch;
+    ctx.fillStyle=enabled?(hot?col:'rgba(0,0,0,0.42)'):'rgba(45,45,42,0.72)'; ctx.fillRect(cx,y,cw,ch);
+    ctx.strokeStyle=enabled?col:'#4a4a45'; ctx.lineWidth=enabled?2:1; ctx.strokeRect(cx+0.5,y+0.5,cw,ch);
+    ctx.textAlign='left'; ctx.fillStyle=enabled?(hot?'#101208':col):'#66665f';
+    ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(group,cx+18,y+13);
+    ctx.font='700 '+(H<560?20:25)+'px ui-monospace,Consolas,monospace'; ctx.fillText(title,cx+18,y+(H<560?31:38));
+    ctx.fillStyle=enabled?(hot?'#202818':'#8a9268'):'#5a5a54'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(desc,cw-36),cx+18,y+ch-23);
+    ctx.textAlign='right'; ctx.font='700 24px ui-monospace,Consolas,monospace'; ctx.fillText(enabled?'\u203A':'\uD83D\uDD12',cx+cw-20,y+ch/2-12);
+    ctx.textAlign='center';
+  };
+  const y0=H*0.055+(H<560?62:86), gap=H<560?14:20;
+  card('endless','OFFLINE','ENDLESS','Classic waves, upgrades, bosses, rewards, and no internet required.',y0,'#a7c15e',true);
+  const online=onlinePlayReady();
+  const why=(navigator.onLine===false||!sb)?'OFFLINE \u2014 reconnect to enable Online games':(!authUser?'SIGN IN REQUIRED \u2014 Online games do not allow guests':'Casual first-to-5 Arena on separate devices.');
+  card('arena','ONLINE','CASUAL 1v1',why,y0+ch+gap,'#d05548',online);
+  const bw=Math.min(260,W-40), bh=42, bx=W/2-bw/2, by=Math.min(H-bh-14,y0+ch*2+gap+22);
+  backRect={x:bx,y:by,w:bw,h:bh};
+  const hot=mouse.x>=bx&&mouse.x<=bx+bw&&mouse.y>=by&&mouse.y<=by+bh;
+  ctx.fillStyle=hot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle='#8a9268'; ctx.strokeRect(bx+0.5,by+0.5,bw,bh);
+  ctx.fillStyle=hot?'#101208':'#cdd6b0'; ctx.font='700 14px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle'; ctx.fillText('\u2039 BACK TO HOME',W/2,by+bh/2);
+  ctx.textBaseline='alphabetic';
+}
+function drawLoadout(){
+  selBg(); catBtns=[];
+  const arenaMode=pendingGameMode==='arena';
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillStyle=arenaMode?'#d05548':'#e8b658'; ctx.font='700 '+(H<600?24:32)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('CHOOSE YOUR WEAPONS',W/2,H*0.035);
+  ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
+  ctx.fillText(arenaMode?'ONLINE 1v1 \u00b7 PRIMARY + SIDEARM + MELEE \u00b7 NO UPGRADES':'OFFLINE ENDLESS \u00b7 THREE WEAPONS REQUIRED \u00b7 UTILITY OPTIONAL',W/2,H*0.035+40);
+  const rows=arenaMode?CATS.slice(0,3):CATS;
+  const bw=Math.min(540,W-40), x0=W/2-bw/2, gap=H<600?9:14;
+  const top=H*0.035+68, footer=104;
+  const rowH=clamp(Math.floor((H-top-footer-gap*(rows.length-1))/rows.length),H<420?32:H<500?40:48,78);
+  let y=top;
+  for(const [cat,slot] of rows){
+    const k=loadout[slot], col=ROLECOL[cat], r={cat,x:x0,y,w:bw,h:rowH}; catBtns.push(r);
+    const hot=mouse.x>=x0&&mouse.x<=x0+bw&&mouse.y>=y&&mouse.y<=y+rowH;
+    ctx.fillStyle=hot?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.40)'; ctx.fillRect(x0,y,bw,rowH);
+    ctx.strokeStyle=k?col:(cat==='UTILITY'?'#4a4634':'#6b5030'); ctx.lineWidth=k?2:1; ctx.strokeRect(x0+0.5,y+0.5,bw,rowH);
+    ctx.fillStyle=col; ctx.fillRect(x0,y,6,rowH);
+    ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle=col; ctx.font='700 15px ui-monospace,Consolas,monospace'; ctx.fillText(cat,x0+20,y+rowH/2-9);
+    ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace'; ctx.fillText(cat==='UTILITY'?'OPTIONAL':'REQUIRED',x0+20,y+rowH/2+11);
+    ctx.textAlign='right'; ctx.fillStyle=k?'#e8d9a8':'#6b5030'; ctx.font='700 '+(W<430?12:15)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(k?(cat==='UTILITY'?UTILITIES[k]:WEAPONS[k]).name:'\u2014 CHOOSE \u2014',x0+bw-42,y+rowH/2);
+    ctx.fillStyle=hot?'#e8b658':'#8a9268'; ctx.font='700 22px ui-monospace,Consolas,monospace'; ctx.fillText('\u203A',x0+bw-18,y+rowH/2);
+    ctx.textAlign='center'; ctx.textBaseline='top'; y+=rowH+gap;
+  }
+  const ready=!!(loadout.primary&&loadout.secondary&&loadout.melee), dh=48, dw=Math.min(360,W-34), dx=W/2-dw/2;
+  const dy=Math.min(H-dh-58,y+5); deployRect={x:dx,y:dy,w:dw,h:dh};
+  const hot=ready&&mouse.x>=dx&&mouse.x<=dx+dw&&mouse.y>=dy&&mouse.y<=dy+dh;
+  ctx.fillStyle=hot?(arenaMode?'#d05548':'#e8b658'):ready?(arenaMode?'rgba(208,85,72,0.18)':'rgba(232,182,88,0.16)'):'rgba(0,0,0,0.35)'; ctx.fillRect(dx,dy,dw,dh);
+  ctx.strokeStyle=ready?(arenaMode?'#d05548':'#e8b658'):'#4a4634'; ctx.lineWidth=1.5; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
+  ctx.fillStyle=hot?'#101208':ready?'#e8d9a8':'#6b7455'; ctx.font='700 16px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
+  ctx.fillText(ready?(arenaMode?'CONTINUE TO 1v1':'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
+  const bbW=120, bbH=30, bbX=16, bbY=H-bbH-14; backRect={x:bbX,y:bbY,w:bbW,h:bbH};
+  const backHot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
+  ctx.fillStyle=backHot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH); ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
+  ctx.fillStyle=backHot?'#101208':'#cdd6b0'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('\u2039 MODES',bbX+bbW/2,bbY+bbH/2);
+  if(now<pracNeedMsgT){ ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('PRIMARY + SIDEARM + MELEE ARE REQUIRED',W/2,dy-18); }
+  ctx.textBaseline='alphabetic';
 }
 function drawHub(){
   selBg();
   leaderboardRowRects=[];
-  drawStreakBoard();
   compactStatus = W<680;
   pendingCancelRect=null;
   // the leaderboard panel hosts the lookup when it is shown; otherwise the bottom row does
@@ -8414,93 +8514,28 @@ function drawHub(){
   withBlockColour('banner', ()=>ctx.fillText(fitLine('\uD83D\uDD25 SUMMER FLAMING UPDATE \uD83D\uDD25', bnW-16), W/2, bnY+bnH/2));
   ctx.textBaseline='top';
 
-  // "USE TEMP WEAPONS" quick-equip button, directly under the banner
-  const tw=360, thh=30, tx=W/2-tw/2, ty=bnY+bnH+6;
-  const allTemp = loadout.primary==='fireworks' && loadout.secondary==='solarrifle'
-               && loadout.melee==='bdaggers' && loadout.utility==='beachball';
-  tempBtnRect={x:tx,y:ty,w:tw,h:thh};
-  const th=mouse.x>=tx&&mouse.x<=tx+tw&&mouse.y>=ty&&mouse.y<=ty+thh;
-  ctx.fillStyle = allTemp ? 'rgba(255,123,46,0.35)' : th ? '#ff7b2e' : 'rgba(255,123,46,0.16)';
-  ctx.fillRect(tx,ty,tw,thh);
-  ctx.strokeStyle='#ff7b2e'; ctx.lineWidth=1.5; ctx.strokeRect(tx+0.5,ty+0.5,tw,thh);
-  ctx.fillStyle = th&&!allTemp ? '#101208' : '#ffd7a0'; ctx.font='700 12px ui-monospace,Consolas,monospace';
-  ctx.fillText(allTemp ? '\uD83D\uDD25 SEASONAL LOADOUT EQUIPPED' : '\uD83D\uDD25 EQUIP ALL SEASONAL WEAPONS', W/2, ty+thh/2-6);
-
-  ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('LOADOUT \u2014 tap a category to choose \u00b7 look for \uD83D\uDD25 temp weapons', W-24), W/2, ty+thh+8);
-
-  // UPDATES board sits where the difficulty picker used to, under the LOADOUT line
+  // Home is intentionally simple: updates, one large PLAY button, and service links.
+  // All weapon choices now live after the player chooses a game mode.
   diffRects=[];
   hubPostsRect=null;
-  const boardTop=ty+thh+18;
-  const boardBottom=drawHubPosts(boardTop, H-190);   // leave room for the category rows + deploy
-
-  const bw=Math.min(460,W-80);
-  const gap=(H<700||W<420)?7:13;                  // the admin row can be tall; give the rows room
-  const rowsTop=boardBottom+(hubPostsRect?12:6);
-  const stackedArena=W<680, hubActionH=stackedArena?30:40;
-  const actionStripH=stackedArena?(32+6+hubActionH):hubActionH;
-  // rows get exactly the space above DEPLOY, which is itself pinned above the bottom strip
-  const deployTopMax=H-8-actionStripH-10-48;
-  const availRows=Math.max(60, deployTopMax-rowsTop-6);
-  const rowH=clamp(Math.floor((availRows-3*gap)/4), 20, 52);   // capped so the streak + tasks fit below
-  const tinyRows=rowH<40;                        // no room for the second line
-  const x0=W/2-bw/2;
-  let y=rowsTop;
-  for(const [cat,slot,listFn] of CATS){
-    const k=loadout[slot];
-    const col=ROLECOL[cat];
-    catBtns.push({cat,x:x0,y,w:bw,h:rowH});
-    const hov=mouse.x>=x0&&mouse.x<=x0+bw&&mouse.y>=y&&mouse.y<=y+rowH;
-    ctx.fillStyle = hov ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.35)';
-    ctx.fillRect(x0,y,bw,rowH);
-    ctx.strokeStyle = k ? col : (cat==='UTILITY'?'#4a4634':'#6b5030'); ctx.lineWidth = k?2:1;
-    ctx.strokeRect(x0+0.5,y+0.5,bw,rowH);
-    ctx.fillStyle=col; ctx.fillRect(x0,y,5,rowH);
-    ctx.textAlign='left';
-    ctx.fillStyle=col; ctx.font='700 16px ui-monospace,Consolas,monospace';
-    ctx.textBaseline='middle';
-    ctx.fillText(cat, x0+20, tinyRows ? y+rowH/2 : y+rowH/2-8);
-    ctx.textBaseline='top';
-    ctx.fillStyle='#6b7455'; ctx.font='10px ui-monospace,Consolas,monospace';
-    if(!tinyRows){ ctx.textBaseline='middle';
-      ctx.fillText(cat==='UTILITY'?'optional \u00b7 sign-in only':(cat==='PRIMARY'||cat==='SIDEARM'||cat==='MELEE')?'required':'', x0+20, y+rowH/2+9);
-      ctx.textBaseline='top'; }
-    // current pick
-    ctx.textAlign='right';
-    if(k){
-      const nm=(cat==='UTILITY'?UTILITIES[k]:WEAPONS[k]).name;
-      ctx.fillStyle='#e8d9a8'; ctx.font='700 15px ui-monospace,Consolas,monospace';
-      ctx.fillText(nm, x0+bw-44, y+rowH/2-8);
-    } else {
-      ctx.fillStyle='#6b5030'; ctx.font='700 14px ui-monospace,Consolas,monospace';
-      ctx.fillText('\u2014 none \u2014', x0+bw-44, y+rowH/2-8);
-    }
-    ctx.fillStyle=hov?'#e8b658':'#8a9268'; ctx.font='700 20px ui-monospace,Consolas,monospace';
-    ctx.fillText('\u203A', x0+bw-20, y+rowH/2-11);
-    ctx.textAlign='center';
-    y+=rowH+gap;
-  }
-
-  const dw=Math.min(340,W-32), dh=48, dx=W/2-dw/2;
-  const actionTop=H-8-actionStripH;
-  const dy=Math.min(y+6, actionTop-dh-10);            // never overlap the action strip
-  deployRect={x:dx,y:dy,w:dw,h:dh};
-  const ready = loadout.primary && loadout.secondary && loadout.melee;
-  const hov = ready && mouse.x>=dx&&mouse.x<=dx+dw&&mouse.y>=dy&&mouse.y<=dy+dh;
-  ctx.fillStyle = hov ? '#e8b658' : ready ? 'rgba(232,182,88,0.14)' : 'rgba(0,0,0,0.3)';
-  ctx.fillRect(dx,dy,dw,dh);
-  ctx.strokeStyle = ready ? '#e8b658' : '#4a4634'; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
-  ctx.fillStyle = hov ? '#101208' : ready ? '#e8b658' : '#6b7455';
-  ctx.font='700 17px ui-monospace,Consolas,monospace';
-  ctx.textBaseline='middle';
-  ctx.fillText(fitLine(ready ? 'DEPLOY  \u23CE' : 'PICK PRIMARY + SIDEARM + MELEE', W-40), W/2, dy+dh/2);
-  ctx.textBaseline='top';
-  // ---- Menu actions. On phones PLAY gets its own full-width row. ----
-  const hbGap=stackedArena?5:8, hbH=hubActionH;
-  const hbN=6+(lbShown?0:1)+(stackedArena?0:1);
+  const boardTop=bnY+bnH+8;
+  const boardBottom=drawHubPosts(boardTop, H-190);
+  const hbH=H<600?30:40, hbGap=W<520?5:8;
+  const hbN=5+(lbShown?0:1);
   const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
   const hbY=H-hbH-8;
+  const pw=Math.min(430,W-40), ph=H<560?52:66, px=W/2-pw/2;
+  const py=Math.min(hbY-ph-14,Math.max(boardBottom+(hubPostsRect?12:6),bnY+bnH+18));
+  playBtnRect={x:px,y:py,w:pw,h:ph};
+  const playHot=mouse.x>=px&&mouse.x<=px+pw&&mouse.y>=py&&mouse.y<=py+ph;
+  ctx.fillStyle=playHot?'#e8b658':'rgba(232,182,88,0.18)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#e8b658'; ctx.lineWidth=2; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
+  ctx.fillStyle=playHot?'#101208':'#e8d9a8'; ctx.font='700 '+(H<560?22:28)+'px ui-monospace,Consolas,monospace';
+  ctx.textBaseline='middle'; ctx.fillText('\u25B6  PLAY',W/2,py+ph/2-5);
+  ctx.fillStyle=playHot?'#303818':'#8a9268'; ctx.font='700 9px ui-monospace,Consolas,monospace';
+  ctx.fillText('CHOOSE A MODE, THEN CHOOSE YOUR WEAPONS',W/2,py+ph-11); ctx.textBaseline='top';
+
+  // ---- Menu actions. ----
   let hbX=W/2-(hbW*hbN+hbGap*(hbN-1))/2;
   const hubBtn=(label, base, txtCol)=>{
     const r={x:hbX,y:hbY,w:hbW,h:hbH};
@@ -8515,22 +8550,8 @@ function drawHub(){
     hbX+=hbW+hbGap;
     return r;
   };
-  if(pendingPractice && loadout.primary && loadout.secondary && loadout.melee){
-    const m=pendingPractice; pendingPractice=null; startPractice(m); sfx('wave'); return;
-  }
-  if(stackedArena){
-    const ah=32, aw=Math.min(340,W-32), ax=W/2-aw/2, ay=hbY-ah-6;
-    arenaBtnRect={x:ax,y:ay,w:aw,h:ah};
-    const hot=mouse.x>=ax&&mouse.x<=ax+aw&&mouse.y>=ay&&mouse.y<=ay+ah;
-    ctx.fillStyle=hot?'#d05548':'rgba(208,85,72,0.16)'; ctx.fillRect(ax,ay,aw,ah);
-    ctx.strokeStyle='#d05548'; ctx.lineWidth=1.5; ctx.strokeRect(ax+0.5,ay+0.5,aw,ah);
-    ctx.fillStyle=hot?'#101208':'#e0a8a0'; ctx.font='700 13px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
-    ctx.fillText('\u2694 PLAY ONLINE  \u00b7  CASUAL 1v1',W/2,ay+ah/2); ctx.textBaseline='top';
-  }
   tutBtnRect =hubBtn('\u2753 HOW TO PLAY','#8a9268','#cdd6b0');
   shopBtnRect=hubBtn('\uD83D\uDC8E SHOP \u00b7 '+gems,'#7fd8ff','#bfe8ff');
-  pracBtnRect=hubBtn('\uD83C\uDFAF PRACTICE','#a7c15e','#cfe0a8');
-  if(!stackedArena) arenaBtnRect=hubBtn('\u2694 PLAY','#d05548','#e0a8a0');
   promoBtnRect=hubBtn('\uD83C\uDF81 CODE','#a7c15e','#cfe0a8');
   shareBtnRect=hubBtn('\uD83D\uDD17 SHARE +5','#bfa8ff','#d8c8ff');
   wheelBtnRect=hubBtn('\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+')':wheelCountdown()),
@@ -8538,31 +8559,13 @@ function drawHub(){
   if(!lbShown) lookupBtnRect=hubBtn('\uD83D\uDD0D LOOKUP','#7fd8ff','#bfe8ff');
   if(now<referralMsgT){
     ctx.fillStyle='#bfa8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(referralMsg,W-30),W/2,Math.max(12,dy-13));
+    ctx.fillText(fitLine(referralMsg,W-30),W/2,Math.max(12,py-13));
   }
-  if(pendingPractice){
-    ctx.fillStyle='#a7c15e'; ctx.font='700 11px ui-monospace,Consolas,monospace';
-    ctx.fillText('\uD83C\uDFAF pick PRIMARY + SIDEARM + MELEE to start practice', W/2, Math.min(hbY+hbH+12, H-12));
-    // left column, under the currency chip: bail out of the practice pick
-    const ex=52, ey=164, ew=92;
-    ctx.fillStyle='rgba(8,10,5,0.78)'; ctx.fillRect(ex,ey,ew,56);
-    ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(ex+0.5,ey+0.5,ew,56);
-    ctx.textBaseline='middle';
-    ctx.fillStyle='#a7c15e'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-    ctx.fillText('\uD83C\uDFAF PRACTICE', ex+ew/2, ey+13);
-    const bx2=ex+8, by2=ey+26, bw2=ew-16, bh2=22;
-    pendingCancelRect={x:bx2,y:by2,w:bw2,h:bh2};
-    const chv=mouse.x>=bx2&&mouse.x<=bx2+bw2&&mouse.y>=by2&&mouse.y<=by2+bh2;
-    ctx.fillStyle=chv?'#d05548':'rgba(208,85,72,0.2)'; ctx.fillRect(bx2,by2,bw2,bh2);
-    ctx.strokeStyle='#d05548'; ctx.strokeRect(bx2+0.5,by2+0.5,bw2,bh2);
-    ctx.fillStyle=chv?'#101208':'#e0a8a0'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-    ctx.fillText('EXIT \u2715', ex+ew/2, by2+bh2/2);
-    ctx.textBaseline='alphabetic';
-  } else if(now<utilLockMsgT){
+  if(now<utilLockMsgT){
     ctx.fillStyle='#d05548'; ctx.font='700 12px ui-monospace,Consolas,monospace';
     ctx.fillText('SIGN-IN ONLY \u2014 use the SIGN IN button top-left', W/2, hbY+hbH+12);
   }
-  if(fallInjected && !pendingPractice){
+  if(fallInjected){
     // #1 crown badge, left column under the currency chip
     const ex=52, ey=164, ew=92, eh=44;
     ctx.fillStyle='rgba(8,10,5,0.78)'; ctx.fillRect(ex,ey,ew,eh);
@@ -8851,7 +8854,7 @@ function drawCard(k, cat, slot, x, yb, cw, ch, sc, isTemp){
   } else {
     ctx.fillStyle= locked ? '#4a4634' : '#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
     const ry2=Math.max(yb+Math.round(98*sc), nameY+15);
-    ctx.fillText('RECHARGE '+(w.cd/1000)+'s', x+cw/2, ry2);
+    ctx.fillText(k==='medkit' ? 'RECHARGE '+MED_KILLS_REQUIRED+' KILLS' : 'RECHARGE '+(w.cd/1000)+'s', x+cw/2, ry2);
     statBottom=ry2+8;
   }
   ctx.fillStyle = locked ? '#3a3a30' : '#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
@@ -9338,12 +9341,34 @@ const TEXT_FONTS=[
 ];
 const TEXT_COLOURS=['#f2f2e8','#e8b658','#a7c15e','#7fd8ff','#d05548','#bfa8ff','#ff9ad5'];
 let customText=[], textMode=false, textRects=[], textSel=null, textDrag=null, textDirty=false, textLocalSaveT=0, editGuides={x:null,y:null};
-function persistTextDraft(){
+const EDITOR_DRAFT_KEY='oz_ui_editor_draft';
+function readEditorDraft(){
   try{
+    const saved=JSON.parse(localStorage.getItem(EDITOR_DRAFT_KEY)||'null');
+    if(saved&&typeof saved==='object'&&saved.layout&&Array.isArray(saved.items)) return saved;
+    // Read drafts created by older copies of the game too.
+    if(localStorage.getItem('oz_ui_text_draft')==='1'){
+      const oldLayout=JSON.parse(localStorage.getItem('oz_ui_layout')||'{}');
+      const oldText=JSON.parse(localStorage.getItem('oz_ui_text')||'[]');
+      return {layout:oldLayout&&typeof oldLayout==='object'?oldLayout:{},items:Array.isArray(oldText)?oldText:[]};
+    }
+  }catch(e){}
+  return null;
+}
+function persistEditorDraft(){
+  try{
+    const draft={layout,items:customText,updatedAt:Date.now()};
+    localStorage.setItem(EDITOR_DRAFT_KEY,JSON.stringify(draft));
+    localStorage.setItem('oz_ui_layout',JSON.stringify(layout));
     localStorage.setItem('oz_ui_text',JSON.stringify(customText));
     localStorage.setItem('oz_ui_text_draft','1');
-  }catch(e){}
+    return true;
+  }catch(e){ return false; }
 }
+function clearEditorDraft(){
+  try{ localStorage.removeItem(EDITOR_DRAFT_KEY); localStorage.removeItem('oz_ui_text_draft'); }catch(e){}
+}
+function persistTextDraft(){ return persistEditorDraft(); } // legacy name used by the frame autosave
 // editing covers both the hub blocks and free text; one undo stack for the lot
 let editHist=[], editFuture=[], layoutStandard=null, textStandard=null, editSuggestOpen=false;
 let multiMode=false, textSelMany=[];                 // MULTI: tap several bits of text, then act on the lot
@@ -9538,12 +9563,19 @@ function alignClick(){
   }
 }
 async function saveAsStandard(){                     // called automatically when the creator publishes
-  if(!isCreator() || !sb) return;
-  layoutStandard=JSON.parse(JSON.stringify(layout));
-  textStandard=JSON.parse(JSON.stringify(customText));
-  try{ await sb.from('ui_layout').upsert({id:'standard', data:{layout:layoutStandard, items:textStandard},
-                                          updated_by:adminEmail()}); sfx('pickup'); }
-  catch(e){ sfx('dry'); }
+  if(!isCreator()) return false;
+  const layoutSnap=JSON.stringify(layout), textSnap=JSON.stringify(customText);
+  const nextLayout=JSON.parse(layoutSnap), nextText=JSON.parse(textSnap);
+  try{
+    if(sb){
+      const {error}=await sb.from('ui_layout').upsert({id:'standard',data:{layout:nextLayout,items:nextText},updated_by:adminEmail()});
+      if(error) throw error;
+    }
+    layoutStandard=nextLayout; textStandard=nextText;
+    const current=JSON.stringify(layout)===layoutSnap&&JSON.stringify(customText)===textSnap;
+    if(!current){ layoutDirty=true; textDirty=true; persistEditorDraft(); }
+    sfx(current?'pickup':'aim'); return current;
+  }catch(e){ layoutDirty=true; textDirty=true; persistEditorDraft(); waveMsg='STANDARD SAVE FAILED: '+String((e&&e.message)||e).slice(0,76); waveMsgT=now+4000; sfx('dry'); return false; }
 }
 async function fetchStandard(){
   if(!sb) return;
@@ -9561,17 +9593,25 @@ function resetToStandard(){                           // RESET returns to the sa
 // main admins cannot publish directly: their版 goes in as a suggestion
 async function submitEditSuggestion(){
   if(!sb || !isMainAdmin()) return;
+  const layoutSnap=JSON.stringify(layout), textSnap=JSON.stringify(customText);
+  const suggestedLayout=JSON.parse(layoutSnap), suggestedText=JSON.parse(textSnap);
+  persistEditorDraft();
   try{
-    await sb.from('player_requests').insert({requested_by:adminEmail(), target_email:'(ui)',
-      patch:{ui:{layout, items:customText}}, status:'pending'});
-    layoutDirty=false; textDirty=false; sfx('pickup');
-  }catch(e){ sfx('dry'); }
+    const {error}=await sb.from('player_requests').insert({requested_by:adminEmail(), target_email:'(ui)',
+      patch:{ui:{layout:suggestedLayout,items:suggestedText}}, status:'pending'});
+    if(error) throw error;
+    const layoutCurrent=JSON.stringify(layout)===layoutSnap, textCurrent=JSON.stringify(customText)===textSnap;
+    layoutDirty=!layoutCurrent; textDirty=!textCurrent;
+    if(layoutCurrent&&textCurrent) clearEditorDraft(); else persistEditorDraft();
+    sfx(layoutCurrent&&textCurrent?'pickup':'aim');
+  }catch(e){ waveMsg='SUGGESTION SAVE FAILED: '+String((e&&e.message)||e).slice(0,70); waveMsgT=now+4000; sfx('dry'); }
 }
 async function publishEdits(){
+  persistEditorDraft();                             // both halves survive refresh before either request starts
   if(isCreator()){
-    const a=await saveLayout(), b=await saveCustomText();
-    if(a&&b) await saveAsStandard();                 // what you publish becomes the new baseline
-    return !!(a&&b);
+    const [a,b]=await Promise.all([saveLayout(),saveCustomText()]);
+    if(!(a&&b)) return false;
+    return !!(await saveAsStandard());               // what you publish becomes the new baseline
   }
   await submitEditSuggestion(); return !(layoutDirty||textDirty);
 }
@@ -9611,26 +9651,31 @@ function drawCustomText(){
   }
 }
 async function fetchCustomText(){
-  let hasDraft=false;
-  try{
-    const v=JSON.parse(localStorage.getItem('oz_ui_text')||'null'); if(Array.isArray(v)) customText=v;
-    hasDraft=localStorage.getItem('oz_ui_text_draft')==='1';
-  }catch(e){}
-  if(!sb) return;
+  const draft=readEditorDraft();
+  if(draft&&Array.isArray(draft.items)){
+    customText=draft.items; layoutDirty=true; textDirty=true; // show UPDATE after a refresh
+  }
+  else try{ const v=JSON.parse(localStorage.getItem('oz_ui_text')||'null'); if(Array.isArray(v)) customText=v; }catch(e){}
+  if(!sb||draft) return;                            // a draft is newer than the published server version
   try{
     const { data } = await sb.from('ui_layout').select('data').eq('id','text').maybeSingle();
-    if(!hasDraft && data && data.data && Array.isArray(data.data.items)){
+    if(layoutDirty||textDirty||readEditorDraft()) return; // keep edits made before the next draft flush
+    if(data && data.data && Array.isArray(data.data.items)){
       customText=data.data.items; localStorage.setItem('oz_ui_text',JSON.stringify(customText));
     }
   }catch(e){}
 }
 async function saveCustomText(){
   if(!isMainAdmin()) return false;
+  const snapshot=JSON.stringify(customText), savedText=JSON.parse(snapshot);
+  persistEditorDraft();                             // local failure must never prevent the Supabase save attempt
+  try{ localStorage.setItem('oz_ui_text',snapshot); }catch(e){}
   try{
-    localStorage.setItem('oz_ui_text',JSON.stringify(customText));
-    if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'text',data:{items:customText},updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
-    localStorage.removeItem('oz_ui_text_draft');
-    textDirty=false; sfx('pickup'); return true;
+    if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'text',data:{items:savedText},updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
+    const current=JSON.stringify(customText)===snapshot;
+    textDirty=!current;
+    if(current&&!layoutDirty) clearEditorDraft(); else if(!current) persistEditorDraft();
+    sfx(current?'pickup':'aim'); return current;
   }catch(e){ waveMsg='TEXT SAVE FAILED: '+String((e&&e.message)||e).slice(0,80); waveMsgT=now+4000; sfx('dry'); return false; }
 }
 function addCustomText(){
@@ -9981,8 +10026,7 @@ function drawCurrencyHUD(){
   const gt='\uD83D\uDC8E '+gems, ct='\uD83E\uDE99 '+coins;
   const spinTxt='\uD83C\uDFA1 '+wheelCountdown();
   const bw=Math.max(ctx.measureText(gt).width,ctx.measureText(ct).width,ctx.measureText(spinTxt).width)+22, bh=64,
-        bx=52+offX('coins'), hubBelowStreak=(state==='select'&&selPage==='hub')?streakBoardBottom+12:0,
-        by=Math.max(104,leftColTop,hubBelowStreak)+offY('coins');
+        bx=52+offX('coins'), by=Math.max(104,leftColTop)+offY('coins');
   layoutBlock('coins',bx,by,bw,bh);
   const paintCoins=()=>{
   ctx.fillStyle='rgba(8,10,5,0.78)'; ctx.fillRect(bx,by,bw,bh);
@@ -10141,26 +10185,37 @@ function drawGear(){
 }
 
 /* ---------------- main loop ---------------- */
-let fpsEMA=60, showFps=false;
+const SIM_STEP=1000/60, MAX_SIM_STEPS=8;
+let fpsEMA=60, showFps=false, simAcc=0;
 function frame(){
   const wall = performance.now();
-  // dt is real elapsed time, clamped so one slow frame can't teleport the world.
-  // rendering runs at the display's own refresh rate (requestAnimationFrame drives it),
-  // and all game motion is scaled by dt so it plays identically at 30, 60, 120, or 144 Hz.
-  let dtms = clamp(wall-last, 4, 42);
-  const raw = wall-last;
+  const raw = Math.max(0,wall-last);
   last = wall;
   wheelTick(Math.min(Math.max(raw,0),60000));       // total site time; tolerate background tabs without clock jumps
   arenaWallTick(wall);                              // online clocks + snapshots never pause with the campaign clock
   if(raw>0){ const inst=1000/raw; fpsEMA += (inst-fpsEMA)*0.1; }
-  if(textDirty && Date.now()>textLocalSaveT){ persistTextDraft(); textLocalSaveT=Date.now()+250; }
+  if((textDirty||layoutDirty) && Date.now()>textLocalSaveT){ persistTextDraft(); textLocalSaveT=Date.now()+250; }
 
   // `now` is a GAME clock. It freezes while the pause menu (or a modal) is open, so
   // utility cooldowns, reloads, ability timers and burn/freeze don't tick while paused.
   const frozen = menuOpen || powerMenuOpen || respawnPromptT || chestRewardOpen || reportOpen || postOpen || msgOpen || scoreEditOpen || appealOpen || promoOpen || formOpen;
-  if(!frozen) now += dtms;
+  if(frozen){
+    simAcc=0;
+  } else {
+    // Run gameplay at a steady 60 Hz and render separately. A 20/30 FPS device
+    // catches up with several small safe steps; a 144 FPS display no longer speeds
+    // up movement, bullets, weapon cooldowns, particles, or enemy behavior.
+    simAcc+=Math.min(raw,SIM_STEP*MAX_SIM_STEPS);
+    let steps=0;
+    while(simAcc>=SIM_STEP && steps<MAX_SIM_STEPS){
+      now+=SIM_STEP;
+      if(state==='play' && (practiceMode!=='arena'||arenaCanAct())) update(SIM_STEP);
+      simAcc-=SIM_STEP; steps++;
+    }
+    if(steps===MAX_SIM_STEPS&&simAcc>=SIM_STEP) simAcc=0; // discard only a true background-tab backlog
+  }
+  arenaSyncTick(wall);                              // send the post-simulation position, even if a local menu is open
   tickCoinTrickles(wall);                         // reward count-ups continue inside the reward menu
-  if(state==='play' && !frozen && (practiceMode!=='arena'||arenaCanAct())) update(dtms);
   // Daily quests reset at noon UTC even if the player stays inside a run.
   if(String(Math.floor((Date.now()-43200000)/86400000))!==tasksDate) loadMeta();
 
