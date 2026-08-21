@@ -289,7 +289,7 @@ async function initAuth(){
         } else if(arenaAuthPending){
           arenaAuthPending=false;
           $('aguest').style.display='block';
-          pendingGameMode='arena'; modeBoardMode='arena';
+          pendingGameMode='arena'; modeBoardMode='arena'; loadoutBackPage='modeboard';
           loadout={primary:null,secondary:null,melee:null,utility:null};
           selPage='loadout';
         }
@@ -340,7 +340,14 @@ function setupRealtime(){
     let ch=sb.channel('oz-live');
     // everyone: new posts, leaderboard moves, price changes
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'banners'},       ()=>{ rtBump(); fetchBanners(); });
-    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'scores'},        ()=>{ rtBump(); fetchBoard(); });
+    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'scores'},        payload=>{
+      rtBump(); fetchBoard();
+      // A referrer who is already online should not have to reload to receive
+      // their gift. The login check below remains the fallback when Realtime is
+      // unavailable or the project does not expose row payloads to this client.
+      const changed=payload&&payload.new&&payload.new.game;
+      if(authUser && changed==='outpost-zero-referral:'+authUser.id) payReferralClaims();
+    });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_prices'}, ()=>{ rtBump(); fetchPrices(); });
     // admins only: roster changes, inbox, report feed
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admins'},        ()=>{ rtBump(); fetchAdmins(); });
@@ -1112,51 +1119,124 @@ function layoutMouseMove(){
 function layoutMouseUp(){ layoutDrag=null; }
 // daily login streak: rolls over at 12:00 UTC like the tasks, and must be COLLECTED by hand
 let streakDays=0, streakLongest=0, streakLastDay='', streakBtnRect=null, streakMsgT=0, streakMsg='';
-let referralUsed=false, referralPaid=0, referralMsg='', referralMsgT=0, shareBtnRect=null;
+let referralUsed=false, referralPaid=0, referralMsg='', referralMsgT=0, shareBtnRect=null, referralPending='';
+const referralPayInFlight=new Map();
 const REFERRAL_GEMS=5;
-function referralLink(){ return location.origin+location.pathname+'?ref='+encodeURIComponent(authUser.id); }
+const REFERRAL_PUBLIC_URL='https://wave-by-wave-2-d-shooter.vercel.app/';
+const REFERRAL_PENDING_KEY='oz_pending_referral';
+function validReferralId(value){
+  const id=String(value||'').trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) ? id : '';
+}
+function capturePendingReferral(){
+  let fromUrl='';
+  try{ fromUrl=validReferralId(new URL(location.href).searchParams.get('ref')); }catch(e){}
+  if(fromUrl){
+    referralPending=fromUrl;
+    try{ localStorage.setItem(REFERRAL_PENDING_KEY,fromUrl); }catch(e){}
+    return referralPending;
+  }
+  try{ referralPending=validReferralId(localStorage.getItem(REFERRAL_PENDING_KEY)); }catch(e){ referralPending=''; }
+  return referralPending;
+}
+function clearPendingReferral(ref){
+  ref=validReferralId(ref);
+  if(!ref || referralPending===ref) referralPending='';
+  try{ if(!ref || validReferralId(localStorage.getItem(REFERRAL_PENDING_KEY))===ref) localStorage.removeItem(REFERRAL_PENDING_KEY); }catch(e){}
+  try{
+    const u=new URL(location.href);
+    if(validReferralId(u.searchParams.get('ref'))===ref){ u.searchParams.delete('ref'); history.replaceState({},'',u.href); }
+  }catch(e){}
+}
+function pendingReferralId(){ return referralPending||capturePendingReferral(); }
+function referralLink(){
+  if(!authUser) return REFERRAL_PUBLIC_URL;
+  const u=new URL(REFERRAL_PUBLIC_URL);               // file:// previews must still share the real website
+  u.searchParams.set('ref',authUser.id);
+  return u.href;
+}
+async function copyReferralLink(url){
+  if(!navigator.clipboard || typeof navigator.clipboard.writeText!=='function') return false;
+  await navigator.clipboard.writeText(url); return true;
+}
 async function shareReferral(){
   if(!authUser){ referralMsg='SIGN IN TO GET YOUR SHARE LINK'; referralMsgT=now+2400; sfx('dry'); return; }
   const url=referralLink(), text='Play OUTPOST ZERO with me! We both get 5 gems.';
   try{
-    if(navigator.share) await navigator.share({title:'OUTPOST ZERO',text,url});
-    else await navigator.clipboard.writeText(url);
-    referralMsg=navigator.share?'SHARE LINK READY':'LINK COPIED \u2014 YOU BOTH GET 5 GEMS';
+    if(typeof navigator.share==='function'){
+      await navigator.share({title:'OUTPOST ZERO',text,url});
+      referralMsg='SHARED \u2014 YOU BOTH GET 5 GEMS';
+    } else if(await copyReferralLink(url)) referralMsg='LINK COPIED \u2014 YOU BOTH GET 5 GEMS';
+    else { window.prompt('Copy your share link:',url); referralMsg='SHARE THIS LINK \u2014 YOU BOTH GET 5 GEMS'; }
   }catch(e){
-    try{ await navigator.clipboard.writeText(url); referralMsg='LINK COPIED \u2014 YOU BOTH GET 5 GEMS'; }
-    catch(e2){ window.prompt('Copy your share link:',url); referralMsg='SHARE THIS LINK \u2014 YOU BOTH GET 5 GEMS'; }
+    if(e&&e.name==='AbortError') referralMsg='SHARE CANCELLED';
+    else try{
+      if(await copyReferralLink(url)) referralMsg='LINK COPIED \u2014 YOU BOTH GET 5 GEMS';
+      else { window.prompt('Copy your share link:',url); referralMsg='SHARE THIS LINK \u2014 YOU BOTH GET 5 GEMS'; }
+    }catch(e2){ window.prompt('Copy your share link:',url); referralMsg='SHARE THIS LINK \u2014 YOU BOTH GET 5 GEMS'; }
   }
   referralMsgT=now+3000; sfx('pickup');
 }
 async function payReferralClaims(){
   if(!sb||!authUser) return;
-  try{
-    const game='outpost-zero-referral:'+authUser.id;
-    const {count}=await sb.from('scores').select('user_id',{count:'exact',head:true}).eq('game',game);
-    const total=count||0, unpaid=Math.max(0,total-referralPaid);
-    if(unpaid&&gemRewardsEnabled()){ referralPaid=total; addGems(unpaid*REFERRAL_GEMS); saveMeta();
-      referralMsg='FRIEND JOINED! +'+(unpaid*REFERRAL_GEMS)+' GEMS'; referralMsgT=now+4000; }
-  }catch(e){ console.warn('referral payout failed',e); }
+  const userId=String(authUser.id||'');
+  if(referralPayInFlight.has(userId)) return referralPayInFlight.get(userId);
+  const task=(async()=>{
+    try{
+      const game='outpost-zero-referral:'+userId;
+      const {count,error}=await sb.from('scores').select('user_id',{count:'exact',head:true}).eq('game',game);
+      if(error) throw error;
+      // An old request must never credit whoever signed in after it started.
+      if(!authUser||authUser.id!==userId) return;
+      const total=count||0, unpaid=Math.max(0,total-referralPaid);
+      if(unpaid&&gemRewardsEnabled()){ referralPaid=total; addGems(unpaid*REFERRAL_GEMS); saveMeta();
+        referralMsg='FRIEND JOINED! +'+(unpaid*REFERRAL_GEMS)+' GEMS'; referralMsgT=now+4000; }
+    }catch(e){ console.warn('referral payout failed',e); }
+  })();
+  referralPayInFlight.set(userId,task);
+  try{ return await task; }
+  finally{ if(referralPayInFlight.get(userId)===task) referralPayInFlight.delete(userId); }
+}
+function awardReferralReceiver(){
+  if(referralUsed) return true;
+  referralUsed=true;
+  if(!addGems(REFERRAL_GEMS)){ referralUsed=false; return false; }
+  saveMeta();
+  referralMsg='WELCOME GIFT! +5 GEMS \u00b7 YOUR FRIEND GETS 5 TOO'; referralMsgT=now+5000;
+  return true;
 }
 async function processReferral(){
-  if(!sb||!authUser||!gemRewardsEnabled()){ return; }
+  if(!sb||!authUser) return;
   await payReferralClaims();
-  const ref=new URLSearchParams(location.search).get('ref');
-  if(!ref||referralUsed||ref===authUser.id||!/^[0-9a-f-]{36}$/i.test(ref)) return;
+  if(!gemRewardsEnabled()) return;
+  const ref=pendingReferralId();
+  if(!ref) return;
+  if(ref===String(authUser.id||'').toLowerCase()){
+    clearPendingReferral(ref);
+    referralMsg='YOUR OWN SHARE LINK NEEDS A DIFFERENT PLAYER'; referralMsgT=now+4000;
+    return;
+  }
+  // Never create the claim before the account balance has been loaded. If the
+  // profile request failed, the saved pending id makes the referral retry-safe.
+  if(!profileLoaded) return;
   try{
-    const {data:prior}=await sb.from('scores').select('game').eq('user_id',authUser.id)
+    const {data:prior,error:priorError}=await sb.from('scores').select('game').eq('user_id',authUser.id)
       .like('game','outpost-zero-referral:%').limit(1);
-    referralUsed=true;
-    if(prior&&prior.length){ saveMeta(); return; }
-    const {error}=await sb.from('scores').upsert(
-      {user_id:authUser.id,name:displayName(authUser),game:'outpost-zero-referral:'+ref,score:REFERRAL_GEMS},
-      {onConflict:'user_id,game'});
-    if(error) throw error;
-    addGems(REFERRAL_GEMS); saveMeta();
-    referralMsg='WELCOME GIFT! +5 GEMS \u00b7 YOUR FRIEND GETS 5 TOO'; referralMsgT=now+5000;
-    history.replaceState({},'',location.pathname+location.hash);
-  }catch(e){ referralUsed=false; console.warn('referral claim failed',e); }
+    if(priorError) throw priorError;
+    if(!prior||!prior.length){
+      const {error}=await sb.from('scores').upsert(
+        {user_id:authUser.id,name:displayName(authUser),game:'outpost-zero-referral:'+ref,score:REFERRAL_GEMS},
+        {onConflict:'user_id,game'});
+      if(error) throw error;
+    }
+    // If the claim row reached Supabase but a previous tab closed before its
+    // profile save, the account flag is still false and this safely finishes
+    // the receiver's one-time gift instead of losing it.
+    if(!awardReferralReceiver()) return;
+    clearPendingReferral(ref);
+  }catch(e){ console.warn('referral claim failed',e); }
 }
+capturePendingReferral();
 // WHEEL SPIN: one every 20 minutes spent anywhere on the site, claimed by hand
 const WHEEL=[{t:'6 \uD83D\uDC8E', gems:3*WHEEL_GEM_SCALE, coins:0},
              {t:'30 \uD83E\uDE99', gems:0, coins:30},
@@ -2104,9 +2184,9 @@ function applyProfile(m){
   try{ if(musicGain) musicGain.gain.value=musicVol*0.7; if(sfxGain) sfxGain.gain.value=sfxVol; }catch(e){}
   if(typeof m.wr==='number') wheelReady=m.wr>0?1:0;
   if(typeof m.wa==='number') wheelAcc=wheelReady?0:clamp(m.wa,0,WHEEL_MS-1);
-  referralUsed=!!(referralUsed||m.refUsed);
+  referralUsed=!!m.refUsed;
   if(typeof m.stkMax==='number') streakLongest=Math.max(streakLongest,m.stkMax);
-  if(typeof m.refPaid==='number') referralPaid=Math.max(referralPaid,m.refPaid);
+  referralPaid=Math.max(0,+m.refPaid||0);
   // take the account's streak only when it is at least as far along as this device's,
   // so a profile landing after a local collect cannot hand out the same reward twice
   if(typeof m.stkDay==='string' && (+(m.stkDay||-1) >= +(streakLastDay||-1))){
@@ -2141,7 +2221,7 @@ async function fetchProfile(){
       if(migrateGems||resetGems) await saveProfile(true); // write the reset marker so an old balance cannot return
     }
     else {                                            // a new account never inherits another account's device gems
-      gems=0; gemResetVersion=GEM_RESET_VERSION; saveMetaLocal();
+      gems=0; gemResetVersion=GEM_RESET_VERSION; referralUsed=false; referralPaid=0; saveMetaLocal();
       profileLoaded=true; saveProfile(true);
     }
   }catch(e){ profileLoaded=false; }
@@ -2276,6 +2356,10 @@ function weaponColor(wkey, fallback){
   if(id){ const c=COSMIC_COLORS.find(x=>x.id===id); if(c) return c.col; }
   return fallback;
 }
+const FIREARM_BULLET_SPEED_MUL=1.15, AWM_BULLET_SPEED_MUL=1.35;
+function weaponBulletSpeedMul(k){ return k==='sniper'?AWM_BULLET_SPEED_MUL:FIREARM_BULLET_SPEED_MUL; }
+function weaponBulletSpeed(k){ const w=WEAPONS[k]; return w&&w.speed ? w.speed*weaponBulletSpeedMul(k) : 0; }
+function weaponBulletLife(k,base){ return base/weaponBulletSpeedMul(k); } // faster travel, same maximum distance
 function taskProgress(id,n){
   if(!gemRewardsEnabled()) return;         // never consume a quest when its gem payout is disabled
   for(const t of dailyTasks){
@@ -2379,10 +2463,17 @@ function freshArena(status){
     syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),rematchVotes:new Set(),savedUtility:undefined};
 }
 arena=freshArena('Sign in, choose a loadout, then enter Casual 1v1.');
+const PARTY_MAX=6, PARTY_JOIN_MS=6500, PARTY_MISSING_MS=4500;
+function freshParty(status){
+  return {phase:'entry',code:'',channel:null,self:null,hostId:null,hostEpoch:0,revision:0,accepted:false,creating:false,
+    members:[],mode:'endless',locked:false,plan:[],status:status||'',liveIds:new Set(),missingSince:{},
+    joinDeadline:0,nextJoinRequest:0,nextStateSend:0};
+}
+let party=freshParty('Create a party or join with a 6-character code.');
 const DIFFS={easy:{hp:0.75,dmg:0.7,label:'EASY'}, normal:{hp:1,dmg:1,label:'NORMAL'}, hard:{hp:1.35,dmg:1.3,label:'HARD'}};
 let spawnQueue=[], spawnTimer=0, betweenTimer=1500;
 let loadout={primary:null,secondary:null,melee:null,utility:null}, cardRects=[], deployRect=null;
-let selPage='hub', pendingGameMode=null, modeBoardMode=null, modeBoardContinueRect=null, modeBoardActionRects=[], catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modeboard | loadout | party | tutorial | shop
+let selPage='hub', pendingGameMode=null, modeBoardMode=null, loadoutBackPage='modeboard', modeBoardActionRects=[], rankedRects=[], catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modeboard | ranked | loadout | party | tutorial | shop
 let detailKey=null, detailBtns=[], detailRects={};
 const CATS=[['PRIMARY','primary',()=>PRIMARIES,()=>TEMP_PRIMARY],
             ['SIDEARM','secondary',()=>SECONDARIES,()=>TEMP_SECONDARY],
@@ -4394,7 +4485,7 @@ addEventListener('keydown', e=>{
   }
   if(k==='r') startReload();
   if(k===' ') doDash();
-  if(k==='f'&&practiceMode!=='arena') quickMelee();
+  if(k==='f') quickMelee();
   if(k==='g' && !e.repeat) utilQuick();
   if(k==='4') equipUtility();
   if(k==='1') switchWeapon(loadout.primary);
@@ -4476,7 +4567,7 @@ function doButton(k){
   else if(k==='e'){ if(practiceMode==='arena'&&(WEAPONS[player.cur].melee||player.cur==='warpwave'||player.cur==='timeturner')) sfx('dry'); else if(utilityOut) utilQuick(); else if(player.cur==='warpwave') warpStun(); else if(player.cur==='timeturner') timeDragField(); else if(WEAPONS[player.cur].melee) sfx('dry'); else { aiming=!aiming; sfx('aim'); } }
   else if(k==='g') utilQuick();
   else if(k==='dsh') doDash();
-  else if(k==='f'&&practiceMode!=='arena') quickMelee();
+  else if(k==='f') quickMelee();
 }
 cv.addEventListener('touchstart', e=>{
   e.preventDefault(); initAudio();
@@ -4621,9 +4712,8 @@ function clickSelect(){
     if(inR(streakBtnRect)){ collectStreak(); return; }
     if(inR(lookupBtnRect)){ if(isAdmin()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
     for(const r of homePlayRects) if(inR(r)){
-      if(r.id==='online') openModeLeaderboard('arena');
-      else if(r.id==='offline') openModeLeaderboard('endless');
-      else if(r.id==='party'){ selPage='party'; sfx('swap'); }
+      if(!r.enabled){ sfx('dry'); return; }
+      if(r.id==='play') openModeLeaderboard();
       return;
     }
     if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
@@ -4638,13 +4728,45 @@ function clickSelect(){
   if(selPage==='modeboard'){
     for(const r of leaderboardRowRects) if(inR(r)){ openBoardPlayer(r); return; }
     if(inR(backRect)){ navigateSelectBack(); return; }
-    for(const r of modeBoardActionRects) if(inR(r)){ chooseGameMode(r.mode); return; }
-    if(inR(modeBoardContinueRect)){ chooseGameMode(modeBoardMode); return; }
+    for(const r of modeBoardActionRects) if(inR(r)){
+      if(r.enabled===false){ sfx('dry'); return; }
+      if(r.id==='ranked') { selPage='ranked'; sfx('swap'); }
+      else if(r.id==='party_menu'||r.id==='party_open') { selPage='party'; sfx('swap'); }
+      // Legacy ids remain routable for older cached canvases, but the live
+      // Play dashboard always enters the dedicated Party menu first.
+      else if(r.id==='party_create') partyPromptCreate();
+      else if(r.id==='party_join') partyPromptJoin();
+      else chooseGameMode(r.mode,'modeboard');
+      return;
+    }
+    return;
+  }
+  if(selPage==='ranked'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of rankedRects) if(inR(r)){
+      if(!r.enabled){ sfx('dry'); return; }
+      if(r.id==='signin') toggleAuth();
+      return;
+    }
     return;
   }
   if(selPage==='party'){
-    if(inR(backRect)){ navigateSelectBack(); return; }
-    return;                                             // Party code and mode cards are previews only.
+    for(const r of partyRects) if(inR(r)){
+      if(!r.enabled){ sfx('dry'); return; }
+      if(r.id==='create') partyPromptCreate();
+      else if(r.id==='join') partyPromptJoin();
+      else if(r.id==='back'||r.id==='leave') leaveParty('',false);
+      else if(r.id==='copy') partyCopyCode();
+      else if(r.id==='mode') partySetMode(r.mode);
+      else if(r.id==='auto'){
+        if(partyIsHost()&&!party.locked){ party.members.forEach(m=>m.ready=false); partyAutoAssign(); partyHostCommit('Assignments balanced automatically.'); sfx('swap'); }
+      }
+      else if(r.id==='lock') partyToggleLock();
+      else if(r.id==='ready') partyToggleReady();
+      else if(r.id==='member_prev'||r.id==='member_next') partyMoveMember(r.memberId,r.dir);
+      return;
+    }
+    return;
   }
   if(selPage==='loadout'){
     if(inR(backRect)){ navigateSelectBack(); return; }
@@ -5039,7 +5161,7 @@ function arenaBotStartRound(){
   arena.roundStartAt=now+3000; arena.roundEndAt=arena.roundStartAt+ARENA_ROUND_MS;
   perks.maxhp=ARENA_HP; player.hp=ARENA_HP; player.hurtCd=0; player.hurtFlash=0;
   bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[];
-  abilityCD={}; sawFuel=100; sawLock=false; daggersOut=null; comboStep=0; comboNextT=0;
+  abilityCD={}; quickReadyT=0; sawFuel=100; sawLock=false; daggersOut=null; comboStep=0; comboNextT=0;
   fanShots=0; fanNextT=0; fanBurstUntil=0; parryUntil=0; fistFlurryUntil=0; sawChargeUntil=0;
   player.cur=loadout.primary; player.reloadEnd=0; player.equipEnd=now+600; player.bloom=0; player.lastShot=0;
   for(const k of [loadout.primary,loadout.secondary,loadout.melee]) if(k&&WEAPONS[k]){
@@ -5147,7 +5269,8 @@ function updateArenaBot(dtms){
   b.lastShot=b.lastShot>0&&now-b.lastShot<interval*4?b.lastShot+interval:now;
   b.mag--; b.flash=now+55;
   const a=b.angle+rand(-0.035,0.035), sx=b.x+Math.cos(a)*7, sy=b.y+Math.sin(a)*7;
-  ebullets.push({x:sx,y:sy,vx:Math.cos(a)*w.speed,vy:Math.sin(a)*w.speed,life:1200,dmg:w.dmg,
+  const shotSpeed=weaponBulletSpeed('ar');
+  ebullets.push({x:sx,y:sy,vx:Math.cos(a)*shotSpeed,vy:Math.sin(a)*shotSpeed,life:weaponBulletLife('ar',1200),dmg:w.dmg,
     botArena:true,dist:0,rng:w.range,fall:w.fall,fg:w.fg||0});
   if(b.mag<=0) b.reloadEnd=now+w.reload;
 }
@@ -5468,7 +5591,7 @@ function arenaApplyRoundStart(p){
   }
   perks.maxhp=ARENA_HP; player.hp=ARENA_HP; player.hurtCd=0; player.hurtFlash=0;
   bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[];
-  abilityCD={}; sawFuel=100; sawLock=false; daggersOut=null; comboStep=0; comboNextT=0;
+  abilityCD={}; quickReadyT=0; sawFuel=100; sawLock=false; daggersOut=null; comboStep=0; comboNextT=0;
   player.cur=loadout.primary; player.reloadEnd=0; player.equipEnd=now+600; player.bloom=0; player.lastShot=0;
   for(const k of [loadout.primary,loadout.secondary,loadout.melee]) if(k&&WEAPONS[k]){
     player.mags[k]=magSize(k); player.reserve[k]=WEAPONS[k].melee?Infinity:magSize(k)*5;
@@ -5609,11 +5732,279 @@ function arenaCopyCode(){
   }catch(e){ arena.status='Room code: '+code; }
   sfx('pickup');
 }
+
+/* ---------------- public party lobby: up to six, no sign-in required ----------------
+   The lobby is ephemeral and casual. Supabase Presence supplies liveness;
+   the elected host owns the six-seat roster and versioned assignment plan. */
+function partyServiceAvailable(){ return !!(sb&&navigator.onLine!==false&&typeof sb.channel==='function'); }
+function partyCleanName(v){ return String(v||'').replace(/[\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,18); }
+function partySessionIdentity(chosenName){
+  let sid='';
+  try{ sid=sessionStorage.getItem('oz_party_session_v1')||''; }catch(e){}
+  if(!/^[A-Za-z0-9_-]{8,40}$/.test(sid)){
+    const a=new Uint32Array(3);
+    if(globalThis.crypto&&crypto.getRandomValues) crypto.getRandomValues(a); else for(let i=0;i<a.length;i++) a[i]=(Math.random()*0xffffffff)>>>0;
+    sid=Array.from(a,n=>n.toString(36)).join('').slice(0,20);
+    try{ sessionStorage.setItem('oz_party_session_v1',sid); }catch(e){}
+  }
+  // Keep the Presence key per-tab even for signed-in accounts, so opening a
+  // second local player does not silently collapse two party seats into one.
+  const id=(authUser?('user:'+authUser.id+':'+sid):('guest:'+sid)).slice(0,80);
+  let fallback=authUser?displayName(authUser):('GUEST-'+sid.slice(-4).toUpperCase());
+  let name=partyCleanName(chosenName)||partyCleanName(fallback)||'OPERATOR';
+  try{ sessionStorage.setItem('oz_party_name_v1',name); }catch(e){}
+  return {id,name,joined:Date.now(),order:1,ready:false,team:''};
+}
+function partyDefaultName(){
+  if(authUser) return partyCleanName(displayName(authUser));
+  try{ return partyCleanName(sessionStorage.getItem('oz_party_name_v1')); }catch(e){ return ''; }
+}
+function partyPresence(ch){ return arenaPresenceList(ch).map(m=>({id:String(m.id||''),name:partyCleanName(m.name),joined:+m.joined||0})); }
+function partyIsHost(){ return !!(party.accepted&&party.self&&party.hostId===party.self.id); }
+function partyMember(id){ return party.members.find(m=>m.id===id); }
+function partyModeLabel(mode){ return mode==='endless'?'ENDLESS ROOMS':mode==='1v1'?'1v1 TOURNAMENT':mode==='2v2'?'2v2 TOURNAMENT':'3v3 CHAMPIONSHIP'; }
+function partySend(event,payload){
+  if(!party.channel||!party.self) return;
+  const body=Object.assign({from:party.self.id,code:party.code},payload||{});
+  try{ party.channel.send({type:'broadcast',event,payload:body}); }catch(e){}
+}
+function partyDropChannel(ch){
+  if(!ch||!sb) return;
+  try{ ch.untrack(); }catch(e){}
+  try{ sb.removeChannel(ch); }catch(e){}
+}
+function partyMemberCopy(m){
+  return {id:String(m.id||'').slice(0,80),name:partyCleanName(m.name)||'OPERATOR',joined:+m.joined||0,
+          order:Math.max(1,Math.floor(+m.order||1)),ready:!!m.ready,team:String(m.team||'').slice(0,8)};
+}
+function partyAutoAssign(){
+  const ms=party.members.slice().sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id)), n=ms.length;
+  if(party.mode==='endless'){
+    const rooms=Math.max(1,Math.ceil(n/3)), base=Math.floor(n/rooms), extra=n%rooms;
+    let at=0;
+    for(let r=1;r<=rooms;r++) for(let j=0;j<base+(r<=extra?1:0);j++) if(ms[at]) ms[at++].team='R'+r;
+  } else if(party.mode==='1v1'){
+    ms.forEach((m,i)=>m.team='S'+(i+1));
+  } else if(party.mode==='2v2'){
+    ms.forEach((m,i)=>m.team=String.fromCharCode(65+Math.floor(i/2)));
+  } else {
+    ms.forEach((m,i)=>m.team=i<3?'A':'B');
+  }
+}
+function partyBuildPlan(){
+  const ms=party.members.slice().sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
+  const name=m=>m?m.name:'OPEN SLOT', rows=[];
+  if(party.mode==='endless'){
+    const groups={}; for(const m of ms) (groups[m.team]||(groups[m.team]=[])).push(m);
+    for(const key of Object.keys(groups).sort()) rows.push({title:'ROOM '+key.slice(1)+'  \u00b7  '+groups[key].length+'/3',body:groups[key].map(name).join(' + '),ready:groups[key].length<=3});
+  } else if(party.mode==='1v1'){
+    const seeded=ms.slice().sort((a,b)=>(parseInt(a.team.slice(1))||99)-(parseInt(b.team.slice(1))||99));
+    if(seeded.length<2) rows.push({title:'NEED 2+ PLAYERS',body:'Invite another operator.',ready:false});
+    else {
+      let lo=0,hi=seeded.length-1,match=1;
+      while(lo<hi) rows.push({title:(seeded.length===2?'FINAL':'ROUND 1 \u00b7 MATCH '+match++),body:name(seeded[lo++])+'  VS  '+name(seeded[hi--]),ready:true});
+      if(lo===hi) rows.push({title:'TOP-SEED BYE',body:name(seeded[lo])+' advances',ready:true});
+    }
+  } else {
+    const cap=party.mode==='2v2'?2:3, teams={};
+    for(const m of ms) (teams[m.team]||(teams[m.team]=[])).push(m);
+    const full=Object.keys(teams).filter(k=>teams[k].length===cap).sort();
+    const incomplete=Object.keys(teams).filter(k=>teams[k].length!==cap).sort();
+    for(const k of incomplete) rows.push({title:'TEAM '+k+'  \u00b7  '+teams[k].length+'/'+cap,body:teams[k].map(name).join(' + ')||'OPEN',ready:false});
+    if(full.length<2) rows.push({title:'NEED TWO FULL TEAMS',body:'Use AUTO ASSIGN or move players.',ready:false});
+    else if(party.mode==='2v2'&&full.length>=3){
+      rows.push({title:'SEMIFINAL',body:'TEAM '+full[1]+'  VS  TEAM '+full[2],ready:true});
+      rows.push({title:'FINAL',body:'TEAM '+full[0]+'  VS  SEMIFINAL WINNER',ready:true});
+    } else rows.push({title:'CHAMPIONSHIP',body:'TEAM '+full[0]+'  VS  TEAM '+full[1],ready:true});
+  }
+  return rows.slice(0,6);
+}
+function partySnapshot(){
+  return {from:party.self.id,code:party.code,hostId:party.hostId,hostEpoch:party.hostEpoch,revision:party.revision,
+          mode:party.mode,locked:!!party.locked,members:party.members.map(partyMemberCopy),plan:party.plan};
+}
+function partyHostCommit(message){
+  if(!partyIsHost()) return;
+  party.members=party.members.slice(0,PARTY_MAX).map(partyMemberCopy).sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
+  party.members.forEach((m,i)=>m.order=i+1);
+  party.revision++; party.plan=partyBuildPlan(); party.phase='lobby';
+  if(message) party.status=message;
+  partySend('party_state',partySnapshot()); party.nextStateSend=Date.now()+1000;
+}
+function partyApplyState(p,force){
+  if(!p||p.code!==party.code||!Array.isArray(p.members)||p.members.length>PARTY_MAX||!party.self) return false;
+  const hostId=String(p.hostId||''), epoch=Math.max(0,Math.floor(+p.hostEpoch||0)), rev=Math.max(0,Math.floor(+p.revision||0));
+  if(!force){
+    if(epoch<party.hostEpoch) return false;
+    if(epoch===party.hostEpoch&&party.hostId&&hostId!==party.hostId) return false;
+    if(epoch===party.hostEpoch&&rev<=party.revision) return false;
+  }
+  const members=p.members.map(partyMemberCopy);
+  if(!members.some(m=>m.id===party.self.id)) return false;
+  party.hostId=hostId; party.hostEpoch=epoch; party.revision=rev; party.members=members;
+  party.mode=['endless','1v1','2v2','3v3'].includes(p.mode)?p.mode:'endless'; party.locked=!!p.locked;
+  party.plan=Array.isArray(p.plan)?p.plan.slice(0,6).map(r=>({title:String(r.title||'').slice(0,42),body:String(r.body||'').slice(0,110),ready:!!r.ready})):partyBuildPlan();
+  party.accepted=true; party.phase='lobby'; party.status='Party connected. '+party.members.length+'/'+PARTY_MAX+' players.';
+  return true;
+}
+function partyReceive(event,p){
+  if(!p||p.code!==party.code||!party.self) return;
+  const from=String(p.from||'');
+  if(event==='join_request'){
+    if(!partyIsHost()||party.locked||!from||from===party.self.id) return;
+    const existing=partyMember(from);
+    if(existing){ partySend('join_accept',{to:from,state:partySnapshot()}); return; }
+    if(party.members.length>=PARTY_MAX){ partySend('join_reject',{to:from,reason:'PARTY FULL \u00b7 MAX 6'}); return; }
+    const nextOrder=party.members.reduce((n,m)=>Math.max(n,m.order||0),0)+1;
+    party.members.push({id:from,name:partyCleanName(p.name)||'OPERATOR',joined:+p.joined||Date.now(),order:nextOrder,ready:false,team:''});
+    partyAutoAssign(); partyHostCommit('A new operator joined.');
+    partySend('join_accept',{to:from,state:partySnapshot()}); return;
+  }
+  if(event==='join_accept'&&String(p.to||'')===party.self.id&&!party.accepted){
+    if(p.state&&partyApplyState(p.state,true)) partySend('state_request',{to:party.hostId}); return;
+  }
+  if(event==='join_reject'&&String(p.to||'')===party.self.id&&!party.accepted){ leaveParty(String(p.reason||'Could not join party.'),false); return; }
+  if(event==='state_request'&&partyIsHost()&&(!p.to||String(p.to)===party.self.id)){ partySend('party_state',partySnapshot()); return; }
+  if(event==='party_state'){
+    if(p.from!==String(p.hostId||'')) return;
+    partyApplyState(p,false); return;
+  }
+  if(event==='action_request'&&partyIsHost()){
+    if(!partyMember(from)) return;
+    if(p.action==='ready'){
+      partyMember(from).ready=!!p.value; partyHostCommit(partyMember(from).name+(p.value?' is ready.':' is not ready.'));
+    }
+    return;
+  }
+  if(event==='leave'&&partyIsHost()&&partyMember(from)){
+    party.members=party.members.filter(m=>m.id!==from); partyAutoAssign(); partyHostCommit('An operator left the party.');
+  }
+}
+function partyPresenceSync(ch){
+  if(ch!==party.channel||!party.self) return;
+  const live=partyPresence(ch), clock=Date.now(); party.liveIds=new Set(live.map(m=>m.id));
+  if(party.accepted) party.liveIds.add(party.self.id);
+  if(partyIsHost()) partySend('party_state',partySnapshot());
+  else if(party.accepted) partySend('state_request',{to:party.hostId});
+  for(const m of party.members){
+    if(party.liveIds.has(m.id)) delete party.missingSince[m.id];
+    else if(!party.missingSince[m.id]) party.missingSince[m.id]=clock;
+  }
+}
+function partyConnect(code,creating,name){
+  if(!partyServiceAvailable()){ party=freshParty('PARTIES NEED AN INTERNET CONNECTION.'); selPage='modeboard'; sfx('dry'); return false; }
+  leaveParty('',false);
+  const self=partySessionIdentity(name), clean=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
+  if(clean.length!==6){ party=freshParty('Enter a full 6-character party code.'); selPage='modeboard'; sfx('dry'); return false; }
+  party=freshParty(creating?'Opening party...':'Looking for that party...');
+  party.phase='joining'; party.code=clean; party.self=self; party.creating=!!creating; party.joinDeadline=Date.now()+PARTY_JOIN_MS;
+  if(creating){ party.accepted=true; party.hostId=self.id; party.hostEpoch=1; party.members=[self]; partyAutoAssign(); }
+  const ch=sb.channel('oz-party-v1-'+clean,{config:{presence:{key:self.id}}}); party.channel=ch;
+  ch.on('presence',{event:'sync'},()=>partyPresenceSync(ch));
+  for(const event of ['join_request','join_accept','join_reject','state_request','party_state','action_request','leave'])
+    ch.on('broadcast',{event},msg=>partyReceive(event,msg&&msg.payload));
+  ch.subscribe(async st=>{
+    if(ch!==party.channel) return;
+    if(st==='SUBSCRIBED'){
+      try{ await ch.track({id:self.id,name:self.name,joined:self.joined}); }catch(e){}
+      if(creating){ party.phase='lobby'; partyHostCommit('Party created. Share code '+clean+'.'); }
+      else { party.nextJoinRequest=0; partyTick(Date.now()); }
+    } else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'||st==='CLOSED'){
+      if(party.channel===ch) party.status='Party connection lost. Leave and reconnect.';
+    }
+  });
+  selPage='party'; return true;
+}
+function partyPromptCreate(){
+  if(!partyServiceAvailable()){ party.status='PARTIES NEED AN INTERNET CONNECTION.'; sfx('dry'); return; }
+  openForm({title:'CREATE PARTY',hint:'No sign-in needed. Choose the name friends will see.',saveLabel:'CREATE',
+    fields:[{id:'name',label:'DISPLAY NAME',type:'text',value:partyDefaultName(),placeholder:'OPERATOR'}],
+    onSave:v=>{ const name=partyCleanName(v.name); if(!name){ formError('Enter a display name.'); return; } closeForm(); partyConnect(randomArenaCode(),true,name); }});
+}
+function partyPromptJoin(){
+  if(!partyServiceAvailable()){ party.status='PARTIES NEED AN INTERNET CONNECTION.'; sfx('dry'); return; }
+  openForm({title:'JOIN PARTY',hint:'Enter the code your friend shared. No sign-in needed.',saveLabel:'JOIN',
+    fields:[{id:'code',label:'PARTY CODE',type:'text',value:'',placeholder:'ABC123',upper:true},
+            {id:'name',label:'DISPLAY NAME',type:'text',value:partyDefaultName(),placeholder:'OPERATOR'}],
+    onSave:v=>{ const code=String(v.code||'').replace(/[^A-Z0-9]/g,'').slice(0,6),name=partyCleanName(v.name);
+      if(code.length!==6){ formError('Enter the full 6-character code.'); return; }
+      if(!name){ formError('Enter a display name.'); return; }
+      closeForm(); partyConnect(code,false,name); }});
+}
+function partyCopyCode(){
+  if(!party.code) return;
+  try{ const p=navigator.clipboard&&navigator.clipboard.writeText(party.code);
+    if(p&&p.then) p.then(()=>party.status='Party code copied: '+party.code).catch(()=>party.status='Party code: '+party.code);
+    else party.status='Party code: '+party.code;
+  }catch(e){ party.status='Party code: '+party.code; }
+  sfx('pickup');
+}
+function partySetMode(mode){
+  if(!partyIsHost()||party.locked||!['endless','1v1','2v2','3v3'].includes(mode)) return;
+  party.mode=mode; party.members.forEach(m=>m.ready=false); partyAutoAssign(); partyHostCommit(partyModeLabel(mode)+' selected.'); sfx('swap');
+}
+function partyMoveMember(id,dir){
+  if(!partyIsHost()||party.locked) return;
+  const m=partyMember(id); if(!m) return;
+  const ordered=party.members.slice().sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
+  if(party.mode==='1v1'){
+    const at=ordered.indexOf(m), to=(at+(dir<0?-1:1)+ordered.length)%ordered.length, other=ordered[to];
+    const t=m.order; m.order=other.order; other.order=t; partyAutoAssign();
+  } else {
+    let groups,cap;
+    if(party.mode==='endless'){ groups=Array.from({length:Math.max(1,Math.ceil(party.members.length/3))},(_,i)=>'R'+(i+1)); cap=3; }
+    else if(party.mode==='2v2'){ groups=['A','B','C']; cap=2; }
+    else { groups=['A','B']; cap=3; }
+    const at=Math.max(0,groups.indexOf(m.team));
+    const target=groups[(at+(dir<0?-1:1)+groups.length)%groups.length];
+    const occupants=party.members.filter(x=>x.team===target).sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
+    if(occupants.length<cap) m.team=target;
+    else { const other=occupants[0]; if(other){ other.team=m.team; m.team=target; } }
+  }
+  party.members.forEach(x=>x.ready=false); partyHostCommit('Assignments updated.'); sfx('swap');
+}
+function partyToggleReady(){
+  if(!party.accepted||!party.self) return;
+  const mine=partyMember(party.self.id); if(!mine) return;
+  const value=!mine.ready;
+  if(partyIsHost()){ mine.ready=value; partyHostCommit(value?'You are ready.':'You are not ready.'); }
+  else partySend('action_request',{action:'ready',value});
+  sfx('swap');
+}
+function partyToggleLock(){
+  if(!partyIsHost()) return;
+  party.locked=!party.locked; partyHostCommit(party.locked?'Plan locked. Players can mark ready.':'Plan unlocked for changes.'); sfx('swap');
+}
+function leaveParty(status,toHub){
+  const old=party;
+  if(old&&old.channel){ try{ partySend('leave',{}); }catch(e){} partyDropChannel(old.channel); }
+  party=freshParty(status||'Create a party or join with a 6-character code.');
+  selPage=toHub?'hub':'modeboard';
+}
+function partyTick(clock){
+  if(!party||!party.channel||!party.self) return;
+  if(!party.accepted){
+    if(clock>=party.joinDeadline){ leaveParty('PARTY NOT FOUND OR NO LONGER OPEN.',false); sfx('dry'); return; }
+    if(clock>=party.nextJoinRequest){ party.nextJoinRequest=clock+850; partySend('join_request',{name:party.self.name,joined:party.self.joined}); }
+    return;
+  }
+  const currentHost=partyMember(party.hostId), hostGone=!currentHost||(!party.liveIds.has(party.hostId)&&clock-(party.missingSince[party.hostId]||clock)>=PARTY_MISSING_MS);
+  if(hostGone){
+    const live=party.members.filter(m=>party.liveIds.has(m.id)).sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
+    if(live.length&&live[0].id===party.self.id){ party.hostId=party.self.id; party.hostEpoch++; party.status='You are the new party host.'; partyHostCommit(); }
+  }
+  if(partyIsHost()){
+    const gone=party.members.filter(m=>m.id!==party.self.id&&!party.liveIds.has(m.id)&&clock-(party.missingSince[m.id]||clock)>=PARTY_MISSING_MS);
+    if(gone.length){ party.members=party.members.filter(m=>!gone.includes(m)); partyAutoAssign(); partyHostCommit('Disconnected players were removed.'); }
+    else if(clock>=party.nextStateSend){ partySend('party_state',partySnapshot()); party.nextStateSend=clock+1000; }
+  }
+}
 function flushEditorDraftOnExit(){ if(textDirty||layoutDirty) persistEditorDraft(); }
 addEventListener('pagehide',flushEditorDraftOnExit);
 addEventListener('beforeunload',()=>{
   flushEditorDraftOnExit();
   try{ if(arena&&arena.matchChannel) arenaSend('leave',{}); }catch(e){}
+  try{ if(party&&party.channel) partySend('leave',{}); }catch(e){}
 });
 
 /* ---------------- combat ---------------- */
@@ -5796,12 +6187,23 @@ function utilRelease(){
 let medHealPct=0;
 function quickMelee(){
   if(state!=='play' || !loadout.melee) return;
+  if(practiceMode==='arena' && (!arenaCanAct() || now<quickReadyT)){
+    if(now<quickReadyT){ waveMsg='QUICK MELEE RECHARGING'; waveMsgT=now+700; }
+    sfx('dry'); return;
+  }
   cancelMedHeal();
   utilityOut=false;
   const saved=player.cur, savedEquip=player.equipEnd;
-  player.cur=loadout.melee;    // F = the equipped melee's ability (scythe dash also cleaves on launch)
+  const meleeKey=loadout.melee, w=WEAPONS[meleeKey];
+  player.cur=meleeKey;
   player.equipEnd=0;
-  meleeAbility();
+  if(practiceMode==='arena'){
+    // Duels allow a fair normal quick strike. Campaign-only execute/dash/parry
+    // specials remain disabled because those effects are not network-synced.
+    quickReadyT=now+Math.max(450,w.fireRate*perks.rate*wm(meleeKey).rate);
+    comboNextT=0;
+    meleeSwing(Object.assign({},w,{combo:false}),1);
+  } else meleeAbility();
   player.cur=saved;
   player.equipEnd=savedEquip;
 }
@@ -5873,9 +6275,10 @@ function tryFire(carryCadence=false){
   for(let i=0;i<w.pellets+wm(player.cur).pellets;i++){
     const a = base + (Math.random()-0.5)*2*sp;
     const tx = player.x + Math.cos(base)*6, ty = player.y + Math.sin(base)*6; // spawn at body, not muzzle: point-blank shots connect
-    bullets.push({ x:tx, y:ty, vx:Math.cos(a)*w.speed*perks.velo, vy:Math.sin(a)*w.speed*perks.velo,
+    const bulletSpeed=weaponBulletSpeed(player.cur)*perks.velo;
+    bullets.push({ x:tx, y:ty, vx:Math.cos(a)*bulletSpeed, vy:Math.sin(a)*bulletSpeed,
                    dmg:w.dmg*perks.dmg*wm(player.cur).dmg, pierce:(w.pierce||0)+perks.pierce+wm(player.cur).pierce,
-                   life: w.range>2000 ? 6000 : 1200,      // infinite-range rounds live much longer
+                   life: weaponBulletLife(player.cur,w.range>2000 ? 6000 : 1200), // faster travel, same max distance
                    rng:w.range*wm(player.cur).range*perks.range, fall:1-(1-w.fall)*wm(player.cur).fall, dist:0,
                    bounce: w.bounce||0, fire: !!w.fire, poison:!!w.poison, fg:w.fg||0, wv:!!w.wave, ox:tx, oy:ty, ba:a, chrono:!!w.chrono,
                    wamp: w.wave ? 24*(1+0.5*Math.sin(now/700)) : 0, wk: w.wave ? 0.05*(1+0.4*Math.sin(now/1100+2)) : 0,
@@ -7416,7 +7819,7 @@ function drawHUD(){
   ctx.fillStyle='rgba(138,146,104,0.8)'; ctx.font='11px ui-monospace,Consolas,monospace';
   if(W>=900){
     const help=practiceMode==='arena'
-      ? 'WASD move · LMB fire · R reload · 1-3 / Q swap · ESC menu'
+      ? 'WASD move · LMB fire · R reload · 1-3 / Q swap · F quick melee · ESC menu'
       : 'WASD move · LMB fire · '+(utilityOut&&loadout.utility==='medkit'?'RMB quick med':'E scope')+' · R reload · 1-4 / Q swap · G/RMB utility'+(perks.dash?' · SPACE dash':'')+' · F melee ability · ESC menu';
     ctx.fillText(fitLine(help,W-pad-300),W-pad,H-26);
   }
@@ -7480,18 +7883,16 @@ function drawHUD(){
       ctx.beginPath(); ctx.moveTo(cx+10,cy+4); ctx.lineTo(cx-10,cy+4); ctx.lineTo(cx-5,cy+9); ctx.stroke();
     }, false);
     rx-=rR*2+10;
-    // FIST — campaign-only melee ability (Arena uses weapon attacks only)
-    if(practiceMode!=='arena'){
-      iconBtn('f', rx, rY, rR, (cx,cy)=>{
-        ctx.lineWidth=2.2;
-        ctx.strokeRect(cx-9,cy-8,18,11);                 // fist block
-        ctx.beginPath();
-        for(let i=0;i<4;i++){ const fx=cx-7+i*4.6; ctx.moveTo(fx,cy-8); ctx.lineTo(fx,cy-11); }
-        ctx.moveTo(cx-9,cy+3); ctx.lineTo(cx-9,cy+8); ctx.lineTo(cx+3,cy+8); // thumb/wrist
-        ctx.stroke();
-      }, false);
-      rx-=rR*2+10;
-    }
+    // FIST — campaign ability; in Arena it becomes a normal quick strike.
+    iconBtn('f', rx, rY, rR, (cx,cy)=>{
+      ctx.lineWidth=2.2;
+      ctx.strokeRect(cx-9,cy-8,18,11);                 // fist block
+      ctx.beginPath();
+      for(let i=0;i<4;i++){ const fx=cx-7+i*4.6; ctx.moveTo(fx,cy-8); ctx.lineTo(fx,cy-11); }
+      ctx.moveTo(cx-9,cy+3); ctx.lineTo(cx-9,cy+8); ctx.lineTo(cx+3,cy+8); // thumb/wrist
+      ctx.stroke();
+    }, practiceMode==='arena'&&now<quickReadyT);
+    rx-=rR*2+10;
     // GRENADE — utility (G), only when one is equipped
     if(loadout.utility){
       iconBtn('g', rx, rY, rR, (cx,cy)=>{
@@ -7704,7 +8105,7 @@ function weaponDetails(k){
     ['RELOAD',(w.reload/1000).toFixed(2)+'s'],
     ['RANGE', w.range>2000 ? 'no falloff' : w.range+' \u2192 '+Math.round(w.fall*100)+'% floor at '+w.range*2],
     ['SPREAD',(w.spread*57.3).toFixed(1)+'\u00b0 hip \u00b7 '+(w.aimSpread*57.3).toFixed(1)+'\u00b0 aimed'],
-    ['BULLET SPEED',''+w.speed],
+    ['BULLET SPEED',Number(weaponBulletSpeed(k).toFixed(2))+'  (boosted)'],
     ['FIRE MODE', w.auto ? 'full-auto' : 'semi-auto'],
     ['SCOPE ZOOM', w.zoom+'\u00d7'+(w.scoped?' (full scope)':'')],
     ['MOVE SPEED',Math.round(w.moveMod*100)+'%']);
@@ -7848,7 +8249,7 @@ function drawBanNotice(){
 }
 function drawSelect(){
   layoutRects=[]; if(!(layoutMode||textMode)) textRects=[];   // one registry per frame
-  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; partyRects=[]; leaderboardRowRects=[]; modeBoardContinueRect=null; modeBoardActionRects=[]; backRect=null;
+  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; partyRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
   adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
@@ -7859,7 +8260,7 @@ function drawSelect(){
   if(banBlocksPlay()){ drawBanPage(); return; }      // blocked accounts see only the ban page
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='party') drawPartyComingSoon(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
+  if(selPage==='hub') drawHub(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='party') drawParty(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
   drawDetail();
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
@@ -8627,12 +9028,12 @@ function drawArena(){
     const partyH=tiny?32:(dense?44:58);
     ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(px,y,pw,partyH); ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,y+0.5,pw,partyH);
     ctx.fillStyle='#6b7455'; ctx.font='700 '+(tiny?9:12)+'px ui-monospace,Consolas,monospace';
-    ctx.fillText('CREATE / JOIN PARTY \u2014 COMING SOON',W/2,y+(tiny?partyH/2:15));
-    if(!tiny){ ctx.font=(dense?'8':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine('Party codes for Endless, 1v1, and 2v2 are not open yet.',pw-20),W/2,y+(dense?32:39)); }
+    ctx.fillText('PARTIES \u00b7 UP TO 6 \u00b7 OPEN FROM PLAY MENU',W/2,y+(tiny?partyH/2:15));
+    if(!tiny){ ctx.font=(dense?'8':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine('Guest-friendly codes, teams, tournament brackets, and Endless room splits.',pw-20),W/2,y+(dense?32:39)); }
     y+=partyH+gap;
     const dh=tiny?32:(dense?44:58);
     ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(px,y,pw,dh); ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,y+0.5,pw,dh);
-    ctx.fillStyle='#6b7455'; ctx.font='700 '+(tiny?10:13)+'px ui-monospace,Consolas,monospace'; ctx.fillText('RANKED + 2v2 \u2014 COMING LATER',W/2,y+(tiny?dh/2:15));
+    ctx.fillStyle='#6b7455'; ctx.font='700 '+(tiny?10:13)+'px ui-monospace,Consolas,monospace'; ctx.fillText('RANK + ELO \u2014 OPEN FROM PLAY MENU',W/2,y+(tiny?dh/2:15));
     if(!tiny){ ctx.font=(dense?'8':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine('Ranked stays locked until wins and divisions can be server-secured.',pw-20),W/2,y+(dense?32:39)); }
     y+=dh+gap;
     button('back','\u2039 BACK TO MENU',y,'#8a9268');
@@ -8648,7 +9049,7 @@ function arenaClick(){
   for(const r of arenaRects) if(hit(r)){
     if(r.id==='botrematch') startBotArena();
     else if(r.id==='botloadout'){
-      leaveArena('',false); pendingGameMode='ai1v1'; modeBoardMode='endless'; loadout.utility=null; selPage='loadout';
+      leaveArena('',false); pendingGameMode='ai1v1'; modeBoardMode='endless'; loadoutBackPage='modeboard'; loadout.utility=null; selPage='loadout';
     }
     else if(r.id==='botleave') leaveArena('',false);
     else if(r.id==='signin'){
@@ -8668,14 +9069,15 @@ function onlinePlayReady(){
   return !!(sb && authUser && navigator.onLine!==false);
 }
 function onlineServiceAvailable(){ return !!(sb && navigator.onLine!==false); }
-function openModeLeaderboard(mode){
-  if(mode==='arena'&&!onlineServiceAvailable()){
-    arena.status='Online games are unavailable. Reconnect and try again.'; sfx('dry'); return false;
-  }
-  modeBoardMode=mode; pendingGameMode=mode; loadout={primary:null,secondary:null,melee:null,utility:null};
+function openModeLeaderboard(){
+  modeBoardMode=null; pendingGameMode=null;
   selPage='modeboard'; fetchBoard(); sfx('swap'); return true;
 }
-function chooseGameMode(mode){
+function chooseGameMode(mode,returnPage='modeboard'){
+  if(mode==='arena2v2'||mode==='arena3v3'){
+    arena.status=(mode==='arena2v2'?'2v2':'3v3')+' is locked and coming soon.'; sfx('dry'); return;
+  }
+  loadoutBackPage=returnPage;
   if(mode==='arena' && !onlinePlayReady()){
     if(navigator.onLine===false || !sb){ arena.status='Online games are unavailable. Reconnect and try again.'; sfx('dry'); return; }
     arenaAuthPending=true; $('aguest').style.display='none';
@@ -8706,11 +9108,12 @@ function navigateSelectBack(){
   if(detailKey){ detailKey=null; sfx('swap'); return; }
   if(CATS.some(c=>c[0]===selPage)){ selPage=pendingGameMode?'loadout':'hub'; sfx('swap'); return; }
   if(selPage==='loadout'){
-    const returnTo=pendingGameMode==='practice'?'practice':(modeBoardMode?'modeboard':'hub');
+    const returnTo=pendingGameMode==='practice'?'practice':(loadoutBackPage||'modeboard');
     pendingGameMode=null; pendingPractice=null; selPage=returnTo; sfx('swap'); return;
   }
   if(selPage==='modeboard'){ pendingGameMode=null; modeBoardMode=null; selPage='hub'; sfx('swap'); return; }
-  if(selPage==='party'){ selPage='hub'; sfx('swap'); return; }
+  if(selPage==='ranked'){ selPage='modeboard'; sfx('swap'); return; }
+  if(selPage==='party'){ leaveParty('',false); sfx('swap'); return; }
   if(selPage==='modes'){ selPage='hub'; sfx('swap'); return; }
   if(selPage==='arena'){
     if(isBotArena()){ leaveArena('',false); sfx('swap'); return; }
@@ -8722,70 +9125,120 @@ function navigateSelectBack(){
   menuOpen=!menuOpen; sfx('swap');
 }
 function drawModeLeaderboard(){
-  selBg(); leaderboardRowRects=[];
-  const arenaMode=modeBoardMode==='arena', rows=arenaMode?arenaBoard:board;
-  const col=arenaMode?'#d05548':'#a7c15e', compact=H<560;
+  selBg(); leaderboardRowRects=[]; modeBoardActionRects=[];
+  const tiny=H<390||(W<=360&&H<=500), compact=H<560, landscape=W/H>=1.35;
   ctx.textAlign='center'; ctx.textBaseline='top';
-  ctx.fillStyle=col; ctx.font='700 '+(compact?23:32)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(arenaMode?'PLAY ONLINE':'PLAY OFFLINE',W/2,H*0.035);
-  ctx.fillStyle='#8a9268'; ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
-  const sub=arenaMode?'MULTIPLAYER \u00b7 DIFFERENT DEVICES \u00b7 1v1 WINS':'ONE DEVICE ONLY \u00b7 ENDLESS + 1v1 VS AI';
-  ctx.fillText(fitLine(sub,W-24),W/2,H*0.035+(compact?30:41));
+  ctx.fillStyle='#e8b658'; ctx.font='700 '+(tiny?20:compact?26:34)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('PLAY',W/2,tiny?4:10);
+  ctx.fillStyle='#8a9268'; ctx.font=(tiny?'7':compact?'9':'10')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('ALL GAME MODES \u00b7 ONE PAGE',W/2,tiny?25:compact?39:50);
 
-  const buttonsH=compact?34:42, buttonsY=H-buttonsH-12;
-  const pw=Math.min(560,W-24), px=W/2-pw/2, py=H*0.035+(compact?51:66);
-  const panelBottom=buttonsY-(compact?8:14), ph=Math.max(120,panelBottom-py);
-  ctx.fillStyle='rgba(0,0,0,0.44)'; ctx.fillRect(px,py,pw,ph);
-  ctx.strokeStyle=col; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
-  const headH=compact?28:36, rowH=Math.max(16,Math.min(compact?23:30,Math.floor((ph-headH-8)/10)));
-  ctx.fillStyle=col; ctx.font='700 '+(compact?10:12)+'px ui-monospace,Consolas,monospace';
-  ctx.textAlign='left'; ctx.fillText(arenaMode?'TOP 10 OPERATORS':'ENDLESS TOP 10 OPERATORS',px+12,py+(compact?9:12));
-  ctx.textAlign='right'; ctx.fillText(arenaMode?'WINS':'SCORE',px+pw-12,py+(compact?9:12));
-  if(rows.length){
-    for(let i=0;i<Math.min(10,rows.length);i++){
-      const r=rows[i], y=py+headH+i*rowH, pub=publicProfileCache[r.user_id]||{};
-      const name=pub.email||r.name||'operator';
-      leaderboardRowRects.push({x:px+6,y,w:pw-12,h:rowH,userId:r.user_id,name});
-      const hot=mouse.x>=px+6&&mouse.x<=px+pw-6&&mouse.y>=y&&mouse.y<=y+rowH;
-      ctx.fillStyle=hot?'rgba(127,216,255,0.13)':(i%2?'rgba(255,255,255,0.025)':'rgba(255,255,255,0.055)'); ctx.fillRect(px+6,y,pw-12,rowH);
-      ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.fillStyle=i<3?'#e8d9a8':'#8a9268';
-      ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine((i+1)+'. '+name,pw-116),px+13,y+rowH/2);
-      ctx.textAlign='right'; ctx.fillStyle=i<3?col:'#8a9268'; ctx.font='700 '+(compact?'10':'12')+'px ui-monospace,Consolas,monospace';
-      ctx.fillText(String(r.score||0),px+pw-13,y+rowH/2);
+  const margin=tiny?7:compact?10:16, gap=tiny?5:compact?7:10;
+  const cols=(W>=620||landscape)?2:1, count=4, gridRows=Math.ceil(count/cols);
+  const top=tiny?34:compact?52:66, backH=tiny?30:compact?34:40;
+  const backY=H-backH-(tiny?5:8), contentBottom=backY-(tiny?5:8);
+  const gridW=Math.min(920,W-margin*2), gridX=(W-gridW)/2;
+  const availableCardH=(contentBottom-top-gap*(gridRows-1))/gridRows;
+  // Keep the four sections compact on large screens: leaderboards should be
+  // quick context beside the mode choices, not tall panels that fill the page.
+  const cardH=Math.min(availableCardH,tiny?120:compact?140:160);
+  const gridH=cardH*gridRows+gap*(gridRows-1);
+  const gridTop=top+Math.max(0,(contentBottom-top-gridH)/2);
+  const cardW=(gridW-gap*(cols-1))/cols;
+
+  const drawMiniBoard=(rows,label,metric,x,y,w,h,col,empty)=>{
+    ctx.fillStyle='rgba(0,0,0,0.30)'; ctx.fillRect(x,y,w,h);
+    ctx.textBaseline='top'; ctx.textAlign='left'; ctx.fillStyle=col;
+    ctx.font='700 '+(tiny?6:compact?7:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(label,w-50),x+5,y+3);
+    ctx.textAlign='right'; ctx.fillText(metric,x+w-5,y+3);
+    const maxRows=h>=42?2:1, rh=Math.max(10,(h-14)/maxRows);
+    if(rows&&rows.length){
+      for(let i=0;i<Math.min(maxRows,rows.length);i++){
+        const item=rows[i], ry=y+13+i*rh, pub=publicProfileCache[item.user_id]||{}, name=pub.email||item.name||'operator';
+        leaderboardRowRects.push({x:x+3,y:ry,w:w-6,h:rh,userId:item.user_id,name});
+        ctx.fillStyle=i%2?'rgba(255,255,255,0.025)':'rgba(255,255,255,0.05)'; ctx.fillRect(x+3,ry,w-6,rh);
+        ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.fillStyle='#cdd6b0'; ctx.font=(tiny?'6':compact?'7':'8')+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine((i+1)+'. '+name,w-65),x+6,ry+rh/2);
+        ctx.textAlign='right'; ctx.fillStyle=col; ctx.font='700 '+(tiny?7:compact?8:9)+'px ui-monospace,Consolas,monospace'; ctx.fillText(String(item.score||0),x+w-6,ry+rh/2);
+      }
+    } else {
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#60675a'; ctx.font=(tiny?'6':compact?'7':'8')+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine(empty||'NO RESULTS YET',w-10),x+w/2,y+13+(h-13)/2);
     }
-  } else {
-    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#6b7455'; ctx.font='10px ui-monospace,Consolas,monospace';
-    ctx.fillText(sb?(arenaMode?'NO 1v1 WINS YET \u2014 BE THE FIRST!':'NO ENDLESS SCORES YET'):'LEADERBOARD UNAVAILABLE',W/2,py+headH+(ph-headH)/2);
-  }
-
-  const gap=compact?6:10, totalW=Math.min(560,W-24), backW=Math.max(92,Math.floor(totalW*0.30));
-  const startX=W/2-totalW/2;
-  backRect={x:startX,y:buttonsY,w:backW,h:buttonsH};
-  const drawButton=(r,label,c)=>{
-    const hot=mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
-    ctx.fillStyle=hot?c:'rgba(0,0,0,0.42)'; ctx.fillRect(r.x,r.y,r.w,r.h);
-    ctx.strokeStyle=c; ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h);
-    ctx.fillStyle=hot?'#101208':'#e8d9a8'; ctx.font='700 '+(compact?10:13)+'px ui-monospace,Consolas,monospace';
-    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(fitLine(label,r.w-10),r.x+r.w/2,r.y+r.h/2);
   };
-  drawButton(backRect,'\u2039 HOME','#8a9268');
-  if(arenaMode){
-    modeBoardContinueRect={x:startX+backW+gap,y:buttonsY,w:totalW-backW-gap,h:buttonsH};
-    drawButton(modeBoardContinueRect,'CHOOSE 1v1 WEAPONS \u203A',col);
-  } else {
-    const actionW=(totalW-backW-gap*2)/2;
-    modeBoardActionRects=[
-      {mode:'endless',x:startX+backW+gap,y:buttonsY,w:actionW,h:buttonsH},
-      {mode:'ai1v1',x:startX+backW+gap*2+actionW,y:buttonsY,w:actionW,h:buttonsH}
-    ];
-    drawButton(modeBoardActionRects[0],'ENDLESS \u203A','#a7c15e');
-    drawButton(modeBoardActionRects[1],'1v1 VS AI \u203A','#7fd8ff');
+  const drawAction=(item,x,y,w,h)=>{
+    const hot=item.enabled&&mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
+    const r={id:item.id,mode:item.mode,x,y,w,h,enabled:item.enabled}; modeBoardActionRects.push(r);
+    ctx.fillStyle=item.enabled?(hot?item.col:'rgba(0,0,0,0.44)'):'rgba(38,38,38,0.78)'; ctx.fillRect(x,y,w,h);
+    ctx.strokeStyle=item.enabled?item.col:'#4a4a45'; ctx.strokeRect(x+0.5,y+0.5,w,h);
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=item.enabled?(hot?'#101208':'#e8d9a8'):'#65655f';
+    ctx.font='700 '+(tiny?12:compact?15:20)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(item.label,w-8),x+w/2,y+h/2);
+  };
+  const drawSection=(section,index)=>{
+    const colIndex=index%cols, rowIndex=Math.floor(index/cols), x=gridX+colIndex*(cardW+gap), y=gridTop+rowIndex*(cardH+gap);
+    ctx.fillStyle='rgba(12,13,10,0.76)'; ctx.fillRect(x,y,cardW,cardH); ctx.strokeStyle=section.col; ctx.lineWidth=1.5; ctx.strokeRect(x+0.5,y+0.5,cardW,cardH);
+    ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=section.col; ctx.font='700 '+(tiny?9:compact?11:14)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(section.title,cardW-12),x+7,y+6);
+    ctx.fillStyle='#777f68'; ctx.font=(tiny?'6':compact?'7':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(section.sub,cardW-12),x+7,y+(tiny?19:compact?23:28));
+    const bh=tiny?28:compact?32:38, by=y+cardH-bh-5;
+    const miniY=y+(tiny?29:compact?35:43);
+    const miniH=Math.min(tiny?44:compact?52:60,Math.max(17,by-miniY-5));
+    drawMiniBoard(section.rows,section.board,section.metric,x+5,miniY,cardW-10,miniH,section.col,section.empty);
+    const bg=tiny?4:6, bw=(cardW-10-bg*(section.actions.length-1))/section.actions.length;
+    for(let i=0;i<section.actions.length;i++) drawAction(section.actions[i],x+5+i*(bw+bg),by,bw,bh);
+  };
+
+  const connected=onlineServiceAvailable();
+  const sections=[
+    {title:'ONLINE \u00b7 MULTIPLE DEVICES',sub:authUser?'CASUAL MULTIPLAYER':'CASUAL \u00b7 SIGN IN TO PLAY',col:'#d05548',rows:arenaBoard,board:'CASUAL LEADERBOARD',metric:'WINS',empty:connected?'NO 1v1 WINS YET':'NO CONNECTION',actions:[
+      {id:'casual_1v1',mode:'arena',label:'1v1',col:'#d05548',enabled:connected},
+      {id:'casual_2v2',mode:'arena2v2',label:'2v2  \uD83D\uDD12',col:'#6b7455',enabled:false}]},
+    {title:'RANKED',sub:'RANK + ELO \u00b7 SERVERS COMING SOON',col:'#e8b658',rows:[],board:'RANKED LEADERBOARD',metric:'ELO',empty:'NO RATED RESULTS YET',actions:[
+      {id:'ranked',label:'VIEW RANK + ELO',col:'#e8b658',enabled:true}]},
+    {title:'OFFLINE \u00b7 ONE DEVICE',sub:'PLAY WITHOUT AN INTERNET MATCH',col:'#a7c15e',rows:board,board:'ENDLESS LEADERBOARD',metric:'SCORE',empty:'NO ENDLESS SCORES YET',actions:[
+      {id:'offline_endless',mode:'endless',label:'ENDLESS',col:'#a7c15e',enabled:true},
+      {id:'offline_ai',mode:'ai1v1',label:'1v1 VS AI',col:'#7fd8ff',enabled:true}]},
+    {title:'PARTY \u00b7 UP TO 6',sub:party.accepted?(party.members.length+'/6 PLAYERS \u00b7 CODE '+party.code):'CREATE, JOIN + ASSIGN TEAMS',col:'#bfa8ff',rows:[],board:'PARTY LEADERBOARD',metric:'WINS',empty:'PARTY RESULTS COMING SOON',actions:[
+      {id:'party_menu',label:party.accepted?'OPEN PARTY':'PARTY MENU',col:'#bfa8ff',enabled:true}]}
+  ];
+  sections.forEach(drawSection);
+
+  backRect={x:margin,y:backY,w:Math.min(150,W-2*margin),h:backH};
+  const backHot=mouse.x>=backRect.x&&mouse.x<=backRect.x+backRect.w&&mouse.y>=backRect.y&&mouse.y<=backRect.y+backRect.h;
+  ctx.fillStyle=backHot?'#8a9268':'rgba(0,0,0,0.45)'; ctx.fillRect(backRect.x,backRect.y,backRect.w,backRect.h); ctx.strokeStyle='#8a9268'; ctx.strokeRect(backRect.x+0.5,backRect.y+0.5,backRect.w,backRect.h);
+  ctx.fillStyle=backHot?'#101208':'#cdd6b0'; ctx.font='700 '+(tiny?9:compact?10:12)+'px ui-monospace,Consolas,monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('\u2039 HOME',backRect.x+backRect.w/2,backRect.y+backRect.h/2);
+  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+}
+function drawRanked(){
+  selBg(); rankedRects=[]; leaderboardRowRects=[];
+  const tiny=H<390, compact=H<560, margin=tiny?9:compact?13:20, col='#e8b658';
+  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle=col; ctx.font='700 '+(tiny?20:compact?28:38)+'px ui-monospace,Consolas,monospace'; ctx.fillText('RANKED',W/2,tiny?5:14);
+  ctx.fillStyle='#8a9268'; ctx.font=(tiny?'7':compact?'9':'11')+'px ui-monospace,Consolas,monospace'; ctx.fillText('COMPETITIVE \u00b7 RATING-PROTECTED MATCHES',W/2,tiny?27:compact?48:61);
+  const totalW=Math.min(650,W-margin*2), x0=W/2-totalW/2, gap=tiny?5:8, statsY=tiny?39:compact?68:88, statsH=tiny?45:compact?58:76, sw=(totalW-gap*2)/3;
+  const stats=[['RANK',authUser?'UNRANKED':'SIGN IN'],['ELO','\u2014'],['PLACEMENTS','0 / 5']];
+  for(let i=0;i<3;i++){
+    const x=x0+i*(sw+gap); ctx.fillStyle='rgba(0,0,0,0.44)'; ctx.fillRect(x,statsY,sw,statsH); ctx.strokeStyle=col; ctx.strokeRect(x+0.5,statsY+0.5,sw,statsH);
+    ctx.fillStyle='#8a9268'; ctx.font='700 '+(tiny?6:compact?8:9)+'px ui-monospace,Consolas,monospace'; ctx.fillText(stats[i][0],x+sw/2,statsY+(tiny?6:9));
+    ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?12:sw<105?14:(compact||sw<150)?17:23)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(stats[i][1],sw-8),x+sw/2,statsY+(tiny?20:compact?27:34));
   }
-  if(arenaMode&&!authUser&&onlineServiceAvailable()){
-    ctx.fillStyle='#d0a548'; ctx.font='700 8px ui-monospace,Consolas,monospace'; ctx.textAlign='right'; ctx.textBaseline='alphabetic';
-    ctx.fillText('SIGN IN REQUIRED AFTER CONTINUE',W-14,buttonsY-4);
+  const lbY=statsY+statsH+gap, lbH=tiny?48:compact?66:90;
+  ctx.fillStyle='rgba(0,0,0,0.40)'; ctx.fillRect(x0,lbY,totalW,lbH); ctx.strokeStyle='#6f6238'; ctx.strokeRect(x0+0.5,lbY+0.5,totalW,lbH);
+  ctx.textAlign='left'; ctx.fillStyle=col; ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace'; ctx.fillText('RANKED LEADERBOARD',x0+9,lbY+7);
+  ctx.textAlign='right'; ctx.fillText('ELO',x0+totalW-9,lbY+7);
+  ctx.textAlign='center'; ctx.fillStyle='#626153'; ctx.font=(tiny?'7':compact?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText('NO RATED RESULTS \u00b7 SECURE MATCH SERVERS COMING SOON',W/2,lbY+lbH/2);
+  const modeY=lbY+lbH+gap, modeH=tiny?42:compact?54:68, modeGap=tiny?5:8, modeW=(totalW-modeGap)/2;
+  const modes=[{id:'ranked_1v1',label:'RANKED 1v1  \uD83D\uDD12'},{id:'ranked_2v2',label:'RANKED 2v2  \uD83D\uDD12'}];
+  for(let i=0;i<2;i++){
+    const x=x0+i*(modeW+modeGap), r={id:modes[i].id,x,y:modeY,w:modeW,h:modeH,enabled:false}; rankedRects.push(r);
+    ctx.fillStyle='rgba(38,38,38,0.78)'; ctx.fillRect(x,modeY,modeW,modeH); ctx.strokeStyle='#4a4a45'; ctx.strokeRect(x+0.5,modeY+0.5,modeW,modeH);
+    ctx.fillStyle='#696960'; ctx.font='700 '+(tiny?10:compact?14:18)+'px ui-monospace,Consolas,monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(fitLine(modes[i].label,modeW-10),x+modeW/2,modeY+modeH/2-5);
+    ctx.fillStyle='#55554f'; ctx.font='700 '+(tiny?6:compact?7:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText('SECURE SERVER REQUIRED',x+modeW/2,modeY+modeH/2+(tiny?10:13));
   }
+  if(!authUser){
+    const sy=modeY+modeH+gap, sh=tiny?28:compact?34:40, r={id:'signin',x:x0,y:sy,w:totalW,h:sh,enabled:true}; rankedRects.push(r);
+    const hot=mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h; ctx.fillStyle=hot?col:'rgba(232,182,88,0.12)'; ctx.fillRect(r.x,r.y,r.w,r.h); ctx.strokeStyle=col; ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h); ctx.fillStyle=hot?'#101208':'#e8d9a8'; ctx.font='700 '+(tiny?9:compact?11:13)+'px ui-monospace,Consolas,monospace'; ctx.fillText('SIGN IN FOR FUTURE RANKED ACCESS',W/2,r.y+r.h/2);
+  }
+  const bh=tiny?30:compact?34:40; backRect={x:margin,y:H-bh-(tiny?5:9),w:Math.min(160,W-margin*2),h:bh};
+  const hot=mouse.x>=backRect.x&&mouse.x<=backRect.x+backRect.w&&mouse.y>=backRect.y&&mouse.y<=backRect.y+backRect.h; ctx.fillStyle=hot?'#8a9268':'rgba(0,0,0,0.42)'; ctx.fillRect(backRect.x,backRect.y,backRect.w,backRect.h); ctx.strokeStyle='#8a9268'; ctx.strokeRect(backRect.x+0.5,backRect.y+0.5,backRect.w,backRect.h); ctx.fillStyle=hot?'#101208':'#cdd6b0'; ctx.font='700 '+(tiny?9:compact?10:12)+'px ui-monospace,Consolas,monospace'; ctx.fillText('\u2039 PLAY MENU',backRect.x+backRect.w/2,backRect.y+backRect.h/2);
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 }
 function drawModes(){
@@ -8822,54 +9275,115 @@ function drawModes(){
   ctx.fillStyle=hot?'#101208':'#cdd6b0'; ctx.font='700 14px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle'; ctx.fillText('\u2039 BACK TO HOME',W/2,by+bh/2);
   ctx.textBaseline='alphabetic';
 }
-function drawPartyComingSoon(){
+function drawPartyButton(id,label,x,y,w,h,col,enabled=true,extra={}){
+  const hot=enabled&&mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
+  const r=Object.assign({id,x,y,w,h,enabled},extra); partyRects.push(r);
+  ctx.fillStyle=enabled?(hot?col:'rgba(0,0,0,0.42)'):'rgba(32,32,34,0.72)'; ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle=enabled?col:'#4a4a4d'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,w,h);
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=enabled?(hot?'#101208':'#e8d9a8'):'#60605d';
+  ctx.font='700 '+(h<30?8:h<38?10:12)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(label,w-8),x+w/2,y+h/2);
+  return r;
+}
+function drawPartyEntry(){
   selBg(); partyRects=[];
-  const compact=H<560, wide=W>=640;
+  const compact=H<560, online=partyServiceAvailable(), pw=Math.min(590,W-28), px=W/2-pw/2;
   ctx.textAlign='center'; ctx.textBaseline='top';
   ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?24:34)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('CREATE / JOIN PARTY',W/2,H*0.045);
+  ctx.fillText('PARTY MENU',W/2,H*0.045);
   ctx.fillStyle='#8a9268'; ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('Party codes will let friends enter the same game from different devices.',W-28),W/2,H*0.045+(compact?32:44));
-
-  const pw=Math.min(600,W-28), px=W/2-pw/2;
-  const codeY=H*0.045+(compact?56:76), codeH=compact?46:62;
-  ctx.fillStyle='rgba(25,23,29,0.72)'; ctx.fillRect(px,codeY,pw,codeH);
-  ctx.strokeStyle='#5c526d'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,codeY+0.5,pw,codeH);
-  ctx.fillStyle='#716982'; ctx.font='700 '+(compact?11:14)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('ENTER PARTY CODE',W/2,codeY+(compact?8:12));
-  ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?10:12)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('COMING SOON',W/2,codeY+(compact?27:38));
-
-  const bbW=Math.min(260,W-36), bbH=compact?34:42, bbX=W/2-bbW/2, bbY=H-bbH-14;
-  const cardsTop=codeY+codeH+(compact?8:14), cardsBottom=bbY-(compact?8:14), gap=compact?6:10;
-  const modes=[
-    {id:'endless',title:'ENDLESS',sub:'CO-OP WAVES',col:'#a7c15e'},
-    {id:'one',title:'1v1',sub:'PRIVATE DUEL',col:'#d05548'},
-    {id:'two',title:'2v2',sub:'TEAM BATTLE',col:'#7fd8ff'}
+  ctx.fillText(fitLine('UP TO 6 PLAYERS \u00b7 NO SIGN-IN \u00b7 TEAM SETUP \u00b7 MATCH LAUNCH COMING SOON',W-24),W/2,H*0.045+(compact?32:44));
+  const infoY=H*0.045+(compact?54:72), infoH=compact?116:150;
+  ctx.fillStyle='rgba(18,17,22,0.72)'; ctx.fillRect(px,infoY,pw,infoH); ctx.strokeStyle='#5c526d'; ctx.strokeRect(px+0.5,infoY+0.5,pw,infoH);
+  const lines=[
+    ['ENDLESS ROOMS','ASSIGN UP TO 3 PLAYERS PER ROOM'],
+    ['1v1 BRACKET','ASSIGN 2\u20136 INDIVIDUAL SEEDS + BYES'],
+    ['2v2 BRACKET','ASSIGN 2 OR 3 TEAMS OF TWO'],
+    ['3v3 MATCH','ASSIGN TWO TEAMS OF THREE']
   ];
-  const cardsW=wide?pw:(Math.min(430,W-28)), cardsX=W/2-cardsW/2;
-  const cw=wide?(cardsW-gap*2)/3:cardsW;
-  const ch=wide?Math.max(30,Math.min(compact?58:82,cardsBottom-cardsTop)):
-                       Math.max(28,Math.min(compact?42:56,Math.floor((cardsBottom-cardsTop-gap*2)/3)));
-  for(let i=0;i<modes.length;i++){
-    const m=modes[i], x=wide?cardsX+i*(cw+gap):cardsX, y=wide?cardsTop:cardsTop+i*(ch+gap);
-    const r={id:m.id,x,y,w:cw,h:ch,enabled:false}; partyRects.push(r);
-    ctx.fillStyle='rgba(32,32,34,0.70)'; ctx.fillRect(x,y,cw,ch);
-    ctx.strokeStyle='#4a4a4d'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,cw,ch);
-    ctx.fillStyle='#66666a'; ctx.font='700 '+(ch<42?12:(wide?18:15))+'px ui-monospace,Consolas,monospace';
-    ctx.fillText(m.title,x+cw/2,y+(ch<42?5:10));
-    if(ch>=42){ ctx.fillStyle='#56565a'; ctx.font='8px ui-monospace,Consolas,monospace'; ctx.fillText(m.sub,x+cw/2,y+(wide?34:28)); }
-    ctx.fillStyle=m.col; ctx.globalAlpha=0.48; ctx.font='700 '+(ch<42?8:9)+'px ui-monospace,Consolas,monospace';
-    ctx.fillText('COMING SOON',x+cw/2,y+ch-(ch<42?11:15)); ctx.globalAlpha=1;
+  const lh=infoH/lines.length;
+  for(let i=0;i<lines.length;i++){
+    const y=infoY+i*lh;
+    if(i){ ctx.strokeStyle='rgba(92,82,109,0.45)'; ctx.beginPath(); ctx.moveTo(px+10,y); ctx.lineTo(px+pw-10,y); ctx.stroke(); }
+    ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle='#d8c8ff'; ctx.font='700 '+(compact?9:11)+'px ui-monospace,Consolas,monospace'; ctx.fillText(lines[i][0],px+13,y+lh/2-(compact?6:8));
+    ctx.fillStyle='#787080'; ctx.font=(compact?'7':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(lines[i][1],pw-26),px+13,y+lh/2+(compact?7:9));
+  }
+  const gap=compact?7:10, bh=compact?38:48, buttonsY=infoY+infoH+(compact?10:16), bw=(pw-gap)/2;
+  drawPartyButton('create','CREATE PARTY',px,buttonsY,bw,bh,'#a7c15e',online);
+  drawPartyButton('join','JOIN WITH CODE',px+bw+gap,buttonsY,bw,bh,'#7fd8ff',online);
+  const backH=compact?32:38, backY=H-backH-14; backRect=drawPartyButton('back','\u2039 PLAY MENU',W/2-Math.min(260,W-36)/2,backY,Math.min(260,W-36),backH,'#8a9268',true);
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.fillStyle=online?'#8a9268':'#d05548'; ctx.font='700 '+(compact?8:10)+'px ui-monospace,Consolas,monospace';
+  const msg=!online?'PARTIES NEED AN INTERNET CONNECTION':party.phase==='joining'?'CONNECTING TO PARTY...':(party.status||'TEAM SETUP WORKS NOW \u00b7 MATCH LAUNCH COMING SOON');
+  ctx.fillText(fitLine(msg,W-24),W/2,Math.min(backY-10,buttonsY+bh+(compact?20:28)));
+  ctx.textAlign='left';
+}
+function drawPartyLobby(){
+  selBg(); partyRects=[];
+  const compact=H<560, wide=W>=700||(compact&&W>=520), margin=Math.max(10,Math.min(20,W*0.025));
+  const top=Math.max(8,H*0.022), titleFs=compact?20:28;
+  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle='#bfa8ff'; ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('PARTY  '+party.code,W/2,top);
+  ctx.fillStyle='#8a9268'; ctx.font=(compact?'8':'10')+'px ui-monospace,Consolas,monospace';
+  const host=partyMember(party.hostId), mine=party.self&&partyMember(party.self.id);
+  ctx.fillText(fitLine(party.members.length+'/'+PARTY_MAX+' PLAYERS  \u00b7  HOST '+(host?host.name:'RECONNECTING')+'  \u00b7  '+partyModeLabel(party.mode)+'  \u00b7  SETUP ONLY',W-24),W/2,top+titleFs+3);
+
+  const codeY=top+titleFs+(compact?18:22), codeH=compact?27:32, leaveW=compact?64:82, copyW=compact?62:78;
+  const codeX=margin, codeW=W-margin*2;
+  ctx.fillStyle='rgba(18,17,22,0.72)'; ctx.fillRect(codeX,codeY,codeW,codeH); ctx.strokeStyle='#5c526d'; ctx.strokeRect(codeX+0.5,codeY+0.5,codeW,codeH);
+  ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle='#d8c8ff'; ctx.font='700 '+(compact?10:13)+'px ui-monospace,Consolas,monospace'; ctx.fillText('CODE  '+party.code,codeX+10,codeY+codeH/2);
+  drawPartyButton('copy','COPY',codeX+codeW-leaveW-copyW-8,codeY+3,copyW,codeH-6,'#7fd8ff',true);
+  backRect=drawPartyButton('leave','LEAVE',codeX+codeW-leaveW-4,codeY+3,leaveW,codeH-6,'#d05548',true);
+
+  const modes=[['endless','ENDLESS'],['1v1','1v1'],['2v2','2v2'],['3v3','3v3']], mg=compact?5:8;
+  const modeY=codeY+codeH+(compact?6:9), modeH=compact?27:34, modeW=(W-margin*2-mg*3)/4;
+  for(let i=0;i<modes.length;i++) drawPartyButton('mode',modes[i][1],margin+i*(modeW+mg),modeY,modeW,modeH,
+    party.mode===modes[i][0]?'#bfa8ff':'#6b7455',partyIsHost()&&!party.locked,{mode:modes[i][0]});
+
+  const footerH=compact?28:34, footerY=H-footerH-margin, fg=compact?5:8, footerW=W-margin*2;
+  const footerButtons=partyIsHost()?3:1, fw=(footerW-fg*(footerButtons-1))/footerButtons;
+  if(partyIsHost()){
+    drawPartyButton('auto','AUTO ASSIGN',margin,footerY,fw,footerH,'#a7c15e',!party.locked);
+    drawPartyButton('lock',party.locked?'UNLOCK PLAN':'LOCK PLAN',margin+fw+fg,footerY,fw,footerH,'#e8b658',true);
+    drawPartyButton('ready',mine&&mine.ready?'NOT READY':'I AM READY',margin+(fw+fg)*2,footerY,fw,footerH,'#7fd8ff',true);
+  } else drawPartyButton('ready',mine&&mine.ready?'NOT READY':'I AM READY',margin,footerY,footerW,footerH,'#7fd8ff',true);
+
+  const contentTop=modeY+modeH+(compact?6:9), contentBottom=footerY-(compact?22:28), contentH=Math.max(80,contentBottom-contentTop), colGap=wide?12:0;
+  const rosterX=margin, rosterW=wide?(W-margin*2-colGap)*0.46:W-margin*2, planX=wide?rosterX+rosterW+colGap:margin, planW=wide?W-margin-planX:rosterW;
+  const rosterH=wide?contentH:Math.min(contentH*0.60,18+Math.max(1,party.members.length)*Math.max(22,Math.min(34,(contentH*0.60-18)/Math.max(1,party.members.length))));
+  const planY=wide?contentTop:contentTop+rosterH+6, planH=wide?contentH:Math.max(44,contentBottom-planY);
+  ctx.fillStyle='rgba(0,0,0,0.38)'; ctx.fillRect(rosterX,contentTop,rosterW,rosterH); ctx.strokeStyle='#5c526d'; ctx.strokeRect(rosterX+0.5,contentTop+0.5,rosterW,rosterH);
+  ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?8:10)+'px ui-monospace,Consolas,monospace'; ctx.fillText('ROSTER  \u00b7  CLICK ARROWS TO ASSIGN',rosterX+8,contentTop+10);
+  const rowTop=contentTop+18, rowH=Math.max(21,Math.min(compact?30:36,(rosterH-20)/Math.max(1,party.members.length)));
+  const sorted=party.members.slice().sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
+  for(let i=0;i<sorted.length;i++){
+    const m=sorted[i], y=rowTop+i*rowH, isMe=party.self&&m.id===party.self.id;
+    ctx.fillStyle=i%2?'rgba(255,255,255,0.025)':'rgba(255,255,255,0.055)'; ctx.fillRect(rosterX+5,y,rosterW-10,rowH-2);
+    ctx.textAlign='left'; ctx.fillStyle=isMe?'#7fd8ff':'#e8d9a8'; ctx.font='700 '+(compact?8:10)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine((m.id===party.hostId?'\u2605 ':'')+m.name,Math.max(50,rosterW-142)),rosterX+10,y+(rowH-2)/2);
+    ctx.textAlign='right'; ctx.fillStyle=m.ready?'#a7c15e':'#6b7455'; ctx.font='700 '+(compact?7:9)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(m.ready?'READY':'WAIT',rosterX+rosterW-(partyIsHost()?83:10),y+(rowH-2)/2);
+    const assignment=party.mode==='endless'?'ROOM '+String(m.team||'R1').slice(1):party.mode==='1v1'?'SEED '+String(m.team||'S1').slice(1):'TEAM '+(m.team||'A');
+    if(partyIsHost()){
+      const aw=22, labelW=52, ax=rosterX+rosterW-aw*2-labelW-7;
+      drawPartyButton('member_prev','\u2039',ax,y+2,aw,rowH-6,'#8a9268',!party.locked,{memberId:m.id,dir:-1});
+      ctx.textAlign='center'; ctx.fillStyle='#d8c8ff'; ctx.font='700 '+(compact?7:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(assignment,labelW-2),ax+aw+labelW/2,y+(rowH-2)/2);
+      drawPartyButton('member_next','\u203a',ax+aw+labelW,y+2,aw,rowH-6,'#8a9268',!party.locked,{memberId:m.id,dir:1});
+    } else { ctx.fillStyle='#d8c8ff'; ctx.fillText(assignment,rosterX+rosterW-10,y+(rowH-2)/2); }
   }
 
-  backRect={x:bbX,y:bbY,w:bbW,h:bbH};
-  const hot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
-  ctx.fillStyle=hot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH);
-  ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
-  ctx.fillStyle=hot?'#101208':'#cdd6b0'; ctx.font='700 13px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
-  ctx.fillText('\u2039 BACK TO HOME',W/2,bbY+bbH/2);
-  ctx.textBaseline='alphabetic'; ctx.textAlign='left';
+  ctx.fillStyle='rgba(0,0,0,0.38)'; ctx.fillRect(planX,planY,planW,planH); ctx.strokeStyle='#5c526d'; ctx.strokeRect(planX+0.5,planY+0.5,planW,planH);
+  ctx.textAlign='left'; ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?8:10)+'px ui-monospace,Consolas,monospace'; ctx.fillText(party.mode==='endless'?'ENDLESS ROOM PLAN':'TOURNAMENT PLAN',planX+8,planY+10);
+  const rows=party.plan.length?party.plan:[{title:'BUILDING PLAN',body:'Waiting for the party host...',ready:false}], ph=Math.max(20,Math.min(compact?34:42,(planH-20)/rows.length));
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i], y=planY+18+i*ph;
+    ctx.fillStyle=r.ready?'rgba(167,193,94,0.06)':'rgba(208,85,72,0.06)'; ctx.fillRect(planX+5,y,planW-10,ph-2);
+    ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=r.ready?'#a7c15e':'#d05548'; ctx.font='700 '+(compact?7:9)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(r.title,planW-16),planX+9,y+3);
+    if(ph>=28){ ctx.fillStyle='#8a9268'; ctx.font=(compact?'7':'8')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(r.body,planW-16),planX+9,y+15); }
+  }
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.fillStyle=party.locked?'#e8b658':'#8a9268'; ctx.font='700 '+(compact?7:9)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine(party.status,W-20),W/2,footerY-(compact?7:10)); ctx.textAlign='left';
+}
+function drawParty(){
+  if(party.phase==='lobby'&&party.accepted) drawPartyLobby(); else drawPartyEntry();
 }
 function drawLoadout(){
   selBg(); catBtns=[];
@@ -8911,7 +9425,7 @@ function drawLoadout(){
   const bbW=120, bbH=30, bbX=16, bbY=H-bbH-14; backRect={x:bbX,y:bbY,w:bbW,h:bbH};
   const backHot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
   ctx.fillStyle=backHot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH); ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
-  const backLabel=pendingGameMode==='practice'?'\u2039 PRACTICE':(modeBoardMode?'\u2039 LEADERBOARD':'\u2039 HOME');
+  const backLabel=pendingGameMode==='practice'?'\u2039 PRACTICE':(loadoutBackPage==='modeboard'?'\u2039 PLAY MENU':'\u2039 HOME');
   ctx.fillStyle=backHot?'#101208':'#cdd6b0'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(backLabel,bbX+bbW/2,bbY+bbH/2);
   if(now<pracNeedMsgT){ ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('PRIMARY + SIDEARM + MELEE ARE REQUIRED',W/2,dy-18); }
   ctx.textBaseline='alphabetic';
@@ -9011,7 +9525,7 @@ function drawHub(){
   withBlockColour('banner', ()=>ctx.fillText(fitLine('\uD83D\uDD25 SUMMER FLAMING UPDATE \uD83D\uDD25', bnW-16), W/2, bnY+bnH/2));
   ctx.textBaseline='top';
 
-  // Home play choices are explicit; weapon choices still live on the next screen.
+  // One Home entry opens the unified Play dashboard; weapons are chosen after a mode.
   diffRects=[];
   homePlayRects=[];
   hubPostsRect=null;
@@ -9019,31 +9533,27 @@ function drawHub(){
   const hbN=5+(lbShown?0:1);
   const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
   const hbY=H-hbH-8;
-  const wideActions=W>=720, actionGap=H<560?5:8, targetActionH=H<560?42:62;
-  const actionReserve=wideActions?targetActionH+18:targetActionH*3+actionGap*2+18;
+  const actionCount=1, actionCols=1, actionRows=1;
+  const actionGap=H<560?5:8, targetActionH=H<560?42:62;
+  const actionReserve=targetActionH*actionRows+actionGap*(actionRows-1)+18;
   const boardTop=bnY+bnH+8;
   const boardBottom=drawHubPosts(boardTop, hbY-actionReserve);
   // The updates feed draws its post copy left-aligned. Home action labels use
   // their rectangle centres, so restore centred text before drawing buttons.
   ctx.textAlign='center'; ctx.textBaseline='top';
   const actionBottom=hbY-10;
-  const minimumBlock=wideActions?30:(3*27+actionGap*2);
+  const minimumBlock=actionRows*27+actionGap*(actionRows-1);
   const wantedTop=Math.max(boardBottom+(hubPostsRect?10:5),bnY+bnH+15);
   const actionTop=Math.min(wantedTop,actionBottom-minimumBlock);
   const groupW=Math.min(460,W-30), groupX=W/2-groupW/2;
-  const cardW=wideActions?(groupW-actionGap*2)/3:groupW;
-  const cardH=wideActions?Math.max(30,Math.min(targetActionH,actionBottom-actionTop)):
-                              Math.max(27,Math.min(targetActionH,Math.floor((actionBottom-actionTop-actionGap*2)/3)));
-  const noConnection=navigator.onLine===false||!sb;
-  const onlineSub=noConnection?'NO CONNECTION \u00b7 DIFFERENT DEVICES':(!authUser?'DIFFERENT DEVICES \u00b7 SIGN IN':'MULTIPLAYER \u00b7 DIFFERENT DEVICES');
+  const cardW=(groupW-actionGap*(actionCols-1))/actionCols;
+  const cardH=Math.max(27,Math.min(targetActionH,Math.floor((actionBottom-actionTop-actionGap*(actionRows-1))/actionRows)));
   const actions=[
-    {id:'online', title:'PLAY ONLINE', sub:onlineSub, col:'#d05548', enabled:onlineServiceAvailable()},
-    {id:'offline',title:'PLAY OFFLINE',sub:'ONE DEVICE ONLY \u00b7 ENDLESS OR AI 1v1',col:'#a7c15e',enabled:true},
-    {id:'party',  title:'CREATE/JOIN PARTY',sub:'ENDLESS \u00b7 1v1 \u00b7 2v2 \u00b7 COMING SOON',col:'#bfa8ff',enabled:true}
+    {id:'play',title:'PLAY',sub:'ONLINE \u00b7 RANKED \u00b7 OFFLINE \u00b7 PARTY',col:'#e8b658',enabled:true}
   ];
   for(let i=0;i<actions.length;i++){
-    const a=actions[i], x=wideActions?groupX+i*(cardW+actionGap):groupX;
-    const y=wideActions?actionTop:actionTop+i*(cardH+actionGap);
+    const a=actions[i], x=groupX+(i%actionCols)*(cardW+actionGap);
+    const y=actionTop+Math.floor(i/actionCols)*(cardH+actionGap);
     const r={id:a.id,x,y,w:cardW,h:cardH,enabled:a.enabled}; homePlayRects.push(r);
     const inside=mouse.x>=x&&mouse.x<=x+cardW&&mouse.y>=y&&mouse.y<=y+cardH;
     const hot=inside&&a.enabled;
@@ -9082,6 +9592,9 @@ function drawHub(){
   if(now<referralMsgT){
     ctx.fillStyle='#bfa8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(referralMsg,W-30),W/2,Math.max(12,actionTop-13));
+  } else if(!authUser&&pendingReferralId()){
+    ctx.fillStyle='#bfa8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine('FRIEND GIFT WAITING \u00b7 SIGN IN TO CLAIM +5 GEMS',W-30),W/2,Math.max(12,actionTop-13));
   }
   if(now<utilLockMsgT){
     ctx.fillStyle='#d05548'; ctx.font='700 12px ui-monospace,Consolas,monospace';
@@ -9802,7 +10315,7 @@ function drawSignUpPrompt(){
     ['\uD83D\uDC8E','earn gems and coins as you play'],
     ['\uD83C\uDFC6','get your score on the global leaderboard'],
     ['\uD83D\uDD25','daily rewards and a streak that keeps paying'],
-    ['\uD83C\uDFA1','a free wheel spin every 15 minutes'],
+    ['\uD83C\uDFA1','a free wheel spin every 20 minutes'],
     ['\uD83D\uDCBE','your weapons and progress follow you to any device'],
   ];
   for(const [icon,txt] of perks){
@@ -10715,6 +11228,7 @@ function frame(){
   last = wall;
   wheelTick(Math.min(Math.max(raw,0),60000));       // total site time; tolerate background tabs without clock jumps
   arenaWallTick(wall);                              // online clocks + snapshots never pause with the campaign clock
+  partyTick(Date.now());                            // party admission, liveness, and host snapshots keep running on menus
   if(raw>0){ const inst=1000/raw; fpsEMA += (inst-fpsEMA)*0.1; }
   if((textDirty||layoutDirty) && Date.now()>textLocalSaveT){ persistTextDraft(); textLocalSaveT=Date.now()+250; }
 
@@ -10801,6 +11315,12 @@ function frame(){
   layoutRibbons();
   requestAnimationFrame(frame);
 }
+// A referral survives while the visitor signs in. Give that visitor a clear,
+// dismissible explanation first; LATER keeps the pending id for a future login.
+setTimeout(()=>{ try{
+  if(state==='select'&&selPage==='hub'&&sb&&!authUser&&pendingReferralId()&&!myBan&&!dailyGateOpen&&!signUpPromptOpen)
+    openSignUpPrompt('your friend sent you 5 gems \u2014 sign in to claim them');
+}catch(e){} }, 350);
 // a brand new visitor, account or not, is offered the tutorials once
 setTimeout(()=>{ try{ if(state==='select' && !dailyGateOpen && !signUpPromptOpen) maybeFirstRunTutorial(); }catch(e){} }, 500);
 requestAnimationFrame(frame);
