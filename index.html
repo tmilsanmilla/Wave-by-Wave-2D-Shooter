@@ -4567,6 +4567,17 @@ const STICK_R=60;
 const sticks={ move:{id:null,cx:0,cy:0,dx:0,dy:0}, aim:{id:null,cx:0,cy:0,dx:0,dy:0} };
 let touchButtons=[], pressedBtn=null, menuTouchId=null;
 let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null, touchUtilityUsed=false;
+function resetHeldGameplayInput(){
+  // A click/touch/Enter used to launch a mode must never become gameplay input.
+  // Fullscreen changes can swallow the matching release event, so clear every
+  // held source explicitly instead of waiting for mouseup/touchend/keyup.
+  for(const k in keys) keys[k]=false;
+  mouse.down=false; dragSlider=null;
+  pressedBtn=null; menuTouchId=null; aimStickId=null; touchUtilityUsed=false; tapShootUntil=0;
+  for(const stick of [sticks.move,sticks.aim]){ stick.id=null; stick.dx=0; stick.dy=0; }
+  aiming=false; rmbAim=false;
+  fireSuppressT=Math.max(fireSuppressT,now+250);
+}
 function buttonAt(x,y){
   // magnet: snap to the nearest button within a generous radius, so hurried
   // boss-fight taps don't get swallowed by the aim stick
@@ -4747,10 +4758,18 @@ function clickSelect(){
     if(inR(backRect)){ navigateSelectBack(); return; }
     for(const r of modeBoardActionRects) if(inR(r)){
       if(r.enabled===false){
+        if(r.id==='ranked'){
+          modeBoardNotice='COMING SOON'; modeBoardNoticeT=performance.now()+2800;
+          sfx('dry'); return;
+        }
         if(r.mode&&!partyAllowsQueue(r.mode)) return;
         sfx('dry'); return;
       }
-      if(r.id==='ranked') { selPage='ranked'; sfx('swap'); }
+      if(r.id==='ranked') {
+        // Fail closed even if a stale cached draw rect still marks Ranked as enabled.
+        modeBoardNotice='COMING SOON'; modeBoardNoticeT=performance.now()+2800;
+        sfx('dry');
+      }
       else if(r.id==='party_menu'||r.id==='party_open') { selPage='party'; sfx('swap'); }
       // Legacy ids remain routable for older cached canvases, but the live
       // Play dashboard always enters the dedicated Party menu first.
@@ -4932,6 +4951,7 @@ function burst(x,y,col,n,pow){
 
 /* ---------------- game flow ---------------- */
 function startGame(){
+  resetHeldGameplayInput();
   selPage='hub';
   perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,vamp:0,pierce:0,acc:1,drop:0.05,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
   perkCounts={}; upgradeOffered=false; upgradeChoices=[]; wmods={}; utilMods={}; bossBounty=false;
@@ -5187,6 +5207,7 @@ function startBotArena(){
 }
 function arenaBotStartRound(){
   if(!isBotArena()||!arena.opponent) return;
+  resetHeldGameplayInput();
   arena.round++; arena.roundResolved=false; arena.phase='countdown'; arena.nextRoundAt=0;
   arena.roundStartAt=now+3000; arena.roundEndAt=arena.roundStartAt+ARENA_ROUND_MS;
   perks.maxhp=ARENA_HP; player.hp=ARENA_HP; player.hurtCd=0; player.hurtFlash=0;
@@ -5359,8 +5380,12 @@ function arenaOwnPresence(){
 function arenaQuickMatch(){
   // Recheck at the real queue boundary: a friend may have joined the party
   // while this player was choosing weapons or viewing the Arena menu.
-  if(!partyAllowsQueue('arena')) return;
-  if(!arenaGuard()) return;
+  if(!partyAllowsQueue('arena')) return false;
+  if(!sb||navigator.onLine===false){
+    arena.status='Online games are unavailable. Reconnect and try again.';
+    sfx('dry'); return false;
+  }
+  if(!arenaGuard()) return false;
   leaveArena('',false);
   arena.mode='queue'; arena.phase='queue'; arena.status='Searching for another signed-in operator...'; arena.joinedAt=Date.now();
   const ch=sb.channel('oz-arena-queue-v1',{config:{presence:{key:authUser.id}}});
@@ -5374,6 +5399,7 @@ function arenaQuickMatch(){
     } else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT') arena.status='Could not reach matchmaking. Try again.';
   });
   arena.queueChannel=ch;
+  return true;
 }
 function arenaQueueSync(ch){
   if(ch!==arena.queueChannel||arena.matchChannel||!authUser) return;
@@ -5613,6 +5639,7 @@ function arenaApplyRoundStart(p){
   const epoch=Math.floor(+p.epoch||0);
   if(epoch>arena.matchEpoch) arenaApplyRematchStart(p); // also recovers if rematch_start arrives late
   if(epoch!==arena.matchEpoch||p.round<=arena.round) return;
+  resetHeldGameplayInput();
   arena.round=p.round; arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=false;
   // Use a relative countdown on each device. Absolute browser clocks can be
   // minutes apart even when both players have a healthy connection.
@@ -7212,8 +7239,12 @@ function killEnemy(j){
 function drawArenaOpponentWorld(){
   if(practiceMode!=='arena'||!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
+  // Online state owns the existing opponent tag.  The local AI used to expose
+  // extra perfect information (exact HP, a tracking nameplate, and a confirmed
+  // hit flash) that a normal 1v1 does not give the Offline player.
+  const showOpponentIntel=!isBotArena();
   ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU); ctx.fill();
-  ctx.fillStyle=now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
+  ctx.fillStyle=showOpponentIntel&&now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   ctx.strokeStyle='#ff8b80'; ctx.lineWidth=2/zoom; ctx.stroke();
   const wk=WEAPONS[e.cur]||WEAPONS.ar, len=Math.min(38,wk.len||24);
   ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0'); ctx.lineWidth=(wk.melee?4:5)/zoom; ctx.lineCap='round';
@@ -7221,11 +7252,13 @@ function drawArenaOpponentWorld(){
   if(now<(e.flash||0)){
     ctx.fillStyle='#ffd98a'; ctx.beginPath(); ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU); ctx.fill();
   }
-  ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(e.x-31,e.y-r-23,62,6);
-  ctx.fillStyle='#d05548'; ctx.fillRect(e.x-31,e.y-r-23,62*clamp(e.hp/ARENA_HP,0,1),6);
-  ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillStyle='#ffd9d2'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-  ctx.fillText(String(e.name||'OPPONENT').slice(0,16),e.x,e.y-r-27);
-  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  if(showOpponentIntel){
+    ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(e.x-31,e.y-r-23,62,6);
+    ctx.fillStyle='#d05548'; ctx.fillRect(e.x-31,e.y-r-23,62*clamp(e.hp/ARENA_HP,0,1),6);
+    ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillStyle='#ffd9d2'; ctx.font='700 9px ui-monospace,Consolas,monospace';
+    ctx.fillText(String(e.name||'OPPONENT').slice(0,16),e.x,e.y-r-27);
+    ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  }
 }
 function drawWorld(){
   ctx.fillStyle='#101208';
@@ -7691,14 +7724,6 @@ function drawHUD(){
     ctx.fillStyle=arena.networkHold?'#ff8b80':(arena.phase==='fight'?'#cdd6b0':'#ffd24d'); ctx.font='700 12px ui-monospace,Consolas,monospace';
     const roundLine=arena.networkHold?'OPPONENT RECONNECTING \u00b7 MATCH HELD':('ROUND '+arena.round+'  \u00b7  FIRST TO 5  \u00b7  '+(arena.phase==='countdown'?('STARTS IN '+Math.max(1,timer)):arena.phase==='fight'?('TIME '+Math.max(0,timer)+'s'):'ROUND COMPLETE'));
     ctx.fillText(fitLine(roundLine,W-36),W/2,pad+32);
-    if(isBotArena()&&arena.opponent){
-      const bw=Math.min(190,W*0.34), bx=W/2-bw/2, by=pad+51;
-      ctx.fillStyle='rgba(0,0,0,0.58)'; ctx.fillRect(bx,by,bw,8);
-      ctx.fillStyle='#d05548'; ctx.fillRect(bx,by,bw*clamp(arena.opponent.hp/ARENA_HP,0,1),8);
-      ctx.strokeStyle='#5a302c'; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,by+0.5,bw,8);
-      ctx.fillStyle='#e0a8a0'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-      ctx.fillText('BOT INTEGRITY '+Math.ceil(arena.opponent.hp)+' / '+ARENA_HP,W/2,by+11);
-    }
     ctx.textAlign='left';
   } else {
     ctx.fillStyle='#e8b658'; ctx.font='700 22px ui-monospace,Consolas,monospace';
@@ -9142,7 +9167,9 @@ function launchSelectedMode(){
   if(!partyAllowsQueue(pendingGameMode)) return false;
   if(pendingGameMode==='arena'){
     if(!onlinePlayReady()){ chooseGameMode('arena'); return false; }
-    loadout.utility=null; selPage='arena'; arena.status='Loadout ready. Choose Quick Match.'; sfx('swap'); return true;
+    loadout.utility=null;
+    if(!arenaQuickMatch()) return false;
+    sfx('swap'); return true;
   }
   if(pendingGameMode==='ai1v1'){
     loadout.utility=null; startBotArena(); sfx('wave'); return true;
@@ -9193,11 +9220,12 @@ function drawModeLeaderboard(){
   const contentW=Math.min(780,W-margin*2), contentX=(W-contentW)/2;
   const sectionTitleH=tiny?14:compact?22:28, sectionGap=tiny?3:compact?6:10;
   const outerPad=tiny?1:compact?4:6;
-  // Five large, full-width choices are intentionally shown in one reading
-  // order. Leaderboards live on Home so this screen can stay focused on play.
-  const fixed=sectionTitleH*2+sectionGap+outerPad*4+gap*3;
-  const tinyActionH=H<390?38:42, tinyActionMin=H<390?34:42;
-  const actionH=Math.min(tiny?tinyActionH:compact?50:64,Math.max(tiny?tinyActionMin:compact?42:48,Math.floor((contentBottom-top-fixed)/5)));
+  // Casual modes share one row, Ranked gets its own row, and Offline modes
+  // share one row. The three clear sections stay tall even in phone landscape.
+  const sectionCount=3, actionRows=3;
+  const fixed=sectionTitleH*sectionCount+sectionGap*(sectionCount-1)+outerPad*2*sectionCount;
+  const actionH=Math.min(tiny?(H<390?54:60):compact?72:88,
+    Math.max(tiny?44:compact?54:64,Math.floor((contentBottom-top-fixed)/actionRows)));
 
   const drawAction=(item,x,y,w,h)=>{
     const hot=item.enabled&&mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
@@ -9212,7 +9240,10 @@ function drawModeLeaderboard(){
       ctx.fillText(fitLine(item.note,w-14),x+w/2,y+h/2+(tiny?9:compact?12:16));
     }
   };
-  const sectionHeight=section=>outerPad*2+sectionTitleH+section.actions.length*actionH+(section.actions.length-1)*gap;
+  const sectionHeight=section=>{
+    const rows=Math.ceil(section.actions.length/(section.cols||1));
+    return outerPad*2+sectionTitleH+rows*actionH+(rows-1)*gap;
+  };
   const drawSection=(section,y)=>{
     const sectionH=sectionHeight(section);
     ctx.fillStyle='rgba(12,13,10,0.76)'; ctx.fillRect(contentX,y,contentW,sectionH);
@@ -9223,21 +9254,24 @@ function drawModeLeaderboard(){
     ctx.fillText(section.title,contentX+10,headY+sectionTitleH/2);
     ctx.textAlign='right'; ctx.fillStyle='#777f68'; ctx.font='700 '+(tiny?6:compact?8:10)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(section.sub,contentW*0.62),contentX+contentW-10,headY+sectionTitleH/2);
-    let ay=headY+sectionTitleH;
-    for(const action of section.actions){
-      drawAction(action,contentX+outerPad,ay,contentW-outerPad*2,actionH);
-      ay+=actionH+gap;
+    const cols=section.cols||1, innerW=contentW-outerPad*2;
+    const actionW=(innerW-gap*(cols-1))/cols;
+    const ay=headY+sectionTitleH;
+    for(let i=0;i<section.actions.length;i++){
+      const action=section.actions[i], col=i%cols, row=Math.floor(i/cols);
+      drawAction(action,contentX+outerPad+col*(actionW+gap),ay+row*(actionH+gap),actionW,actionH);
     }
     return y+sectionH;
   };
 
   const connected=onlineServiceAvailable();
   const sections=[
-    {title:'ONLINE',sub:'MULTIPLE DEVICES',col:'#d05548',actions:[
+    {title:'ONLINE',sub:'MULTIPLE DEVICES',col:'#d05548',cols:2,actions:[
       {id:'casual_1v1',mode:'arena',label:'1v1',note:authUser?'CASUAL \u00b7 FIRST TO 5':'SIGN IN TO PLAY',col:'#d05548',enabled:connected},
-      {id:'casual_2v2',mode:'arena2v2',label:'2v2  \uD83D\uDD12',note:'COMING SOON',col:'#6b7455',enabled:false},
-      {id:'ranked',label:'PLAY RANKED',note:'RANK + ELO \u00b7 COMING SOON',col:'#e8b658',enabled:true}]},
-    {title:'OFFLINE',sub:'ONE DEVICE',col:'#a7c15e',actions:[
+      {id:'casual_2v2',mode:'arena2v2',label:'2v2  \uD83D\uDD12',note:'COMING SOON',col:'#6b7455',enabled:false}]},
+    {title:'RANKED',sub:'COMPETITIVE \u00b7 RANK + ELO',col:'#e8b658',cols:1,actions:[
+      {id:'ranked',label:'PLAY RANKED  \uD83D\uDD12',note:'COMING SOON',col:'#e8b658',enabled:false}]},
+    {title:'OFFLINE',sub:'ONE DEVICE',col:'#a7c15e',cols:2,actions:[
       {id:'offline_endless',mode:'endless',label:'ENDLESS',col:'#a7c15e',enabled:true},
       {id:'offline_ai',mode:'ai1v1',label:'1v1 VS AI',note:'FIRST TO 5',col:'#7fd8ff',enabled:true}]}
   ];
@@ -9471,7 +9505,7 @@ function drawLoadout(){
   ctx.fillStyle=hot?modeCol:ready?(aiMode?'rgba(127,216,255,0.16)':arenaMode?'rgba(208,85,72,0.18)':'rgba(232,182,88,0.16)'):'rgba(0,0,0,0.35)'; ctx.fillRect(dx,dy,dw,dh);
   ctx.strokeStyle=ready?modeCol:'#4a4634'; ctx.lineWidth=1.5; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
   ctx.fillStyle=hot?'#101208':ready?'#e8d9a8':'#6b7455'; ctx.font='700 16px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
-  ctx.fillText(ready?(arenaMode?'CONTINUE TO ONLINE 1v1':aiMode?'START 1v1 VS AI':'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
+  ctx.fillText(ready?(arenaMode?'START QUEUING FOR 1v1':aiMode?'START 1v1 VS AI':'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
   const bbW=120, bbH=30, bbX=16, bbY=H-bbH-14; backRect={x:bbX,y:bbY,w:bbW,h:bbH};
   const backHot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
   ctx.fillStyle=backHot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH); ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
