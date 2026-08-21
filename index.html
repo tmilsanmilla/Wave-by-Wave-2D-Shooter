@@ -9023,6 +9023,9 @@ function drawHub(){
   const actionReserve=wideActions?targetActionH+18:targetActionH*3+actionGap*2+18;
   const boardTop=bnY+bnH+8;
   const boardBottom=drawHubPosts(boardTop, hbY-actionReserve);
+  // The updates feed draws its post copy left-aligned. Home action labels use
+  // their rectangle centres, so restore centred text before drawing buttons.
+  ctx.textAlign='center'; ctx.textBaseline='top';
   const actionBottom=hbY-10;
   const minimumBlock=wideActions?30:(3*27+actionGap*2);
   const wantedTop=Math.max(boardBottom+(hubPostsRect?10:5),bnY+bnH+15);
