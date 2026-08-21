@@ -256,6 +256,7 @@
 const SUPABASE_URL = 'https://edvurrilylypgfyvjyas.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
+const PUBLIC_BOARD_LIMIT=5;
 let sb = null, authUser = null, board = [], arenaBoard = [], boardT = 0, recovering = false;
 let arenaAuthPending=false, arena=null;
 let leaderboardRowRects=[];
@@ -317,8 +318,6 @@ async function initAuth(){
       fetchMyBan();                                  // device bans apply even signed out
       fetchBanners();                                // the UPDATES board is for everyone
       fetchLayout();                                 // where admins placed the hub blocks
-      fetchCustomText();                             // admin-written text on the menus
-      fetchStandard();                               // the creator's saved default layout
       fetchWeaponDefs();                             // shared stat/price/publish overrides
       setupRealtime();
     }catch(err){ console.warn('supabase init failed', err); sb=null; }
@@ -405,7 +404,7 @@ async function fetchBoard(){
   const read=async(game,setter)=>{
     try{
       const {data,error}=await sb.from('scores').select('user_id,name,score')
-        .eq('game',game).order('score',{ascending:false}).limit(10);
+        .eq('game',game).order('score',{ascending:false}).limit(PUBLIC_BOARD_LIMIT);
       if(error) throw error;
       setter(data||[]);
     }catch(err){ console.warn(game+' board fetch failed',err); }
@@ -550,9 +549,8 @@ $('rdone').onclick = ()=>{ $('authwrap').style.display='none'; };
 for(const id of ['rpass1','rpass2'])
   $(id).addEventListener('keydown', e=>{ if(e.key==='Enter') $('rsave').click(); });
 initAuth().finally(()=>{
-  // The local file must still restore editor work when the Supabase script or
-  // network is unavailable. This microtask runs after all editor state exists.
-  if(!sb){ fetchLayout(); fetchCustomText(); }
+  // The local file must still restore layout work when Supabase is unavailable.
+  if(!sb) fetchLayout();
 });
 
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
@@ -958,7 +956,8 @@ const LAYOUT_BLOCKS={
   coins:   'GEMS + COINS',
   account: 'ACCOUNT CHIP',
 };
-let layout={}, layoutMode=false, layoutRects=[], layoutDrag=null, layoutDirty=false, layoutPick=null;
+let layout={}, layoutMode=false, layoutRects=[], layoutDrag=null, layoutDirty=false, layoutPick=null, layoutLocalSaveT=0;
+const LAYOUT_DRAFT_KEY='oz_ui_layout_draft';
 const LAYOUT_COLOURS=[
   {id:'',       name:'DEFAULT', hex:null},
   {id:'gold',   name:'GOLD',    hex:'#e8b658'},
@@ -981,30 +980,42 @@ function withBlockColour(id, draw){
 function offX(id){ const o=layout[id]; return (o&&+o.dx)||0; }
 function offY(id){ const o=layout[id]; return (o&&+o.dy)||0; }
 // register a block so layout mode can outline and drag it
-function layoutBlock(id,x,y,w,h){ if(layoutMode||textMode) layoutRects.push({id,x,y,w,h}); }
+function layoutBlock(id,x,y,w,h){ if(layoutMode) layoutRects.push({id,x,y,w,h}); }
+function readLayoutDraft(){
+  try{
+    const saved=JSON.parse(localStorage.getItem(LAYOUT_DRAFT_KEY)||'null');
+    return saved&&typeof saved==='object'&&saved.layout&&typeof saved.layout==='object' ? saved.layout : null;
+  }catch(e){ return null; }
+}
+function persistLayoutDraft(){
+  try{
+    localStorage.setItem(LAYOUT_DRAFT_KEY,JSON.stringify({layout,updatedAt:Date.now()}));
+    localStorage.setItem('oz_ui_layout',JSON.stringify(layout));
+    return true;
+  }catch(e){ return false; }
+}
+function clearLayoutDraft(){ try{ localStorage.removeItem(LAYOUT_DRAFT_KEY); }catch(e){} }
 async function fetchLayout(){
-  const draft=readEditorDraft();
-  if(draft&&draft.layout&&typeof draft.layout==='object'){
-    layout=draft.layout; layoutDirty=true; textDirty=true; // recovered work still needs publishing
-  }
+  const draft=readLayoutDraft();
+  if(draft){ layout=draft; layoutDirty=true; }
   else try{ const v=JSON.parse(localStorage.getItem('oz_ui_layout')||'null'); if(v&&typeof v==='object') layout=v; }catch(e){}
   if(!sb||draft) return;                            // never replace an unsaved local edit with an older server copy
   try{
     const { data } = await sb.from('ui_layout').select('data').eq('id','hub').maybeSingle();
-    if(layoutDirty||textDirty||readEditorDraft()) return; // an edit may have begun before its draft flush
+    if(layoutDirty||readLayoutDraft()) return;       // an edit may have begun before its draft flush
     if(data && data.data && typeof data.data==='object'){ layout=data.data; localStorage.setItem('oz_ui_layout',JSON.stringify(layout)); }
   }catch(e){}
 }
 async function saveLayout(){
   if(!isMainAdmin()) return false;
   const snapshot=JSON.stringify(layout), savedLayout=JSON.parse(snapshot);
-  persistEditorDraft();                             // secure the edit before waiting for the network
+  persistLayoutDraft();                             // secure the edit before waiting for the network
   try{ localStorage.setItem('oz_ui_layout',snapshot); }catch(e){}
   try{
     if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'hub',data:savedLayout,updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
     const current=JSON.stringify(layout)===snapshot;
     layoutDirty=!current;
-    if(current&&!textDirty) clearEditorDraft(); else if(!current) persistEditorDraft();
+    if(current) clearLayoutDraft(); else persistLayoutDraft();
     sfx(current?'pickup':'aim'); return current;
   }catch(e){ waveMsg='LAYOUT SAVE FAILED: '+String((e&&e.message)||e).slice(0,80); waveMsgT=now+4000; sfx('dry'); return false; }
 }
@@ -2463,7 +2474,12 @@ function freshArena(status){
     syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),rematchVotes:new Set(),savedUtility:undefined};
 }
 arena=freshArena('Sign in, choose a loadout, then enter Casual 1v1.');
-const PARTY_MAX=6, PARTY_JOIN_MS=6500, PARTY_MISSING_MS=4500;
+const PARTY_MAX=4, PARTY_JOIN_MS=6500, PARTY_MISSING_MS=4500;
+const PARTY_QUEUE_CAPS=Object.freeze({
+  arena:1, arena1v1:1, ai1v1:1, ranked1v1:1, ranked_1v1:1,
+  arena2v2:2, ranked2v2:2, ranked_2v2:2,
+  arena3v3:3, ranked3v3:3, ranked_3v3:3, endless:3
+});
 function freshParty(status){
   return {phase:'entry',code:'',channel:null,self:null,hostId:null,hostEpoch:0,revision:0,accepted:false,creating:false,
     members:[],mode:'endless',locked:false,plan:[],status:status||'',liveIds:new Set(),missingSince:{},
@@ -2474,6 +2490,7 @@ const DIFFS={easy:{hp:0.75,dmg:0.7,label:'EASY'}, normal:{hp:1,dmg:1,label:'NORM
 let spawnQueue=[], spawnTimer=0, betweenTimer=1500;
 let loadout={primary:null,secondary:null,melee:null,utility:null}, cardRects=[], deployRect=null;
 let selPage='hub', pendingGameMode=null, modeBoardMode=null, loadoutBackPage='modeboard', modeBoardActionRects=[], rankedRects=[], catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modeboard | ranked | loadout | party | tutorial | shop
+let modeBoardNotice='', modeBoardNoticeT=0;
 let detailKey=null, detailBtns=[], detailRects={};
 const CATS=[['PRIMARY','primary',()=>PRIMARIES,()=>TEMP_PRIMARY],
             ['SIDEARM','secondary',()=>SECONDARIES,()=>TEMP_SECONDARY],
@@ -4224,7 +4241,7 @@ function drawAdminPanel(){
   // everyone with admin: broadcast a banner
   actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 banner for all players'+(isMainAdmin()?'':' (needs approval)'));
   actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up \u00b7 ban \u00b7 log');
-  if(isMainAdmin()) actionBtn('edit','\u270E EDIT PAGES \u2014 move things \u00b7 add your own text');
+  if(isMainAdmin()) actionBtn('layout','\u2194 LAYOUT EDITOR \u2014 move home page sections');
   if(isMainAdmin()) actionBtn('promos','\uD83C\uDF81 PROMO CODES \u2014 create \u00b7 edit \u00b7 expire');
 
   toggle('testmode','\uD83E\uDDEA TEST MODE \u2014 all weapons \u00b7 no gems', testMode, true);
@@ -4279,7 +4296,10 @@ function adminPanelClick(){
       if(id==='post'){ openPost(); sfx('swap'); return; }
       if(id==='promos'){ adminPanelOpen=false; promoAdminOpen=true; fetchPromos(); sfx('swap'); return; }
       if(id==='players'){ adminPanelOpen=false; playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
-      if(id==='edit'){ if(!isMainAdmin()){ sfx('dry'); return; } adminPanelOpen=false; textMode=true; textSel=null; layoutPick=null; editHist=[]; editFuture=[]; sfx('swap'); return; }
+      if(id==='layout'){
+        if(!isMainAdmin()){ sfx('dry'); return; }
+        adminPanelOpen=false; selPage='hub'; layoutMode=true; layoutPick=null; sfx('swap'); return;
+      }
       if(id==='testmode'){ setTestMode(!testMode); sfx('swap'); return; }
       if(id==='storage'){ adminPanelOpen=false; storageOpen=true; sfx('swap'); return; }
       if(id.indexOf('appr:')===0){ approveBanner(+id.slice(5)); sfx('pickup'); return; }
@@ -4440,8 +4460,7 @@ addEventListener('keydown', e=>{
   if(appealOpen){ if(e.key==='Escape') closeAppeal(); return; }
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
   if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
-  if(alignOpen && e.key==='Escape'){ alignOpen=false; sfx('swap'); return; }
-  if(textMode && e.key==='Escape'){ textMode=false; textSel=null; sfx('swap'); return; }
+  if(layoutMode && e.key==='Escape'){ layoutMode=false; layoutDrag=null; layoutPick=null; sfx('swap'); return; }
   if(adminPanelOpen||updatesOpen||adminsOpen||msgsOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||readerOpen){ if(e.key==='Escape'){ if(wheelSpinning) return; if(readerOpen){ readerOpen=false; sfx('swap'); return; } wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; adminPanelOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
   if(['w','a','s','d',' '].includes(k)) e.preventDefault();
@@ -4500,7 +4519,6 @@ addEventListener('keyup', e=>{
 
 cv.addEventListener('mousemove', e=>{
   mouse.x=px(e.clientX); mouse.y=e.clientY;
-  if(textMode && mouse.down) textMouseMove();
   if(layoutMode && mouse.down) layoutMouseMove();
   if(dragSlider && mouse.down) setSliderFromMouse();
 });
@@ -4518,8 +4536,6 @@ cv.addEventListener('mousedown', e=>{
       menuOpen=!menuOpen; sfx('swap'); return;
     }
     if(menuOpen){ menuClick(); return; }
-    if(alignOpen && state==='select'){ alignClick(); return; }
-    if(textMode && state==='select'){ textMouseDown(); return; }
     if(layoutMode && state==='select' && selPage==='hub'){ layoutMouseDown(); return; }
     if(state==='select'){ clickSelect(); return; }
     if(state==='upgrade'){ clickUpgrade(); return; }
@@ -4539,7 +4555,7 @@ cv.addEventListener('mousedown', e=>{
   }
 });
 addEventListener('mouseup', e=>{
-  textMouseUp();
+  layoutMouseUp();
   if(e.button===0){ mouse.down=false; dragSlider=null; if(utilityOut) utilRelease(); }
   if(e.button===2 && rmbAim){ rmbAim=false; aiming=false; }
 });
@@ -4714,6 +4730,7 @@ function clickSelect(){
     for(const r of homePlayRects) if(inR(r)){
       if(!r.enabled){ sfx('dry'); return; }
       if(r.id==='play') openModeLeaderboard();
+      else if(r.id==='party'){ selPage='party'; sfx('swap'); }
       return;
     }
     if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
@@ -4729,7 +4746,10 @@ function clickSelect(){
     for(const r of leaderboardRowRects) if(inR(r)){ openBoardPlayer(r); return; }
     if(inR(backRect)){ navigateSelectBack(); return; }
     for(const r of modeBoardActionRects) if(inR(r)){
-      if(r.enabled===false){ sfx('dry'); return; }
+      if(r.enabled===false){
+        if(r.mode&&!partyAllowsQueue(r.mode)) return;
+        sfx('dry'); return;
+      }
       if(r.id==='ranked') { selPage='ranked'; sfx('swap'); }
       else if(r.id==='party_menu'||r.id==='party_open') { selPage='party'; sfx('swap'); }
       // Legacy ids remain routable for older cached canvases, but the live
@@ -4744,7 +4764,10 @@ function clickSelect(){
   if(selPage==='ranked'){
     if(inR(backRect)){ navigateSelectBack(); return; }
     for(const r of rankedRects) if(inR(r)){
-      if(!r.enabled){ sfx('dry'); return; }
+      if(!r.enabled){
+        if(r.mode&&!partyAllowsQueue(r.mode)) return;
+        sfx('dry'); return;
+      }
       if(r.id==='signin') toggleAuth();
       return;
     }
@@ -4752,10 +4775,17 @@ function clickSelect(){
   }
   if(selPage==='party'){
     for(const r of partyRects) if(inR(r)){
-      if(!r.enabled){ sfx('dry'); return; }
+      if(!r.enabled){
+        if(r.mode==='mode6') party.status='2v2v2 AND 3v3 NEED 6 PLAYERS \u00b7 PARTY MAX IS 4';
+        sfx('dry'); return;
+      }
       if(r.id==='create') partyPromptCreate();
       else if(r.id==='join') partyPromptJoin();
-      else if(r.id==='back'||r.id==='leave') leaveParty('',false);
+      else if(r.id==='back'){
+        if(party.channel) leaveParty('',true); else { selPage='hub'; sfx('swap'); }
+      }
+      else if(r.id==='leave') leaveParty('',true);
+      else if(r.id==='browse') { selPage='modeboard'; fetchBoard(); sfx('swap'); }
       else if(r.id==='copy') partyCopyCode();
       else if(r.id==='mode') partySetMode(r.mode);
       else if(r.id==='auto'){
@@ -5327,6 +5357,9 @@ function arenaOwnPresence(){
           ready:!!arena.localReady,primary:loadout.primary,secondary:loadout.secondary,melee:loadout.melee};
 }
 function arenaQuickMatch(){
+  // Recheck at the real queue boundary: a friend may have joined the party
+  // while this player was choosing weapons or viewing the Arena menu.
+  if(!partyAllowsQueue('arena')) return;
   if(!arenaGuard()) return;
   leaveArena('',false);
   arena.mode='queue'; arena.phase='queue'; arena.status='Searching for another signed-in operator...'; arena.joinedAt=Date.now();
@@ -5733,9 +5766,9 @@ function arenaCopyCode(){
   sfx('pickup');
 }
 
-/* ---------------- public party lobby: up to six, no sign-in required ----------------
+/* ---------------- public party lobby: up to four, no sign-in required ----------------
    The lobby is ephemeral and casual. Supabase Presence supplies liveness;
-   the elected host owns the six-seat roster and versioned assignment plan. */
+   the elected host owns the four-seat roster and versioned assignment plan. */
 function partyServiceAvailable(){ return !!(sb&&navigator.onLine!==false&&typeof sb.channel==='function'); }
 function partyCleanName(v){ return String(v||'').replace(/[\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,18); }
 function partySessionIdentity(chosenName){
@@ -5762,7 +5795,7 @@ function partyDefaultName(){
 function partyPresence(ch){ return arenaPresenceList(ch).map(m=>({id:String(m.id||''),name:partyCleanName(m.name),joined:+m.joined||0})); }
 function partyIsHost(){ return !!(party.accepted&&party.self&&party.hostId===party.self.id); }
 function partyMember(id){ return party.members.find(m=>m.id===id); }
-function partyModeLabel(mode){ return mode==='endless'?'ENDLESS ROOMS':mode==='1v1'?'1v1 TOURNAMENT':mode==='2v2'?'2v2 TOURNAMENT':'3v3 CHAMPIONSHIP'; }
+function partyModeLabel(mode){ return mode==='endless'?'ENDLESS ROOMS':mode==='1v1'?'1v1 MATCH SETS':mode==='2v2'?'2v2 MATCH':'PARTY PLAN'; }
 function partySend(event,payload){
   if(!party.channel||!party.self) return;
   const body=Object.assign({from:party.self.id,code:party.code},payload||{});
@@ -5788,7 +5821,7 @@ function partyAutoAssign(){
   } else if(party.mode==='2v2'){
     ms.forEach((m,i)=>m.team=String.fromCharCode(65+Math.floor(i/2)));
   } else {
-    ms.forEach((m,i)=>m.team=i<3?'A':'B');
+    party.mode='1v1'; ms.forEach((m,i)=>m.team='S'+(i+1));
   }
 }
 function partyBuildPlan(){
@@ -5802,20 +5835,17 @@ function partyBuildPlan(){
     if(seeded.length<2) rows.push({title:'NEED 2+ PLAYERS',body:'Invite another operator.',ready:false});
     else {
       let lo=0,hi=seeded.length-1,match=1;
-      while(lo<hi) rows.push({title:(seeded.length===2?'FINAL':'ROUND 1 \u00b7 MATCH '+match++),body:name(seeded[lo++])+'  VS  '+name(seeded[hi--]),ready:true});
+      while(lo<hi) rows.push({title:(seeded.length===2?'1v1 MATCH':'1v1 SET '+match++),body:name(seeded[lo++])+'  VS  '+name(seeded[hi--]),ready:true});
       if(lo===hi) rows.push({title:'TOP-SEED BYE',body:name(seeded[lo])+' advances',ready:true});
     }
   } else {
-    const cap=party.mode==='2v2'?2:3, teams={};
+    const cap=2, teams={};
     for(const m of ms) (teams[m.team]||(teams[m.team]=[])).push(m);
     const full=Object.keys(teams).filter(k=>teams[k].length===cap).sort();
     const incomplete=Object.keys(teams).filter(k=>teams[k].length!==cap).sort();
     for(const k of incomplete) rows.push({title:'TEAM '+k+'  \u00b7  '+teams[k].length+'/'+cap,body:teams[k].map(name).join(' + ')||'OPEN',ready:false});
     if(full.length<2) rows.push({title:'NEED TWO FULL TEAMS',body:'Use AUTO ASSIGN or move players.',ready:false});
-    else if(party.mode==='2v2'&&full.length>=3){
-      rows.push({title:'SEMIFINAL',body:'TEAM '+full[1]+'  VS  TEAM '+full[2],ready:true});
-      rows.push({title:'FINAL',body:'TEAM '+full[0]+'  VS  SEMIFINAL WINNER',ready:true});
-    } else rows.push({title:'CHAMPIONSHIP',body:'TEAM '+full[0]+'  VS  TEAM '+full[1],ready:true});
+    else rows.push({title:'2v2 MATCH',body:'TEAM '+full[0]+'  VS  TEAM '+full[1],ready:true});
   }
   return rows.slice(0,6);
 }
@@ -5842,8 +5872,10 @@ function partyApplyState(p,force){
   const members=p.members.map(partyMemberCopy);
   if(!members.some(m=>m.id===party.self.id)) return false;
   party.hostId=hostId; party.hostEpoch=epoch; party.revision=rev; party.members=members;
-  party.mode=['endless','1v1','2v2','3v3'].includes(p.mode)?p.mode:'endless'; party.locked=!!p.locked;
-  party.plan=Array.isArray(p.plan)?p.plan.slice(0,6).map(r=>({title:String(r.title||'').slice(0,42),body:String(r.body||'').slice(0,110),ready:!!r.ready})):partyBuildPlan();
+  const validMode=['endless','1v1','2v2'].includes(p.mode);
+  party.mode=validMode?p.mode:'endless'; party.locked=!!p.locked;
+  if(!validMode) partyAutoAssign();
+  party.plan=validMode&&Array.isArray(p.plan)?p.plan.slice(0,6).map(r=>({title:String(r.title||'').slice(0,42),body:String(r.body||'').slice(0,110),ready:!!r.ready})):partyBuildPlan();
   party.accepted=true; party.phase='lobby'; party.status='Party connected. '+party.members.length+'/'+PARTY_MAX+' players.';
   return true;
 }
@@ -5854,7 +5886,7 @@ function partyReceive(event,p){
     if(!partyIsHost()||party.locked||!from||from===party.self.id) return;
     const existing=partyMember(from);
     if(existing){ partySend('join_accept',{to:from,state:partySnapshot()}); return; }
-    if(party.members.length>=PARTY_MAX){ partySend('join_reject',{to:from,reason:'PARTY FULL \u00b7 MAX 6'}); return; }
+    if(party.members.length>=PARTY_MAX){ partySend('join_reject',{to:from,reason:'PARTY FULL \u00b7 MAX 4'}); return; }
     const nextOrder=party.members.reduce((n,m)=>Math.max(n,m.order||0),0)+1;
     party.members.push({id:from,name:partyCleanName(p.name)||'OPERATOR',joined:+p.joined||Date.now(),order:nextOrder,ready:false,team:''});
     partyAutoAssign(); partyHostCommit('A new operator joined.');
@@ -5892,10 +5924,10 @@ function partyPresenceSync(ch){
   }
 }
 function partyConnect(code,creating,name){
-  if(!partyServiceAvailable()){ party=freshParty('PARTIES NEED AN INTERNET CONNECTION.'); selPage='modeboard'; sfx('dry'); return false; }
+  if(!partyServiceAvailable()){ party=freshParty('PARTIES NEED AN INTERNET CONNECTION.'); selPage='party'; sfx('dry'); return false; }
   leaveParty('',false);
   const self=partySessionIdentity(name), clean=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
-  if(clean.length!==6){ party=freshParty('Enter a full 6-character party code.'); selPage='modeboard'; sfx('dry'); return false; }
+  if(clean.length!==6){ party=freshParty('Enter a full 6-character party code.'); selPage='party'; sfx('dry'); return false; }
   party=freshParty(creating?'Opening party...':'Looking for that party...');
   party.phase='joining'; party.code=clean; party.self=self; party.creating=!!creating; party.joinDeadline=Date.now()+PARTY_JOIN_MS;
   if(creating){ party.accepted=true; party.hostId=self.id; party.hostEpoch=1; party.members=[self]; partyAutoAssign(); }
@@ -5940,7 +5972,7 @@ function partyCopyCode(){
   sfx('pickup');
 }
 function partySetMode(mode){
-  if(!partyIsHost()||party.locked||!['endless','1v1','2v2','3v3'].includes(mode)) return;
+  if(!partyIsHost()||party.locked||!['endless','1v1','2v2'].includes(mode)) return;
   party.mode=mode; party.members.forEach(m=>m.ready=false); partyAutoAssign(); partyHostCommit(partyModeLabel(mode)+' selected.'); sfx('swap');
 }
 function partyMoveMember(id,dir){
@@ -5953,8 +5985,7 @@ function partyMoveMember(id,dir){
   } else {
     let groups,cap;
     if(party.mode==='endless'){ groups=Array.from({length:Math.max(1,Math.ceil(party.members.length/3))},(_,i)=>'R'+(i+1)); cap=3; }
-    else if(party.mode==='2v2'){ groups=['A','B','C']; cap=2; }
-    else { groups=['A','B']; cap=3; }
+    else { groups=['A','B']; cap=2; }
     const at=Math.max(0,groups.indexOf(m.team));
     const target=groups[(at+(dir<0?-1:1)+groups.length)%groups.length];
     const occupants=party.members.filter(x=>x.team===target).sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
@@ -5979,7 +6010,7 @@ function leaveParty(status,toHub){
   const old=party;
   if(old&&old.channel){ try{ partySend('leave',{}); }catch(e){} partyDropChannel(old.channel); }
   party=freshParty(status||'Create a party or join with a 6-character code.');
-  selPage=toHub?'hub':'modeboard';
+  selPage=toHub?'hub':'party';
 }
 function partyTick(clock){
   if(!party||!party.channel||!party.self) return;
@@ -5999,10 +6030,10 @@ function partyTick(clock){
     else if(clock>=party.nextStateSend){ partySend('party_state',partySnapshot()); party.nextStateSend=clock+1000; }
   }
 }
-function flushEditorDraftOnExit(){ if(textDirty||layoutDirty) persistEditorDraft(); }
-addEventListener('pagehide',flushEditorDraftOnExit);
+function flushLayoutDraftOnExit(){ if(layoutDirty) persistLayoutDraft(); }
+addEventListener('pagehide',flushLayoutDraftOnExit);
 addEventListener('beforeunload',()=>{
-  flushEditorDraftOnExit();
+  flushLayoutDraftOnExit();
   try{ if(arena&&arena.matchChannel) arenaSend('leave',{}); }catch(e){}
   try{ if(party&&party.channel) partySend('leave',{}); }catch(e){}
 });
@@ -8248,7 +8279,7 @@ function drawBanNotice(){
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 }
 function drawSelect(){
-  layoutRects=[]; if(!(layoutMode||textMode)) textRects=[];   // one registry per frame
+  layoutRects=[];                                         // one registry per frame
   cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; partyRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
   adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
@@ -8956,12 +8987,13 @@ function drawArena(){
   selBg(); arenaRects=[];
   const botMode=isBotArena();
   const tiny=H<430, dense=H<620;
+  const queueNoticeActive=modeBoardNotice&&now<modeBoardNoticeT;
   const titleY=tiny?19:(dense?28:42), subY=tiny?41:(dense?53:70);
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillStyle=botMode?'#7fd8ff':'#d05548'; ctx.font='700 '+(tiny?20:(W<440?25:34))+'px ui-monospace,Consolas,monospace';
   ctx.fillText(botMode?'\u2694 OFFLINE 1v1 VS AI':'\u2694 ONLINE MULTIPLAYER',W/2,titleY);
-  ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
-  const arenaSub=botMode?'ONE DEVICE ONLY \u00b7 FIRST TO 5 \u00b7 NO UPGRADES OR REWARDS':
+  ctx.fillStyle=queueNoticeActive?'#ff6b5d':'#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
+  const arenaSub=queueNoticeActive?modeBoardNotice:botMode?'ONE DEVICE ONLY \u00b7 FIRST TO 5 \u00b7 NO UPGRADES OR REWARDS':
                    (tiny?'DIFFERENT DEVICES \u00b7 SIGN-IN ONLY \u00b7 FIRST TO 5':'ONLINE \u00b7 MULTIPLAYER ON DIFFERENT DEVICES \u00b7 FIRST TO 5 \u00b7 NO REWARDS');
   ctx.fillText(fitLine(arenaSub,W-16),W/2,subY);
   const pw=Math.min(560,W-20), px=W/2-pw/2, gap=tiny?4:(dense?7:10);
@@ -9028,7 +9060,7 @@ function drawArena(){
     const partyH=tiny?32:(dense?44:58);
     ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(px,y,pw,partyH); ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,y+0.5,pw,partyH);
     ctx.fillStyle='#6b7455'; ctx.font='700 '+(tiny?9:12)+'px ui-monospace,Consolas,monospace';
-    ctx.fillText('PARTIES \u00b7 UP TO 6 \u00b7 OPEN FROM PLAY MENU',W/2,y+(tiny?partyH/2:15));
+    ctx.fillText('PARTIES \u00b7 UP TO 4 \u00b7 OPEN FROM HOME',W/2,y+(tiny?partyH/2:15));
     if(!tiny){ ctx.font=(dense?'8':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine('Guest-friendly codes, teams, tournament brackets, and Endless room splits.',pw-20),W/2,y+(dense?32:39)); }
     y+=partyH+gap;
     const dh=tiny?32:(dense?44:58);
@@ -9069,29 +9101,45 @@ function onlinePlayReady(){
   return !!(sb && authUser && navigator.onLine!==false);
 }
 function onlineServiceAvailable(){ return !!(sb && navigator.onLine!==false); }
+function partyAllowsQueue(mode){
+  const cap=PARTY_QUEUE_CAPS[mode];
+  if(!cap||!party||!party.accepted||party.members.length<=cap){
+    modeBoardNotice=''; modeBoardNoticeT=0; return true;
+  }
+  const message='THE PARTY IS TOO BIG FOR THIS QUEUE';
+  modeBoardNotice=message; modeBoardNoticeT=performance.now()+2800;
+  party.status=message; arena.status=message; sfx('dry');
+  return false;
+}
 function openModeLeaderboard(){
   modeBoardMode=null; pendingGameMode=null;
   selPage='modeboard'; fetchBoard(); sfx('swap'); return true;
 }
 function chooseGameMode(mode,returnPage='modeboard'){
+  // Size is checked before locked/auth states so a party always gets the
+  // useful queue-capacity explanation for the button it just chose.
+  if(!partyAllowsQueue(mode)) return false;
   if(mode==='arena2v2'||mode==='arena3v3'){
-    arena.status=(mode==='arena2v2'?'2v2':'3v3')+' is locked and coming soon.'; sfx('dry'); return;
+    arena.status=(mode==='arena2v2'?'2v2':'3v3')+' is locked and coming soon.'; sfx('dry'); return false;
   }
   loadoutBackPage=returnPage;
   if(mode==='arena' && !onlinePlayReady()){
-    if(navigator.onLine===false || !sb){ arena.status='Online games are unavailable. Reconnect and try again.'; sfx('dry'); return; }
+    if(navigator.onLine===false || !sb){ arena.status='Online games are unavailable. Reconnect and try again.'; sfx('dry'); return false; }
     arenaAuthPending=true; $('aguest').style.display='none';
     $('authmsg').textContent='Sign in is required for Online multiplayer on different devices.';
-    $('authwrap').style.display='flex'; sfx('dry'); return;
+    $('authwrap').style.display='flex'; sfx('dry'); return false;
   }
   pendingGameMode=mode; modeBoardMode=mode==='arena'?'arena':'endless';
   loadout={primary:null,secondary:null,melee:null,utility:null};
-  selPage='loadout'; sfx('swap');
+  selPage='loadout'; sfx('swap'); return true;
 }
 function launchSelectedMode(){
   if(!(loadout.primary&&loadout.secondary&&loadout.melee)){
     pracNeedMsgT=now+1600; sfx('dry'); return false;
   }
+  // Party membership can change while the loadout screen is open, so the
+  // selection-page check alone is not enough to protect queue capacities.
+  if(!partyAllowsQueue(pendingGameMode)) return false;
   if(pendingGameMode==='arena'){
     if(!onlinePlayReady()){ chooseGameMode('arena'); return false; }
     loadout.utility=null; selPage='arena'; arena.status='Loadout ready. Choose Quick Match.'; sfx('swap'); return true;
@@ -9113,7 +9161,12 @@ function navigateSelectBack(){
   }
   if(selPage==='modeboard'){ pendingGameMode=null; modeBoardMode=null; selPage='hub'; sfx('swap'); return; }
   if(selPage==='ranked'){ selPage='modeboard'; sfx('swap'); return; }
-  if(selPage==='party'){ leaveParty('',false); sfx('swap'); return; }
+  if(selPage==='party'){
+    if(party.accepted){ selPage='modeboard'; fetchBoard(); sfx('swap'); }
+    else if(party.channel) { leaveParty('',true); sfx('swap'); }
+    else { selPage='hub'; sfx('swap'); }
+    return;
+  }
   if(selPage==='modes'){ selPage='hub'; sfx('swap'); return; }
   if(selPage==='arena'){
     if(isBotArena()){ leaveArena('',false); sfx('swap'); return; }
@@ -9126,81 +9179,71 @@ function navigateSelectBack(){
 }
 function drawModeLeaderboard(){
   selBg(); leaderboardRowRects=[]; modeBoardActionRects=[];
-  const tiny=H<390||(W<=360&&H<=500), compact=H<560, landscape=W/H>=1.35;
+  const tiny=H<450||(W<=360&&H<=500), compact=H<600;
   ctx.textAlign='center'; ctx.textBaseline='top';
   ctx.fillStyle='#e8b658'; ctx.font='700 '+(tiny?20:compact?26:34)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('PLAY',W/2,tiny?4:10);
-  ctx.fillStyle='#8a9268'; ctx.font=(tiny?'7':compact?'9':'10')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('ALL GAME MODES \u00b7 ONE PAGE',W/2,tiny?25:compact?39:50);
+  const noticeActive=typeof modeBoardNotice!=='undefined'&&modeBoardNotice&&typeof modeBoardNoticeT!=='undefined'&&typeof now!=='undefined'&&now<modeBoardNoticeT;
+  ctx.fillStyle=noticeActive?'#ff6b5d':'#8a9268'; ctx.font='700 '+(tiny?'7':compact?'9':'10')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine(noticeActive?modeBoardNotice:'CHOOSE WHERE YOU WANT TO PLAY',W-20),W/2,tiny?25:compact?39:50);
 
-  const margin=tiny?7:compact?10:16, gap=tiny?5:compact?7:10;
-  const cols=(W>=620||landscape)?2:1, count=4, gridRows=Math.ceil(count/cols);
-  const top=tiny?34:compact?52:66, backH=tiny?30:compact?34:40;
+  const margin=tiny?7:compact?10:16, gap=tiny?2:compact?4:7;
+  const top=tiny?35:compact?52:66, backH=tiny?30:compact?34:40;
   const backY=H-backH-(tiny?5:8), contentBottom=backY-(tiny?5:8);
-  const gridW=Math.min(920,W-margin*2), gridX=(W-gridW)/2;
-  const availableCardH=(contentBottom-top-gap*(gridRows-1))/gridRows;
-  // Keep the four sections compact on large screens: leaderboards should be
-  // quick context beside the mode choices, not tall panels that fill the page.
-  const cardH=Math.min(availableCardH,tiny?120:compact?140:160);
-  const gridH=cardH*gridRows+gap*(gridRows-1);
-  const gridTop=top+Math.max(0,(contentBottom-top-gridH)/2);
-  const cardW=(gridW-gap*(cols-1))/cols;
+  const contentW=Math.min(780,W-margin*2), contentX=(W-contentW)/2;
+  const sectionTitleH=tiny?14:compact?22:28, sectionGap=tiny?3:compact?6:10;
+  const outerPad=tiny?1:compact?4:6;
+  // Five large, full-width choices are intentionally shown in one reading
+  // order. Leaderboards live on Home so this screen can stay focused on play.
+  const fixed=sectionTitleH*2+sectionGap+outerPad*4+gap*3;
+  const tinyActionH=H<390?38:42, tinyActionMin=H<390?34:42;
+  const actionH=Math.min(tiny?tinyActionH:compact?50:64,Math.max(tiny?tinyActionMin:compact?42:48,Math.floor((contentBottom-top-fixed)/5)));
 
-  const drawMiniBoard=(rows,label,metric,x,y,w,h,col,empty)=>{
-    ctx.fillStyle='rgba(0,0,0,0.30)'; ctx.fillRect(x,y,w,h);
-    ctx.textBaseline='top'; ctx.textAlign='left'; ctx.fillStyle=col;
-    ctx.font='700 '+(tiny?6:compact?7:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(label,w-50),x+5,y+3);
-    ctx.textAlign='right'; ctx.fillText(metric,x+w-5,y+3);
-    const maxRows=h>=42?2:1, rh=Math.max(10,(h-14)/maxRows);
-    if(rows&&rows.length){
-      for(let i=0;i<Math.min(maxRows,rows.length);i++){
-        const item=rows[i], ry=y+13+i*rh, pub=publicProfileCache[item.user_id]||{}, name=pub.email||item.name||'operator';
-        leaderboardRowRects.push({x:x+3,y:ry,w:w-6,h:rh,userId:item.user_id,name});
-        ctx.fillStyle=i%2?'rgba(255,255,255,0.025)':'rgba(255,255,255,0.05)'; ctx.fillRect(x+3,ry,w-6,rh);
-        ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.fillStyle='#cdd6b0'; ctx.font=(tiny?'6':compact?'7':'8')+'px ui-monospace,Consolas,monospace';
-        ctx.fillText(fitLine((i+1)+'. '+name,w-65),x+6,ry+rh/2);
-        ctx.textAlign='right'; ctx.fillStyle=col; ctx.font='700 '+(tiny?7:compact?8:9)+'px ui-monospace,Consolas,monospace'; ctx.fillText(String(item.score||0),x+w-6,ry+rh/2);
-      }
-    } else {
-      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#60675a'; ctx.font=(tiny?'6':compact?'7':'8')+'px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine(empty||'NO RESULTS YET',w-10),x+w/2,y+13+(h-13)/2);
-    }
-  };
   const drawAction=(item,x,y,w,h)=>{
     const hot=item.enabled&&mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
     const r={id:item.id,mode:item.mode,x,y,w,h,enabled:item.enabled}; modeBoardActionRects.push(r);
     ctx.fillStyle=item.enabled?(hot?item.col:'rgba(0,0,0,0.44)'):'rgba(38,38,38,0.78)'; ctx.fillRect(x,y,w,h);
     ctx.strokeStyle=item.enabled?item.col:'#4a4a45'; ctx.strokeRect(x+0.5,y+0.5,w,h);
     ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=item.enabled?(hot?'#101208':'#e8d9a8'):'#65655f';
-    ctx.font='700 '+(tiny?12:compact?15:20)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(item.label,w-8),x+w/2,y+h/2);
+    ctx.font='700 '+(tiny?15:compact?19:25)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(item.label,w-14),x+w/2,y+h/2-(item.note?5:0));
+    if(item.note){
+      ctx.fillStyle=item.enabled?(hot?'#24291a':'#7f876e'):'#55554f';
+      ctx.font='700 '+(tiny?6:compact?7:8)+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine(item.note,w-14),x+w/2,y+h/2+(tiny?9:compact?12:16));
+    }
   };
-  const drawSection=(section,index)=>{
-    const colIndex=index%cols, rowIndex=Math.floor(index/cols), x=gridX+colIndex*(cardW+gap), y=gridTop+rowIndex*(cardH+gap);
-    ctx.fillStyle='rgba(12,13,10,0.76)'; ctx.fillRect(x,y,cardW,cardH); ctx.strokeStyle=section.col; ctx.lineWidth=1.5; ctx.strokeRect(x+0.5,y+0.5,cardW,cardH);
-    ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=section.col; ctx.font='700 '+(tiny?9:compact?11:14)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(section.title,cardW-12),x+7,y+6);
-    ctx.fillStyle='#777f68'; ctx.font=(tiny?'6':compact?'7':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(section.sub,cardW-12),x+7,y+(tiny?19:compact?23:28));
-    const bh=tiny?28:compact?32:38, by=y+cardH-bh-5;
-    const miniY=y+(tiny?29:compact?35:43);
-    const miniH=Math.min(tiny?44:compact?52:60,Math.max(17,by-miniY-5));
-    drawMiniBoard(section.rows,section.board,section.metric,x+5,miniY,cardW-10,miniH,section.col,section.empty);
-    const bg=tiny?4:6, bw=(cardW-10-bg*(section.actions.length-1))/section.actions.length;
-    for(let i=0;i<section.actions.length;i++) drawAction(section.actions[i],x+5+i*(bw+bg),by,bw,bh);
+  const sectionHeight=section=>outerPad*2+sectionTitleH+section.actions.length*actionH+(section.actions.length-1)*gap;
+  const drawSection=(section,y)=>{
+    const sectionH=sectionHeight(section);
+    ctx.fillStyle='rgba(12,13,10,0.76)'; ctx.fillRect(contentX,y,contentW,sectionH);
+    ctx.strokeStyle=section.col; ctx.lineWidth=1.5; ctx.strokeRect(contentX+0.5,y+0.5,contentW,sectionH);
+    const headY=y+outerPad;
+    ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle=section.col;
+    ctx.font='700 '+(tiny?13:compact?17:22)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(section.title,contentX+10,headY+sectionTitleH/2);
+    ctx.textAlign='right'; ctx.fillStyle='#777f68'; ctx.font='700 '+(tiny?6:compact?8:10)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(section.sub,contentW*0.62),contentX+contentW-10,headY+sectionTitleH/2);
+    let ay=headY+sectionTitleH;
+    for(const action of section.actions){
+      drawAction(action,contentX+outerPad,ay,contentW-outerPad*2,actionH);
+      ay+=actionH+gap;
+    }
+    return y+sectionH;
   };
 
   const connected=onlineServiceAvailable();
   const sections=[
-    {title:'ONLINE \u00b7 MULTIPLE DEVICES',sub:authUser?'CASUAL MULTIPLAYER':'CASUAL \u00b7 SIGN IN TO PLAY',col:'#d05548',rows:arenaBoard,board:'CASUAL LEADERBOARD',metric:'WINS',empty:connected?'NO 1v1 WINS YET':'NO CONNECTION',actions:[
-      {id:'casual_1v1',mode:'arena',label:'1v1',col:'#d05548',enabled:connected},
-      {id:'casual_2v2',mode:'arena2v2',label:'2v2  \uD83D\uDD12',col:'#6b7455',enabled:false}]},
-    {title:'RANKED',sub:'RANK + ELO \u00b7 SERVERS COMING SOON',col:'#e8b658',rows:[],board:'RANKED LEADERBOARD',metric:'ELO',empty:'NO RATED RESULTS YET',actions:[
-      {id:'ranked',label:'VIEW RANK + ELO',col:'#e8b658',enabled:true}]},
-    {title:'OFFLINE \u00b7 ONE DEVICE',sub:'PLAY WITHOUT AN INTERNET MATCH',col:'#a7c15e',rows:board,board:'ENDLESS LEADERBOARD',metric:'SCORE',empty:'NO ENDLESS SCORES YET',actions:[
+    {title:'ONLINE',sub:'MULTIPLE DEVICES',col:'#d05548',actions:[
+      {id:'casual_1v1',mode:'arena',label:'1v1',note:authUser?'CASUAL \u00b7 FIRST TO 5':'SIGN IN TO PLAY',col:'#d05548',enabled:connected},
+      {id:'casual_2v2',mode:'arena2v2',label:'2v2  \uD83D\uDD12',note:'COMING SOON',col:'#6b7455',enabled:false},
+      {id:'ranked',label:'PLAY RANKED',note:'RANK + ELO \u00b7 COMING SOON',col:'#e8b658',enabled:true}]},
+    {title:'OFFLINE',sub:'ONE DEVICE',col:'#a7c15e',actions:[
       {id:'offline_endless',mode:'endless',label:'ENDLESS',col:'#a7c15e',enabled:true},
-      {id:'offline_ai',mode:'ai1v1',label:'1v1 VS AI',col:'#7fd8ff',enabled:true}]},
-    {title:'PARTY \u00b7 UP TO 6',sub:party.accepted?(party.members.length+'/6 PLAYERS \u00b7 CODE '+party.code):'CREATE, JOIN + ASSIGN TEAMS',col:'#bfa8ff',rows:[],board:'PARTY LEADERBOARD',metric:'WINS',empty:'PARTY RESULTS COMING SOON',actions:[
-      {id:'party_menu',label:party.accepted?'OPEN PARTY':'PARTY MENU',col:'#bfa8ff',enabled:true}]}
+      {id:'offline_ai',mode:'ai1v1',label:'1v1 VS AI',note:'FIRST TO 5',col:'#7fd8ff',enabled:true}]}
   ];
-  sections.forEach(drawSection);
+  const totalSectionsH=sections.reduce((sum,section)=>sum+sectionHeight(section),0)+sectionGap*(sections.length-1);
+  let sectionY=top+Math.max(0,(contentBottom-top-totalSectionsH)/2);
+  for(const section of sections){ sectionY=drawSection(section,sectionY)+sectionGap; }
 
   backRect={x:margin,y:backY,w:Math.min(150,W-2*margin),h:backH};
   const backHot=mouse.x>=backRect.x&&mouse.x<=backRect.x+backRect.w&&mouse.y>=backRect.y&&mouse.y<=backRect.y+backRect.h;
@@ -9212,7 +9255,9 @@ function drawRanked(){
   selBg(); rankedRects=[]; leaderboardRowRects=[];
   const tiny=H<390, compact=H<560, margin=tiny?9:compact?13:20, col='#e8b658';
   ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle=col; ctx.font='700 '+(tiny?20:compact?28:38)+'px ui-monospace,Consolas,monospace'; ctx.fillText('RANKED',W/2,tiny?5:14);
-  ctx.fillStyle='#8a9268'; ctx.font=(tiny?'7':compact?'9':'11')+'px ui-monospace,Consolas,monospace'; ctx.fillText('COMPETITIVE \u00b7 RATING-PROTECTED MATCHES',W/2,tiny?27:compact?48:61);
+  const noticeActive=typeof modeBoardNotice!=='undefined'&&modeBoardNotice&&typeof modeBoardNoticeT!=='undefined'&&typeof now!=='undefined'&&now<modeBoardNoticeT;
+  ctx.fillStyle=noticeActive?'#ff6b5d':'#8a9268'; ctx.font=(tiny?'7':compact?'9':'11')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine(noticeActive?modeBoardNotice:'COMPETITIVE \u00b7 RATING-PROTECTED MATCHES',W-20),W/2,tiny?27:compact?48:61);
   const totalW=Math.min(650,W-margin*2), x0=W/2-totalW/2, gap=tiny?5:8, statsY=tiny?39:compact?68:88, statsH=tiny?45:compact?58:76, sw=(totalW-gap*2)/3;
   const stats=[['RANK',authUser?'UNRANKED':'SIGN IN'],['ELO','\u2014'],['PLACEMENTS','0 / 5']];
   for(let i=0;i<3;i++){
@@ -9226,9 +9271,9 @@ function drawRanked(){
   ctx.textAlign='right'; ctx.fillText('ELO',x0+totalW-9,lbY+7);
   ctx.textAlign='center'; ctx.fillStyle='#626153'; ctx.font=(tiny?'7':compact?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText('NO RATED RESULTS \u00b7 SECURE MATCH SERVERS COMING SOON',W/2,lbY+lbH/2);
   const modeY=lbY+lbH+gap, modeH=tiny?42:compact?54:68, modeGap=tiny?5:8, modeW=(totalW-modeGap)/2;
-  const modes=[{id:'ranked_1v1',label:'RANKED 1v1  \uD83D\uDD12'},{id:'ranked_2v2',label:'RANKED 2v2  \uD83D\uDD12'}];
+  const modes=[{id:'ranked_1v1',mode:'ranked1v1',label:'RANKED 1v1  \uD83D\uDD12'},{id:'ranked_2v2',mode:'ranked2v2',label:'RANKED 2v2  \uD83D\uDD12'}];
   for(let i=0;i<2;i++){
-    const x=x0+i*(modeW+modeGap), r={id:modes[i].id,x,y:modeY,w:modeW,h:modeH,enabled:false}; rankedRects.push(r);
+    const x=x0+i*(modeW+modeGap), r={id:modes[i].id,mode:modes[i].mode,x,y:modeY,w:modeW,h:modeH,enabled:false}; rankedRects.push(r);
     ctx.fillStyle='rgba(38,38,38,0.78)'; ctx.fillRect(x,modeY,modeW,modeH); ctx.strokeStyle='#4a4a45'; ctx.strokeRect(x+0.5,modeY+0.5,modeW,modeH);
     ctx.fillStyle='#696960'; ctx.font='700 '+(tiny?10:compact?14:18)+'px ui-monospace,Consolas,monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(fitLine(modes[i].label,modeW-10),x+modeW/2,modeY+modeH/2-5);
     ctx.fillStyle='#55554f'; ctx.font='700 '+(tiny?6:compact?7:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText('SECURE SERVER REQUIRED',x+modeW/2,modeY+modeH/2+(tiny?10:13));
@@ -9291,14 +9336,14 @@ function drawPartyEntry(){
   ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?24:34)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('PARTY MENU',W/2,H*0.045);
   ctx.fillStyle='#8a9268'; ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('UP TO 6 PLAYERS \u00b7 NO SIGN-IN \u00b7 TEAM SETUP \u00b7 MATCH LAUNCH COMING SOON',W-24),W/2,H*0.045+(compact?32:44));
+  ctx.fillText(fitLine('UP TO 4 PLAYERS \u00b7 NO SIGN-IN \u00b7 TEAM SETUP \u00b7 BROWSE GAMES TOGETHER',W-24),W/2,H*0.045+(compact?32:44));
   const infoY=H*0.045+(compact?54:72), infoH=compact?116:150;
   ctx.fillStyle='rgba(18,17,22,0.72)'; ctx.fillRect(px,infoY,pw,infoH); ctx.strokeStyle='#5c526d'; ctx.strokeRect(px+0.5,infoY+0.5,pw,infoH);
   const lines=[
     ['ENDLESS ROOMS','ASSIGN UP TO 3 PLAYERS PER ROOM'],
-    ['1v1 BRACKET','ASSIGN 2\u20136 INDIVIDUAL SEEDS + BYES'],
-    ['2v2 BRACKET','ASSIGN 2 OR 3 TEAMS OF TWO'],
-    ['3v3 MATCH','ASSIGN TWO TEAMS OF THREE']
+    ['1v1 MATCH SETS','2 OR 4 PLAYERS \u00b7 UP TO TWO MATCHES'],
+    ['2v2 MATCH','ASSIGN TWO TEAMS OF TWO'],
+    ['2v2v2 / 3v3  \uD83D\uDD12','UNAVAILABLE \u00b7 NEED 6 PLAYERS \u00b7 PARTY MAX IS 4']
   ];
   const lh=infoH/lines.length;
   for(let i=0;i<lines.length;i++){
@@ -9310,7 +9355,7 @@ function drawPartyEntry(){
   const gap=compact?7:10, bh=compact?38:48, buttonsY=infoY+infoH+(compact?10:16), bw=(pw-gap)/2;
   drawPartyButton('create','CREATE PARTY',px,buttonsY,bw,bh,'#a7c15e',online);
   drawPartyButton('join','JOIN WITH CODE',px+bw+gap,buttonsY,bw,bh,'#7fd8ff',online);
-  const backH=compact?32:38, backY=H-backH-14; backRect=drawPartyButton('back','\u2039 PLAY MENU',W/2-Math.min(260,W-36)/2,backY,Math.min(260,W-36),backH,'#8a9268',true);
+  const backH=compact?32:38, backY=H-backH-14; backRect=drawPartyButton('back','\u2039 HOME',W/2-Math.min(260,W-36)/2,backY,Math.min(260,W-36),backH,'#8a9268',true);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic'; ctx.fillStyle=online?'#8a9268':'#d05548'; ctx.font='700 '+(compact?8:10)+'px ui-monospace,Consolas,monospace';
   const msg=!online?'PARTIES NEED AN INTERNET CONNECTION':party.phase==='joining'?'CONNECTING TO PARTY...':(party.status||'TEAM SETUP WORKS NOW \u00b7 MATCH LAUNCH COMING SOON');
   ctx.fillText(fitLine(msg,W-24),W/2,Math.min(backY-10,buttonsY+bh+(compact?20:28)));
@@ -9333,18 +9378,22 @@ function drawPartyLobby(){
   drawPartyButton('copy','COPY',codeX+codeW-leaveW-copyW-8,codeY+3,copyW,codeH-6,'#7fd8ff',true);
   backRect=drawPartyButton('leave','LEAVE',codeX+codeW-leaveW-4,codeY+3,leaveW,codeH-6,'#d05548',true);
 
-  const modes=[['endless','ENDLESS'],['1v1','1v1'],['2v2','2v2'],['3v3','3v3']], mg=compact?5:8;
+  const modes=[['endless','ENDLESS',true],['1v1','1v1 SETS',true],['2v2','2v2',true],['mode6','6P MODES \uD83D\uDD12',false]], mg=compact?5:8;
   const modeY=codeY+codeH+(compact?6:9), modeH=compact?27:34, modeW=(W-margin*2-mg*3)/4;
   for(let i=0;i<modes.length;i++) drawPartyButton('mode',modes[i][1],margin+i*(modeW+mg),modeY,modeW,modeH,
-    party.mode===modes[i][0]?'#bfa8ff':'#6b7455',partyIsHost()&&!party.locked,{mode:modes[i][0]});
+    party.mode===modes[i][0]?'#bfa8ff':'#6b7455',modes[i][2]&&partyIsHost()&&!party.locked,{mode:modes[i][0]});
 
   const footerH=compact?28:34, footerY=H-footerH-margin, fg=compact?5:8, footerW=W-margin*2;
-  const footerButtons=partyIsHost()?3:1, fw=(footerW-fg*(footerButtons-1))/footerButtons;
+  const footerButtons=partyIsHost()?4:2, fw=(footerW-fg*(footerButtons-1))/footerButtons;
   if(partyIsHost()){
     drawPartyButton('auto','AUTO ASSIGN',margin,footerY,fw,footerH,'#a7c15e',!party.locked);
     drawPartyButton('lock',party.locked?'UNLOCK PLAN':'LOCK PLAN',margin+fw+fg,footerY,fw,footerH,'#e8b658',true);
     drawPartyButton('ready',mine&&mine.ready?'NOT READY':'I AM READY',margin+(fw+fg)*2,footerY,fw,footerH,'#7fd8ff',true);
-  } else drawPartyButton('ready',mine&&mine.ready?'NOT READY':'I AM READY',margin,footerY,footerW,footerH,'#7fd8ff',true);
+    drawPartyButton('browse','BROWSE GAMES',margin+(fw+fg)*3,footerY,fw,footerH,'#bfa8ff',true);
+  } else {
+    drawPartyButton('ready',mine&&mine.ready?'NOT READY':'I AM READY',margin,footerY,fw,footerH,'#7fd8ff',true);
+    drawPartyButton('browse','BROWSE GAMES',margin+fw+fg,footerY,fw,footerH,'#bfa8ff',true);
+  }
 
   const contentTop=modeY+modeH+(compact?6:9), contentBottom=footerY-(compact?22:28), contentH=Math.max(80,contentBottom-contentTop), colGap=wide?12:0;
   const rosterX=margin, rosterW=wide?(W-margin*2-colGap)*0.46:W-margin*2, planX=wide?rosterX+rosterW+colGap:margin, planW=wide?W-margin-planX:rosterW;
@@ -9388,15 +9437,16 @@ function drawParty(){
 function drawLoadout(){
   selBg(); catBtns=[];
   const arenaMode=pendingGameMode==='arena', aiMode=pendingGameMode==='ai1v1', duelMode=arenaMode||aiMode;
+  const queueNoticeActive=modeBoardNotice&&now<modeBoardNoticeT;
   const modeCol=arenaMode?'#d05548':aiMode?'#7fd8ff':'#e8b658';
   ctx.textAlign='center'; ctx.textBaseline='top';
   ctx.fillStyle=modeCol; ctx.font='700 '+(H<600?24:32)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('CHOOSE YOUR WEAPONS',W/2,H*0.035);
-  ctx.fillStyle='#8a9268'; ctx.font=(W<430?'9':'11')+'px ui-monospace,Consolas,monospace';
+  ctx.fillStyle=queueNoticeActive?'#ff6b5d':'#8a9268'; ctx.font=(W<430?'9':'11')+'px ui-monospace,Consolas,monospace';
   const loadoutSub=arenaMode?'ONLINE MULTIPLAYER \u00b7 DIFFERENT DEVICES \u00b7 1v1':
                    aiMode?'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 1v1 VS AI \u00b7 NO UPGRADES':
                           'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 ENDLESS \u00b7 UTILITY OPTIONAL';
-  ctx.fillText(fitLine(loadoutSub,W-24),W/2,H*0.035+40);
+  ctx.fillText(fitLine(queueNoticeActive?modeBoardNotice:loadoutSub,W-24),W/2,H*0.035+40);
   const rows=duelMode?CATS.slice(0,3):CATS;
   const bw=Math.min(540,W-40), x0=W/2-bw/2, gap=H<600?9:14;
   const top=H*0.035+68, footer=112;
@@ -9430,14 +9480,57 @@ function drawLoadout(){
   if(now<pracNeedMsgT){ ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('PRIMARY + SIDEARM + MELEE ARE REQUIRED',W/2,dy-18); }
   ctx.textBaseline='alphabetic';
 }
+function drawHomeLeaderboards(x,y,w,h){
+  const titleH=h<90?16:20, gap=w<400?5:10;
+  const panelY=y+titleH, panelH=h-titleH, panelW=(w-gap)/2;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle='#e8b658'; ctx.font='700 '+(h<90?9:11)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83C\uDFC6 TOP '+PUBLIC_BOARD_LIMIT+' LEADERBOARDS',x+w/2,y+titleH/2);
+  const panels=[
+    {x,title:'ONLINE',metric:'1v1 WINS',rows:arenaBoard,col:'#d05548',empty:onlineServiceAvailable()?'NO WINS YET':'NO CONNECTION'},
+    {x:x+panelW+gap,title:'OFFLINE',metric:'ENDLESS SCORE',rows:board,col:'#a7c15e',empty:sb?'NO SCORES YET':'BOARD OFFLINE'}
+  ];
+  for(const panel of panels){
+    ctx.fillStyle='rgba(8,10,7,0.72)'; ctx.fillRect(panel.x,panelY,panelW,panelH);
+    ctx.strokeStyle=panel.col; ctx.lineWidth=1.2; ctx.strokeRect(panel.x+0.5,panelY+0.5,panelW,panelH);
+    const headH=panelH<70?14:19;
+    ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.fillStyle=panel.col;
+    ctx.font='700 '+(panelW<170?7:9)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(panel.title,panel.x+6,panelY+headH/2);
+    ctx.textAlign='right'; ctx.fillStyle='#777f68'; ctx.font='700 '+(panelW<170?6:7)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(panel.metric,panel.x+panelW-6,panelY+headH/2);
+    const rowH=(panelH-headH-2)/PUBLIC_BOARD_LIMIT;
+    const count=Math.min(PUBLIC_BOARD_LIMIT,panel.rows.length);
+    for(let i=0;i<PUBLIC_BOARD_LIMIT;i++){
+      const rowY=panelY+headH+i*rowH;
+      ctx.fillStyle=i%2?'rgba(255,255,255,0.018)':'rgba(255,255,255,0.045)';
+      ctx.fillRect(panel.x+3,rowY,panelW-6,rowH);
+      if(i>=count) continue;
+      const item=panel.rows[i], pub=publicProfileCache[item.user_id]||{};
+      const publicName=String(pub.email||item.name||'operator');
+      leaderboardRowRects.push({x:panel.x+3,y:rowY,w:panelW-6,h:rowH,userId:item.user_id,name:publicName});
+      const hot=mouse.x>=panel.x+3&&mouse.x<=panel.x+panelW-3&&mouse.y>=rowY&&mouse.y<=rowY+rowH;
+      if(hot){ ctx.fillStyle='rgba(127,216,255,0.13)'; ctx.fillRect(panel.x+3,rowY,panelW-6,rowH); }
+      const me=authUser&&item.user_id===authUser.id;
+      ctx.textBaseline='middle'; ctx.textAlign='left'; ctx.fillStyle=me?'#a7c15e':(i<3?'#cdd6b0':'#8a9268');
+      ctx.font=(rowH<11?'6':rowH<14?'8':'9')+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine((i+1)+'. '+publicName,panelW-52),panel.x+6,rowY+rowH/2);
+      ctx.textAlign='right'; ctx.fillStyle=panel.col; ctx.font='700 '+(rowH<11?'6':rowH<14?'8':'9')+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(String(item.score||0),panel.x+panelW-6,rowY+rowH/2);
+    }
+    if(!count){
+      ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#60675a';
+      ctx.font=(panelW<170?'6':'8')+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine(panel.empty,panelW-12),panel.x+panelW/2,panelY+headH+(panelH-headH)/2);
+    }
+  }
+  ctx.textAlign='center'; ctx.textBaseline='top';
+}
 function drawHub(){
   selBg();
   leaderboardRowRects=[];
   compactStatus = W<680;
   pendingCancelRect=null;
-  // the leaderboard panel hosts the lookup when it is shown; otherwise the bottom row does
-  const lbShown = W>720 && ((W/2 + Math.min(460,W-80)/2 + 16) < (W-210-24));
-  let lookupDrawn=false;
   ctx.textAlign='center';
   const titleFs=(H<760?28:38);
   ctx.fillStyle='#e8b658'; ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
@@ -9530,26 +9623,41 @@ function drawHub(){
   homePlayRects=[];
   hubPostsRect=null;
   const hbH=H<600?30:40, hbGap=W<520?5:8;
-  const hbN=5+(lbShown?0:1);
+  const hbN=6;
   const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
   const hbY=H-hbH-8;
-  const actionCount=1, actionCols=1, actionRows=1;
-  const actionGap=H<560?5:8, targetActionH=H<560?42:62;
-  const actionReserve=targetActionH*actionRows+actionGap*(actionRows-1)+18;
-  const boardTop=bnY+bnH+8;
-  const boardBottom=drawHubPosts(boardTop, hbY-actionReserve);
+  const actionCount=2, actionCols=W>=480?2:1, actionRows=Math.ceil(actionCount/actionCols);
+  const actionGap=H<390?3:H<560?5:8, targetActionH=H<390?34:H<560?42:62;
+  const contentTop=bnY+bnH+8, actionBottom=hbY-10;
+  let cardH=targetActionH, homeBoardsH=H<390?72:H<560?88:112;
+  const boardActionGap=H<390?3:H<560?5:8;
+  const available=Math.max(0,actionBottom-contentTop);
+  let actionBlockH=cardH*actionRows+actionGap*(actionRows-1);
+  let excess=homeBoardsH+boardActionGap+actionBlockH-available;
+  if(excess>0){
+    const shrink=Math.min(excess,Math.max(0,homeBoardsH-(H<390?60:72)));
+    homeBoardsH-=shrink; excess-=shrink;
+  }
+  if(excess>0){
+    cardH=Math.max(H<390?27:32,Math.floor((available-homeBoardsH-boardActionGap-actionGap*(actionRows-1))/actionRows));
+    actionBlockH=cardH*actionRows+actionGap*(actionRows-1);
+  }
+  const maxBoardsY=Math.max(contentTop,actionBottom-actionBlockH-boardActionGap-homeBoardsH);
+  const preferredBoardsY=Math.min(maxBoardsY,Math.max(contentTop,H*0.30));
+  const postsLimit=preferredBoardsY-boardActionGap;
+  const boardBottom=postsLimit-contentTop>=58?drawHubPosts(contentTop,postsLimit):contentTop;
   // The updates feed draws its post copy left-aligned. Home action labels use
   // their rectangle centres, so restore centred text before drawing buttons.
   ctx.textAlign='center'; ctx.textBaseline='top';
-  const actionBottom=hbY-10;
-  const minimumBlock=actionRows*27+actionGap*(actionRows-1);
-  const wantedTop=Math.max(boardBottom+(hubPostsRect?10:5),bnY+bnH+15);
-  const actionTop=Math.min(wantedTop,actionBottom-minimumBlock);
+  const homeBoardsY=Math.min(maxBoardsY,Math.max(preferredBoardsY,boardBottom+boardActionGap));
+  const homeBoardsW=Math.min(560,W-24), homeBoardsX=W/2-homeBoardsW/2;
+  drawHomeLeaderboards(homeBoardsX,homeBoardsY,homeBoardsW,homeBoardsH);
+  const actionTop=homeBoardsY+homeBoardsH+boardActionGap;
   const groupW=Math.min(460,W-30), groupX=W/2-groupW/2;
   const cardW=(groupW-actionGap*(actionCols-1))/actionCols;
-  const cardH=Math.max(27,Math.min(targetActionH,Math.floor((actionBottom-actionTop-actionGap*(actionRows-1))/actionRows)));
   const actions=[
-    {id:'play',title:'PLAY',sub:'ONLINE \u00b7 RANKED \u00b7 OFFLINE \u00b7 PARTY',col:'#e8b658',enabled:true}
+    {id:'play',title:'PLAY',sub:'ONLINE \u00b7 RANKED \u00b7 OFFLINE',col:'#e8b658',enabled:true},
+    {id:'party',title:'PARTY',sub:party.accepted?(party.members.length+' PLAYERS \u00b7 OPEN PARTY'):'CREATE \u00b7 JOIN \u00b7 MANAGE',col:'#bfa8ff',enabled:true}
   ];
   for(let i=0;i<actions.length;i++){
     const a=actions[i], x=groupX+(i%actionCols)*(cardW+actionGap);
@@ -9588,7 +9696,7 @@ function drawHub(){
   shareBtnRect=hubBtn('\uD83D\uDD17 SHARE +5','#bfa8ff','#d8c8ff');
   wheelBtnRect=hubBtn('\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+')':wheelCountdown()),
                       wheelReady>0?'#e8b658':'#5a5648', wheelReady>0?'#e8d9a8':'#8a9268');
-  if(!lbShown) lookupBtnRect=hubBtn('\uD83D\uDD0D LOOKUP','#7fd8ff','#bfe8ff');
+  lookupBtnRect=hubBtn('\uD83D\uDD0D LOOKUP','#7fd8ff','#bfe8ff');
   if(now<referralMsgT){
     ctx.fillStyle='#bfa8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(referralMsg,W-30),W/2,Math.max(12,actionTop-13));
@@ -9714,52 +9822,6 @@ function drawHub(){
     ctx.textAlign='center';
   }
 
-  // ---- LEADERBOARD panel (top-right corner of the home page) ----
-  const lbClear = (W/2 + Math.min(460,W-80)/2 + 16) < (W-210-24);
-  if(W>720 && lbClear){                               // only when it clears the rows
-    const lbW=210, lbX=W-lbW-24+offX('board'), lbY=H*0.035+44+adminRowShift+offY('board');   // clears the admin row
-    const rows=Math.min(10, board.length);
-    const lbH=52 + Math.max(rows,1)*18 + 14;
-    layoutBlock('board',lbX,lbY,lbW,lbH);
-    boardPanelRect={x:lbX,y:lbY,w:lbW,h:lbH};
-    ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(lbX,lbY,lbW,lbH);
-    ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(lbX+0.5,lbY+0.5,lbW,lbH);
-    ctx.textAlign='center';
-    ctx.fillStyle='#e8b658'; ctx.font='700 13px ui-monospace,Consolas,monospace';
-    ctx.fillText('\uD83C\uDFC6 GLOBAL TOP 10', lbX+lbW/2, lbY+14);
-    let ly=lbY+40;
-    if(rows){
-      ctx.font='11px ui-monospace,Consolas,monospace';
-      for(let i=0;i<rows;i++){
-        const me = authUser && board[i].name===displayName(authUser);
-        const pub=publicProfileCache[board[i].user_id]||{}, publicName=pub.email||board[i].name;
-        leaderboardRowRects.push({x:lbX+6,y:ly-12,w:lbW-12,h:17,userId:board[i].user_id,name:publicName});
-        const hot=mouse.x>=lbX+6&&mouse.x<=lbX+lbW-6&&mouse.y>=ly-12&&mouse.y<=ly+5;
-        if(hot){ ctx.fillStyle='rgba(127,216,255,0.12)'; ctx.fillRect(lbX+6,ly-12,lbW-12,17); }
-        ctx.fillStyle = me ? '#a7c15e' : (i<3?'#cdd6b0':'#8a9268');
-        ctx.textAlign='left';
-        ctx.fillText((i+1)+'. '+String(publicName).slice(0,16), lbX+12, ly);
-        ctx.textAlign='right';
-        ctx.fillText(String(board[i].score), lbX+lbW-12, ly);
-        ly+=18;
-      }
-    } else {
-      ctx.fillStyle='#6b7455'; ctx.font='10px ui-monospace,Consolas,monospace';
-      ctx.fillText(sb ? 'no scores yet \u2014 be the first!' : 'leaderboard offline', lbX+lbW/2, ly+4);
-    }
-    // anyone can look a player up
-    const luH=24, luY=lbY+lbH+8;
-    lookupBtnRect={x:lbX,y:luY,w:lbW,h:luH};
-    const luHv=mouse.x>=lbX&&mouse.x<=lbX+lbW&&mouse.y>=luY&&mouse.y<=luY+luH;
-    ctx.fillStyle=luHv?'rgba(127,216,255,0.28)':'rgba(127,216,255,0.10)'; ctx.fillRect(lbX,luY,lbW,luH);
-    ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(lbX+0.5,luY+0.5,lbW,luH);
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle=luHv?'#e8f8ff':'#bfe8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine('\uD83D\uDD0D PLAYER LOOKUP', lbW-10), lbX+lbW/2, luY+luH/2);
-    ctx.textBaseline='alphabetic';
-    lookupDrawn=true;
-    ctx.textAlign='center';
-  }
 }
 function drawCategory(cat){
   selBg();
@@ -10141,9 +10203,9 @@ function drawUpgrade(){
   if(board.length){
     let ly=Math.max(H*0.36+152, hintY+28);          // always sit below the hint text
     ctx.fillStyle='#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
-    ctx.fillText('GLOBAL TOP 10', W/2, ly); ly+=18;
+    ctx.fillText('GLOBAL TOP '+PUBLIC_BOARD_LIMIT, W/2, ly); ly+=18;
     ctx.font='11px ui-monospace,Consolas,monospace';
-    for(let i=0;i<board.length;i++){
+    for(let i=0;i<Math.min(PUBLIC_BOARD_LIMIT,board.length);i++){
       const me = authUser && board[i].name===displayName(authUser);
       ctx.fillStyle = me ? '#a7c15e' : '#6b7455';
       ctx.textAlign='right'; ctx.fillText((i+1)+'.', W/2-96, ly);
@@ -10368,574 +10430,6 @@ function signUpPromptClick(){
   }
 }
 let signUpLater=0, pendingDeploy=false;
-// ---- CUSTOM TEXT (main admins + creator): free text on any menu page, shared with every player ----
-const TEXT_FONTS=[
-  {id:'mono',   name:'MONO',   css:'ui-monospace,Consolas,monospace'},
-  {id:'sans',   name:'SANS',   css:'system-ui,Segoe UI,Helvetica,Arial,sans-serif'},
-  {id:'serif',  name:'SERIF',  css:'Georgia,Times New Roman,serif'},
-];
-const TEXT_COLOURS=['#f2f2e8','#e8b658','#a7c15e','#7fd8ff','#d05548','#bfa8ff','#ff9ad5'];
-let customText=[], textMode=false, textRects=[], textSel=null, textDrag=null, textDirty=false, textLocalSaveT=0, editGuides={x:null,y:null};
-const EDITOR_DRAFT_KEY='oz_ui_editor_draft';
-function readEditorDraft(){
-  try{
-    const saved=JSON.parse(localStorage.getItem(EDITOR_DRAFT_KEY)||'null');
-    if(saved&&typeof saved==='object'&&saved.layout&&Array.isArray(saved.items)) return saved;
-    // Read drafts created by older copies of the game too.
-    if(localStorage.getItem('oz_ui_text_draft')==='1'){
-      const oldLayout=JSON.parse(localStorage.getItem('oz_ui_layout')||'{}');
-      const oldText=JSON.parse(localStorage.getItem('oz_ui_text')||'[]');
-      return {layout:oldLayout&&typeof oldLayout==='object'?oldLayout:{},items:Array.isArray(oldText)?oldText:[]};
-    }
-  }catch(e){}
-  return null;
-}
-function persistEditorDraft(){
-  try{
-    const draft={layout,items:customText,updatedAt:Date.now()};
-    localStorage.setItem(EDITOR_DRAFT_KEY,JSON.stringify(draft));
-    localStorage.setItem('oz_ui_layout',JSON.stringify(layout));
-    localStorage.setItem('oz_ui_text',JSON.stringify(customText));
-    localStorage.setItem('oz_ui_text_draft','1');
-    return true;
-  }catch(e){ return false; }
-}
-function clearEditorDraft(){
-  try{ localStorage.removeItem(EDITOR_DRAFT_KEY); localStorage.removeItem('oz_ui_text_draft'); }catch(e){}
-}
-function persistTextDraft(){ return persistEditorDraft(); } // legacy name used by the frame autosave
-// editing covers both the hub blocks and free text; one undo stack for the lot
-let editHist=[], editFuture=[], layoutStandard=null, textStandard=null, editSuggestOpen=false;
-let multiMode=false, textSelMany=[];                 // MULTI: tap several bits of text, then act on the lot
-function selectedTextIds(){
-  if(multiMode && textSelMany.length) return textSelMany.slice();
-  return textSel ? [textSel] : [];
-}
-function isTextSelected(id){ return multiMode ? textSelMany.includes(id) : textSel===id; }
-function editSnapshot(){ return JSON.stringify({layout, customText}); }
-function editPush(){                                  // call BEFORE a change
-  editHist.push(editSnapshot());
-  if(editHist.length>60) editHist.shift();
-  editFuture.length=0;
-}
-function editApply(snap){
-  try{
-    const o=JSON.parse(snap);
-    layout=o.layout||{}; customText=Array.isArray(o.customText)?o.customText:[];
-    layoutDirty=true; textDirty=true;
-  }catch(e){}
-}
-function editUndo(){
-  if(!editHist.length){ sfx('dry'); return; }
-  editFuture.push(editSnapshot());
-  editApply(editHist.pop()); sfx('swap');
-}
-function editRedo(){
-  if(!editFuture.length){ sfx('dry'); return; }
-  editHist.push(editSnapshot());
-  editApply(editFuture.pop()); sfx('swap');
-}
-let alignOpen=false, alignRects=[], alignSel=null, alignList=[], alignScroll=0;
-// where the selected thing currently sits on screen
-function currentSelRect(){
-  if(textSel){
-    const r=textRects.find(x=>!x.tool && x.id===textSel);
-    if(r) return {id:textSel, kind:'text', x:r.x, y:r.y, w:r.w, h:r.h, cx:r.x+r.w/2, cy:r.y+r.h/2};
-  }
-  if(layoutPick){
-    const r=layoutRects.find(x=>!x.tool && x.id===layoutPick);
-    if(r) return {id:layoutPick, kind:'block', x:r.x, y:r.y, w:r.w, h:r.h, cx:r.x+r.w/2, cy:r.y+r.h/2};
-  }
-  return null;
-}
-// everything else on this page you could line up against
-function collectAlignTargets(excludeId){
-  const out=[];
-  for(const r of layoutRects){
-    if(r.tool || r.id===excludeId) continue;
-    out.push({id:r.id, name:LAYOUT_BLOCKS[r.id]||r.id, cx:r.x+r.w/2, cy:r.y+r.h/2});
-  }
-  for(const r of textRects){
-    if(r.tool || r.id===excludeId) continue;
-    const t=customText.find(x=>x.id===r.id);
-    out.push({id:r.id, name: t ? ('\u201C'+String(t.text).slice(0,16)+'\u201D') : r.id,
-              cx:r.x+r.w/2, cy:r.y+r.h/2});
-  }
-  return out;
-}
-function openAlign(){
-  const sel=currentSelRect();
-  if(!sel){ sfx('dry'); return; }
-  alignSel=sel; alignList=collectAlignTargets(sel.id); alignOpen=true; alignRects=[]; alignScroll=0;
-}
-// move the selection so its centre lands on cx / cy (either may be null to leave that axis alone)
-function applyAlign(cx, cy){
-  if(!alignSel) return;
-  editPush();
-  if(alignSel.kind==='text'){
-    const t=customText.find(x=>x.id===alignSel.id);
-    if(t){
-      if(cx!==null) t.x=clamp(cx/W, 0.02, 0.98);
-      if(cy!==null) t.y=clamp(cy/H, 0.02, 0.98);
-      textDirty=true;
-    }
-  } else {
-    const cur=layout[alignSel.id]||{};
-    layout[alignSel.id]={
-      dx: (cur.dx||0) + (cx!==null ? Math.round(cx-alignSel.cx) : 0),
-      dy: (cur.dy||0) + (cy!==null ? Math.round(cy-alignSel.cy) : 0),
-      col: cur.col||null
-    };
-    layoutDirty=true;
-  }
-  alignOpen=false; sfx('aim');
-}
-function drawAlignPanel(){
-  ctx.fillStyle='rgba(4,6,3,0.94)'; ctx.fillRect(0,0,W,H);
-  const pw=Math.min(440,W-24), ph=Math.min(430,H-24), px=W/2-pw/2, py=H/2-ph/2;
-  ctx.fillStyle='#0a0c0e'; ctx.fillRect(px,py,pw,ph);
-  ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
-  alignRects=[];
-  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-  ctx.fillStyle='#bfe8ff'; ctx.font='700 16px ui-monospace,Consolas,monospace';
-  ctx.fillText('\u2B0C ALIGN', W/2, py+26);
-  ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  const selName = alignSel ? (alignSel.kind==='block'
-      ? (LAYOUT_BLOCKS[alignSel.id]||alignSel.id)
-      : (()=>{ const t=customText.find(x=>x.id===alignSel.id); return t?('\u201C'+String(t.text).slice(0,18)+'\u201D'):alignSel.id; })())
-    : '';
-  ctx.fillText(fitLine('moving '+selName, pw-24), W/2, py+42);
-  const x0=px+16, rw=pw-32; let y=py+54;
-
-  // down the middle of the screen
-  ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText('SCREEN', x0, y+8); y+=14;
-  const mid=[['mx','\u2195 DOWN THE MIDDLE (X)'],['my','\u2194 MIDDLE OF THE SCREEN (Y)'],['mb','\u2732 DEAD CENTRE']];
-  for(const [id,lbl] of mid){
-    const h=26;
-    alignRects.push({x:x0,y,w:rw,h,id});
-    const hv=mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+h;
-    ctx.fillStyle=hv?'rgba(127,216,255,0.30)':'rgba(127,216,255,0.12)'; ctx.fillRect(x0,y,rw,h);
-    ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle='#bfe8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(lbl, rw-14), W/2, y+h/2);
-    ctx.textBaseline='alphabetic'; ctx.textAlign='left';
-    y+=h+5;
-  }
-  y+=6;
-  ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText('LINE UP WITH SOMETHING ELSE', x0, y+8); y+=14;
-  if(!alignList.length){
-    ctx.fillStyle='#5a5648'; ctx.fillText('nothing else on this page', x0+4, y+8); y+=18;
-  }
-  const rowH2=33, listBottom=py+ph-46;
-  const perPage=Math.max(1, Math.floor((listBottom-y)/rowH2));
-  const maxScroll=Math.max(0, alignList.length-perPage);
-  if(alignScroll>maxScroll) alignScroll=maxScroll;
-  if(maxScroll>0){                                   // page arrows, so nothing is unreachable
-    const aw2=30, ah2=18, ax2=x0+rw-2*aw2-6;
-    for(const [id,lbl,bx3,on] of [['aup','\u25B2',ax2,alignScroll>0],
-                                  ['adn','\u25BC',ax2+aw2+6,alignScroll<maxScroll]]){
-      alignRects.push({x:bx3,y:y-4,w:aw2,h:ah2,id});
-      const hv=mouse.x>=bx3&&mouse.x<=bx3+aw2&&mouse.y>=y-4&&mouse.y<=y-4+ah2;
-      ctx.fillStyle= on?(hv?'rgba(127,216,255,0.4)':'rgba(127,216,255,0.16)'):'rgba(255,255,255,0.04)';
-      ctx.fillRect(bx3,y-4,aw2,ah2);
-      ctx.strokeStyle= on?'#7fd8ff':'#4a4634'; ctx.lineWidth=1; ctx.strokeRect(bx3+0.5,y-3.5,aw2,ah2);
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillStyle= on?'#bfe8ff':'#5a5648'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-      ctx.fillText(lbl, bx3+aw2/2, y-4+ah2/2);
-      ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-    }
-    ctx.fillStyle='#6b7455'; ctx.font='8px ui-monospace,Consolas,monospace';
-    ctx.fillText((alignScroll+1)+'-'+Math.min(alignList.length,alignScroll+perPage)+' of '+alignList.length, x0+rw-150, y+8);
-  }
-  for(const t of alignList.slice(alignScroll, alignScroll+perPage)){
-    const h=28, bw2=52;
-    if(y+h>listBottom) break;
-    ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
-    ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
-    ctx.textAlign='left'; ctx.textBaseline='middle';
-    ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(t.name, rw-2*bw2-24), x0+8, y+h/2);
-    const ax=x0+rw-2*bw2-8, bx2=x0+rw-bw2-4;
-    alignRects.push({x:ax,y:y+4,w:bw2,h:h-8,id:'ax:'+t.id});
-    alignRects.push({x:bx2,y:y+4,w:bw2,h:h-8,id:'ay:'+t.id});
-    for(const [bx3,lbl] of [[ax,'MATCH X'],[bx2,'MATCH Y']]){
-      const hv=mouse.x>=bx3&&mouse.x<=bx3+bw2&&mouse.y>=y+4&&mouse.y<=y+h-4;
-      ctx.fillStyle=hv?'rgba(127,216,255,0.34)':'rgba(127,216,255,0.14)'; ctx.fillRect(bx3,y+4,bw2,h-8);
-      ctx.strokeStyle='#7fd8ff'; ctx.strokeRect(bx3+0.5,y+4.5,bw2,h-8);
-      ctx.textAlign='center'; ctx.font='700 7px ui-monospace,Consolas,monospace';
-      ctx.fillStyle='#bfe8ff'; ctx.fillText(lbl, bx3+bw2/2, y+h/2);
-    }
-    ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-    y+=h+5;
-  }
-  const cbw=Math.min(140,pw-40), cbh=28, cbx=W/2-cbw/2, cby=py+ph-36;
-  alignRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'cancel'});
-  const chv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
-  ctx.fillStyle=chv?'#d05548':'rgba(208,85,72,0.14)'; ctx.fillRect(cbx,cby,cbw,cbh);
-  ctx.strokeStyle='#d05548'; ctx.lineWidth=1; ctx.strokeRect(cbx+0.5,cby+0.5,cbw,cbh);
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle=chv?'#101208':'#e0a8a0'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-  ctx.fillText('CANCEL', W/2, cby+cbh/2);
-  ctx.textAlign='left'; ctx.textBaseline='top';
-}
-function alignClick(){
-  for(const r of alignRects){
-    if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
-      const id=String(r.id);
-      if(id==='cancel'){ alignOpen=false; sfx('swap'); return; }
-      if(id==='aup'){ alignScroll=Math.max(0,alignScroll-3); sfx('aim'); return; }
-      if(id==='adn'){ alignScroll+=3; sfx('aim'); return; }
-      if(id==='mx'){ applyAlign(W/2, null); return; }
-      if(id==='my'){ applyAlign(null, H/2); return; }
-      if(id==='mb'){ applyAlign(W/2, H/2); return; }
-      if(id.indexOf('ax:')===0){ const t=alignList.find(x=>x.id===id.slice(3)); if(t) applyAlign(t.cx, null); return; }
-      if(id.indexOf('ay:')===0){ const t=alignList.find(x=>x.id===id.slice(3)); if(t) applyAlign(null, t.cy); return; }
-      return;
-    }
-  }
-}
-async function saveAsStandard(){                     // called automatically when the creator publishes
-  if(!isCreator()) return false;
-  const layoutSnap=JSON.stringify(layout), textSnap=JSON.stringify(customText);
-  const nextLayout=JSON.parse(layoutSnap), nextText=JSON.parse(textSnap);
-  try{
-    if(sb){
-      const {error}=await sb.from('ui_layout').upsert({id:'standard',data:{layout:nextLayout,items:nextText},updated_by:adminEmail()});
-      if(error) throw error;
-    }
-    layoutStandard=nextLayout; textStandard=nextText;
-    const current=JSON.stringify(layout)===layoutSnap&&JSON.stringify(customText)===textSnap;
-    if(!current){ layoutDirty=true; textDirty=true; persistEditorDraft(); }
-    sfx(current?'pickup':'aim'); return current;
-  }catch(e){ layoutDirty=true; textDirty=true; persistEditorDraft(); waveMsg='STANDARD SAVE FAILED: '+String((e&&e.message)||e).slice(0,76); waveMsgT=now+4000; sfx('dry'); return false; }
-}
-async function fetchStandard(){
-  if(!sb) return;
-  try{
-    const { data } = await sb.from('ui_layout').select('data').eq('id','standard').maybeSingle();
-    if(data && data.data){ layoutStandard=data.data.layout||{}; textStandard=data.data.items||[]; }
-  }catch(e){}
-}
-function resetToStandard(){                           // RESET returns to the saved standard, not to nothing
-  editPush();
-  layout = layoutStandard ? JSON.parse(JSON.stringify(layoutStandard)) : {};
-  customText = textStandard ? JSON.parse(JSON.stringify(textStandard)) : [];
-  layoutPick=null; textSel=null; layoutDirty=true; textDirty=true; sfx('dry');
-}
-// main admins cannot publish directly: their版 goes in as a suggestion
-async function submitEditSuggestion(){
-  if(!sb || !isMainAdmin()) return;
-  const layoutSnap=JSON.stringify(layout), textSnap=JSON.stringify(customText);
-  const suggestedLayout=JSON.parse(layoutSnap), suggestedText=JSON.parse(textSnap);
-  persistEditorDraft();
-  try{
-    const {error}=await sb.from('player_requests').insert({requested_by:adminEmail(), target_email:'(ui)',
-      patch:{ui:{layout:suggestedLayout,items:suggestedText}}, status:'pending'});
-    if(error) throw error;
-    const layoutCurrent=JSON.stringify(layout)===layoutSnap, textCurrent=JSON.stringify(customText)===textSnap;
-    layoutDirty=!layoutCurrent; textDirty=!textCurrent;
-    if(layoutCurrent&&textCurrent) clearEditorDraft(); else persistEditorDraft();
-    sfx(layoutCurrent&&textCurrent?'pickup':'aim');
-  }catch(e){ waveMsg='SUGGESTION SAVE FAILED: '+String((e&&e.message)||e).slice(0,70); waveMsgT=now+4000; sfx('dry'); }
-}
-async function publishEdits(){
-  persistEditorDraft();                             // both halves survive refresh before either request starts
-  if(isCreator()){
-    const [a,b]=await Promise.all([saveLayout(),saveCustomText()]);
-    if(!(a&&b)) return false;
-    return !!(await saveAsStandard());               // what you publish becomes the new baseline
-  }
-  await submitEditSuggestion(); return !(layoutDirty||textDirty);
-}
-function fontCss(id,size,weight){
-  const f=TEXT_FONTS.find(x=>x.id===id)||TEXT_FONTS[0];
-  return (weight||700)+' '+(size||16)+'px '+f.css;
-}
-function textForPage(){
-  const page = (state==='select') ? selPage : null;
-  if(!page) return [];
-  return customText.filter(t=>t.page===page);
-}
-function drawCustomText(){
-  textRects=[];
-  for(const t of textForPage()){
-    ctx.save();
-    // shrink to fit the screen, so a long line can never run off the edge
-    let size=t.size||16;
-    ctx.font=fontCss(t.font,size,t.weight);
-    const maxW=W-24;
-    let w=ctx.measureText(t.text).width;
-    let label=t.text;
-    if(w>maxW){
-      size=Math.max(8, Math.floor(size*maxW/w));
-      ctx.font=fontCss(t.font,size,t.weight);
-      w=ctx.measureText(label).width;
-      if(w>maxW){ label=fitLine(label, maxW); w=ctx.measureText(label).width; }   // already at min size
-    }
-    const h=size*1.25;
-    // and keep it fully on screen horizontally
-    const cx=clamp(t.x*W, w/2+8, W-w/2-8), cy=clamp(t.y*H, h/2+4, H-h/2-4);
-    ctx.fillStyle=t.col||'#f2f2e8';
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(label, cx, cy);
-    ctx.restore();
-    if(textMode) textRects.push({id:t.id, x:cx-w/2-6, y:cy-h/2-4, w:w+12, h:h+8});
-  }
-}
-async function fetchCustomText(){
-  const draft=readEditorDraft();
-  if(draft&&Array.isArray(draft.items)){
-    customText=draft.items; layoutDirty=true; textDirty=true; // show UPDATE after a refresh
-  }
-  else try{ const v=JSON.parse(localStorage.getItem('oz_ui_text')||'null'); if(Array.isArray(v)) customText=v; }catch(e){}
-  if(!sb||draft) return;                            // a draft is newer than the published server version
-  try{
-    const { data } = await sb.from('ui_layout').select('data').eq('id','text').maybeSingle();
-    if(layoutDirty||textDirty||readEditorDraft()) return; // keep edits made before the next draft flush
-    if(data && data.data && Array.isArray(data.data.items)){
-      customText=data.data.items; localStorage.setItem('oz_ui_text',JSON.stringify(customText));
-    }
-  }catch(e){}
-}
-async function saveCustomText(){
-  if(!isMainAdmin()) return false;
-  const snapshot=JSON.stringify(customText), savedText=JSON.parse(snapshot);
-  persistEditorDraft();                             // local failure must never prevent the Supabase save attempt
-  try{ localStorage.setItem('oz_ui_text',snapshot); }catch(e){}
-  try{
-    if(sb){ const {error}=await sb.from('ui_layout').upsert({id:'text',data:{items:savedText},updated_by:adminEmail()},{onConflict:'id'}); if(error) throw error; }
-    const current=JSON.stringify(customText)===snapshot;
-    textDirty=!current;
-    if(current&&!layoutDirty) clearEditorDraft(); else if(!current) persistEditorDraft();
-    sfx(current?'pickup':'aim'); return current;
-  }catch(e){ waveMsg='TEXT SAVE FAILED: '+String((e&&e.message)||e).slice(0,80); waveMsgT=now+4000; sfx('dry'); return false; }
-}
-function addCustomText(){
-  const id='t'+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
-  const item={id, page:selPage, text:'NEW TEXT', x:0.5, y:0.5, size:20, col:'#f2f2e8', font:'mono', weight:700};
-  customText.push(item); textSel=id; textDirty=true;
-  editCustomText(item);
-}
-function selectedText(){ return customText.find(t=>t.id===textSel)||null; }
-function editCustomText(item){
-  openForm({
-    title:'\u270E TEXT',
-    hint:'shown on the '+item.page+' page to every player \u00b7 drag it to move',
-    fields:[
-      {id:'text', label:'TEXT', type:'text', value:item.text},
-      {id:'size', label:'SIZE', min:8, max:96, value:item.size},
-      {id:'weight', label:'WEIGHT (400 or 700)', min:400, max:700, value:item.weight||700},
-    ],
-    saveLabel:'SAVE',
-    onSave:(v)=>{
-      if(v.text!==null && String(v.text).trim()!=='') item.text=String(v.text).slice(0,80);
-      if(v.size!==null) item.size=v.size;
-      if(v.weight!==null) item.weight=(v.weight>=600?700:400);
-      textDirty=true; closeForm();
-    }
-  });
-}
-function drawTextOverlay(){
-  if(!textMode) return;
-  ctx.save();
-  // hub blocks are draggable in the same mode
-  if(selPage==='hub') for(const r of layoutRects){
-    if(r.tool) continue;
-    const on=r.id===layoutPick && !textSel;
-    ctx.setLineDash([4,4]);
-    ctx.strokeStyle= on?'#7dff8c':'#e8b658'; ctx.lineWidth= on?2:1;
-    ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h);
-    ctx.setLineDash([]);
-    ctx.fillStyle= on?'rgba(125,255,140,0.9)':'rgba(232,182,88,0.8)';
-    ctx.font='700 8px ui-monospace,Consolas,monospace';
-    ctx.textAlign='left'; ctx.textBaseline='bottom';
-    ctx.fillText(fitLine(LAYOUT_BLOCKS[r.id]||r.id, r.w), r.x+2, Math.max(10,r.y-2));
-  }
-  for(const r of textRects){
-    if(r.tool) continue;
-    const on=isTextSelected(r.id);
-    ctx.setLineDash([5,4]);
-    ctx.strokeStyle= on?'#7dff8c':'#7fd8ff'; ctx.lineWidth= on?2:1;
-    ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h);
-    ctx.setLineDash([]);
-  }
-  // Google Slides-style live alignment guides while an item is being dragged.
-  ctx.save(); ctx.setLineDash([5,4]); ctx.strokeStyle='#ff4fb8'; ctx.lineWidth=1.5;
-  if(editGuides.x!==null){ ctx.beginPath(); ctx.moveTo(editGuides.x,0); ctx.lineTo(editGuides.x,H); ctx.stroke(); }
-  if(editGuides.y!==null){ ctx.beginPath(); ctx.moveTo(0,editGuides.y); ctx.lineTo(W,editGuides.y); ctx.stroke(); }
-  ctx.restore();
-  // solid backing for the toolbar area: without it the hub text underneath reads through
-  {
-    const sel0=selectedText() || (textSelMany.length? customText.find(t=>t.id===textSelMany[0]) : null);
-    const rows = sel0 ? 4 : 2;                       // tools + tools2 (+ colour + font when something is picked)
-    const stripH = 28+8 + 24+6 + (sel0 ? (20+10 + 20+6) : 0) + 6;
-    ctx.fillStyle='rgba(6,8,4,0.94)';
-    ctx.fillRect(0, H-stripH, W, stripH);
-    ctx.strokeStyle='rgba(127,216,255,0.35)'; ctx.lineWidth=1;
-    ctx.beginPath(); ctx.moveTo(0, H-stripH+0.5); ctx.lineTo(W, H-stripH+0.5); ctx.stroke();
-  }
-  const row2=[['undo','\u21B6 UNDO','#8a9268'],['redo','\u21B7 REDO','#8a9268'],
-              ['align','\u2B0C ALIGN','#7fd8ff'],['reset','RESET','#e8b658'],
-              ['multi', multiMode ? ('MULTI ('+textSelMany.length+')') : 'MULTI', multiMode?'#7dff8c':'#8a9268']];
-  const bw2b=Math.min(104,(W-40)/row2.length), bh2b=24, gap2=6;
-  let bx2=W/2-(row2.length*bw2b+gap2*(row2.length-1))/2; const by2=H-28-8-bh2b-6;
-  for(const [id,lbl,col] of row2){
-    textRects.push({id:'tt:'+id, x:bx2, y:by2, w:bw2b, h:bh2b, tool:true});
-    const hv=mouse.x>=bx2&&mouse.x<=bx2+bw2b&&mouse.y>=by2&&mouse.y<=by2+bh2b;
-    const dim=(id==='undo'&&!editHist.length)||(id==='redo'&&!editFuture.length);
-    ctx.fillStyle=dim?'rgba(8,10,5,0.9)':(hv?col:'rgba(8,10,5,0.92)'); ctx.fillRect(bx2,by2,bw2b,bh2b);
-    ctx.strokeStyle=dim?'#4a4634':col; ctx.lineWidth=1.2; ctx.strokeRect(bx2+0.5,by2+0.5,bw2b,bh2b);
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle=dim?'#5a5648':(hv?'#101208':'#cdd6b0'); ctx.font='700 8px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(lbl,bw2b-6), bx2+bw2b/2, by2+bh2b/2);
-    bx2+=bw2b+gap2;
-  }
-  const bw=Math.min(104,(W-40)/5), bh=28, gap=6;
-  const ids=[['add','+ ADD','#a7c15e'],['edit','EDIT','#7fd8ff'],['del','DELETE','#d05548'],
-             ['save', (textDirty||layoutDirty) ? (isCreator()?'UPDATE':'SUGGEST') : 'SAVED','#a7c15e'],
-             ['done','DONE','#e8b658']];
-  let bx=W/2-(ids.length*bw+gap*(ids.length-1))/2; const by=H-bh-8;
-  for(const [id,lbl,col] of ids){
-    textRects.push({id:'tt:'+id, x:bx, y:by, w:bw, h:bh, tool:true});
-    const hv=mouse.x>=bx&&mouse.x<=bx+bw&&mouse.y>=by&&mouse.y<=by+bh;
-    const dim=(id==='edit'||id==='del') && !selectedText();
-    ctx.fillStyle=dim?'rgba(8,10,5,0.9)':(hv?col:'rgba(8,10,5,0.92)'); ctx.fillRect(bx,by,bw,bh);
-    ctx.strokeStyle=dim?'#4a4634':col; ctx.lineWidth=1.5; ctx.strokeRect(bx+0.5,by+0.5,bw,bh);
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle=dim?'#5a5648':(hv?'#101208':'#cdd6b0'); ctx.font='700 9px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(lbl,bw-6), bx+bw/2, by+bh/2);
-    bx+=bw+gap;
-  }
-  // colour + font rows for the selected line
-  const sel=selectedText() || (textSelMany.length? customText.find(t=>t.id===textSelMany[0]) : null);
-  if(sel){
-    const sw=Math.min(46,(W-40)/TEXT_COLOURS.length), sh=20;
-    let cx=W/2-(TEXT_COLOURS.length*sw+5*(TEXT_COLOURS.length-1))/2;
-    const cy=by2-sh-10;                              // clears the undo/redo/centre row
-    for(const c of TEXT_COLOURS){
-      textRects.push({id:'tc:'+c, x:cx, y:cy, w:sw, h:sh, tool:true});
-      const on=(sel.col||'')===c;
-      ctx.fillStyle=c; ctx.fillRect(cx,cy,sw,sh);
-      ctx.strokeStyle=on?'#ffffff':'#4a4634'; ctx.lineWidth=on?2:1; ctx.strokeRect(cx+0.5,cy+0.5,sw,sh);
-      cx+=sw+5;
-    }
-    const fw=Math.min(80,(W-40)/TEXT_FONTS.length), fh=20;
-    let fx=W/2-(TEXT_FONTS.length*fw+6*(TEXT_FONTS.length-1))/2;
-    const fy=cy-fh-6;
-    for(const f of TEXT_FONTS){
-      textRects.push({id:'tf:'+f.id, x:fx, y:fy, w:fw, h:fh, tool:true});
-      const on=(sel.font||'mono')===f.id;
-      const hv=mouse.x>=fx&&mouse.x<=fx+fw&&mouse.y>=fy&&mouse.y<=fy+fh;
-      ctx.fillStyle= on?'#7fd8ff':hv?'rgba(127,216,255,0.25)':'rgba(0,0,0,0.5)'; ctx.fillRect(fx,fy,fw,fh);
-      ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(fx+0.5,fy+0.5,fw,fh);
-      ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillStyle= on?'#101208':'#bfe8ff'; ctx.font='700 8px '+f.css;
-      ctx.fillText(f.name, fx+fw/2, fy+fh/2);
-      fx+=fw+6;
-    }
-  }
-  ctx.textAlign='left'; ctx.textBaseline='top';
-  ctx.restore();
-}
-function textMouseDown(){
-  for(const r of textRects){                        // tools first
-    if(!r.tool) continue;
-    if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
-      const id=String(r.id);
-      if(id==='tt:undo'){ editUndo(); return true; }
-      if(id==='tt:redo'){ editRedo(); return true; }
-      if(id==='tt:align'){ openAlign(); return true; }
-      if(id==='tt:reset'){ resetToStandard(); return true; }
-      if(id==='tt:multi'){
-        multiMode=!multiMode;
-        if(multiMode){ textSelMany = textSel ? [textSel] : []; }
-        else { textSel = textSelMany[textSelMany.length-1] || textSel; textSelMany=[]; }
-        sfx('aim'); return true;
-      }
-      if(id==='tt:add'){ editPush(); addCustomText(); return true; }
-      if(id==='tt:edit'){ const s2=selectedText(); if(s2) editCustomText(s2); return true; }
-      if(id==='tt:del'){
-        const ids=selectedTextIds();
-        if(!ids.length){ sfx('dry'); return true; }
-        editPush();
-        customText=customText.filter(t=>!ids.includes(t.id));
-        textSel=null; textSelMany=[]; textDirty=true; sfx('dry'); return true;
-      }
-      if(id==='tt:save'){ publishEdits(); return true; }
-      if(id==='tt:done'){
-        const finish=()=>{ textMode=false; textSel=null; textDrag=null; multiMode=false; textSelMany=[]; sfx('swap'); };
-        if(textDirty||layoutDirty) publishEdits().then(ok=>{ if(ok) finish(); }); else finish();
-        return true;
-      }
-      if(id.indexOf('tc:')===0){ const ids=selectedTextIds(); if(ids.length){ editPush();
-        for(const t of customText) if(ids.includes(t.id)) t.col=id.slice(3);
-        textDirty=true; sfx('aim'); } return true; }
-      if(id.indexOf('tf:')===0){ const ids=selectedTextIds(); if(ids.length){ editPush();
-        for(const t of customText) if(ids.includes(t.id)) t.font=id.slice(3);
-        textDirty=true; sfx('aim'); } return true; }
-      return true;
-    }
-  }
-  for(const r of textRects){
-    if(r.tool) continue;
-    if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
-      if(multiMode){
-        const i=textSelMany.indexOf(r.id);
-        if(i>=0) textSelMany.splice(i,1); else textSelMany.push(r.id);
-        textSel=r.id; layoutPick=null; sfx('aim');
-        return true;                                 // multi-select never drags
-      }
-      editPush();
-      textSel=r.id; layoutPick=null;
-      const t=customText.find(x=>x.id===r.id);
-      if(t) textDrag={id:r.id, ox:mouse.x-t.x*W, oy:mouse.y-t.y*H};
-      sfx('aim');
-      return true;
-    }
-  }
-  // nothing textual there: try the hub blocks, which this mode also moves
-  if(selPage==='hub'){
-    for(const r of layoutRects){
-      if(r.tool) continue;
-      if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
-        editPush();
-        textSel=null; layoutPick=r.id;
-        layoutDrag={id:r.id, ox:mouse.x-offX(r.id), oy:mouse.y-offY(r.id)};
-        sfx('aim');
-        return true;
-      }
-    }
-  }
-  if(!multiMode){ textSel=null; layoutPick=null; }
-  return true;
-}
-function textMouseMove(){
-  if(layoutDrag){
-    const oldDx=offX(layoutDrag.id), oldDy=offY(layoutDrag.id);
-    layoutMouseMove(); editGuides={x:null,y:null};
-    const r=layoutRects.find(x=>!x.tool&&x.id===layoutDrag.id);
-    if(r){
-      const cur=layout[layoutDrag.id]||{}, cx=r.x+r.w/2+(cur.dx||0)-oldDx, cy=r.y+r.h/2+(cur.dy||0)-oldDy;
-      const targets=[{cx:W/2,cy:H/2},...collectAlignTargets(layoutDrag.id)];
-      for(const a of targets){ if(Math.abs(cx-a.cx)<=6){ layout[layoutDrag.id].dx+=(a.cx-cx); editGuides.x=a.cx; break; } }
-      for(const a of targets){ if(Math.abs(cy-a.cy)<=6){ layout[layoutDrag.id].dy+=(a.cy-cy); editGuides.y=a.cy; break; } }
-    }
-    return;
-  }
-  if(!textDrag) return;
-  const t=customText.find(x=>x.id===textDrag.id); if(!t) return;
-  let cx=mouse.x-textDrag.ox, cy=mouse.y-textDrag.oy; editGuides={x:null,y:null};
-  const targets=[{cx:W/2,cy:H/2},...collectAlignTargets(textDrag.id)];
-  for(const a of targets){ if(Math.abs(cx-a.cx)<=6){ cx=a.cx; editGuides.x=a.cx; break; } }
-  for(const a of targets){ if(Math.abs(cy-a.cy)<=6){ cy=a.cy; editGuides.y=a.cy; break; } }
-  t.x=clamp(cx/W, 0.02, 0.98);
-  t.y=clamp(cy/H, 0.02, 0.98);
-  textDirty=true;
-}
-function textMouseUp(){ textDrag=null; layoutDrag=null; editGuides={x:null,y:null}; }
 let leftColTop=104;                       // pushed down when the hub's top rows are in the way
 let compactStatus=false;                  // narrow: gems/coins/sign-in on one line under the title
 const AD_LLR_URL   = 'https://www.youtube.com/@AsrtsbLLR';
@@ -10956,27 +10450,43 @@ function drawYouTubeMark(cx, cy, w){
   ctx.moveTo(cx-t*0.45, cy-t*0.62); ctx.lineTo(cx-t*0.45, cy+t*0.62); ctx.lineTo(cx+t*0.75, cy);
   ctx.closePath(); ctx.fill();
 }
+function sideAdMetrics(){
+  // Keep the ads in the unused side gutters.  This lets them grow on a large
+  // screen without covering the centred Home controls on a smaller one.
+  const edge=14, gap=18;
+  const centreHalf=Math.min(560,W-60)/2;
+  const centreLeft=W/2-centreHalf, centreRight=W/2+centreHalf;
+  const maxGutterW=Math.floor(centreLeft-edge-gap);
+  const aw=Math.min(230, Math.floor(W*0.17), maxGutterW);
+  const ah=Math.min(300, Math.max(210, Math.floor(H*0.38)), H-136);
+  if(aw<112 || ah<170) return null;                 // no safe side gutter: hide, never squeeze the menu
+  return {aw,ah,edge,gap,centreLeft,centreRight};
+}
+function sideAdTop(x,w,h,preferred){
+  const minY=120, maxY=H-h-16;
+  if(maxY<minY) return null;
+  const overlapsX=r=>r && x<r.x+r.w+12 && x+w>r.x-12;
+  // PLAYER LOOKUP is directly below the board, so protect both rectangles.
+  const blocks=[boardPanelRect,lookupBtnRect].filter(overlapsX);
+  const collides=y=>blocks.some(r=>y<r.y+r.h+12 && y+h>r.y-12);
+  const candidates=[clamp(preferred,minY,maxY),minY,maxY];
+  for(const r of blocks){ candidates.push(r.y+r.h+16, r.y-h-16); }
+  const safe=candidates.filter(y=>y>=minY&&y<=maxY&&!collides(y));
+  if(!safe.length) return null;
+  safe.sort((a,b)=>Math.abs(a-preferred)-Math.abs(b-preferred));
+  return safe[0];
+}
 function drawSideAds(){
   adLeftRect=null; adRightRect=null;
   if(selPage!=='hub') return;                       // only beside the menu
-  const aw=Math.min(150, Math.floor(W*0.13));
-  // there must be room either side of the centre column without crowding it
-  const centreHalf=Math.min(560,W-60)/2;
-  const gutter=W/2-centreHalf-14;
-  if(aw<96 || gutter<aw+10) return;                 // too narrow: no ads rather than a squeeze
-  const ah=Math.min(210, Math.max(150, H*0.26));
-  // one shared baseline so the two ads line up with each other,
-  // pushed below the leaderboard panel on the right so they never overlap it
-  let base=Math.max(120, H/2-ah/2);
-  if(boardPanelRect){
-    const clear=boardPanelRect.y+boardPanelRect.h+14;
-    if(clear+ah <= H-16) base=Math.max(base, clear);
-    else base=Math.max(120, Math.min(base, H-ah-16));
-  }
-  base=Math.min(base, H-ah-16);
-  const ay=base+offY('adleft');
-  const lx2=14+offX('adleft'), rx2=W-aw-14+offX('adright');
-  const ry=base+offY('adright');
+  const geo=sideAdMetrics();
+  if(!geo) return;
+  const {aw,ah,edge,gap,centreLeft,centreRight}=geo;
+  const lx2=clamp(edge+offX('adleft'),edge,centreLeft-gap-aw);
+  const rx2=clamp(W-aw-edge+offX('adright'),centreRight+gap,W-aw-edge);
+  const base=Math.max(120,H/2-ah/2);
+  const ay=sideAdTop(lx2,aw,ah,base+offY('adleft'));
+  const ry=sideAdTop(rx2,aw,ah,base+offY('adright'));
 
   const panel=(x,y,label,sub,accent,isYT)=>{
     const hv=mouse.x>=x&&mouse.x<=x+aw&&mouse.y>=y&&mouse.y<=y+ah;
@@ -10984,27 +10494,33 @@ function drawSideAds(){
     ctx.strokeStyle=accent; ctx.lineWidth=hv?2:1.5; ctx.strokeRect(x+0.5,y+0.5,aw,ah);
     ctx.fillStyle=hv?accent+'22':'transparent';
     if(hv){ ctx.fillStyle='rgba(255,255,255,0.05)'; ctx.fillRect(x,y,aw,ah); }
-    if(isYT) drawYouTubeMark(x+aw/2, y+42, Math.min(64, aw-40));
+    const heroY=y+Math.min(62,ah*0.23), heroW=Math.min(88,Math.max(66,aw*0.42));
+    if(isYT) drawYouTubeMark(x+aw/2, heroY, heroW);
     else {
-      ctx.fillStyle=accent; ctx.font='700 30px ui-monospace,Consolas,monospace';
+      ctx.fillStyle=accent; ctx.font='700 '+Math.min(46,Math.max(34,Math.floor(aw*0.20)))+'px ui-monospace,Consolas,monospace';
       ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText('\u2665', x+aw/2, y+42);
+      ctx.fillText('\u2665', x+aw/2, heroY);
     }
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle='#f2f2e8'; ctx.font='700 13px ui-monospace,Consolas,monospace';
-    wrapTextClamped(label, x+aw/2, y+ah/2-6, aw-18, 16, 3);
-    ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(sub, aw-14), x+aw/2, y+ah-30);
-    ctx.fillStyle=hv?accent:'#6b7455'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-    ctx.fillText('TAP TO OPEN', x+aw/2, y+ah-14);
+    const labelSize=Math.min(17,Math.max(13,Math.floor(aw/13)));
+    ctx.fillStyle='#f2f2e8'; ctx.font='700 '+labelSize+'px ui-monospace,Consolas,monospace';
+    wrapTextClamped(label, x+aw/2, y+ah*0.48, aw-22, labelSize+4, 3);
+    ctx.fillStyle='#aab38b'; ctx.font='10px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(sub, aw-18), x+aw/2, y+ah-36);
+    ctx.fillStyle=hv?accent:'#7f8766'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+    ctx.fillText('TAP TO OPEN', x+aw/2, y+ah-17);
     ctx.textBaseline='top'; ctx.textAlign='left';
   };
-  withBlockColour('adleft', ()=>panel(lx2, ay, 'SUBSCRIBE TO LLR', 'on YouTube', '#ff3355', true));
-  adLeftRect={x:lx2,y:ay,w:aw,h:ah,url:AD_LLR_URL};
-  layoutBlock('adleft', lx2, ay, aw, ah);
-  withBlockColour('adright', ()=>panel(rx2, ry, 'MOVES FOR A MISSION', 'donate now', '#7fd8ff', false));
-  adRightRect={x:rx2,y:ry,w:aw,h:ah,url:AD_MOVES_URL};
-  layoutBlock('adright', rx2, ry, aw, ah);
+  if(ay!==null){
+    withBlockColour('adleft', ()=>panel(lx2, ay, 'SUBSCRIBE TO LLR', 'on YouTube', '#ff3355', true));
+    adLeftRect={x:lx2,y:ay,w:aw,h:ah,url:AD_LLR_URL};
+    layoutBlock('adleft', lx2, ay, aw, ah);
+  }
+  if(ry!==null){
+    withBlockColour('adright', ()=>panel(rx2, ry, 'MOVES FOR A MISSION', 'donate now', '#7fd8ff', false));
+    adRightRect={x:rx2,y:ry,w:aw,h:ah,url:AD_MOVES_URL};
+    layoutBlock('adright', rx2, ry, aw, ah);
+  }
 }
 let playersOpen=false, playersTab='banned', playersRects=[], playersHubBtnRect=null;
 let banList=[], appealList=[], playerLog=[];
@@ -11230,7 +10746,7 @@ function frame(){
   arenaWallTick(wall);                              // online clocks + snapshots never pause with the campaign clock
   partyTick(Date.now());                            // party admission, liveness, and host snapshots keep running on menus
   if(raw>0){ const inst=1000/raw; fpsEMA += (inst-fpsEMA)*0.1; }
-  if((textDirty||layoutDirty) && Date.now()>textLocalSaveT){ persistTextDraft(); textLocalSaveT=Date.now()+250; }
+  if(layoutDirty && Date.now()>layoutLocalSaveT){ persistLayoutDraft(); layoutLocalSaveT=Date.now()+250; }
 
   // `now` is a GAME clock. It freezes while the pause menu (or a modal) is open, so
   // utility cooldowns, reloads, ability timers and burn/freeze don't tick while paused.
@@ -11300,10 +10816,7 @@ function frame(){
   drawAccountChip();                      // sign in / out
   drawWaveCoinTracker();                  // every fifth wave: coins spin and spiral into the total
   drawChestReward();                      // boss chest reward menu sits above the run and HUD
-  if(state==='select') drawCustomText();          // admin-placed text, on whichever page it belongs to
   if(layoutMode && state==='select' && selPage==='hub') drawLayoutOverlay();   // last: everything has registered
-  if(textMode && state==='select') drawTextOverlay();
-  if(alignOpen && state==='select') drawAlignPanel();
   if(showFps){
     ctx.save();
     ctx.textAlign='right'; ctx.textBaseline='top';
