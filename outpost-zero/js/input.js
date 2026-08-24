@@ -1,0 +1,506 @@
+"use strict";
+
+const keys={};
+const mouse={x:W/2,y:H/2,down:false};
+let menuRects={}, dragSlider=null, menuOpen=false, gearRect={x:-99,y:-99,w:0,h:0}, powerBtnRect={x:-99,y:-99,w:0,h:0};
+
+/* ---------------- input ---------------- */
+function typingInField(e){
+  const t=e.target;
+  return t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA' || t.isContentEditable);
+}
+addEventListener('keydown', e=>{
+  if(typingInField(e)) return;          // don't eat keys while typing in the auth form
+  if(chestRewardOpen) return;            // chest menu stays open for the full three-second count-up
+  if(reportOpen){ if(e.key==='Escape') closeReport(); return; }
+  if(postOpen){ if(e.key==='Escape') closePost(); return; }
+  if(msgOpen){ if(e.key==='Escape') closeMsgCompose(); return; }
+  if(scoreEditOpen){ if(e.key==='Escape') closeScoreEdit(); return; }
+  if(appealOpen){ if(e.key==='Escape') closeAppeal(); return; }
+  if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
+  if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
+  if(layoutMode && e.key==='Escape'){ layoutMode=false; layoutDrag=null; layoutPick=null; sfx('swap'); return; }
+  if(adminPanelOpen||updatesOpen||adminsOpen||msgsOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||readerOpen){ if(e.key==='Escape'){ if(wheelSpinning) return; if(readerOpen){ readerOpen=false; sfx('swap'); return; } wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; adminPanelOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
+  const k = e.key.toLowerCase();
+  if(['w','a','s','d',' '].includes(k)) e.preventDefault();
+  keys[k]=true;
+  initAudio();
+
+  // respawn prompt is modal: swallow all keys until they choose
+  if(respawnPromptT){ return; }
+  if(k==='`'){ showFps=!showFps; return; }   // toggle FPS counter
+  // powerups popup lives on the upgrade screen now
+  if(powerMenuOpen){ if(k==='escape'||k==='p'||k==='v'){ powerMenuOpen=false; sfx('swap'); } return; }
+  if(k==='v' && state==='upgrade'){ powerMenuOpen=true; sfx('swap'); return; }
+
+  if(k==='escape' && state==='select'){ navigateSelectBack(); return; }
+  if(k==='p' || k==='escape'){ menuOpen=!menuOpen; sfx('swap'); return; }
+  if(menuOpen) return;
+
+  if(state==='select'){
+    if(k==='enter' && selPage==='loadout') launchSelectedMode();
+    return;
+  }
+  if(state==='over'){
+    if(k==='enter'){ pendingPractice=null; startGame(); }
+    if(k==='m'){ state='select'; tutorialTeardown(); restoreTryLoadout(); }
+    return;
+  }
+  if(state==='upgrade'){
+    const i = parseInt(k)-1;
+    if(i>=0 && i<4) chooseUpgrade(i);
+    return;
+  }
+  if(state!=='play') return;
+
+  if(k==='e'){
+    if(e.repeat) return;                                  // one physical press toggles aim once
+    if(practiceMode==='arena'&&!arenaCanAct()) sfx('dry');
+    else if(practiceMode==='arena'&&(WEAPONS[player.cur].melee||player.cur==='warpwave'||player.cur==='timeturner')) sfx('dry');
+    else if(utilityOut) utilQuick();                       // holding the medkit: E is the quick med
+    else if(player.cur==='warpwave') warpStun();
+    else if(player.cur==='timeturner') timeDragField();
+    else if(WEAPONS[player.cur].melee) sfx('dry');         // melee specials are F, or RMB with melee held
+    else { aiming=!aiming; sfx('aim'); }
+  }
+  if(k==='r') startReload();
+  if(k===' ') doDash();
+  if(k==='f') quickMelee();
+  if(k==='g' && !e.repeat) utilQuick();
+  if(k==='4') equipUtility();
+  if(k==='1') switchWeapon(loadout.primary);
+  if(k==='2') switchWeapon(loadout.secondary);
+  if(k==='3') switchWeapon(loadout.melee);
+  if(k==='q') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
+});
+addEventListener('keyup', e=>{
+  if(typingInField(e)) return;
+  keys[e.key.toLowerCase()]=false;
+});
+
+cv.addEventListener('mousemove', e=>{
+  mouse.x=px(e.clientX); mouse.y=e.clientY;
+  if(layoutMode && mouse.down) layoutMouseMove();
+  if(dragSlider && mouse.down) setSliderFromMouse();
+});
+cv.addEventListener('mousedown', e=>{
+  if(tutorialOn && state==='play' && !menuOpen){ const r=cv.getBoundingClientRect();
+    mouse.x=(e.clientX-r.left); mouse.y=(e.clientY-r.top);
+    if(tutorialClick()){ e.preventDefault(); return; } }
+  initAudio();
+  if(e.button===0){
+    mouse.down=true;
+    if(chestRewardOpen){ chestRewardClick(); return; }
+    if(respawnPromptT){ respawnPromptClick(); return; }        // modal
+    if(powerMenuOpen){ powerMenuClick(); return; }
+    if(mouse.x>=gearRect.x && mouse.x<=gearRect.x+gearRect.w && mouse.y>=gearRect.y && mouse.y<=gearRect.y+gearRect.h){
+      menuOpen=!menuOpen; sfx('swap'); return;
+    }
+    if(menuOpen){ menuClick(); return; }
+    if(layoutMode && state==='select' && selPage==='hub'){ layoutMouseDown(); return; }
+    if(state==='select'){ clickSelect(); return; }
+    if(state==='upgrade'){ clickUpgrade(); return; }
+    if(state==='over') return;
+    if(state==='play' && utilityOut){
+      if(loadout.utility==='medkit') medChannelStart();
+      else utilQuick();
+      return;
+    }
+    if(state==='play' && (!WEAPONS[player.cur].auto || WEAPONS[player.cur].melee)) tryFire();
+  } else if(e.button===2 && state==='play'){
+    if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); }
+    else if(utilityOut){                                 // the visible utility owns RMB, never the hidden melee
+      if(loadout.utility==='medkit') medQuick(); else utilQuick();
+    }
+    else if(WEAPONS[player.cur].melee) meleeAbility();
+    else { rmbAim=true; aiming=true; sfx('aim'); }
+  }
+});
+addEventListener('mouseup', e=>{
+  layoutMouseUp();
+  if(e.button===0){ mouse.down=false; dragSlider=null; if(utilityOut) utilRelease(); }
+  if(e.button===2 && rmbAim){ rmbAim=false; aiming=false; }
+});
+cv.addEventListener('contextmenu', e=> e.preventDefault());
+
+/* ---------------- touch controls (twin-stick) ---------------- */
+const touchUI = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
+const STICK_R=60;
+const sticks={ move:{id:null,cx:0,cy:0,dx:0,dy:0}, aim:{id:null,cx:0,cy:0,dx:0,dy:0} };
+let touchButtons=[], pressedBtn=null, menuTouchId=null;
+let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null, touchUtilityUsed=false;
+function resetHeldGameplayInput(){
+  // A click/touch/Enter used to launch a mode must never become gameplay input.
+  // Fullscreen changes can swallow the matching release event, so clear every
+  // held source explicitly instead of waiting for mouseup/touchend/keyup.
+  for(const k in keys) keys[k]=false;
+  mouse.down=false; dragSlider=null;
+  pressedBtn=null; menuTouchId=null; aimStickId=null; touchUtilityUsed=false; tapShootUntil=0;
+  for(const stick of [sticks.move,sticks.aim]){ stick.id=null; stick.dx=0; stick.dy=0; }
+  aiming=false; rmbAim=false;
+  fireSuppressT=Math.max(fireSuppressT,now+250);
+}
+function buttonAt(x,y){
+  // magnet: snap to the nearest button within a generous radius, so hurried
+  // boss-fight taps don't get swallowed by the aim stick
+  let best=null, bd=1e9;
+  for(const b of touchButtons){
+    const d2=(x-b.x)*(x-b.x)+(y-b.y)*(y-b.y);
+    if(d2 <= (b.r+22)*(b.r+22) && d2<bd){ bd=d2; best=b; }
+  }
+  return best;
+}
+function doButton(k){
+  if(k==='rld') startReload();
+  else if(k==='swp') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
+  else if(k==='e'){ if(practiceMode==='arena'&&!arenaCanAct()) sfx('dry'); else if(practiceMode==='arena'&&(WEAPONS[player.cur].melee||player.cur==='warpwave'||player.cur==='timeturner')) sfx('dry'); else if(utilityOut) utilQuick(); else if(player.cur==='warpwave') warpStun(); else if(player.cur==='timeturner') timeDragField(); else if(WEAPONS[player.cur].melee) sfx('dry'); else { aiming=!aiming; sfx('aim'); } }
+  else if(k==='g') utilQuick();
+  else if(k==='dsh') doDash();
+  else if(k==='f') quickMelee();
+}
+cv.addEventListener('touchstart', e=>{
+  e.preventDefault(); initAudio();
+  for(const t of e.changedTouches){
+    const x=px(t.clientX), y=t.clientY;
+    if(chestRewardOpen){ mouse.x=x; mouse.y=y; chestRewardClick(); continue; }
+    if(respawnPromptT){ mouse.x=x; mouse.y=y; respawnPromptClick(); continue; }
+    if(powerMenuOpen){ mouse.x=x; mouse.y=y; powerMenuClick(); continue; }
+    if(x>=gearRect.x&&x<=gearRect.x+gearRect.w&&y>=gearRect.y&&y<=gearRect.y+gearRect.h){
+      menuOpen=!menuOpen; sfx('swap'); continue;
+    }
+    if(state!=='play' || menuOpen){
+      mouse.x=x; mouse.y=y; mouse.down=true; menuTouchId=t.identifier;
+      if(menuOpen) menuClick();
+      else if(state==='select') clickSelect();
+      else if(state==='upgrade') clickUpgrade();
+      else if(state==='over') startGame();
+      continue;
+    }
+    const b=buttonAt(x,y);
+    if(b){ pressedBtn=b.key; doButton(b.key); continue; }
+    // left-bottom quadrant drives the movement joystick
+    if(x < W*0.42 && y > H*0.45 && sticks.move.id===null){
+      sticks.move.id=t.identifier; sticks.move.cx=x; sticks.move.cy=y; sticks.move.dx=0; sticks.move.dy=0;
+      continue;
+    }
+    // anywhere else on the field: tap to aim + shoot there
+    const wp=screenToWorld(x,y);
+    tapAimX=wp.x; tapAimY=wp.y;
+    mouse.x=x; mouse.y=y;
+    tapShootUntil=now+220;              // brief fire window per tap
+    aimStickId=t.identifier;            // drag to keep firing along the finger
+    touchUtilityUsed=false;
+  }
+},{passive:false});
+cv.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier===menuTouchId){
+      mouse.x=px(t.clientX); mouse.y=t.clientY;
+      if(dragSlider) setSliderFromMouse();
+      continue;
+    }
+    if(t.identifier===aimStickId){
+      const sx=px(t.clientX), sy=t.clientY;
+      const wp=screenToWorld(sx,sy);
+      tapAimX=wp.x; tapAimY=wp.y; mouse.x=sx; mouse.y=sy;
+      tapShootUntil=now+220;
+      continue;
+    }
+    const st=sticks.move;
+    if(st.id===t.identifier){
+      let dx=px(t.clientX)-st.cx, dy=t.clientY-st.cy;
+      const m=Math.hypot(dx,dy);
+      if(m>STICK_R){ dx*=STICK_R/m; dy*=STICK_R/m; }
+      st.dx=dx; st.dy=dy;
+    }
+  }
+},{passive:false});
+function touchEnd(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier===menuTouchId){ menuTouchId=null; mouse.down=false; dragSlider=null; }
+    if(t.identifier===aimStickId){ aimStickId=null; touchUtilityUsed=false; }
+    if(sticks.move.id===t.identifier){ sticks.move.id=null; sticks.move.dx=0; sticks.move.dy=0; }
+  }
+  pressedBtn=null;
+}
+cv.addEventListener('touchend', touchEnd, {passive:false});
+cv.addEventListener('touchcancel', touchEnd, {passive:false});
+addEventListener('blur', ()=>{
+  const localArena=isBotArena()||(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2());
+  if(state==='play'&&(practiceMode!=='arena'||localArena)) menuOpen=true;
+  if(practiceMode==='arena'&&!localArena) for(const k in keys) keys[k]=false;
+});
+
+function pickWeapon(k){
+  if(isLocked(k)){ sfx('dry'); utilLockMsgT=now+2200; return; }
+  if(UTILKEYS.includes(k) || TEMP_UTILITY.includes(k)){
+    loadout.utility = loadout.utility===k ? null : k;
+    sfx('swap'); return;
+  }
+  const slot = (PRIMARIES.includes(k)||TEMP_PRIMARY.includes(k)) ? 'primary'
+             : (SECONDARIES.includes(k)||TEMP_SECONDARY.includes(k)) ? 'secondary' : 'melee';
+  if(loadout[slot]===k){ loadout[slot]=null; sfx('swap'); return; }
+  loadout[slot]=k; sfx('swap');
+}
+let utilLockMsgT=0;
+// bottom to top: the LAST open one is what the player sees, so it gets the click.
+// keeping one list for both drawing and clicking is what stops CLOSE landing on a hidden screen.
+const MODALS=[
+  {k:'adminPanel', is:()=>adminPanelOpen,  draw:()=>drawAdminPanel(),  click:()=>adminPanelClick()},
+  {k:'updates',    is:()=>updatesOpen,     draw:()=>drawUpdates(),     click:()=>updatesClick()},
+  {k:'admins',     is:()=>adminsOpen,      draw:()=>drawAdminsMenu(),  click:()=>adminsClick()},
+  {k:'msgs',       is:()=>msgsOpen,        draw:()=>{ if(composePickOpen) drawComposePick(); else drawMsgs(); },
+                                           click:()=>msgsClick()},
+  {k:'promos',     is:()=>promoAdminOpen,  draw:()=>drawPromoAdmin(),  click:()=>promoAdminClick()},
+  {k:'players',    is:()=>playersOpen,     draw:()=>drawPlayers(),     click:()=>playersClick()},
+  {k:'scores',     is:()=>scoresOpen,      draw:()=>drawScores(),      click:()=>scoresClick()},
+  {k:'archive',    is:()=>archOpen,        draw:()=>drawArchive(),     click:()=>archClick()},
+  {k:'storage',    is:()=>storageOpen,     draw:()=>drawStorage(),     click:()=>storageClick()},
+  {k:'weaponEdit', is:()=>weaponEditOpen,  draw:()=>drawWeaponEdit(),  click:()=>weaponEditClick()},
+  {k:'wheel',      is:()=>wheelOpen,       draw:()=>drawWheel(),       click:()=>wheelClick()},
+  {k:'practice',   is:()=>practicePickOpen,draw:()=>drawPracticePick(),click:()=>practicePickClick()},
+  {k:'reader',     is:()=>readerOpen,      draw:()=>drawReader(),      click:()=>readerClick()},
+];
+function topModal(){
+  for(let i=MODALS.length-1;i>=0;i--) if(MODALS[i].is()) return MODALS[i];
+  return null;
+}
+function clickSelect(){
+  const inR=r=>r&&mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
+  const openBoardPlayer=r=>{
+    scoresOpen=true; peStep='panel'; peMode='edit'; peData=null; peEdit=null;
+    peTarget=r.name; lookupPlayer(r.userId); sfx('swap');
+  };
+  const top=topModal();
+  if(top){ top.click(); return; }                    // whatever is on top owns the click
+  if(banBlocksPlay()){ banPageClick(); return; }     // nothing else is reachable while blocked
+  if(dailyGateOpen){ dailyGateClick(); return; }
+  if(firstAccountWelcomeOpen){ firstAccountWelcomeClick(); return; }
+  if(signUpPromptOpen){ signUpPromptClick(); return; }
+  if(signBtnRect && inR(signBtnRect) && !adminPanelOpen && !updatesOpen && !adminsOpen && !msgsOpen && !archOpen && !storageOpen && !scoresOpen && !detailKey){ toggleAuth(); sfx('swap'); return; }
+  // ADMIN / UPDATES live beside the gear, so they work from any select page
+  if(selPage==='hub'){ for(const xr of feedXRects){ if(inR(xr)){ deleteBanner(xr.id); sfx('dry'); return; } } }
+  if(isAdmin() && inR(adminHubBtnRect)){ adminPanelOpen=true; fetchAdmins(); fetchBanners(); sfx('swap'); return; }
+  if(isMainAdmin() && inR(adminsHubBtnRect)){ adminsOpen=true; fetchAdmins(); sfx('swap'); return; }
+  if(isAdmin() && inR(msgsHubBtnRect)){ msgsOpen=true; fetchMsgs().then(()=>markMsgsRead()); sfx('swap'); return; }
+  if(detailKey){
+    if(inR(detailRects.close) || !inR(detailRects.panel)){ detailKey=null; sfx('swap'); }
+    return;
+  }
+  // details arrows (only on a category page)
+  for(const b of detailBtns){ if(inR(b)){ detailKey=b.key; sfx('aim'); return; } }
+  if(selPage==='hub'){
+    for(const r of leaderboardRowRects) if(inR(r)){
+      openBoardPlayer(r); return;
+    }
+    if(inR(adLeftRect)){ try{ window.open(adLeftRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
+    if(inR(adRightRect)){ try{ window.open(adRightRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
+    if(inR(promoBtnRect)){ openPromo(); sfx('swap'); return; }
+    if(inR(shareBtnRect)){ shareReferral(); return; }
+    if(inR(wheelBtnRect)){ openWheel(); sfx('swap'); return; }
+    if(inR(streakBtnRect)){ collectStreak(); return; }
+    if(inR(lookupBtnRect)){ if(isAdmin()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
+    for(const r of homePlayRects) if(inR(r)){
+      if(!r.enabled){ sfx('dry'); return; }
+      if(r.id==='play') openModeLeaderboard();
+      else if(r.id==='practice'){ selPage='practice'; sfx('swap'); }
+      else if(r.id==='social'){ selPage='social'; fetchSocial(true); sfx('swap'); }
+      return;
+    }
+    if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
+    if(inR(shopBtnRect)){ selPage='shop'; sfx('swap'); return; }
+    return;
+  }
+  if(selPage==='modes'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of modeRects) if(inR(r)){ openModeLeaderboard(r.id); return; }
+    return;
+  }
+  if(selPage==='modeboard'){
+    for(const r of leaderboardRowRects) if(inR(r)){ openBoardPlayer(r); return; }
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of modeBoardActionRects) if(inR(r)){
+      if(r.enabled===false){
+        if(r.id==='ranked'){
+          modeBoardNotice='COMING SOON'; modeBoardNoticeT=performance.now()+2800;
+          sfx('dry'); return;
+        }
+        if(r.mode&&!partyAllowsQueue(r.mode)) return;
+        sfx('dry'); return;
+      }
+      if(r.id==='ranked') {
+        // Fail closed even if a stale cached draw rect still marks Ranked as enabled.
+        modeBoardNotice='COMING SOON'; modeBoardNoticeT=performance.now()+2800;
+        sfx('dry');
+      }
+      else if(r.id==='party_menu'||r.id==='party_open') { selPage='social'; fetchSocial(true); sfx('swap'); }
+      // Legacy ids remain routable for older cached canvases, but the live
+      // Play dashboard always enters the dedicated Party menu first.
+      else if(r.id==='party_create') partyPromptCreate();
+      else if(r.id==='party_join') partyPromptJoin();
+      else if(r.id==='offline_cpu_menu') { selPage='offlinecpu'; sfx('swap'); }
+      else chooseGameMode(r.mode,'modeboard');
+      return;
+    }
+    return;
+  }
+  if(selPage==='offlinecpu'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of offlineCpuRects) if(inR(r)){
+      if(r.enabled===false){ sfx('dry'); return; }
+      chooseGameMode(r.mode,'offlinecpu'); return;
+    }
+    return;
+  }
+  if(selPage==='ranked'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of rankedRects) if(inR(r)){
+      if(!r.enabled){
+        if(r.mode&&!partyAllowsQueue(r.mode)) return;
+        sfx('dry'); return;
+      }
+      if(r.id==='signin') toggleAuth();
+      return;
+    }
+    return;
+  }
+  if(selPage==='social'){
+    for(const r of socialRects) if(inR(r)){
+      if(!r.enabled){ sfx('dry'); return; }
+      if(r.id==='back'){ selPage='hub'; sfx('swap'); }
+      else if(r.id==='signin') toggleAuth();
+      else if(r.id==='social_retry') fetchSocial(true);
+      else if(r.id==='friend_add') socialPromptAddFriend();
+      else if(r.id==='friend_handle') socialPromptEditHandle();
+      else if(r.id==='friend_accept') socialAcceptFriend(r.rowId);
+      else if(r.id==='friend_block') socialBlockFriend(r.rowId);
+      else if(r.id==='friend_remove') socialRemoveFriend(r.rowId);
+      else if(r.id==='friend_prev'){ socialFriendPage=Math.max(0,socialFriendPage-1); sfx('swap'); }
+      else if(r.id==='friend_next'){ socialFriendPage++; sfx('swap'); }
+      else if(r.id==='friend_message'||r.id==='dm_reply') openSocialMessageCompose(r.userId,r.handle);
+      else if(r.id==='dm_new') socialPromptMessage();
+      else if(r.id==='dm_prev'){ socialMessagePage=Math.max(0,socialMessagePage-1); sfx('swap'); }
+      else if(r.id==='dm_next'){ socialMessagePage++; sfx('swap'); }
+      else if(r.id==='party_create') partyPromptCreate();
+      else if(r.id==='party_join') partyPromptJoin();
+      else if(r.id==='party_open'){ selPage='party'; sfx('swap'); }
+      else if(r.id==='party_copy') partyCopyCode();
+      return;
+    }
+    return;
+  }
+  if(selPage==='party'){
+    for(const r of partyRects) if(inR(r)){
+      if(!r.enabled){
+        if(r.id==='browse') partyRequirePlayers();
+        else sfx('dry');
+        return;
+      }
+      if(r.id==='create') partyPromptCreate();
+      else if(r.id==='join') partyPromptJoin();
+      else if(r.id==='back'){
+        // Returning to Social must never dissolve an accepted Party.
+        if(!party.accepted&&party.channel) leaveParty('',false);
+        selPage='social'; fetchSocial(true); sfx('swap');
+      }
+      else if(r.id==='leave'){ leaveParty('',false); selPage='social'; fetchSocial(true); sfx('swap'); }
+      else if(r.id==='browse') {
+        if(!partyRequirePlayers()) return;
+        // The old lobby exposed a dedicated cancel button. PLAY now safely
+        // clears a stale setup/waiting session before opening the simple chooser.
+        if(partyCpuSessionOpen()) partyCpuAbort('Party CPU match setup was cancelled.',true);
+        selPage='partymodes'; sfx('swap');
+      }
+      else if(r.id==='cpu2v2') { if(partyCpuSessionOpen()) partyCpuAbort('Party CPU match setup was cancelled.',true); else partyCpuHostPrepare(); }
+      else if(r.id==='copy') partyCopyCode();
+      else if(r.id==='mode') partySetMode(r.mode);
+      else if(r.id==='lock') partyToggleLock();
+      else if(r.id==='ready') partyToggleReady();
+      else if(r.id==='member_prev'||r.id==='member_next') partyMoveMember(r.memberId,r.dir);
+      else if(r.id==='kick') partyKickMember(r.memberId);
+      else if(r.id==='chat_open'){ party.chatOpen=true; sfx('swap'); }
+      else if(r.id==='chat_close'){ party.chatOpen=false; sfx('swap'); }
+      else if(r.id==='chat_send') partyPromptChat();
+      else if(r.id==='chat_toggle') partyToggleChat();
+      else if(r.id==='chat_up') partyChatScroll(-1);
+      else if(r.id==='chat_down') partyChatScroll(1);
+      return;
+    }
+    return;
+  }
+  if(selPage==='partymodes'){
+    for(const r of partyModeRects) if(inR(r)){
+      if(r.id==='party_modes_back'){ selPage=party.accepted?'party':'social'; sfx('swap'); }
+      else if(r.id==='party_mode_existing'){
+        if(!party.accepted){ party.status='PARTY CONNECTION LOST'; selPage='party'; sfx('dry'); return; }
+        if(!partyRequirePlayers()) return;
+        modeBoardOrigin='party'; selPage='modeboard'; fetchBoard(); sfx('swap');
+      }
+      else if(r.id==='party_mode_1v1v1') partyChooseSetupMode('1v1v1');
+      else if(r.id==='party_mode_1v1') partyChooseSetupMode('1v1');
+      else if(r.id==='party_mode_2v2') partyChooseSetupMode('2v2');
+      return;
+    }
+    return;
+  }
+  if(selPage==='loadout'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const c of catBtns) if(inR(c)){ selPage=c.cat; sfx('swap'); return; }
+    if(inR(deployRect)){ launchSelectedMode(); return; }
+    return;
+  }
+  if(selPage==='arena'){ arenaClick(); return; }
+  // category / tutorial / shop pages
+  if(inR(backRect)){ navigateSelectBack(); return; }
+  // shop: tabs, weapon picker arrows, then buy/equip rects
+  if(selPage==='howto'){ howToClick(); return; }
+  if(selPage==='shop'){
+  for(const r of shopTabRects){ if(inR(r)){ shopTab=r.tab; sfx('swap'); return; } }
+  if(shopTab==='anims'){
+    const pk=WKEYS.filter(k=>!isLocked(k));
+    if(inR(animPrevRect)){ const i=pk.indexOf(shopAnimWeapon); shopAnimWeapon=pk[(i-1+pk.length)%pk.length]; sfx('swap'); return; }
+    if(inR(animNextRect)){ const i=pk.indexOf(shopAnimWeapon); shopAnimWeapon=pk[(i+1)%pk.length]; sfx('swap'); return; }
+  }
+  if(shopTab==='cosmetics'){
+    const pickable=WKEYS.filter(k=>!isLocked(k));
+    if(inR(cosPrevRect)){ const i=pickable.indexOf(shopCosWeapon); shopCosWeapon=pickable[(i-1+pickable.length)%pickable.length]; sfx('swap'); return; }
+    if(inR(cosNextRect)){ const i=pickable.indexOf(shopCosWeapon); shopCosWeapon=pickable[(i+1)%pickable.length]; sfx('swap'); return; }
+  }
+  // buttons first: the whole-row expand target must never swallow a BUY
+  for(const r of shopRects){ if(r.kind!=='expand' && inR(r)){
+    if(r.kind==='cosmetic') buyCosmetic(r.wkey, r.cos);
+    else if(r.kind==='anim') buyAnim(r.anim, r.wkey);
+    else if(r.kind==='powerup') buyPowerup(r.pu);
+    else buyGem(r.item);
+    return;
+  } }
+  for(const r of shopRects){ if(inR(r)){
+    if(r.kind==='cosmetic') buyCosmetic(r.wkey, r.cos);
+    else if(r.kind==='expand'){ shopExpanded = (shopExpanded===r.item.key) ? null : r.item.key; sfx('swap'); }
+    else if(r.kind==='anim') buyAnim(r.anim, r.wkey);
+    else if(r.kind==='powerup') buyPowerup(r.pu);
+    else buyGem(r.item);
+    return;
+  } }
+  }
+  if(selPage==='practice')
+  for(const r of practiceRects){ if(inR(r)){
+    // always pick fresh: clear the loadout and send them through the shared loadout screen
+    loadout={primary:null,secondary:null,melee:null,utility:null};
+    pendingPractice=r.mode; pendingGameMode='practice'; selPage='loadout'; sfx('swap'); return;
+  } }
+  for(const r of cardRects){                      // PRACTICE + BUY IN SHOP take priority over equipping
+    if(r.tryIt && inR(r)){ openPracticePick(r.key); sfx('swap'); return; }
+  }
+  for(const r of cardRects){
+    if(r.gotoShop && inR(r)){ selPage='shop'; shopTab='weapons'; sfx('swap'); return; }
+  }
+  for(const r of cardRects){
+    if(inR(r)){
+      if(r.gotoShop){ selPage='shop'; shopTab='weapons'; sfx('swap'); return; }   // BUY IN SHOP
+      pickWeapon(r.key); return;   // stays on page so you can compare
+    }
+  }
+}
