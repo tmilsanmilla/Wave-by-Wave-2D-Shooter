@@ -1920,12 +1920,22 @@ function drawLoadout(){
 function drawHomeLeaderboards(x,y,w,h){
   const titleH=h<90?16:20, gap=w<400?5:10;
   const panelY=y+titleH, panelH=h-titleH, panelW=(w-gap)/2;
+  // Test/preview harnesses may draw this component without networking state,
+  // so the normal empty labels remain the safe fallback.
+  const readState=typeof leaderboardReadState==='object'&&leaderboardReadState?leaderboardReadState:null;
+  const emptyLabel=(key,normal)=>{
+    const status=readState&&readState[key];
+    if(status==='loading') return 'LOADING...';
+    if(status==='setup') return 'RUN LEADERBOARD SQL';
+    if(status==='error') return 'BOARD UNAVAILABLE';
+    return normal;
+  };
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillStyle='#e8b658'; ctx.font='700 '+(h<90?9:11)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('\uD83C\uDFC6 TOP '+PUBLIC_BOARD_LIMIT+' LEADERBOARDS',x+w/2,y+titleH/2);
   const panels=[
-    {x,title:'ONLINE',metric:'1v1 WINS',rows:arenaBoard,col:'#d05548',empty:onlineServiceAvailable()?'NO WINS YET':'NO CONNECTION'},
-    {x:x+panelW+gap,title:'OFFLINE',metric:'ENDLESS SCORE',rows:board,col:'#a7c15e',empty:sb?'NO SCORES YET':'BOARD OFFLINE'}
+    {x,title:'ONLINE',metric:'1v1 WINS',rows:arenaBoard,col:'#d05548',empty:emptyLabel('arena',onlineServiceAvailable()?'NO WINS YET':'NO CONNECTION')},
+    {x:x+panelW+gap,title:'OFFLINE',metric:'ENDLESS SCORE',rows:board,col:'#a7c15e',empty:emptyLabel('endless',sb?'NO SCORES YET':'BOARD OFFLINE')}
   ];
   for(const panel of panels){
     ctx.fillStyle='rgba(8,10,7,0.72)'; ctx.fillRect(panel.x,panelY,panelW,panelH);

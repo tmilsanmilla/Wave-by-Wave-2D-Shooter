@@ -16,6 +16,8 @@ const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
 const PUBLIC_BOARD_LIMIT=5;
 let sb = null, authUser = null, board = [], arenaBoard = [], boardT = 0, recovering = false;
+let leaderboardFetchVersion=0;
+const leaderboardReadState={endless:'idle',arena:'idle'};
 let arenaAuthPending=false, arena=null;
 let leaderboardRowRects=[];
 const ONBOARDING_VERSION=1;
@@ -31,16 +33,27 @@ function leaderboardNeedsUsername(row){
   if(!row) return false;
   if(row.needsUsername===true) return true;
   const username=cleanUsername(row.username!=null?row.username:row.name).toLowerCase();
+  // Newer database migrations may return this explicit marker instead of the
+  // deterministic op_<uuid> transport fallback. Treat both spellings as the
+  // same unfinished identity so the owner is routed to Choose Username.
+  if(username==='username_not_set'||username==='usernamenotset') return true;
   const suffix=String(row.user_id!=null?row.user_id:row.userId||'').replace(/-/g,'').toLowerCase();
   return !!suffix&&(username==='op_'+suffix.slice(0,20)||username==='op_'+suffix.slice(0,8));
+}
+function leaderboardReadFailure(error){
+  const text=[error&&error.code,error&&error.message,error&&error.details,error&&error.hint,error]
+    .filter(Boolean).join(' ').toLowerCase();
+  return /pgrst202|schema cache|could not find[^\n]*function|get_outpost_zero_leaderboard|permission denied|does not exist/.test(text)
+    ? 'setup' : 'error';
 }
 function displayName(u){
   if(!u) return 'guest';
   if(authUser&&String(u.id||'')===String(authUser.id||'')&&typeof socialProfile!=='undefined'&&socialProfile&&socialProfile.handle){
     const live=cleanUsername(socialProfile.handle);
     if(live){
-      const suffix=String(u.id||'').replace(/-/g,'').toLowerCase();
-      const pending=!!suffix&&live.toLowerCase()==='op_'+suffix.slice(0,20);
+      const key=live.toLowerCase(), suffix=String(u.id||'').replace(/-/g,'').toLowerCase();
+      const pending=key==='username_not_set'||key==='usernamenotset'||
+        (!!suffix&&(key==='op_'+suffix.slice(0,20)||key==='op_'+suffix.slice(0,8)));
       return pending?'operator':live;
     }
   }
@@ -211,25 +224,36 @@ async function submitArenaWin(){
   }catch(err){ console.warn('arena win submit failed',err); }
 }
 async function fetchBoard(){
-  if(!sb) return;
-  const read=async(game,setter)=>{
+  if(!sb) return false;
+  const requestVersion=++leaderboardFetchVersion;
+  leaderboardReadState.endless='loading'; leaderboardReadState.arena='loading';
+  const read=async game=>{
     try{
       const {data,error}=await sb.rpc('get_outpost_zero_leaderboard',{p_game:game,p_limit:PUBLIC_BOARD_LIMIT});
       if(error) throw error;
-      setter((data||[]).map(row=>({
+      return {game,rows:(data||[]).map(row=>({
         user_id:row.user_id,
         username:cleanUsername(row.username),
         name:cleanUsername(row.username),
         needsUsername:leaderboardNeedsUsername(row),
         score:+row.score||0
-      })));
-    }catch(err){ console.warn(game+' board fetch failed',err); }
+      }))};
+    }catch(error){ console.warn(game+' board fetch failed',error); return {game,error}; }
   };
-  await Promise.all([
-    read('outpost-zero',rows=>{ board=rows; }),
-    read('outpost-zero-arena-wins',rows=>{ arenaBoard=rows; })
-  ]);
+  const results=await Promise.all([read('outpost-zero'),read('outpost-zero-arena-wins')]);
+  // Auth, Realtime, and the 30-second refresh can overlap. Only the newest
+  // request may publish results, otherwise a slower old response can put a
+  // temporary username or old score back on screen.
+  if(requestVersion!==leaderboardFetchVersion) return false;
+  let anySuccess=false;
+  for(const result of results){
+    const arenaResult=result.game==='outpost-zero-arena-wins', key=arenaResult?'arena':'endless';
+    if(result.error){ leaderboardReadState[key]=leaderboardReadFailure(result.error); continue; }
+    if(arenaResult) arenaBoard=result.rows; else board=result.rows;
+    leaderboardReadState[key]='ready'; anySuccess=true;
+  }
   boardT=Date.now(); syncFallAccess();
+  return anySuccess;
 }
 // ---- report a problem: small form -> Supabase 'reports' table (write-only) ----
 let reportOpen=false, lastReportT=0;

@@ -33,15 +33,27 @@ after Social core has created and backfilled player usernames:
 
 1. `leaderboards/01-public-board.sql`
 
+If you already finished Social `01` through `04`,
+run only this one Leaderboards script next; do not combine it with or rerun the
+Social scripts for this fix.
+It uses the existing `public.scores` table that already stores game scores; it
+does not create or replace the table.
+
 This also removes obsolete `outpost-zero-profile` score rows that could contain
 legacy account-email JSON, rewrites old score aliases to Social usernames, and
 installs the narrow username/high-score player lookup used by public profiles.
+It also blocks old browser tabs from recreating those JSON rows and removes
+anonymous direct reads of the raw score table. Signed-in score saving and
+referrals retain their existing authenticated access and RLS checks.
 
 This script is rerunnable. It exposes only user ID, username, and score, and it
 hard-limits requests to the two public Outpost Zero boards and five rows.
 Accounts created before usernames were required display `USERNAME_NOT_SET`
-instead of an email or UUID-like temporary label. The game sends the account
-owner to Social to choose a username; username changes are free.
+instead of an email or UUID-like temporary label. This covers both the current
+20-character generated handle and the legacy 8-character version. The game
+sends the account owner to Social to choose a username; username changes are
+free. Cleanup is restricted to score games beginning with `outpost-zero`, so it
+does not rename rows belonging to another game that shares the table.
 
 ## Global AI training
 
