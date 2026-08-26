@@ -42,6 +42,22 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
     color:#cdd6b0;font:12px ui-monospace,Consolas,monospace;padding:9px;margin-bottom:10px}
   #authbox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
   #authmsg{color:#a7c15e;font-size:11px;min-height:15px;margin-top:4px}
+  #usernameclaimwrap{inset:0;background:rgba(5,6,4,.96);display:none;align-items:center;justify-content:center;z-index:100}
+  #usernameclaimbox{background:#101208;border:1px solid #e8b658;padding:clamp(20px,6vw,30px);
+    width:min(380px,94vw);max-height:92vh;overflow:auto;box-sizing:border-box;text-align:center;
+    box-shadow:0 0 42px rgba(232,182,88,.13)}
+  #usernameclaimbox h2{color:#e8b658;font-size:20px;margin:0 0 8px}
+  #usernameclaimbox p{color:#aab38a;font-size:11px;margin:0 0 18px;line-height:1.55}
+  #usernameclaiminput{width:100%;box-sizing:border-box;background:rgba(0,0,0,.58);border:1px solid #6f684b;
+    color:#f0ddb0;font:700 15px ui-monospace,Consolas,monospace;padding:11px;margin-bottom:11px;
+    text-align:center;user-select:text;-webkit-user-select:text}
+  #usernameclaiminput:focus{outline:2px solid rgba(232,182,88,.24);outline-offset:1px;border-color:#e8b658}
+  #usernameclaimbox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
+  #usernameclaimretry{display:none!important}
+  #usernameclaimwrap.error #usernameclaimretry{display:block!important}
+  #usernameclaimwrap.checking #usernameclaiminput,#usernameclaimwrap.checking #usernameclaimsave,
+  #usernameclaimwrap.error #usernameclaiminput,#usernameclaimwrap.error #usernameclaimsave{display:none}
+  #usernameclaimstatus{color:#c4d48d;font-size:11px;min-height:16px;margin-top:5px;line-height:1.45}
   #repwrap{inset:0;background:rgba(8,9,5,.86);display:none;align-items:center;justify-content:center;z-index:60}
   #repbox{background:#101208;border:1px solid #4a4634;padding:26px;width:340px;text-align:center}
   #repbox h2{color:#e8b658;font-size:18px;margin:0 0 6px}

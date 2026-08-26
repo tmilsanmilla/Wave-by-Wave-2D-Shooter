@@ -28,7 +28,7 @@ let arenaRects=[];
 function freshArena(status){
   return {phase:'menu',mode:null,room:'',status:status||'',queueChannel:null,matchChannel:null,
     expectedIds:null,queueCandidate:null,queueOffer:null,wantsHost:false,hostId:null,opponent:null,localReady:false,remoteReady:false,
-    networkHold:false,disconnectAt:0,disconnectTimer:null,
+    networkHold:false,disconnectAt:0,disconnectTimer:null,disconnectSide:'',departureAnnounced:'',departurePromise:null,forfeitResultId:'',forfeitPacket:null,
     active:false,matchEpoch:0,round:0,scores:{},roundStartAt:0,roundEndAt:0,nextRoundAt:0,roundResolved:false,winRecorded:false,
     mapId:'arena',mapVotePhase:'idle',mapVoteId:'',mapVoteDeadline:0,mapVotes:{},mapVoteResult:null,
     mapVoteAcks:new Set(),mapVoteRevealUntil:0,mapVoteSyncAt:0,mapVoteStartPending:false,

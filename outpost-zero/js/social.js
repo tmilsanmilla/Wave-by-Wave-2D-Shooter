@@ -7,6 +7,8 @@ let socialBackend={profiles:null,friends:null,messages:null};
 let socialFriendPage=0, socialMessagePage=0;
 let socialMessageTo=null, msgKind='admin';
 let socialDomPageActive=false;
+let socialFetchVersion=0;
+let usernameClaimOpen=false, usernameClaimMode='closed', usernameClaimUserId='';
 
 function socialHandleKey(value){
   return String(value||'').trim().replace(/^@/,'').toLowerCase().replace(/[^a-z0-9_]/g,'').slice(0,32);
@@ -16,7 +18,86 @@ function socialDefaultHandle(){
   return ('op_'+suffix).slice(0,32);
 }
 function socialHasGeneratedUsername(profile=socialProfile){
-  return !!(profile&&socialHandleKey(profile.handle)===socialDefaultHandle());
+  if(!profile||!authUser) return false;
+  const key=socialHandleKey(profile.handle), suffix=String(authUser.id||'').replace(/-/g,'').toLowerCase();
+  return !!suffix&&(key==='op_'+suffix.slice(0,20)||key==='op_'+suffix.slice(0,8));
+}
+function usernameClaimElements(){
+  if(typeof document==='undefined') return {wrap:null,title:null,hint:null,input:null,save:null,retry:null,signout:null,status:null};
+  return {
+    wrap:document.getElementById('usernameclaimwrap'),
+    title:document.getElementById('usernameclaimtitle'),
+    hint:document.getElementById('usernameclaimhint'),
+    input:document.getElementById('usernameclaiminput'),
+    save:document.getElementById('usernameclaimsave'),
+    retry:document.getElementById('usernameclaimretry'),
+    signout:document.getElementById('usernameclaimsignout'),
+    status:document.getElementById('usernameclaimstatus')
+  };
+}
+function closeUsernameClaim(){
+  usernameClaimOpen=false; usernameClaimMode='closed'; usernameClaimUserId='';
+  const el=usernameClaimElements();
+  if(el.wrap){ el.wrap.style.display='none'; el.wrap.className='ui'; }
+  if(el.input) el.input.value='';
+  if(el.status) el.status.textContent='';
+}
+function openUsernameClaim(mode='checking',message='Checking your account username...'){
+  if(!authUser||recovering){ closeUsernameClaim(); return false; }
+  const id=String(authUser.id||'');
+  if(!id){ closeUsernameClaim(); return false; }
+  const el=usernameClaimElements(), same=usernameClaimOpen&&usernameClaimUserId===id;
+  usernameClaimOpen=true; usernameClaimMode=mode; usernameClaimUserId=id;
+  if(el.wrap){ el.wrap.className='ui '+mode; el.wrap.style.display='flex'; }
+  if(el.title) el.title.textContent=mode==='required'?'CHOOSE YOUR USERNAME':mode==='error'?'USERNAME REQUIRED':'CHECKING USERNAME';
+  if(el.hint) el.hint.textContent=mode==='required'
+    ? 'Choose the unique public username shown on leaderboards, parties, friends, and messages. Your email always stays private.'
+    : mode==='error'?'Your username could not be verified. Retry the secure profile check or sign out.':'Checking the public username attached to your account.';
+  if(el.status) el.status.textContent=message;
+  if(el.save) el.save.disabled=mode!=='required';
+  if(el.signout) el.signout.disabled=false;
+  if(mode==='required'&&!same&&el.input) el.input.value='';
+  if(mode==='required') try{ setTimeout(()=>el.input&&el.input.focus(),0); }catch(e){}
+  return true;
+}
+function beginUsernameClaimCheck(){
+  if(!authUser||recovering){ closeUsernameClaim(); return false; }
+  const profileForUser=socialProfile&&String(socialProfile.user_id||'')===String(authUser.id||'');
+  if(profileForUser){ syncUsernameClaim(); return usernameClaimOpen; }
+  return openUsernameClaim('checking','Checking your account username...');
+}
+function syncUsernameClaim(){
+  if(!authUser||recovering){ closeUsernameClaim(); return false; }
+  if(!socialProfile||String(socialProfile.user_id||'')!==String(authUser.id||'')){
+    return openUsernameClaim('checking','Checking your account username...');
+  }
+  if(socialHasGeneratedUsername(socialProfile)){
+    openUsernameClaim('required','Use 3–32 letters, numbers, or underscores.');
+    return true;
+  }
+  closeUsernameClaim(); return false;
+}
+function usernameClaimFailed(message){
+  if(!authUser||recovering){ closeUsernameClaim(); return false; }
+  openUsernameClaim('error',message||'Could not verify your username. Check your connection and retry.');
+  return true;
+}
+function usernameClaimBusy(busy,status){
+  const el=usernameClaimElements();
+  if(el.save) el.save.disabled=!!busy;
+  if(el.signout) el.signout.disabled=!!busy;
+  if(status&&el.status) el.status.textContent=status;
+}
+async function usernameClaimSubmit(){
+  const el=usernameClaimElements();
+  return socialUpdateHandle(el.input&&el.input.value,true);
+}
+async function usernameClaimRetry(){
+  if(!authUser) return false;
+  openUsernameClaim('checking','Checking your account username...');
+  const ok=await fetchSocial(true);
+  if(!ok&&usernameClaimMode==='checking') usernameClaimFailed('Could not verify your username. Check your connection and retry.');
+  return ok;
 }
 function socialSafeDisplayName(){
   // `display_name` is retained in the existing table for compatibility, but
@@ -33,10 +114,12 @@ function socialDropRealtime(){
   socialChannel=null;
 }
 function resetSocialState(message){
+  socialFetchVersion++;
   socialDropRealtime(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialFriendPage=0; socialMessagePage=0;
   socialStatus=message||'SIGN IN FOR FRIENDS + PRIVATE MESSAGES';
+  closeUsernameClaim();
 }
 function setupSocialRealtime(){
   if(!sb||!authUser||socialChannel||socialBackend.friends!==true||socialBackend.messages!==true||typeof sb.channel!=='function') return;
@@ -72,22 +155,32 @@ function socialMergeRows(a,b){
 }
 async function fetchSocial(force=false){
   if(!authUser){ resetSocialState(); return false; }
-  if(!sb||typeof navigator!=='undefined'&&navigator.onLine===false){ socialStatus='SOCIAL IS OFFLINE · PARTY ALSO NEEDS A CONNECTION'; return false; }
+  if(!sb||typeof navigator!=='undefined'&&navigator.onLine===false){
+    socialStatus='SOCIAL IS OFFLINE · PARTY ALSO NEEDS A CONNECTION';
+    usernameClaimFailed('Could not verify your username while offline. Reconnect and retry.');
+    return false;
+  }
   if(socialLoading||(!force&&Date.now()-socialLastFetch<2500)) return false;
+  const userId=String(authUser.id||''), fetchVersion=++socialFetchVersion;
+  const stillCurrent=()=>socialFetchVersion===fetchVersion&&authUser&&String(authUser.id||'')===userId;
   socialLoading=true; socialStatus='REFRESHING SOCIAL...';
   try{
     const previousUsername=socialProfile&&String(socialProfile.handle||'');
-    let profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',authUser.id).maybeSingle();
+    let profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',userId).maybeSingle();
+    if(!stillCurrent()) return false;
     if(profileResult.error){ socialBackend.profiles=false; throw profileResult.error; }
     socialBackend.profiles=true;
     if(!profileResult.data){
       const handle=socialDefaultHandle();
-      const made=await sb.from(SOCIAL_PROFILE_TABLE).insert({user_id:authUser.id,handle,handle_key:handle,display_name:handle});
+      const made=await sb.from(SOCIAL_PROFILE_TABLE).insert({user_id:userId,handle,handle_key:handle,display_name:handle});
+      if(!stillCurrent()) return false;
       if(made&&made.error){ socialBackend.profiles=false; throw made.error; }
-      profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',authUser.id).maybeSingle();
+      profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',userId).maybeSingle();
+      if(!stillCurrent()) return false;
       if(profileResult.error||!profileResult.data) throw profileResult.error||new Error('Social profile could not be created.');
     }
-    socialProfile=profileResult.data; socialProfiles={[String(authUser.id)]:socialProfile};
+    socialProfile=profileResult.data; socialProfiles={[userId]:socialProfile};
+    syncUsernameClaim();
     // Auth metadata can be stale or absent. Repaint as soon as the canonical
     // Social username arrives so the header never keeps showing an old alias.
     if(typeof paintUserbar==='function') paintUserbar();
@@ -97,22 +190,26 @@ async function fetchSocial(force=false){
     }
 
     const fr=await sb.from(SOCIAL_FRIEND_TABLE).select('id,requester_id,addressee_id,status,blocked_by,created_at,updated_at').order('updated_at',{ascending:false}).limit(60);
+    if(!stillCurrent()) return false;
     if(fr.error){ socialBackend.friends=false; throw fr.error; }
     socialBackend.friends=true; socialFriends=fr.data||[];
 
-    const sent=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at').eq('sender_id',authUser.id).order('created_at',{ascending:false}).limit(40);
+    const sent=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at').eq('sender_id',userId).order('created_at',{ascending:false}).limit(40);
+    if(!stillCurrent()) return false;
     if(sent.error){ socialBackend.messages=false; throw sent.error; }
-    const received=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at').eq('recipient_id',authUser.id).order('created_at',{ascending:false}).limit(40);
+    const received=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at').eq('recipient_id',userId).order('created_at',{ascending:false}).limit(40);
+    if(!stillCurrent()) return false;
     if(received.error){ socialBackend.messages=false; throw received.error; }
     socialBackend.messages=true;
     socialMessages=socialMergeRows(sent.data,received.data).sort((a,b)=>Date.parse(b.created_at||0)-Date.parse(a.created_at||0)).slice(0,60);
 
-    const ids=new Set([String(authUser.id)]);
+    const ids=new Set([userId]);
     for(const row of socialFriends) ids.add(socialFriendOther(row));
     for(const row of socialMessages){ ids.add(String(row.sender_id||'')); ids.add(String(row.recipient_id||'')); }
     const wanted=[...ids].filter(Boolean);
     if(wanted.length){
       const people=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name').in('user_id',wanted);
+      if(!stillCurrent()) return false;
       if(!people.error) for(const p of people.data||[]) socialProfiles[String(p.user_id)]=p;
     }
     socialStatus=socialHasGeneratedUsername()
@@ -120,18 +217,23 @@ async function fetchSocial(force=false){
       : 'SOCIAL READY · PRIVATE MESSAGES ARE FRIENDS-ONLY';
     socialLastFetch=Date.now();
     setupSocialRealtime();
-    const unread=socialMessages.some(m=>String(m.recipient_id)===String(authUser.id)&&!m.read_at);
+    const unread=socialMessages.some(m=>String(m.recipient_id)===userId&&!m.read_at);
     if(unread){
-      try{ await sb.from(SOCIAL_MESSAGE_TABLE).update({read_at:new Date().toISOString()}).eq('recipient_id',authUser.id).is('read_at',null); }catch(e){}
-      for(const m of socialMessages) if(String(m.recipient_id)===String(authUser.id)&&!m.read_at) m.read_at=new Date().toISOString();
+      try{ await sb.from(SOCIAL_MESSAGE_TABLE).update({read_at:new Date().toISOString()}).eq('recipient_id',userId).is('read_at',null); }catch(e){}
+      if(!stillCurrent()) return false;
+      for(const m of socialMessages) if(String(m.recipient_id)===userId&&!m.read_at) m.read_at=new Date().toISOString();
     }
     return true;
   }catch(error){
+    if(!stillCurrent()) return false;
     console.warn('social sync failed',error);
     if(socialSetupMissing(error)) socialStatus=socialSetupStatus();
     else socialStatus='SOCIAL COULD NOT REFRESH · CHECK YOUR CONNECTION AND TRY AGAIN';
+    usernameClaimFailed(socialSetupMissing(error)
+      ? 'Account usernames need the Social database update. Retry after the update is installed.'
+      : 'Could not verify your username. Check your connection and retry.');
     socialDropRealtime(); return false;
-  }finally{ socialLoading=false; }
+  }finally{ if(socialFetchVersion===fetchVersion) socialLoading=false; }
 }
 function socialPromptAddFriend(){
   if(!authUser){ toggleAuth(); return; }
@@ -165,16 +267,31 @@ function socialPromptEditProfile(){
     fields:[{id:'handle',label:'USERNAME',type:'text',value:firstChoice?'':socialProfile&&socialProfile.handle||'',placeholder:'operator_7'}],
     onSave:v=>socialUpdateHandle(v.handle)});
 }
-async function socialUpdateHandle(value){
+async function socialUpdateHandle(value,requiredClaim=false){
   const username=String(value||'').trim().replace(/^@/,'');
-  if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){ formError('use 3–32 letters, numbers, or _'); return false; }
+  const showError=message=>{
+    if(requiredClaim){ const el=usernameClaimElements(); if(el.status) el.status.textContent=message; usernameClaimBusy(false); }
+    else formError(message);
+  };
+  if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){ showError('Use 3–32 letters, numbers, or _.'); return false; }
   const key=username.toLowerCase();
-  if(key===socialDefaultHandle()){ formError('choose a real username, not the temporary account label'); return false; }
+  if(socialHasGeneratedUsername({handle:username})){ showError('Choose a real username, not the temporary account label.'); return false; }
+  if(!sb||!authUser){ showError('Sign in and reconnect first.'); return false; }
+  const userId=String(authUser.id||'');
+  if(requiredClaim) usernameClaimBusy(true,'Saving your unique username...');
   try{
-    const result=await sb.from(SOCIAL_PROFILE_TABLE).update({handle:username,handle_key:key,display_name:username}).eq('user_id',authUser.id);
+    const result=await sb.from(SOCIAL_PROFILE_TABLE).update({handle:username,handle_key:key,display_name:username}).eq('user_id',userId);
     if(result&&result.error) throw result.error;
-    closeForm(); await fetchSocial(true); paintUserbar(); fetchBoard(); socialStatus='USERNAME UPDATED · @'+username; sfx('swap'); return true;
-  }catch(error){ formError(socialSetupMissing(error)?socialSetupStatus():'that username is unavailable'); return false; }
+    if(!authUser||String(authUser.id||'')!==userId) return false;
+    if(socialProfile&&String(socialProfile.user_id||'')===userId){
+      socialProfile={...socialProfile,handle:username,handle_key:key,display_name:username};
+      socialProfiles[userId]=socialProfile;
+    }
+    if(requiredClaim) syncUsernameClaim(); else closeForm();
+    await fetchSocial(true); paintUserbar(); fetchBoard(); socialStatus='USERNAME UPDATED · @'+username; sfx('swap'); return true;
+  }catch(error){
+    showError(socialSetupMissing(error)?socialSetupStatus():'That username is unavailable. Try another one.'); return false;
+  }
 }
 
 function socialPartyCodeClean(value){
@@ -247,6 +364,13 @@ function bindSocialDomControls(){
   if(join) join.addEventListener('click',socialPartyJoinFromInline);
   if(copy) copy.addEventListener('click',socialCopyOwnHandle);
   if(edit) edit.addEventListener('click',socialPromptEditProfile);
+  const claim=usernameClaimElements();
+  if(claim.save) claim.save.addEventListener('click',usernameClaimSubmit);
+  if(claim.retry) claim.retry.addEventListener('click',usernameClaimRetry);
+  if(claim.signout) claim.signout.addEventListener('click',()=>toggleAuth());
+  if(claim.input) claim.input.addEventListener('keydown',event=>{
+    if(event.key==='Enter'){ event.preventDefault(); usernameClaimSubmit(); }
+  });
 }
 async function socialAcceptFriend(rowId){
   if(!sb||!authUser) return;

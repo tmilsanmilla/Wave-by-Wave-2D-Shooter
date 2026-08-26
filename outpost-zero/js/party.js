@@ -461,7 +461,7 @@ function partyCpuApplyPrepare(p){
   partyCpuMatch.hostId=party.hostId; partyCpuMatch.humanIds=ids;
   for(const id of ids){ const member=partyMember(id); partyCpuMatch.humanNames[id]=partyCleanName(p.humanNames&&p.humanNames[id])||(member&&member.name)||'OPERATOR'; }
   pendingGameMode=PARTY_CPU_MODE; loadoutBackPage='party'; modeBoardMode=null;
-  loadout={primary:null,secondary:null,melee:null,utility:null}; selPage='loadout';
+  restoreLastLoadoutForMode(PARTY_CPU_MODE); selPage='loadout';
   party.status='Choose three weapons for 2v2 vs CPUs. Utilities and rewards are disabled.'; sfx('swap');
   return true;
 }
@@ -1074,9 +1074,12 @@ function partyTick(clock){
   }
 }
 function flushLayoutDraftOnExit(){ if(layoutDirty) persistLayoutDraft(); }
-addEventListener('pagehide',flushLayoutDraftOnExit);
+addEventListener('pagehide',()=>{
+  flushLayoutDraftOnExit();
+  try{ if(typeof arenaForfeitOnPageExit==='function') arenaForfeitOnPageExit(); }catch(e){}
+});
 addEventListener('beforeunload',()=>{
   flushLayoutDraftOnExit();
-  try{ if(arena&&arena.matchChannel) arenaSend('leave',{}); }catch(e){}
+  try{ if(typeof arenaForfeitOnPageExit==='function') arenaForfeitOnPageExit(); }catch(e){}
   try{ if(party&&party.channel) partySend('leave',{}); }catch(e){}
 });

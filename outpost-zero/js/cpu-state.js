@@ -17,7 +17,10 @@ function partyCpuIsHost(){ return !!(partyCpuSessionOpen()&&party.self&&partyCpu
 function cpuTeamIsAuthority(){ return isLocalCpu2v2()||partyCpuIsHost(); }
 const DIFFS={easy:{hp:0.75,dmg:0.7,label:'EASY'}, normal:{hp:1,dmg:1,label:'NORMAL'}, hard:{hp:1.35,dmg:1.3,label:'HARD'}};
 let spawnQueue=[], spawnTimer=0, betweenTimer=1500;
-let loadout={primary:null,secondary:null,melee:null,utility:null}, cardRects=[], deployRect=null;
+const SHARED_LOADOUT_DEFAULTS=Object.freeze({primary:'smg',secondary:'m9',melee:'knife',utility:null});
+let lastLoadout={primary:'smg',secondary:'m9',melee:'knife',utility:null};
+let lastLoadoutAccountId='';
+let loadout={primary:'smg',secondary:'m9',melee:'knife',utility:null}, cardRects=[], deployRect=null;
 let selPage='hub', pendingGameMode=null, modeBoardMode=null, modeBoardOrigin='hub', loadoutBackPage='modeboard', modeBoardActionRects=[], offlineCpuRects=[], rankedRects=[], catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], partyModeRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modeboard | offlinecpu | ranked | loadout | social | party | partymodes | tutorial | shop
 let modeBoardNotice='', modeBoardNoticeT=0;
 let detailKey=null, detailBtns=[], detailRects={};

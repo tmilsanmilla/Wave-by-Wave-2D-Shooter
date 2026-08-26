@@ -65,10 +65,13 @@ async function initAuth(){
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
       const { data } = await sb.auth.getSession();
       authUser = data.session ? data.session.user : null;
+      prepareLastLoadoutForAccount(authUser?String(authUser.id):'');
+      if(authUser) beginUsernameClaimCheck();
       void refreshGlobalBotTraining(true);
       sb.auth.onAuthStateChange((_e, sess)=>{
         authUser = sess ? sess.user : null;
         const profileUserId=authUser ? String(authUser.id) : '';
+        prepareLastLoadoutForAccount(profileUserId);
         void refreshGlobalBotTraining(false);
         const profileRequestVersion=++authProfileRequestVersion;
         if(profileUserId && firstAccountTutorialUserId && firstAccountTutorialUserId!==profileUserId){
@@ -84,12 +87,13 @@ async function initAuth(){
           for(const slot of ['primary','secondary','melee'])
             if(loadout[slot] && LOCKED_KEYS.includes(loadout[slot])) loadout[slot]=null;
           loadout.utility=null;
+          restoreLastLoadoutForMode(null);
           resetSocialState();
         } else if(arenaAuthPending){
           arenaAuthPending=false;
           $('aguest').style.display='block';
           pendingGameMode='arena'; modeBoardMode='arena'; loadoutBackPage='modeboard';
-          loadout={primary:null,secondary:null,melee:null,utility:null};
+          restoreLastLoadoutForMode('arena');
           selPage='loadout';
         }
         syncFallAccess();
@@ -106,9 +110,11 @@ async function initAuth(){
         });
         fetchScoreReqs(); fetchMyBan(); fetchWeaponDefs(); fetchOwnBest();
         setupRealtime();                              // re-subscribe: RLS scope changes with the signed-in user
+        if(authUser&&!recovering) beginUsernameClaimCheck();
         if(authUser) fetchSocial(true);
         if(_e==='PASSWORD_RECOVERY'){
           recovering=true;
+          closeUsernameClaim();
           $('authwrap').style.display='flex';
           $('resetbox').style.display='block';
           $('authmsg').textContent='Recovery link accepted \u2014 choose a new password below.';
@@ -261,7 +267,11 @@ async function sendReport(){
   }
 }
 async function toggleAuth(){
-  if(authUser && sb){ await sb.auth.signOut(); authUser=null; paintUserbar(); }
+  if(authUser && sb){
+    try{ if(typeof arenaForfeitBeforeSignOut==='function') await arenaForfeitBeforeSignOut(); }
+    catch(error){ console.warn('arena sign-out forfeit failed',error); }
+    await sb.auth.signOut(); authUser=null; paintUserbar();
+  }
   else { arenaAuthPending=false; $('aguest').style.display='block'; $('authwrap').style.display='flex'; }
 }
 function creds(){
@@ -354,13 +364,17 @@ function bindDomEvents(){
   if(a!==b){ $('authmsg').textContent='Passwords do not match.'; return; }
   const { error } = await sb.auth.updateUser({ password: a });
   if(error){ $('authmsg').textContent=error.message; return; }
-  $('authmsg').textContent='Password saved. You can start playing.';
+  $('authmsg').textContent='Password saved. Continue to your account.';
   recovering=false;
   $('rpass1').value=''; $('rpass2').value='';
   $('rsave').style.display='none';
   $('rdone').style.display='block';
   };
-  $('rdone').onclick = ()=>{ $('authwrap').style.display='none'; };
+  $('rdone').onclick = ()=>{
+    $('authwrap').style.display='none';
+    beginUsernameClaimCheck();
+    if(authUser) fetchSocial(true);
+  };
   for(const id of ['rpass1','rpass2'])
     $(id).addEventListener('keydown', e=>{ if(e.key==='Enter') $('rsave').click(); });
 }

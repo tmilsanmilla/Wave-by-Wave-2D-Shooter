@@ -48,6 +48,18 @@
     </div>
   </div>
 </div>
+<div id="usernameclaimwrap" class="ui" role="dialog" aria-modal="true" aria-labelledby="usernameclaimtitle">
+  <div id="usernameclaimbox">
+    <h2 id="usernameclaimtitle">CHOOSE YOUR USERNAME</h2>
+    <p id="usernameclaimhint">Every signed-in operator needs one unique public username. It appears on leaderboards, parties, friends, and messages. Your email stays private.</p>
+    <input id="usernameclaiminput" type="text" placeholder="operator_7" autocomplete="off"
+      minlength="3" maxlength="32" autocapitalize="none" spellcheck="false" aria-label="Choose username">
+    <button id="usernameclaimsave" class="btn" type="button">USE THIS USERNAME</button>
+    <button id="usernameclaimretry" class="btn" type="button">RETRY</button>
+    <button id="usernameclaimsignout" class="btn" type="button">SIGN OUT</button>
+    <div id="usernameclaimstatus" aria-live="polite"></div>
+  </div>
+</div>
 <div id="repwrap" class="ui">
   <div id="repbox">
     <h2>⚠ REPORT A PROBLEM</h2>

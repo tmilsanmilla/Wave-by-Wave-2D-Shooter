@@ -576,5 +576,5 @@ function normalizeDailyRewards(){
     t.prog=clamp(+t.prog||0,0,t.goal); if(t.done) t.prog=t.goal;
   }
 }
-function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); }catch(e){} }
+function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); persistLastLoadoutLocal(); }catch(e){} }
 function saveMeta(){ saveMetaLocal(); queueProfileSave(); }

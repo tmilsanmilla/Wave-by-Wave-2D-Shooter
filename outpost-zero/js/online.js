@@ -4,6 +4,7 @@
    Supabase Presence/Broadcast carries the live match. This first version is
    intentionally CASUAL: ranked ratings need a trusted game server, not a
    browser that can be edited by either player. */
+const ARENA_FORFEIT_GRACE_MS=5000;
 function arenaLoadoutReady(){ return !!(loadout.primary&&loadout.secondary&&loadout.melee); }
 function arenaGuard(){
   if(!sb||!authUser){
@@ -150,6 +151,7 @@ function arenaApplyMapVoteOpen(p){
     arena.matchEpoch=epoch; arena.round=0; arena.scores=Object.assign({},p.scores||{});
     arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
     arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.hitSeq=0; arena.winRecorded=false;
+    arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
     arenaResetMapVote('arena');
   }
   if(arena.mapVoteId&&arena.mapVoteId!==String(p.voteId)) return false;
@@ -244,7 +246,138 @@ function arenaDropChannel(ch){
 function arenaSend(event,payload){
   if(!arena.matchChannel||!authUser) return;
   const body=Object.assign({from:authUser.id,room:arena.room,epoch:arena.matchEpoch,round:arena.round},payload||{});
-  try{ arena.matchChannel.send({type:'broadcast',event,payload:body}); }catch(e){}
+  try{ return arena.matchChannel.send({type:'broadcast',event,payload:body}); }catch(e){ return null; }
+}
+/* A match becomes binding as soon as both ready players enter map voting and
+   stays binding between rounds. Leaving a room before that point is harmless;
+   leaving after it is a whole-match forfeit, not merely one lost round. */
+function arenaForfeitEligible(){
+  if(!arena||!authUser||!arena.matchChannel||!arena.opponent||isBotArena()||
+     (typeof isCpuTeamArena==='function'&&isCpuTeamArena())) return false;
+  return Math.floor(+arena.matchEpoch||0)>0&&
+    ['map_vote','map_reveal','countdown','fight','ko_wait','round_end'].includes(arena.phase);
+}
+function arenaForfeitResultId(loserId){
+  return ['arena-forfeit',String(arena&&arena.room||''),Math.floor(+arena?.matchEpoch||0),String(loserId||'')].join(':');
+}
+function arenaClearDisconnectHold(resumeClocks){
+  if(!arena) return 0;
+  const heldFor=Math.max(0,Date.now()-(arena.disconnectAt||Date.now()));
+  if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
+  arena.disconnectTimer=null; arena.disconnectAt=0; arena.disconnectSide=''; arena.networkHold=false;
+  if(!resumeClocks||!heldFor) return heldFor;
+  if(arena.active&&arena.roundStartAt){
+    arena.roundStartAt+=heldFor; arena.roundEndAt+=heldFor;
+    if(arena.nextRoundAt) arena.nextRoundAt+=heldFor;
+  }
+  if(arena.mapVotePhase==='voting'&&arena.mapVoteDeadline) arena.mapVoteDeadline+=heldFor;
+  if(arena.mapVotePhase==='reveal'&&arena.mapVoteRevealUntil) arena.mapVoteRevealUntil+=heldFor;
+  arena.mapVoteSyncAt=0;
+  if(arena.pendingHazards instanceof Map) for(const pending of arena.pendingHazards.values()) pending.nextAt=0;
+  return heldFor;
+}
+function arenaApplyForfeitResult(p){
+  if(!arena||!authUser||!arena.opponent||!p) return false;
+  const me=String(authUser.id),opp=String(arena.opponent.id),winner=String(p.winner||''),loser=String(p.loser||'');
+  const resultId=arenaForfeitResultId(loser),epoch=Math.floor(+p.epoch||0);
+  if(String(p.room||'')!==String(arena.room)||epoch!==Math.floor(+arena.matchEpoch||0)||
+     p.resultId!==resultId||winner===loser||![me,opp].includes(winner)||![me,opp].includes(loser)||
+     !([winner,loser].includes(me)&&[winner,loser].includes(opp))) return false;
+  if(arena.forfeitResultId) return arena.forfeitResultId===resultId;
+  // A completed normal match cannot be rewritten by a late Presence/leave
+  // packet. During an unfinished match, even round_end is still binding.
+  if(arena.phase==='match_end'||!arenaForfeitEligible()) return false;
+  arenaClearDisconnectHold(false);
+  const scores=Object.assign({},arena.scores);
+  scores[winner]=Math.max(ARENA_TARGET,Math.max(0,Math.floor(+scores[winner]||0)));
+  scores[loser]=Math.max(0,Math.floor(+scores[loser]||0));
+  arena.scores=scores; arena.roundResolved=true; arena.nextRoundAt=0; arena.active=false;
+  arena.mapVoteStartPending=false; arena.rematchVotes=new Set(); arena.forfeitResultId=resultId;
+  arena.forfeitPacket={room:arena.room,epoch:arena.matchEpoch,round:arena.round,resultId,winner,loser,
+    reason:String(p.reason||'disconnect').slice(0,24)};
+  if(winner===me&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(); }
+  if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
+  practiceMode=null; state='select'; selPage='arena'; menuOpen=false; aiming=false; rmbAim=false;
+  resetHeldGameplayInput();
+  arena.phase='match_end';
+  arena.status=winner===me
+    ?'MATCH WON BY FORFEIT — '+String(arena.opponent.name||'your opponent')+' disconnected.'
+    :'MATCH LOST BY FORFEIT — your connection left the match.';
+  sfx(winner===me?'pickup':'die');
+  return true;
+}
+function arenaBroadcastForfeitResult(packet){
+  if(!packet||!arena.matchChannel||!authUser) return false;
+  arenaSend('forfeit_result',packet);
+  const channel=arena.matchChannel,resultId=packet.resultId;
+  for(const wait of [300,900]) setTimeout(()=>{
+    if(arena.matchChannel===channel&&arena.forfeitResultId===resultId) arenaSend('forfeit_result',packet);
+  },wait);
+  return true;
+}
+function arenaClaimOpponentForfeit(reason='disconnect'){
+  if(!arenaForfeitEligible()||arena.departureAnnounced) return false;
+  const packet={room:arena.room,epoch:arena.matchEpoch,round:arena.round,
+    resultId:arenaForfeitResultId(arena.opponent.id),winner:String(authUser.id),loser:String(arena.opponent.id),reason};
+  if(!arenaApplyForfeitResult(packet)) return false;
+  arenaBroadcastForfeitResult(packet); return true;
+}
+function arenaApplyOwnDisconnectLoss(reason='disconnect'){
+  if(!arenaForfeitEligible()) return false;
+  const me=String(authUser.id),packet={room:arena.room,epoch:arena.matchEpoch,round:arena.round,
+    resultId:arenaForfeitResultId(me),winner:String(arena.opponent.id),loser:me,reason};
+  arena.departureAnnounced=packet.resultId;
+  // This client never credits the opponent. The still-connected opponent does
+  // that once after its own Presence confirmation, preventing two winners if
+  // both clients lose the channel at the same time.
+  arenaSend('leave',{forfeit:true,resultId:packet.resultId,loser:me,reason});
+  return arenaApplyForfeitResult(packet);
+}
+function arenaBeginDisconnectHold(side,ch){
+  if(!arenaForfeitEligible()) return false;
+  side=side==='opponent'?'opponent':'self';
+  const newlyHeld=!arena.networkHold;
+  if(arena.networkHold){
+    if(arena.disconnectSide&&arena.disconnectSide!==side) arena.disconnectSide='both';
+  }else{
+    arena.networkHold=true; arena.disconnectAt=Date.now(); arena.disconnectSide=side;
+  }
+  const seconds=Math.ceil(ARENA_FORFEIT_GRACE_MS/1000);
+  arena.status=arena.disconnectSide==='opponent'
+    ?'Opponent connection lost — win by forfeit in '+seconds+' seconds...'
+    :arena.disconnectSide==='self'
+      ?'Connection interrupted — reconnect within '+seconds+' seconds or forfeit.'
+      :'Both connections are interrupted — confirming the match state...';
+  // Presence can emit many identical sync snapshots. Keep the first deadline
+  // instead of letting duplicate absence packets extend the grace forever.
+  if(!newlyHeld) return true;
+  if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
+  const epoch=arena.matchEpoch,heldChannel=ch;
+  arena.disconnectTimer=setTimeout(()=>{
+    if(arena.matchChannel!==heldChannel||!arena.networkHold||arena.matchEpoch!==epoch) return;
+    const disconnected=arena.disconnectSide;
+    arenaClearDisconnectHold(false);
+    if(disconnected==='opponent') arenaClaimOpponentForfeit('disconnect');
+    else arenaApplyOwnDisconnectLoss(disconnected==='both'?'mutual_disconnect':'disconnect');
+  },ARENA_FORFEIT_GRACE_MS);
+  return true;
+}
+function arenaNotifyDeparture(reason='left'){
+  if(!arena||!arena.matchChannel||!authUser) return false;
+  const forfeit=arenaForfeitEligible(),loser=String(authUser.id);
+  const resultId=forfeit?arenaForfeitResultId(loser):'';
+  if(resultId&&arena.departureAnnounced===resultId) return true;
+  if(resultId) arena.departureAnnounced=resultId;
+  arena.departurePromise=arenaSend('leave',{forfeit,resultId,loser,reason:String(reason||'left').slice(0,24)});
+  return forfeit;
+}
+function arenaForfeitOnPageExit(){ return arenaNotifyDeparture('page_exit'); }
+function arenaForfeitBeforeSignOut(){
+  const announced=arenaNotifyDeparture('signed_out');
+  if(announced&&arena.departurePromise&&typeof arena.departurePromise.then==='function')
+    return Promise.race([arena.departurePromise,new Promise(resolve=>setTimeout(resolve,150))])
+      .catch(()=>{}).then(()=>announced);
+  return Promise.resolve(announced);
 }
 function arenaHazardEventId(tntId,epoch=arena.matchEpoch,round=arena.round){ return [epoch,round,String(tntId||'')].join(':'); }
 function arenaHazardHp(value){ return Number.isFinite(+value)?clamp(+value,0,ARENA_HP):null; }
@@ -463,25 +596,19 @@ function arenaConnectRoom(code,wantsHost,mode,expectedIds){
   arena.wantsHost=!!wantsHost; arena.expectedIds=expectedIds; arena.joinedAt=arena.joinedAt||Date.now();
   arena.localReady=mode==='queue'; arena.remoteReady=false;
   const ch=sb.channel('oz-arena-v1-'+code,{config:{broadcast:{self:false,ack:false},presence:{key:authUser.id}}});
-  for(const ev of ['state','hit','ko','round_start','round_result','ready','rematch','rematch_start',
+  for(const ev of ['state','hit','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
                     'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_tnt_hit','map_hazard','map_hazard_ack','leave','room_full'])
     ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload));
   ch.on('presence',{event:'sync'},()=>arenaMatchPresenceSync(ch));
   ch.subscribe(async st=>{
     if(ch!==arena.matchChannel) return;
     if(st==='SUBSCRIBED'){
-      arena.status=mode==='queue'?'Opponent found. Preparing match...':(wantsHost?'Room '+code+' created. Waiting for another player...':'Joining room '+code+'...');
+      if(!(arena.phase==='match_end'&&arena.forfeitResultId))
+        arena.status=mode==='queue'?'Opponent found. Preparing match...':(wantsHost?'Room '+code+' created. Waiting for another player...':'Joining room '+code+'...');
       try{ await ch.track(arenaOwnPresence()); }catch(e){}
     } else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'||st==='CLOSED'){
-      const matchStarted=arena.active||['voting','reveal'].includes(arena.mapVotePhase)||
-                         (arena.pendingHazards instanceof Map&&arena.pendingHazards.size>0);
-      arena.status=matchStarted?'Connection interrupted. Reconnecting for 15 seconds...':'Room connection failed. Go back and try again.';
-      if(matchStarted&&!arena.networkHold){
-        arena.networkHold=true; arena.disconnectAt=Date.now();
-        arena.disconnectTimer=setTimeout(()=>{
-          if(arena.matchChannel===ch&&arena.networkHold) leaveArena('Arena connection lost.',false);
-        },15000);
-      }
+      if(!arenaBeginDisconnectHold('self',ch)&&!(arena.phase==='match_end'&&arena.forfeitResultId))
+        arena.status='Room connection failed. Go back and try again.';
     }
   });
   arena.matchChannel=ch;
@@ -501,8 +628,12 @@ function arenaMatchPresenceSync(ch){
   }
   const oldOpp=arena.opponent, om=chosen.find(x=>x.id!==authUser.id);
   if(oldOpp&&!om){
-    if(!arena.networkHold){
-      arena.networkHold=true; arena.disconnectAt=Date.now(); arena.status='Opponent reconnecting \u2014 holding the match for 15 seconds...';
+    if(arena.phase==='match_end'&&arena.forfeitResultId) return;
+    if(arenaForfeitEligible()){
+      arenaBeginDisconnectHold('opponent',ch);
+    }else if(!arena.networkHold){
+      arena.networkHold=true; arena.disconnectAt=Date.now(); arena.disconnectSide='opponent';
+      arena.status='Opponent reconnecting \u2014 holding the room for 15 seconds...';
       const heldChannel=ch;
       arena.disconnectTimer=setTimeout(()=>{
         if(arena.matchChannel===heldChannel&&arena.networkHold) leaveArena('The other player disconnected.',false);
@@ -511,16 +642,7 @@ function arenaMatchPresenceSync(ch){
     return;
   }
   if(!om){ arena.status=arena.mode==='queue'?'Waiting for matched player to connect...':'Share room code '+arena.room+' with your friend.'; return; }
-  if(arena.networkHold){
-    const heldFor=Math.max(0,Date.now()-(arena.disconnectAt||Date.now()));
-    if(arena.active&&arena.roundStartAt){ arena.roundStartAt+=heldFor; arena.roundEndAt+=heldFor; if(arena.nextRoundAt) arena.nextRoundAt+=heldFor; }
-    if(arena.mapVotePhase==='voting'&&arena.mapVoteDeadline) arena.mapVoteDeadline+=heldFor;
-    if(arena.mapVotePhase==='reveal'&&arena.mapVoteRevealUntil) arena.mapVoteRevealUntil+=heldFor;
-    arena.mapVoteSyncAt=0;
-    if(arena.pendingHazards instanceof Map) for(const pending of arena.pendingHazards.values()) pending.nextAt=0;
-    if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
-    arena.disconnectTimer=null; arena.disconnectAt=0; arena.networkHold=false;
-  }
+  if(arena.networkHold) arenaClearDisconnectHold(true);
   arena.opponent=Object.assign(oldOpp||{x:WORLD.w/2+380,y:WORLD.h/2,tx:WORLD.w/2+380,ty:WORLD.h/2,angle:Math.PI,hp:ARENA_HP,cur:om.primary||'ar',lastSeen:Date.now()},
                                {id:om.id,name:om.name||'opponent',loadout:{primary:om.primary,secondary:om.secondary,melee:om.melee}});
   // Stay visible in the quick queue until both confirmed IDs have actually
@@ -531,7 +653,9 @@ function arenaMatchPresenceSync(ch){
   arena.hostId=(chosen.find(x=>x.host)||chosen.slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))[0]).id;
   arena.remoteReady=!!om.ready;
   if(!['match_end','map_vote','map_reveal'].includes(arena.phase)) arena.phase=arena.active?arena.phase:'lobby';
-  if(arena.mapVotePhase==='voting') arena.status='Vote for a map — '+Math.max(1,Math.ceil((arena.mapVoteDeadline-Date.now())/1000))+' seconds.';
+  if(arena.phase==='match_end'&&arena.forfeitPacket&&String(arena.forfeitPacket.winner)===String(authUser.id))
+    arenaSend('forfeit_result',arena.forfeitPacket);
+  else if(arena.mapVotePhase==='voting') arena.status='Vote for a map — '+Math.max(1,Math.ceil((arena.mapVoteDeadline-Date.now())/1000))+' seconds.';
   else if(arena.mapVotePhase==='reveal') arena.status=arenaMapName(arena.mapId)+' selected.';
   else arena.status=arena.mode==='queue'?'Match found: '+arena.opponent.name:(arena.opponent.name+' joined room '+arena.room+'.');
   if(arena.mode==='queue'&&!arena.localReady) arenaSetReady(true);
@@ -563,6 +687,10 @@ function arenaReceive(event,p){
   if(event==='map_vote_result' && p.from===arena.hostId){ arenaApplyMapVoteResult(p); return; }
   if(event==='round_start' && p.from===arena.hostId){ arenaApplyRoundStart(p); return; }
   if(Math.floor(+p.epoch||0)!==arena.matchEpoch) return; // ignore late packets from the previous match
+  if(event==='forfeit_result'){
+    if(String(p.winner)!==String(p.from)||String(p.loser)!==String(authUser.id)) return;
+    arenaApplyForfeitResult(p); return;
+  }
   if(event==='map_vote'){
     if(authUser.id!==arena.hostId||arena.mapVotePhase!=='voting'||String(p.voteId||'')!==arena.mapVoteId||
        !arenaMapValid(p.mapId)||Date.now()>=arena.mapVoteDeadline) return;
@@ -635,7 +763,10 @@ function arenaReceive(event,p){
   if(event==='rematch'){
     arena.rematchVotes.add(p.from); arenaCheckRematch(); return;
   }
-  if(event==='leave'){ leaveArena('The other player left the Arena.',false); }
+  if(event==='leave'){
+    if(arenaForfeitEligible()&&!arena.departureAnnounced){ arenaClaimOpponentForfeit(String(p.reason||'left')); return; }
+    if(arena.phase!=='match_end') leaveArena('The other player left the Arena.',false);
+  }
 }
 function arenaHostStartRound(){
   if(!authUser||authUser.id!==arena.hostId||!arena.opponent) return;
@@ -655,6 +786,7 @@ function arenaApplyRematchStart(p){
   arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
   arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.hitSeq=0; arena.winRecorded=false;
+  arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
   arenaResetMapVote('arena');
   arena.phase='lobby'; arena.status='Rematch confirmed. Starting round 1...';
   return true;
@@ -835,10 +967,14 @@ function leaveArena(status,toHub){
     aiLearningSavedLoadout=wasBot&&arena.botTrainingTest&&arena.botTrainingSavedLoadout?
       Object.assign({},arena.botTrainingSavedLoadout):null;
   if(wasBot&&typeof cancelGlobalBotTrainingSubmission==='function') cancelGlobalBotTrainingSubmission(arena);
+  const oldMatchChannel=arena.matchChannel,forfeitAnnounced=oldMatchChannel&&authUser?arenaNotifyDeparture('left'):false;
   if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
   if(arena.hazardArbitrations instanceof Map) for(const a of arena.hazardArbitrations.values()) if(a&&a.timer) clearTimeout(a.timer);
-  if(arena.matchChannel&&authUser) arenaSend('leave',{});
-  arenaDropChannel(arena.queueChannel); arenaDropChannel(arena.matchChannel);
+  arenaDropChannel(arena.queueChannel);
+  // Give an explicit forfeit broadcast one brief websocket flush window. An
+  // unannounced close is still covered by the opponent's Presence deadline.
+  if(forfeitAnnounced) setTimeout(()=>arenaDropChannel(oldMatchChannel),150);
+  else arenaDropChannel(oldMatchChannel);
   if(arena.savedUtility!==undefined) loadout.utility=arena.savedUtility;
   if(aiLearningSavedLoadout) loadout={primary:aiLearningSavedLoadout.primary||null,
     secondary:aiLearningSavedLoadout.secondary||null,melee:aiLearningSavedLoadout.melee||null,

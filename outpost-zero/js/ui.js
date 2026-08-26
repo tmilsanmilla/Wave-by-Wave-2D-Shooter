@@ -1177,14 +1177,14 @@ function arenaClick(){
     else if(r.id==='map_leave') leaveArena('Left the map vote.',false);
     else if(r.id==='teamrematch') offlineCpu2v2Rematch();
     else if(r.id==='teamloadout'){
-      offlineCpu2v2Leave('',false);pendingGameMode='ai2v2';modeBoardMode='endless';loadoutBackPage='offlinecpu';loadout.utility=null;selPage='loadout';
+      offlineCpu2v2Leave('',false);pendingGameMode='ai2v2';modeBoardMode='endless';loadoutBackPage='offlinecpu';restoreLastLoadoutForMode('ai2v2');selPage='loadout';
     }
     else if(r.id==='teamleave') offlineCpu2v2Leave('',false);
     else if(r.id==='bottestagain') restartAiLearningModelTest(arena);
     else if(r.id==='botlearningback') leaveArena('',false);
     else if(r.id==='botrematch') startBotArena();
     else if(r.id==='botloadout'){
-      leaveArena('',false); pendingGameMode='ai1v1'; modeBoardMode='endless'; loadoutBackPage='offlinecpu'; loadout.utility=null; selPage='loadout';
+      leaveArena('',false); pendingGameMode='ai1v1'; modeBoardMode='endless'; loadoutBackPage='offlinecpu'; restoreLastLoadoutForMode('ai1v1'); selPage='loadout';
     }
     else if(r.id==='botleave') leaveArena('',false);
     else if(r.id==='signin'){
@@ -1239,7 +1239,7 @@ function chooseGameMode(mode,returnPage='modeboard'){
     $('authwrap').style.display='flex'; sfx('dry'); return false;
   }
   pendingGameMode=mode; modeBoardMode=mode==='arena'?'arena':'endless';
-  loadout={primary:null,secondary:null,melee:null,utility:null};
+  restoreLastLoadoutForMode(mode);
   selPage='loadout'; sfx('swap'); return true;
 }
 function launchSelectedMode(){
@@ -1876,14 +1876,14 @@ function drawLoadout(){
   const modeCol=arenaMode?'#d05548':partyCpuMode?'#bfa8ff':aiMode?'#7fd8ff':'#e8b658';
   ctx.textAlign='center'; ctx.textBaseline='top';
   ctx.fillStyle=modeCol; ctx.font='700 '+(H<600?24:32)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('CHOOSE YOUR WEAPONS',W/2,H*0.035);
+  ctx.fillText('YOUR LOADOUT',W/2,H*0.035);
   ctx.fillStyle=queueNoticeActive?'#ff6b5d':'#8a9268'; ctx.font=(W<430?'9':'11')+'px ui-monospace,Consolas,monospace';
   const loadoutSub=arenaMode?'ONLINE MULTIPLAYER \u00b7 DIFFERENT DEVICES \u00b7 1v1':
                    partyCpuMode?'PARTY \u00b7 MULTIPLE DEVICES \u00b7 2v2 VS CPUs \u00b7 NO UPGRADES, UTILITY, OR REWARDS':
                    ai2v2Mode?'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 YOU + ALLY CPU VS TWO CPUs \u00b7 NO UPGRADES, UTILITY, OR REWARDS':
                    ai1v1Mode?'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 1v1 VS AI \u00b7 NO UPGRADES':
                           'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 ENDLESS \u00b7 UTILITY OPTIONAL';
-  ctx.fillText(fitLine(queueNoticeActive?modeBoardNotice:loadoutSub,W-24),W/2,H*0.035+40);
+  ctx.fillText(fitLine(queueNoticeActive?modeBoardNotice:'AUTO-SAVED FOR EVERY MODE \u00b7 '+loadoutSub,W-24),W/2,H*0.035+40);
   const rows=duelMode?CATS.slice(0,3):CATS;
   const bw=Math.min(540,W-40), x0=W/2-bw/2, gap=H<600?9:14;
   const top=H*0.035+68, footer=112;
@@ -1896,7 +1896,7 @@ function drawLoadout(){
     ctx.strokeStyle=k?col:(cat==='UTILITY'?'#4a4634':'#6b5030'); ctx.lineWidth=k?2:1; ctx.strokeRect(x0+0.5,y+0.5,bw,rowH);
     ctx.fillStyle=col; ctx.fillRect(x0,y,6,rowH);
     ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle=col; ctx.font='700 15px ui-monospace,Consolas,monospace'; ctx.fillText(cat,x0+20,y+rowH/2-9);
-    ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace'; ctx.fillText(cat==='UTILITY'?'OPTIONAL':'REQUIRED',x0+20,y+rowH/2+11);
+    ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace'; ctx.fillText(cat==='UTILITY'?'OPTIONAL \u00b7 SAVED':'REQUIRED \u00b7 SAVED',x0+20,y+rowH/2+11);
     ctx.textAlign='right'; ctx.fillStyle=k?'#e8d9a8':'#6b5030'; ctx.font='700 '+(W<430?12:15)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(k?(cat==='UTILITY'?UTILITIES[k]:WEAPONS[k]).name:'\u2014 CHOOSE \u2014',x0+bw-42,y+rowH/2);
     ctx.fillStyle=hot?'#e8b658':'#8a9268'; ctx.font='700 22px ui-monospace,Consolas,monospace'; ctx.fillText('\u203A',x0+bw-18,y+rowH/2);

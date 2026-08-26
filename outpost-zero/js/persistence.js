@@ -6,7 +6,80 @@ function metaPayload(){
   return {gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
-          hi:hiScore, mv:musicVol, sv:sfxVol, onboardV:onboardingVersion};
+          hi:hiScore, mv:musicVol, sv:sfxVol, onboardV:onboardingVersion, loadout:storedLastLoadout()};
+}
+const LOADOUT_SLOTS=['primary','secondary','melee','utility'];
+const GUEST_LOADOUT_STORAGE_KEY='oz_loadout_guest_v1',ACCOUNT_LOADOUT_STORAGE_PREFIX='oz_loadout_account_v1:';
+function storedLoadoutSlot(key){
+  if(typeof key!=='string'||!key) return null;
+  if(PRIMARIES.includes(key)||TEMP_PRIMARY.includes(key)||VAULT_SLOTS[key]==='primary') return 'primary';
+  if(SECONDARIES.includes(key)||TEMP_SECONDARY.includes(key)||VAULT_SLOTS[key]==='secondary') return 'secondary';
+  if(MELEES.includes(key)||TEMP_MELEE.includes(key)||VAULT_SLOTS[key]==='melee') return 'melee';
+  if(UTILKEYS.includes(key)||TEMP_UTILITY.includes(key)||VAULT_SLOTS[key]==='utility') return 'utility';
+  return null;
+}
+function storedLastLoadout(candidate=lastLoadout){
+  const source=candidate&&typeof candidate==='object'?candidate:{}, result={};
+  for(const slot of LOADOUT_SLOTS){
+    const has=Object.prototype.hasOwnProperty.call(source,slot), value=has?source[slot]:SHARED_LOADOUT_DEFAULTS[slot];
+    result[slot]=value==null?null:(storedLoadoutSlot(value)===slot?value:SHARED_LOADOUT_DEFAULTS[slot]);
+  }
+  return result;
+}
+function localLoadoutStorageKey(accountId=lastLoadoutAccountId){
+  const id=String(accountId||'').replace(/[^A-Za-z0-9_-]/g,'').slice(0,80);
+  return id?ACCOUNT_LOADOUT_STORAGE_PREFIX+id:GUEST_LOADOUT_STORAGE_KEY;
+}
+function readLastLoadoutLocal(accountId=''){
+  try{
+    const raw=localStorage.getItem(localLoadoutStorageKey(accountId));
+    return raw?storedLastLoadout(JSON.parse(raw)):null;
+  }catch(e){ return null; }
+}
+function persistLastLoadoutLocal(){
+  try{ localStorage.setItem(localLoadoutStorageKey(),JSON.stringify(storedLastLoadout())); return true; }
+  catch(e){ return false; }
+}
+function usableLastLoadoutKey(key,slot){
+  if(!key||storedLoadoutSlot(key)!==slot||isLocked(key)) return false;
+  return slot==='utility'?!!UTILITIES[key]:!!WEAPONS[key];
+}
+function playableLastLoadout(candidate=lastLoadout){
+  const saved=storedLastLoadout(candidate), result={};
+  for(const slot of LOADOUT_SLOTS){
+    const key=saved[slot];
+    result[slot]=key==null?null:(usableLastLoadoutKey(key,slot)?key:SHARED_LOADOUT_DEFAULTS[slot]);
+  }
+  return result;
+}
+function modeAllowsUtility(mode){
+  return !['arena','arena2v2','ai1v1','ai2v2','partycpu2v2'].includes(String(mode||''));
+}
+function restoreLastLoadoutForMode(mode=pendingGameMode){
+  loadout=playableLastLoadout(lastLoadout);
+  if(!modeAllowsUtility(mode)) loadout.utility=null;
+  return loadout;
+}
+function prepareLastLoadoutForAccount(accountId=''){
+  const id=String(accountId||'');
+  if(id===lastLoadoutAccountId) return lastLoadout;
+  lastLoadoutAccountId=id;
+  lastLoadout=readLastLoadoutLocal(id)||storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
+  if(canRestoreAccountLoadout()) restoreLastLoadoutForMode(pendingGameMode);
+  return lastLoadout;
+}
+function rememberLoadoutSlot(slot,value){
+  if(!LOADOUT_SLOTS.includes(slot)) return false;
+  if(value!=null&&storedLoadoutSlot(value)!==slot) return false;
+  lastLoadout=storedLastLoadout(Object.assign({},lastLoadout,{[slot]:value==null?null:value}));
+  saveMeta();
+  return true;
+}
+function canRestoreAccountLoadout(){
+  const liveArena=typeof arena!=='undefined'&&arena&&(arena.active||arena.queueChannel||arena.matchChannel);
+  const cpuSession=typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen();
+  return typeof state!=='undefined'&&state==='select'&&!liveArena&&!cpuSession&&
+    !(typeof soloPractice!=='undefined'&&soloPractice)&&!(typeof tryLoadoutBackup!=='undefined'&&tryLoadoutBackup);
 }
 function applyProfile(m){
   if(!m) return;
@@ -58,6 +131,12 @@ function applyProfile(m){
   for(const k in animEquipped){ const id=animEquipped[k];
     if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }
   syncOwnedWeapons();                                 // otherwise a synced purchase has no card
+  lastLoadoutAccountId=authUser?String(authUser.id||''):'';
+  // A profile without this field predates shared loadouts. Give that account
+  // clean defaults; never adopt another account's or the guest's device kit.
+  lastLoadout=m.loadout&&typeof m.loadout==='object'
+    ?storedLastLoadout(m.loadout):storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
+  if(canRestoreAccountLoadout()) restoreLastLoadoutForMode(pendingGameMode);
 }
 // an older account may have a leaderboard score but no saved profile yet
 async function fetchOwnBest(){
@@ -83,6 +162,7 @@ async function fetchProfile(expectedUserId,requestVersion){
       const removeLegacyBotTrain=Object.prototype.hasOwnProperty.call(data.data,'botTrain');
       const hasOnboarding=Object.prototype.hasOwnProperty.call(data.data,'onboardV') &&
         data.data.onboardV!==null && Number.isFinite(Number(data.data.onboardV));
+      const hasLoadout=!!(data.data.loadout&&typeof data.data.loadout==='object');
       // Profiles created before account onboarding existed are established
       // players. Migrate them as already seen instead of surprising everyone
       // with a first-login tutorial after an update.
@@ -90,12 +170,15 @@ async function fetchProfile(expectedUserId,requestVersion){
       applyProfile(data.data); profileLoaded=true; saveMetaLocal();
       if(onboardingVersion<ONBOARDING_VERSION) firstAccountTutorialUserId=userId;
       else if(firstAccountTutorialUserId===userId) firstAccountTutorialUserId='';
-      if(migrateGems||resetGems||!hasOnboarding||removeLegacyBotTrain) await saveProfile(true); // persist all migration markers
+      if(migrateGems||resetGems||!hasOnboarding||removeLegacyBotTrain||!hasLoadout) await saveProfile(true); // persist all migration markers
     }
     else {                                            // a new account never inherits another account's device gems
       onboardingVersion=0;
       firstAccountTutorialUserId=userId;
-      gems=0; gemResetVersion=GEM_RESET_VERSION; referralUsed=false; referralPaid=0; saveMetaLocal();
+      gems=0; gemResetVersion=GEM_RESET_VERSION; referralUsed=false; referralPaid=0;
+      lastLoadoutAccountId=userId; lastLoadout=storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
+      if(canRestoreAccountLoadout()) restoreLastLoadoutForMode(pendingGameMode);
+      saveMetaLocal();
       profileLoaded=true;
       // Finish the initial onboardV=0 write before exposing START. Otherwise a
       // slow first write could land after the button's onboardV=1 save and make
@@ -133,6 +216,8 @@ function loadMeta(){
     referralUsed=!!m.refUsed; referralPaid=m.refPaid||0;
     wheelReady=m.wr>0?1:0; wheelAcc=wheelReady?0:clamp(m.wa||0,0,WHEEL_MS-1);
     hiScore=m.hi||0;
+    lastLoadoutAccountId='';
+    lastLoadout=readLastLoadoutLocal('')||storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
     if(typeof m.mv==='number') musicVol=m.mv;
     if(typeof m.sv==='number') sfxVol=m.sv;
     for(const k in animEquipped){ const id=animEquipped[k];
@@ -149,6 +234,7 @@ function loadMeta(){
   normalizeDailyRewards();
   saveMetaLocal();                                  // persist the reset marker and reward normalization
   syncOwnedWeapons();
+  restoreLastLoadoutForMode(pendingGameMode);
 }
 function dropUnownedFromLoadout(){                    // a removed weapon must leave your hands too
   for(const slot of ['primary','secondary','melee','utility']){

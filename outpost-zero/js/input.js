@@ -27,6 +27,11 @@ function activateContextAction(){
 }
 addEventListener('keydown', e=>{
   if(typingInField(e)) return;          // don't eat keys while typing in the auth form
+  if(typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen){
+    const gate=typeof document!=='undefined'&&document.getElementById('usernameclaimwrap');
+    if(!(gate&&gate.contains(e.target))) e.preventDefault();
+    return;
+  }
   if(chestRewardOpen) return;            // chest menu stays open for the full three-second count-up
   if(reportOpen){ if(e.key==='Escape') closeReport(); return; }
   if(postOpen){ if(e.key==='Escape') closePost(); return; }
@@ -85,6 +90,7 @@ addEventListener('keydown', e=>{
 });
 addEventListener('keyup', e=>{
   if(typingInField(e)) return;
+  if(typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen){ keys[e.key.toLowerCase()]=false; return; }
   keys[e.key.toLowerCase()]=false;
 });
 
@@ -256,12 +262,13 @@ function pickWeapon(k){
   if(isLocked(k)){ sfx('dry'); utilLockMsgT=now+2200; return; }
   if(UTILKEYS.includes(k) || TEMP_UTILITY.includes(k)){
     loadout.utility = loadout.utility===k ? null : k;
+    rememberLoadoutSlot('utility',loadout.utility);
     sfx('swap'); return;
   }
   const slot = (PRIMARIES.includes(k)||TEMP_PRIMARY.includes(k)) ? 'primary'
              : (SECONDARIES.includes(k)||TEMP_SECONDARY.includes(k)) ? 'secondary' : 'melee';
-  if(loadout[slot]===k){ loadout[slot]=null; sfx('swap'); return; }
-  loadout[slot]=k; sfx('swap');
+  if(loadout[slot]===k){ loadout[slot]=null; rememberLoadoutSlot(slot,null); sfx('swap'); return; }
+  loadout[slot]=k; rememberLoadoutSlot(slot,k); sfx('swap');
 }
 let utilLockMsgT=0;
 // bottom to top: the LAST open one is what the player sees, so it gets the click.
@@ -519,8 +526,7 @@ function clickSelect(){
   }
   if(selPage==='practice')
   for(const r of practiceRects){ if(inR(r)){
-    // always pick fresh: clear the loadout and send them through the shared loadout screen
-    loadout={primary:null,secondary:null,melee:null,utility:null};
+    restoreLastLoadoutForMode('practice');
     pendingPractice=r.mode; pendingGameMode='practice'; selPage='loadout'; sfx('swap'); return;
   } }
   for(const r of cardRects){                      // PRACTICE + BUY IN SHOP take priority over equipping
