@@ -3,7 +3,8 @@
 function freshPartyCpuMatch(){
   return {phase:'idle',epoch:0,hostEpoch:0,hostId:'',humanIds:[],humanNames:{},loadouts:{},ready:{},humans:{},bots:[],shots:[],
     round:0,scores:{allies:0,cpus:0},roundStartAt:0,roundEndAt:0,nextRoundAt:0,roundResolved:false,
-    syncAt:0,snapshotAt:0,simAt:0,simAcc:0,hitSeq:0,shotSeq:0,seenHits:new Set(),seenShots:new Set(),status:'',local:false,localLoadout:null,savedLoadout:null};
+    syncAt:0,snapshotAt:0,simAt:0,simClock:0,simAcc:0,aiSeed:0,threat:{A:{},B:{}},
+    hitSeq:0,shotSeq:0,seenHits:new Set(),seenShots:new Set(),status:'',local:false,localLoadout:null,savedLoadout:null};
 }
 let partyCpuMatch=freshPartyCpuMatch();
 function partyCpuSessionOpen(){ return !!(partyCpuMatch&&partyCpuMatch.phase!=='idle'); }

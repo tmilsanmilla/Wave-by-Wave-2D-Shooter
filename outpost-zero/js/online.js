@@ -44,8 +44,22 @@ function arenaMapHash(text){
   for(const c of String(text||'')){ h^=c.charCodeAt(0); h=Math.imul(h,16777619); }
   return h>>>0;
 }
+function arenaIsLocalMapVote(){
+  return isBotArena()||(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2());
+}
+function arenaLocalMapVoterId(){
+  if(isBotArena()) return LOCAL_DUEL_PLAYER;
+  if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()) return LOCAL_CPU2V2_PLAYER;
+  return authUser&&String(authUser.id);
+}
+function arenaOtherMapVoterId(){
+  if(isBotArena()) return LOCAL_DUEL_BOT;
+  if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()) return LOCAL_CPU2V2_CPU_TEAM;
+  return arena&&arena.opponent&&String(arena.opponent.id);
+}
 function arenaMapVoterIds(){
   if(isBotArena()) return [LOCAL_DUEL_PLAYER,LOCAL_DUEL_BOT];
+  if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()) return [LOCAL_CPU2V2_PLAYER,LOCAL_CPU2V2_CPU_TEAM];
   if(!authUser||!arena.opponent) return [];
   return [String(authUser.id),String(arena.opponent.id)].sort();
 }
@@ -96,18 +110,18 @@ function arenaMapVoteResultPacket(clock=Date.now()){
 /* Start one vote per first-to-five match. Subsequent rounds retain mapId;
    a mutually accepted rematch receives a fresh nonce and another vote. */
 function arenaStartMapVote(){
-  const local=isBotArena(), host=local||!!(authUser&&authUser.id===arena.hostId);
-  if(!arena.opponent||!host) return false;
+  const local=arenaIsLocalMapVote(), host=local||!!(authUser&&authUser.id===arena.hostId);
+  if((!local&&!arena.opponent)||!host) return false;
   const clock=local?now:Date.now(), ids=arenaMapVoterIds();
   if(ids.length!==2) return false;
   arenaResetMapVote('arena');
   arena.mapVotePhase='voting'; arena.mapVoteId=[arena.room||'OFFLINE',arena.matchEpoch,randomArenaCode()].join(':');
   arena.mapVoteDeadline=clock+ARENA_MAP_VOTE_MS; arena.mapVotes=Object.fromEntries(ids.map(id=>[id,'arena']));
   if(local){
-    // The CPU commits a deterministic preference as soon as voting opens;
-    // the human still has the full five seconds to change their own vote.
-    const botPick=ARENA_MAP_IDS[arenaMapHash(arena.mapVoteId+'|cpu')%ARENA_MAP_IDS.length];
-    arena.mapVotes[LOCAL_DUEL_BOT]=botPick;
+    // The other side commits a deterministic preference as soon as voting
+    // opens; the human still has the full five seconds to change their team's.
+    const otherId=arenaOtherMapVoterId(), botPick=ARENA_MAP_IDS[arenaMapHash(arena.mapVoteId+'|cpu-team')%ARENA_MAP_IDS.length];
+    arena.mapVotes[otherId]=botPick;
   }
   arena.phase='map_vote'; arena.status='Vote for a map — 5 seconds.'; arena.mapVoteSyncAt=0;
   if(local){ state='select'; selPage='arena'; menuOpen=false; }
@@ -117,12 +131,12 @@ function arenaStartMapVote(){
 function arenaCastMapVote(mapId){
   mapId=String(mapId||'');
   if(!arenaMapValid(mapId)||arena.mapVotePhase!=='voting') return false;
-  const clock=isBotArena()?now:Date.now();
+  const local=arenaIsLocalMapVote(), clock=local?now:Date.now();
   if(clock>=arena.mapVoteDeadline) return false;
-  const me=isBotArena()?LOCAL_DUEL_PLAYER:(authUser&&String(authUser.id));
+  const me=arenaLocalMapVoterId();
   if(!me||!Object.prototype.hasOwnProperty.call(arena.mapVotes,me)) return false;
   arena.mapVotes[me]=mapId; arena.status='Voted for '+arenaMapName(mapId)+'. You can change it until time expires.';
-  if(!isBotArena()){
+  if(!local){
     arenaSend('map_vote',{voteId:arena.mapVoteId,mapId});
     if(authUser&&authUser.id===arena.hostId) arena.mapVoteSyncAt=0;
   }
@@ -177,7 +191,7 @@ function arenaHostResolveMapVote(){
   return true;
 }
 function arenaLocalResolveMapVote(){
-  if(!isBotArena()||arena.mapVotePhase!=='voting') return false;
+  if(!arenaIsLocalMapVote()||arena.mapVotePhase!=='voting') return false;
   const result=arenaResolveMapVote(arena.mapVotes,arena.mapVoteId,arenaMapVoterIds());
   arena.mapVoteResult=result; arena.mapVotes=Object.assign({},result.votes); arena.mapId=result.mapId;
   arena.mapVotePhase='reveal'; arena.phase='map_reveal'; arena.mapVoteRevealUntil=now+ARENA_MAP_REVEAL_MS;
@@ -185,7 +199,7 @@ function arenaLocalResolveMapVote(){
 }
 function arenaMapVoteTick(){
   if(!arena||arena.networkHold||!['voting','reveal'].includes(arena.mapVotePhase)) return;
-  const local=isBotArena(), clock=local?now:Date.now();
+  const local=arenaIsLocalMapVote(), clock=local?now:Date.now();
   if(arena.mapVotePhase==='voting'){
     if(clock>=arena.mapVoteDeadline){
       if(local) arenaLocalResolveMapVote();
@@ -201,7 +215,11 @@ function arenaMapVoteTick(){
     return;
   }
   if(local){
-    if(clock>=arena.mapVoteRevealUntil){ arena.mapVotePhase='locked'; arenaBotStartRound(); }
+    if(clock>=arena.mapVoteRevealUntil){
+      arena.mapVotePhase='locked';
+      if(isBotArena()) arenaBotStartRound();
+      else if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()) offlineCpu2v2BeginRound();
+    }
     return;
   }
   if(clock>=arena.mapVoteSyncAt){
@@ -261,6 +279,17 @@ function arenaHostRecordHazardHp(eventId,tntId,actorId,hp){
   arenaHostResolve(winner);
   return true;
 }
+/* TNT durability is a per-actor grow-only damage counter. Immediate packets
+   make hits feel responsive; the regular state snapshot repeats the same
+   cumulative value so a dropped packet or reconnect still converges. */
+function arenaBroadcastTntHit(tntId,damage){
+  if(isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())||!authUser||!arena.matchChannel||
+     !arena.active||arena.phase!=='fight'||activeArenaMapId()!=='construction') return false;
+  tntId=String(tntId||'');damage=arenaTntDamageValue(damage);
+  if(damage===null||!arenaHazardTntKnown(tntId)) return false;
+  arenaSend('map_tnt_hit',{mapId:'construction',tntId,eventId:arenaHazardEventId(tntId),damage});
+  return true;
+}
 /* TNT is locally detected and immediately applied, then this stores a stable
    post-blast envelope until the opponent acknowledges that exact round/event. */
 function arenaBroadcastTnt(tntId,sourceHp=player.hp){
@@ -290,6 +319,20 @@ function arenaHazardSyncTick(clock=Date.now()){
 function arenaOwnPresence(){
   return {id:authUser.id,name:displayName(authUser),joined:arena.joinedAt||Date.now(),host:!!arena.wantsHost,
           ready:!!arena.localReady,primary:loadout.primary,secondary:loadout.secondary,melee:loadout.melee};
+}
+function arenaRefreshUsername(){
+  if(!authUser||!arena) return false;
+  try{
+    if(arena.queueChannel){
+      const queued=arena.queueChannel.track({id:authUser.id,name:displayName(authUser),joined:arena.joinedAt||Date.now()});
+      if(queued&&typeof queued.catch==='function') queued.catch(()=>{});
+    }
+    if(arena.matchChannel){
+      const matched=arena.matchChannel.track(arenaOwnPresence());
+      if(matched&&typeof matched.catch==='function') matched.catch(()=>{});
+    }
+  }catch(e){ return false; }
+  return true;
 }
 function arenaQuickMatch(){
   // Recheck at the real queue boundary: a friend may have joined the party
@@ -421,7 +464,7 @@ function arenaConnectRoom(code,wantsHost,mode,expectedIds){
   arena.localReady=mode==='queue'; arena.remoteReady=false;
   const ch=sb.channel('oz-arena-v1-'+code,{config:{broadcast:{self:false,ack:false},presence:{key:authUser.id}}});
   for(const ev of ['state','hit','ko','round_start','round_result','ready','rematch','rematch_start',
-                    'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_hazard','map_hazard_ack','leave','room_full'])
+                    'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_tnt_hit','map_hazard','map_hazard_ack','leave','room_full'])
     ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload));
   ch.on('presence',{event:'sync'},()=>arenaMatchPresenceSync(ch));
   ch.subscribe(async st=>{
@@ -530,6 +573,11 @@ function arenaReceive(event,p){
        String(p.voteId||'')!==arena.mapVoteId||p.resultId!==arena.mapVoteResult.resultId) return;
     arena.mapVoteAcks.add(String(p.from)); return;
   }
+  if(event==='map_tnt_hit'){
+    if(!arenaHazardEnvelopeValid(p)||arena.phase!=='fight') return;
+    const cumulative=arenaTntDamageValue(p.damage);if(cumulative===null)return;
+    arenaMergeTntDamageSnapshot(String(p.from),{[String(p.tntId)]:cumulative});return;
+  }
   if(event==='map_hazard'){
     if(!arenaHazardEnvelopeValid(p)||!['fight','ko_wait','round_end','match_end'].includes(arena.phase)) return;
     const sourceHp=arenaHazardHp(p.sourceHp); if(sourceHp===null) return;
@@ -559,6 +607,8 @@ function arenaReceive(event,p){
   }
   if(event==='state'){
     if(p.round!==arena.round) return;
+    if(activeArenaMapId()==='construction'&&p.tntDamage&&typeof p.tntDamage==='object')
+      arenaMergeTntDamageSnapshot(String(p.from),p.tntDamage);
     const r=arena.opponent, bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:0,top:0,right:WORLD.w,bottom:WORLD.h}, margin=Math.max(1,+r.r||15);
     const oldPortalSeq=Math.max(0,Math.floor(+r.portalSeq||0)), hasPortalSeq=p.portalSeq!==undefined&&p.portalSeq!==null;
     const portalSeq=hasPortalSeq?+p.portalSeq:oldPortalSeq;
@@ -690,6 +740,8 @@ function arenaSyncTick(wall){
     if(arena.syncAt<wall-ARENA_SYNC_MS) arena.syncAt=wall+ARENA_SYNC_MS;
     const cause=arena.localKoCause;
     arenaSend('state',{x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,hp:Math.max(0,player.hp),
+      tntDamage:activeArenaMapId()==='construction'?arenaTntOwnDamageSnapshot(String(authUser.id)):undefined,
+      detonatedTnt:activeArenaMapId()==='construction'?[...arenaDestroyedTnt()]:undefined,
       portalSeq:Math.max(0,Math.floor(+player.portalSeq||0)),koKind:cause&&cause.kind,
       hazardEventId:cause&&cause.eventId,hazardTntId:cause&&cause.tntId});
   }
@@ -776,12 +828,21 @@ function leaveArena(status,toHub){
   if(!arena) return;
   if(typeof isPartyCpuMatch==='function'&&isPartyCpuMatch()){ partyCpuAbort(status||'You left the Party CPU match.',true); return; }
   if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()){ offlineCpu2v2Leave(status,toHub); return; }
-  const wasBot=isBotArena();
+  const wasBot=isBotArena(),returnToAiLearning=wasBot&&arena.botTrainingTest&&arena.botTrainingReturnToLearning&&
+    typeof isMainAdmin==='function'&&isMainAdmin(),
+    aiLearningReturnPage=String(arena.botTrainingReturnPage||'hub'),
+    aiLearningReturnLevel=wasBot&&arena.botTrainingTest?botTrainingLevel(arena.botTrainingXp):1,
+    aiLearningSavedLoadout=wasBot&&arena.botTrainingTest&&arena.botTrainingSavedLoadout?
+      Object.assign({},arena.botTrainingSavedLoadout):null;
+  if(wasBot&&typeof cancelGlobalBotTrainingSubmission==='function') cancelGlobalBotTrainingSubmission(arena);
   if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
   if(arena.hazardArbitrations instanceof Map) for(const a of arena.hazardArbitrations.values()) if(a&&a.timer) clearTimeout(a.timer);
   if(arena.matchChannel&&authUser) arenaSend('leave',{});
   arenaDropChannel(arena.queueChannel); arenaDropChannel(arena.matchChannel);
   if(arena.savedUtility!==undefined) loadout.utility=arena.savedUtility;
+  if(aiLearningSavedLoadout) loadout={primary:aiLearningSavedLoadout.primary||null,
+    secondary:aiLearningSavedLoadout.secondary||null,melee:aiLearningSavedLoadout.melee||null,
+    utility:aiLearningSavedLoadout.utility||null};
   if(practiceMode==='arena'){
     practiceMode=null;
     enemies=[]; bullets=[]; ebullets=[]; pickups=[]; damageNumbers=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[]; splitBalls=[];
@@ -791,6 +852,12 @@ function leaveArena(status,toHub){
   if(state==='play'||state==='over'||state==='upgrade') state='select';
   if(wasBot){
     pendingGameMode=null; modeBoardMode=toHub?null:'endless';
+    if(returnToAiLearning){
+      modeBoardMode=null; selPage=aiLearningReturnPage; aiLearningModelLevel=aiLearningReturnLevel;
+      aiLearningNotice='Returned from local LV '+aiLearningReturnLevel+' model test. Global XP was unchanged.';
+      aiLearningOpen=true; menuOpen=false; aiming=false; rmbAim=false;
+      return;
+    }
     selPage=toHub?'hub':'offlinecpu'; menuOpen=false; aiming=false; rmbAim=false;
     return;
   }

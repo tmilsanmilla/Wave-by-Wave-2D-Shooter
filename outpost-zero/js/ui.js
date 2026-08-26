@@ -118,13 +118,13 @@ function weaponDetails(k){
     if(w.fire) rows.push(['\uD83D\uDD25 SUMMER','temporary'],['ON HIT','ignites (burn DoT)']);
     if(w.saw) rows.push(['FUEL DRAIN','5% per tick (~2.6s/tank)'],
       ['RECHARGE','7%/s idle \u00b7 lockout when empty']);
-    const ab={chainsaw:['F / MELEE RMB: RIP','0.4s shred \u00b7 NO LUNGE \u00b7 42/90ms \u00b7 i-frames \u00b7 16s'],
-              knife:['F / MELEE RMB: EXECUTE','kills ALL in range, 90% boss \u00b7 rng 70 \u00b7 4.8s'],
-              terafists:['F / MELEE RMB: FLURRY','1.6s punches \u00b7 lifesteal \u00b7 recharge with '+TERA_HITS_REQUIRED+' normal hits'],
-              scythe:['F / MELEE RMB: DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 9.6s'],
-              hammer:['F / MELEE RMB: SLAM','110 dmg \u00b7 radius 160 \u00b7 8s'],
-              twinsai:['F / MELEE RMB: PARRY','2.5s window \u00b7 next shot aims at crosshair \u00b7 120 dmg \u00b7 6.4s cd'],
-              bdaggers:['F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite']}[k];
+    const ab={chainsaw:['E / F / MELEE RMB: RIP','0.4s shred \u00b7 NO LUNGE \u00b7 42/90ms \u00b7 i-frames \u00b7 16s'],
+              knife:['E / F / MELEE RMB: EXECUTE','kills ALL in range, 90% boss \u00b7 rng 70 \u00b7 4.8s'],
+              terafists:['E / F / MELEE RMB: FLURRY','1.6s punches \u00b7 lifesteal \u00b7 recharge with '+TERA_HITS_REQUIRED+' normal hits'],
+              scythe:['E / F / MELEE RMB: DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 9.6s'],
+              hammer:['E / F / MELEE RMB: SLAM','110 dmg \u00b7 radius 160 \u00b7 8s'],
+              twinsai:['E / F / MELEE RMB: PARRY','2.5s window \u00b7 next shot aims at crosshair \u00b7 120 dmg \u00b7 6.4s cd'],
+              bdaggers:['E / F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite']}[k];
     if(ab) rows.push(ab);
     return rows;
   }
@@ -289,6 +289,8 @@ function drawSelect(){
   shopRects=[]; shopTabRects=[]; practiceRects=[]; arenaRects=[]; feedXRects=[];
   cosPrevRect=null; cosNextRect=null; animPrevRect=null; animNextRect=null; pendingCancelRect=null;
   tutBtnRect=null; shopBtnRect=null; pracBtnRect=null; arenaBtnRect=null; tempBtnRect=null; deployRect=null;
+  if(typeof socialSetDomPageActive==='function')
+    socialSetDomPageActive(selPage==='social'&&!banBlocksPlay()&&!dailyGateOpen&&!firstAccountWelcomeOpen&&!signUpPromptOpen);
   if(banBlocksPlay()){ drawBanPage(); return; }      // blocked accounts see only the ban page
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(firstAccountWelcomeOpen){ drawFirstAccountWelcome(); return; }
@@ -322,9 +324,9 @@ const TUT_STEPS=[
   {id:'kill',   title:'TAKE ONE DOWN',how:'shoot a target until it drops',
    why:'Targets here respawn. Real enemies do not.',
    watch:'{n}/1 target down'},
-  {id:'melee',  title:'MELEE ABILITY',how:'press F',
+  {id:'melee',  title:'MELEE ABILITY',how:'press E or F',
    why:'Your melee has a special move. Tera Fists recharge from normal hits; others use a timer.',
-   watch:'waiting for F'},
+   watch:'waiting for E / F'},
 ];
 function startTutorial(){
   // A new account can sign in from an Offline/Online duel result before the
@@ -526,7 +528,7 @@ function drawTutorial(){
     ['AIM / SCOPE','hold right mouse or E (guns)'],
     ['RELOAD','R \u00b7 touch: reload button'],
     ['SWAP WEAPON','1-4 or Q \u00b7 touch: swap button'],
-    ['MELEE ABILITY','F anytime \u00b7 or right-click with melee out'],
+    ['MELEE ABILITY','E/F with melee out \u00b7 F anytime \u00b7 or right-click'],
     ['UTILITY','G = quick cast \u00b7 right-click while equipped \u00b7 4 = equip'],
     ['PICKUPS','medkit every '+MED_DROP_KILLS_BASE+' kills \u00b7 Field Medic lowers it \u00b7 ammo stays put'],
     ['WAVES','clear a wave \u2192 choose an upgrade'],
@@ -991,22 +993,31 @@ function drawPractice(){
 }
 function drawArena(){
   selBg(); arenaRects=[];
-  const botMode=isBotArena(),cpuTeamMode=typeof isLocalCpu2v2==='function'&&isLocalCpu2v2(),localMode=botMode||cpuTeamMode;
+  const botMode=isBotArena(),botModelTest=botMode&&!!arena.botTrainingTest,cpuTeamMode=typeof isLocalCpu2v2==='function'&&isLocalCpu2v2(),localMode=botMode||cpuTeamMode;
   const tiny=H<430, dense=H<620;
   const mapVoting=arena.phase==='map_vote'&&arena.mapVotePhase==='voting';
   const mapReveal=arena.phase==='map_reveal'&&arena.mapVotePhase==='reveal';
-  const mapClock=botMode?now:Date.now();
+  const localMapVote=typeof arenaIsLocalMapVote==='function'&&arenaIsLocalMapVote(),mapClock=localMapVote?now:Date.now();
   const mapSeconds=mapVoting?Math.max(0,Math.ceil((arena.mapVoteDeadline-mapClock)/1000)):0;
+  const validMapPick=id=>ARENA_MAP_IDS.includes(String(id||''));
+  const myVoteId=typeof arenaLocalMapVoterId==='function'?arenaLocalMapVoterId():null,
+    otherVoteId=typeof arenaOtherMapVoterId==='function'?arenaOtherMapVoterId():null,
+    myMapPick=validMapPick(arena.mapVotes&&arena.mapVotes[myVoteId])?arena.mapVotes[myVoteId]:'arena',
+    otherMapPick=validMapPick(arena.mapVotes&&arena.mapVotes[otherVoteId])?arena.mapVotes[otherVoteId]:'arena',
+    myPickLabel=cpuTeamMode?'YOUR TEAM PICK':'YOUR PICK',otherPickLabel=cpuTeamMode?'CPU TEAM PICK':'OTHER TEAM PICK',
+    voteSummary='VOTE SUMMARY \u00b7 '+myPickLabel+': '+arenaMapName(myMapPick)+' \u00b7 '+otherPickLabel+': '+arenaMapName(otherMapPick);
   const queueNoticeActive=modeBoardNotice&&now<modeBoardNoticeT;
   const titleY=tiny?19:(dense?28:42), subY=tiny?41:(dense?53:70);
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillStyle=cpuTeamMode?'#bfa8ff':botMode?'#7fd8ff':'#d05548'; ctx.font='700 '+(tiny?20:(W<440?25:34))+'px ui-monospace,Consolas,monospace';
   const arenaTitle=mapVoting?('MAP VOTE \u00b7 '+mapSeconds+'s'):mapReveal?'MAP SELECTED':
-                   cpuTeamMode?'\u2694 OFFLINE 2v2 VS CPUs':botMode?'\u2694 OFFLINE 1v1 VS AI':'\u2694 ONLINE MULTIPLAYER';
+                   cpuTeamMode?'\u2694 OFFLINE 2v2 VS CPUs':botModelTest?('\uD83E\uDDE0 AI MODEL TEST \u00b7 LV '+botTrainingLevel(arena.botTrainingXp)):
+                   botMode?'\u2694 OFFLINE 1v1 VS AI':'\u2694 ONLINE MULTIPLAYER';
   ctx.fillText(fitLine(arenaTitle,W-18),W/2,titleY);
   ctx.fillStyle=queueNoticeActive?'#ff6b5d':'#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
-  const arenaSub=queueNoticeActive?modeBoardNotice:mapVoting?'CHOOSE A MAP \u00b7 CHANGE YOUR VOTE UNTIL THE TIMER ENDS':
-                   mapReveal?(arenaMapName(arena.mapId)+' WON THE WEIGHTED VOTE'):
+  const arenaSub=queueNoticeActive?modeBoardNotice:mapVoting?('CHANGE YOUR VOTE UNTIL TIMER ENDS \u00b7 '+voteSummary):
+                   mapReveal?('SELECTED MAP: '+arenaMapName(arena.mapId)+' \u00b7 WON THE WEIGHTED VOTE \u00b7 '+voteSummary):
+                   botModelTest?'DETERMINISTIC LOCAL COMPARISON \u00b7 GLOBAL MODEL WILL NOT CHANGE':
                    localMode?'ONE DEVICE ONLY \u00b7 FIRST TO 5 \u00b7 NO UPGRADES, UTILITIES, OR REWARDS':
                    (tiny?'DIFFERENT DEVICES \u00b7 SIGN-IN ONLY \u00b7 FIRST TO 5':'ONLINE \u00b7 MULTIPLAYER ON DIFFERENT DEVICES \u00b7 FIRST TO 5 \u00b7 NO REWARDS');
   ctx.fillText(fitLine(arenaSub,W-16),W/2,subY);
@@ -1032,42 +1043,54 @@ function drawArena(){
   ctx.fillText(fitLine(names,pw-20),px+10,ly+(tiny?29:43)); ctx.textAlign='center';
 
   if(mapVoting||mapReveal){
-    const descriptions={arena:'CLASSIC WALLS \u00b7 CENTRAL COVER',dimension:'PORTALS TELEPORT YOU ACROSS THE MAP',construction:'CRATES + LETHAL TNT'};
+    const descriptions={arena:'CLASSIC WALLS \u00b7 CENTRAL COVER',dimension:'PORTALS TELEPORT YOU ACROSS THE MAP',construction:'CRATES + 100 HP EXPLOSIVE TNT'};
     if(mapReveal){
       const cardH=tiny?82:(dense?116:150), y=bodyY+(tiny?2:8);
       ctx.fillStyle='rgba(232,182,88,0.12)'; ctx.fillRect(px,y,pw,cardH);
       ctx.strokeStyle='#e8b658'; ctx.lineWidth=2; ctx.strokeRect(px+0.5,y+0.5,pw,cardH);
-      ctx.fillStyle='#fff0a0'; ctx.font='700 '+(tiny?22:(W<440?29:40))+'px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine(arenaMapName(arena.mapId),pw-20),W/2,y+cardH*(tiny?0.36:0.40));
+      ctx.fillStyle='#fff0a0'; ctx.font='700 '+(tiny?22:(W<360?22:(W<440?25:40)))+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(arenaMapName(arena.mapId),W/2,y+cardH*(tiny?0.18:0.20));
       ctx.fillStyle='#a7c15e'; ctx.font='700 '+(tiny?10:14)+'px ui-monospace,Consolas,monospace';
-      ctx.fillText('SELECTED',W/2,y+cardH*(tiny?0.68:0.66));
-      ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine(descriptions[arena.mapId]||descriptions.arena,pw-20),W/2,y+cardH*(tiny?0.86:0.84));
+      ctx.fillText('SELECTED MAP',W/2,y+cardH*(tiny?0.39:0.39));
+      ctx.fillStyle='#cdd6b0'; ctx.font='700 '+(tiny?'7':(dense?'8':'10'))+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(myPickLabel+': '+arenaMapName(myMapPick),W/2,y+cardH*(tiny?0.56:0.57));
+      ctx.fillStyle='#bfa8ff';
+      ctx.fillText(otherPickLabel+': '+arenaMapName(otherMapPick),W/2,y+cardH*(tiny?0.70:0.72));
+      ctx.fillStyle='#8a9268'; ctx.font=(tiny?'7':(dense?'8':'10'))+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine(descriptions[arena.mapId]||descriptions.arena,pw-20),W/2,y+cardH*(tiny?0.87:0.89));
     } else {
       const ids=ARENA_MAP_IDS, wide=W>=620, cardGap=tiny?4:8;
       const cardH=wide?(tiny?54:(dense?74:94)):(tiny?36:(dense?47:58));
       const cardW=wide?(pw-cardGap*(ids.length-1))/ids.length:pw;
-      const me=botMode?LOCAL_DUEL_PLAYER:(authUser&&String(authUser.id));
+      const summaryH=tiny?29:(dense?38:46), cardsY=bodyY+summaryH;
       const counts=Object.fromEntries(ids.map(id=>[id,0]));
       for(const id of Object.values(arena.mapVotes||{})) if(Object.prototype.hasOwnProperty.call(counts,id)) counts[id]++;
+      ctx.fillStyle='#d0a548'; ctx.font='700 '+(tiny?'7':(dense?'8':'9'))+'px ui-monospace,Consolas,monospace';
+      ctx.fillText('VOTE SUMMARY',W/2,bodyY+(tiny?3:5));
+      ctx.fillStyle='#cdd6b0';
+      ctx.fillText(myPickLabel+': '+arenaMapName(myMapPick),W/2,bodyY+(tiny?13:(dense?17:20)));
+      ctx.fillStyle='#bfa8ff';
+      ctx.fillText(otherPickLabel+': '+arenaMapName(otherMapPick),W/2,bodyY+(tiny?23:(dense?29:34)));
       ids.forEach((id,i)=>{
-        const x=wide?px+i*(cardW+cardGap):px, y=wide?bodyY:bodyY+i*(cardH+cardGap);
-        const selected=arena.mapVotes&&arena.mapVotes[me]===id;
+        const x=wide?px+i*(cardW+cardGap):px, y=wide?cardsY:cardsY+i*(cardH+cardGap);
+        const selected=myMapPick===id,otherSelected=otherMapPick===id,
+          pickLabels=[selected?myPickLabel:'',otherSelected?otherPickLabel:''].filter(Boolean);
         const r={id:'map_vote_'+id,mapId:id,x,y,w:cardW,h:cardH}; arenaRects.push(r);
         const hv=mouse.x>=x&&mouse.x<=x+cardW&&mouse.y>=y&&mouse.y<=y+cardH;
-        ctx.fillStyle=selected?'rgba(167,193,94,0.30)':hv?'rgba(232,182,88,0.20)':'rgba(0,0,0,0.42)'; ctx.fillRect(x,y,cardW,cardH);
-        ctx.strokeStyle=selected?'#a7c15e':'#e8b658'; ctx.lineWidth=selected?2:1.2; ctx.strokeRect(x+0.5,y+0.5,cardW,cardH);
+        ctx.fillStyle=selected?'rgba(167,193,94,0.30)':otherSelected?'rgba(191,168,255,0.20)':hv?'rgba(232,182,88,0.20)':'rgba(0,0,0,0.42)'; ctx.fillRect(x,y,cardW,cardH);
+        ctx.strokeStyle=selected?'#a7c15e':otherSelected?'#bfa8ff':'#e8b658'; ctx.lineWidth=selected||otherSelected?2:1.2; ctx.strokeRect(x+0.5,y+0.5,cardW,cardH);
         ctx.fillStyle=selected?'#dff0aa':'#e8d9a8';
         const titleSize=wide?(tiny?10:(dense?12:15)):(tiny?11:(dense?13:16));
         ctx.font='700 '+titleSize+'px ui-monospace,Consolas,monospace';
         ctx.fillText(fitLine(arenaMapName(id),cardW-12),x+cardW/2,y+(wide?cardH*0.30:cardH*0.32));
         ctx.fillStyle='#8a9268'; ctx.font=(tiny?'7':(dense?'8':'9'))+'px ui-monospace,Consolas,monospace';
         ctx.fillText(fitLine(descriptions[id],cardW-12),x+cardW/2,y+(wide?cardH*0.58:cardH*0.62));
-        ctx.fillStyle=selected?'#a7c15e':'#d0a548'; ctx.font='700 '+(tiny?'7':'8')+'px ui-monospace,Consolas,monospace';
-        ctx.fillText((selected?'YOUR VOTE \u00b7 ':'')+counts[id]+' VOTE'+(counts[id]===1?'':'S'),x+cardW/2,y+cardH*(wide?0.82:0.86));
+        ctx.fillStyle=selected?'#a7c15e':otherSelected?'#bfa8ff':'#d0a548'; ctx.font='700 '+(tiny?'7':'8')+'px ui-monospace,Consolas,monospace';
+        const pickText=(pickLabels.length?pickLabels.join(' + ')+' \u00b7 ':'')+counts[id]+'/2 PICKS';
+        ctx.fillText(fitLine(pickText,cardW-10),x+cardW/2,y+cardH*(wide?0.82:0.86));
       });
-      const listBottom=wide?bodyY+cardH:bodyY+ids.length*cardH+(ids.length-1)*cardGap;
-      button('map_leave',botMode?'LEAVE MAP VOTE':'LEAVE MATCH',listBottom+cardGap,'#d05548');
+      const listBottom=wide?cardsY+cardH:cardsY+ids.length*cardH+(ids.length-1)*cardGap;
+      button('map_leave',localMapVote?'LEAVE MAP VOTE':'LEAVE MATCH',listBottom+cardGap,'#d05548');
     }
   } else if(cpuTeamMode&&partyCpuMatch.phase==='match_end'){
     const me=partyCpuMatch.scores.allies||0,them=partyCpuMatch.scores.cpus||0;
@@ -1081,14 +1104,23 @@ function drawArena(){
     button('teamleave','BACK TO OFFLINE VS CPU',y,'#8a9268');
   } else if(botMode&&arena.phase==='match_end'){
     const me=arena.scores[LOCAL_DUEL_PLAYER]||0, them=arena.scores[LOCAL_DUEL_BOT]||0;
+    const trainingResult=botModelTest
+      ?'LOCAL MODEL TEST \u00b7 LIVE GLOBAL XP UNCHANGED'
+      :botTrainingMatchResultText(arena);
     ctx.fillStyle=me>them?'#a7c15e':'#d05548'; ctx.font='700 '+(tiny?18:24)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(me>them?'YOU BEAT THE BOT':'BOT WINS',W/2,bodyY+12);
     ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace'; ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
-    let y=bodyY+(tiny?72:116);
-    y=button('botrematch','PLAY AGAIN',y,'#a7c15e','New first-to-5 match against the AI.');
-    y=button('botloadout','CHANGE WEAPONS',y,'#7fd8ff');
-    button('botleave','BACK TO OFFLINE \u00b7 ONE DEVICE ONLY',y,'#8a9268');
+    ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(trainingResult,pw-20),W/2,bodyY+(tiny?72:108));
+    let y=bodyY+(tiny?84:126);
+    if(botModelTest){
+      y=button('bottestagain','TEST THIS MODEL AGAIN',y,'#a7c15e','Same archived tuning and deterministic AI seed.');
+      button('botlearningback','BACK TO AI BOT LEARNING',y,'#7fd8ff');
+    }else{
+      y=button('botrematch','PLAY AGAIN',y,'#a7c15e','New first-to-5 match against the AI.');
+      y=button('botloadout','CHANGE WEAPONS',y,'#7fd8ff');
+      button('botleave','BACK TO OFFLINE \u00b7 ONE DEVICE ONLY',y,'#8a9268');
+    }
   } else if(!authUser){
     let y=bodyY; y=button('signin','SIGN IN TO PLAY',y,'#e8b658','Online Arena does not allow guest play.');
     button('back','\u2039 BACK TO MENU',y,'#8a9268');
@@ -1148,6 +1180,8 @@ function arenaClick(){
       offlineCpu2v2Leave('',false);pendingGameMode='ai2v2';modeBoardMode='endless';loadoutBackPage='offlinecpu';loadout.utility=null;selPage='loadout';
     }
     else if(r.id==='teamleave') offlineCpu2v2Leave('',false);
+    else if(r.id==='bottestagain') restartAiLearningModelTest(arena);
+    else if(r.id==='botlearningback') leaveArena('',false);
     else if(r.id==='botrematch') startBotArena();
     else if(r.id==='botloadout'){
       leaveArena('',false); pendingGameMode='ai1v1'; modeBoardMode='endless'; loadoutBackPage='offlinecpu'; loadout.utility=null; selPage='loadout';
@@ -1357,15 +1391,15 @@ function drawOfflineCpuModes(){
   ctx.fillStyle='#7fd8ff'; ctx.font='700 '+(tiny?22:short?27:36)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine('PLAY AGAINST CPU',W-24),W/2,tiny?8:16);
   ctx.fillStyle='#a7c15e'; ctx.font='700 '+(tiny?8:10)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('OFFLINE · ONE DEVICE ONLY',W-24),W/2,tiny?39:short?52:64);
+  ctx.fillText(fitLine('GAMEPLAY LOCAL · GLOBAL MODEL SYNCS ONLINE',W-24),W/2,tiny?39:short?52:64);
   ctx.fillStyle='#8a9268'; ctx.font=(tiny?7:9)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('FIRST TO 5 · NO UPGRADES, UTILITY, OR REWARDS',W-24),W/2,tiny?54:short?68:82);
+  ctx.fillText(fitLine('FIRST TO 5 · ONLY CREATOR + MAIN ADMINS TRAIN THE BOT · MAX LV 10',W-24),W/2,tiny?54:short?68:82);
 
   const totalW=Math.min(720,W-margin*2), cardW=(totalW-gap)/2, x0=W/2-totalW/2;
   const top=tiny?(H<350?70:82):short?94:116, backH=tiny?32:40, backY=H-backH-(tiny?8:14);
   const cardH=Math.max(92,Math.min(short?178:240,backY-top-(tiny?12:22)));
   const cards=[
-    {mode:'ai1v1',title:'1v1',sub:'YOU VS CPU',detail:'ONE CPU OPPONENT',col:'#7fd8ff'},
+    {mode:'ai1v1',title:'1v1',sub:'YOU VS CPU',detail:'GLOBAL BOT '+botTrainingProgressText(),col:'#7fd8ff'},
     {mode:'ai2v2',title:'2v2',sub:'YOU + ALLY CPU',detail:'VS TWO CPUs',col:'#bfa8ff'}
   ];
   for(let i=0;i<cards.length;i++){
@@ -1468,7 +1502,7 @@ function drawSocialButton(id,label,x,y,w,h,col,enabled=true,extra={}){
 }
 function drawSocial(){
   selBg(); socialRects=[];
-  const tiny=H<390, compact=H<600, wide=W>=700||(H<430&&W>=520);
+  const tiny=H<390, compact=H<600;
   const margin=tiny?7:compact?10:16, titleY=tiny?3:compact?7:12, titleFs=tiny?20:compact?25:34;
   ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle='#bfa8ff'; ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
   ctx.fillText('SOCIAL',W/2,titleY);
@@ -1478,21 +1512,23 @@ function drawSocial(){
   const statusY=subY+(tiny?9:compact?13:17);
   ctx.fillStyle=/NOT ENABLED|COULD NOT|OFFLINE/.test(socialStatus)?'#d05548':'#7f876e';
   ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
-  const identity=authUser&&socialProfile?'@'+socialProfile.handle+'  ·  ':'';
-  ctx.fillText(fitLine(identity+(socialStatus||(authUser?'OPEN SOCIAL TO SYNC':'SIGN IN FOR FRIENDS + PRIVATE MESSAGES')),W-20),W/2,statusY);
+  ctx.fillText(fitLine(socialStatus||(authUser?'OPEN SOCIAL TO REFRESH':'SIGN IN FOR FRIENDS + PRIVATE MESSAGES'),W-20),W/2,statusY);
 
   const backH=tiny?27:compact?31:38, backY=H-backH-margin;
-  const contentTop=statusY+(tiny?10:compact?14:19), contentBottom=backY-(tiny?5:compact?8:12), gap=tiny?4:compact?7:11;
+  const gap=tiny?4:compact?7:11, contentBottom=backY-(tiny?5:compact?8:12);
   const contentW=Math.min(1120,W-margin*2), contentX=(W-contentW)/2;
-  const cols=wide?3:1, panelGap=gap, rows=wide?1:3;
-  const panelW=(contentW-panelGap*(cols-1))/cols, panelH=Math.max(56,(contentBottom-contentTop-panelGap*(rows-1))/rows);
-  const panels=['friends','messages','party'].map((id,i)=>({id,
-    x:contentX+(wide?i*(panelW+panelGap):0),y:contentTop+(wide?0:i*(panelH+panelGap)),w:panelW,h:panelH}));
+  const identityY=statusY+(tiny?9:compact?12:15), identityH=authUser?(W<500?(tiny?42:48):(tiny?23:compact?27:32)):0;
+  if(typeof socialLayoutIdentity==='function') socialLayoutIdentity({x:contentX,y:identityY,w:contentW,h:identityH});
+  const contentTop=(identityH?identityY+identityH:statusY)+(tiny?5:compact?8:12);
+  const partyH=tiny?55:compact?64:78, partyY=contentBottom-partyH;
+  const panelGap=gap, panelW=(contentW-panelGap)/2, panelH=Math.max(56,partyY-panelGap-contentTop);
+  const panels=['friends','messages'].map((id,i)=>({id,x:contentX+i*(panelW+panelGap),y:contentTop,w:panelW,h:panelH}));
   const panelFrame=(p,title,col,sub)=>{
     ctx.fillStyle='rgba(10,10,12,0.76)'; ctx.fillRect(p.x,p.y,p.w,p.h); ctx.strokeStyle=col; ctx.lineWidth=1.3; ctx.strokeRect(p.x+0.5,p.y+0.5,p.w,p.h);
     ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=col; ctx.font='700 '+(tiny?9:compact?11:14)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(title,p.x+8,p.y+(tiny?5:8));
-    if(sub){ ctx.textAlign='right'; ctx.fillStyle='#686b61'; ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(sub,p.w*0.52),p.x+p.w-8,p.y+(tiny?7:10)); }
+    const subNeeds=title==='PRIVATE MESSAGES'?285:210;
+    if(sub&&p.w>=subNeeds){ ctx.textAlign='right'; ctx.fillStyle='#686b61'; ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(sub,p.w*0.46),p.x+p.w-8,p.y+(tiny?7:10)); }
   };
   const panelMessage=(p,text,y,col='#777f68')=>{
     ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=col; ctx.font='700 '+(tiny?6:compact?8:9)+'px ui-monospace,Consolas,monospace';
@@ -1507,8 +1543,8 @@ function drawSocial(){
       panelMessage(p,'SIGN IN TO ADD FRIENDS',headY+(footerY-headY)/2,'#8a9268');
       drawSocialButton('signin','SIGN IN',p.x+6,footerY,p.w-12,footerH,col,true);
     } else if(socialLoading&&socialBackend.profiles===null){
-      panelMessage(p,'SYNCING FRIENDS...',headY+(footerY-headY)/2,'#8a9268');
-      drawSocialButton('social_retry','SYNCING...',p.x+6,footerY,p.w-12,footerH,col,false);
+      panelMessage(p,'LOADING FRIENDS...',headY+(footerY-headY)/2,'#8a9268');
+      drawSocialButton('social_retry','REFRESH',p.x+6,footerY,p.w-12,footerH,col,false);
     } else if(socialBackend.profiles===false||socialBackend.friends===false){
       panelMessage(p,'RUN SOCIAL SQL SETUP FILES',headY+(footerY-headY)/2,'#d05548');
       drawSocialButton('social_retry','RETRY SETUP CHECK',p.x+6,footerY,p.w-12,footerH,col,true);
@@ -1517,7 +1553,7 @@ function drawSocial(){
       const rowH=tiny?24:compact?30:37, maxRows=Math.max(1,Math.floor((footerY-headY-2)/rowH));
       const pages=Math.max(1,Math.ceil(visible.length/maxRows)); socialFriendPage=clamp(socialFriendPage,0,pages-1);
       const pageRows=visible.slice(socialFriendPage*maxRows,(socialFriendPage+1)*maxRows);
-      if(!visible.length) panelMessage(p,'NO FRIENDS YET · ADD BY HANDLE',headY+(footerY-headY)/2);
+      if(!visible.length) panelMessage(p,'NO FRIENDS YET · ADD BY USERNAME',headY+(footerY-headY)/2);
       for(let i=0;i<pageRows.length;i++){
         const f=pageRows[i], other=socialFriendOther(f), person=socialPerson(other), y=headY+i*rowH;
         ctx.fillStyle=i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)'; ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
@@ -1537,11 +1573,11 @@ function drawSocial(){
       }
       const bg=4, count=pages>1?4:3, bw=(p.w-12-bg*(count-1))/count;
       drawSocialButton('friend_add','ADD',p.x+6,footerY,bw,footerH,col,true);
-      drawSocialButton('friend_handle','HANDLE',p.x+6+bw+bg,footerY,bw,footerH,'#bfa8ff',true);
+      drawSocialButton('friend_handle','USERNAME',p.x+6+bw+bg,footerY,bw,footerH,'#bfa8ff',true);
       if(pages>1){
         drawSocialButton('friend_prev','‹ '+(socialFriendPage+1)+'/'+pages,p.x+6+(bw+bg)*2,footerY,bw,footerH,'#8a9268',socialFriendPage>0);
         drawSocialButton('friend_next',(socialFriendPage+1)+'/'+pages+' ›',p.x+6+(bw+bg)*3,footerY,bw,footerH,'#8a9268',socialFriendPage<pages-1);
-      } else drawSocialButton('social_retry','SYNC',p.x+6+(bw+bg)*2,footerY,bw,footerH,'#8a9268',true);
+      } else drawSocialButton('social_retry','REFRESH',p.x+6+(bw+bg)*2,footerY,bw,footerH,'#8a9268',true);
     }
   }
 
@@ -1553,8 +1589,8 @@ function drawSocial(){
       panelMessage(p,'SIGN IN TO READ PRIVATE MESSAGES',headY+(footerY-headY)/2,'#8a9268');
       drawSocialButton('signin','SIGN IN',p.x+6,footerY,p.w-12,footerH,col,true);
     } else if(socialLoading&&socialBackend.profiles===null){
-      panelMessage(p,'SYNCING PRIVATE MESSAGES...',headY+(footerY-headY)/2,'#8a9268');
-      drawSocialButton('social_retry','SYNCING...',p.x+6,footerY,p.w-12,footerH,col,false);
+      panelMessage(p,'LOADING PRIVATE MESSAGES...',headY+(footerY-headY)/2,'#8a9268');
+      drawSocialButton('social_retry','REFRESH',p.x+6,footerY,p.w-12,footerH,col,false);
     } else if(socialBackend.profiles===false||socialBackend.messages===false||socialBackend.friends===false){
       panelMessage(p,'SECURE MESSAGE STORAGE NEEDS SETUP',headY+(footerY-headY)/2,'#d05548');
       drawSocialButton('social_retry','RETRY SETUP CHECK',p.x+6,footerY,p.w-12,footerH,col,true);
@@ -1577,26 +1613,24 @@ function drawSocial(){
       if(pages>1){
         drawSocialButton('dm_prev','‹ '+(socialMessagePage+1)+'/'+pages,p.x+6+bw+bg,footerY,bw,footerH,'#8a9268',socialMessagePage>0);
         drawSocialButton('dm_next',(socialMessagePage+1)+'/'+pages+' ›',p.x+6+(bw+bg)*2,footerY,bw,footerH,'#8a9268',socialMessagePage<pages-1);
-      } else drawSocialButton('social_retry','SYNC',p.x+6+bw+bg,footerY,bw,footerH,'#8a9268',true);
+      } else drawSocialButton('social_retry','REFRESH',p.x+6+bw+bg,footerY,bw,footerH,'#8a9268',true);
     }
   }
 
-  // PARTY remains available to guests and reuses the existing Party lobby.
+  // PARTY is a compact bottom action row. The real DOM field keeps keyboard,
+  // paste, accessibility, and the mobile software keyboard working correctly.
   {
-    const p=panels[2], col='#bfa8ff', footerH=tiny?25:compact?29:34, footerY=p.y+p.h-footerH-5, headY=p.y+(tiny?20:compact?25:32), online=partyServiceAvailable();
+    const p={x:contentX,y:partyY,w:contentW,h:partyH}, col='#bfa8ff', footerH=tiny?25:compact?29:34, footerY=p.y+p.h-footerH-5, online=partyServiceAvailable();
     panelFrame(p,'PARTY',col,'GUESTS OK · MAX '+PARTY_MAX);
-    const summary=party.accepted?(party.members.length+'/'+PARTY_MAX+' PLAYERS  ·  CODE '+party.code):party.channel?'CONNECTING TO '+party.code:'CREATE OR JOIN WITH A CODE';
-    panelMessage(p,summary,headY+(footerY-headY)*0.38,party.accepted?'#d8c8ff':'#8a9268');
-    panelMessage(p,online?'2v2 VS CPUs IS PLAYABLE · HUMAN MODES ARE PLANNERS':'PARTIES NEED AN INTERNET CONNECTION',headY+(footerY-headY)*0.68,online?'#777f68':'#d05548');
-    if(party.channel||party.accepted){
-      const bg=5, bw=(p.w-12-bg)/2;
-      drawSocialButton('party_open',party.accepted?'OPEN PARTY':'VIEW CONNECTION',p.x+6,footerY,bw,footerH,col,true);
-      drawSocialButton('party_copy','COPY CODE',p.x+6+bw+bg,footerY,bw,footerH,'#7fd8ff',!!party.code);
-    } else {
-      const bg=5, bw=(p.w-12-bg)/2;
-      drawSocialButton('party_create','CREATE PARTY',p.x+6,footerY,bw,footerH,'#a7c15e',online);
-      drawSocialButton('party_join','JOIN CODE',p.x+6+bw+bg,footerY,bw,footerH,'#7fd8ff',online);
-    }
+    const summary=!online?'PARTIES NEED AN INTERNET CONNECTION':party.accepted?
+      (party.members.length+'/'+PARTY_MAX+' PLAYERS · JOINING ANOTHER CODE LEAVES THIS PARTY'):
+      party.channel?('CONNECTING TO '+party.code):'CREATE A PARTY OR ENTER A 6-CHARACTER JOIN CODE';
+    panelMessage(p,summary,p.y+(tiny?18:compact?22:27),!online?'#d05548':party.accepted?'#d8c8ff':'#8a9268');
+    const bg=5, bw=(p.w-12-bg)/2, leftX=p.x+6, joinX=leftX+bw+bg;
+    if(party.channel||party.accepted) drawSocialButton('party_open','OPEN PARTY',leftX,footerY,bw,footerH,col,true);
+    else drawSocialButton('party_create','CREATE PARTY',leftX,footerY,bw,footerH,'#a7c15e',online);
+    if(typeof socialLayoutPartyJoin==='function') socialLayoutPartyJoin({x:joinX,y:footerY,w:bw,h:footerH},online);
+    else drawSocialButton('party_join','JOIN CODE',joinX,footerY,bw,footerH,'#7fd8ff',online);
   }
 
   backRect=drawSocialButton('back','‹ HOME',margin,backY,Math.min(170,W-margin*2),backH,'#8a9268',true);
@@ -1909,9 +1943,10 @@ function drawHomeLeaderboards(x,y,w,h){
       ctx.fillStyle=i%2?'rgba(255,255,255,0.018)':'rgba(255,255,255,0.045)';
       ctx.fillRect(panel.x+3,rowY,panelW-6,rowH);
       if(i>=count) continue;
-      const item=panel.rows[i], pub=publicProfileCache[item.user_id]||{};
-      const publicName=String(pub.email||item.name||'operator');
-      leaderboardRowRects.push({x:panel.x+3,y:rowY,w:panelW-6,h:rowH,userId:item.user_id,name:publicName});
+      const item=panel.rows[i], publicName=leaderboardUsername(item);
+      leaderboardRowRects.push({x:panel.x+3,y:rowY,w:panelW-6,h:rowH,userId:item.user_id,
+        name:publicName,score:+item.score||0,metric:panel.title==='ONLINE'?'arena_wins':'endless_score',
+        needsUsername:leaderboardNeedsUsername(item)});
       const hot=mouse.x>=panel.x+3&&mouse.x<=panel.x+panelW-3&&mouse.y>=rowY&&mouse.y<=rowY+rowH;
       if(hot){ ctx.fillStyle='rgba(127,216,255,0.13)'; ctx.fillRect(panel.x+3,rowY,panelW-6,rowH); }
       const me=authUser&&item.user_id===authUser.id;
@@ -2610,11 +2645,12 @@ function drawUpgrade(){
     ctx.fillText('GLOBAL TOP '+PUBLIC_BOARD_LIMIT, W/2, ly); ly+=18;
     ctx.font='11px ui-monospace,Consolas,monospace';
     for(let i=0;i<Math.min(PUBLIC_BOARD_LIMIT,board.length);i++){
-      const me = authUser && board[i].name===displayName(authUser);
+      const row=board[i], rowName=leaderboardUsername(row);
+      const me = authUser && row.user_id===authUser.id;
       ctx.fillStyle = me ? '#a7c15e' : '#6b7455';
       ctx.textAlign='right'; ctx.fillText((i+1)+'.', W/2-96, ly);
-      ctx.textAlign='left';  ctx.fillText(board[i].name.slice(0,16), W/2-86, ly);
-      ctx.textAlign='right'; ctx.fillText(String(board[i].score), W/2+110, ly);
+      ctx.textAlign='left';  ctx.fillText(rowName.slice(0,16), W/2-86, ly);
+      ctx.textAlign='right'; ctx.fillText(String(row.score), W/2+110, ly);
       ly+=15;
     }
     ctx.textAlign='center';

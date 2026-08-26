@@ -61,7 +61,7 @@ function drawWorld(){
   ctx.fillStyle='#101208';
   ctx.fillRect(0,0,W,H);
 
-  const duelView=isDuelArena(),playBounds=activeArenaBounds(),mapId=activeArenaMapId();
+  const duelView=isArenaMapBattlefield(),playBounds=activeArenaBounds(),mapId=activeArenaMapId();
   // Countdown simulation is intentionally frozen, so rendering also pins the
   // initial frame to the arena center instead of briefly showing a spawn-side
   // camera until FIGHT.
@@ -112,11 +112,23 @@ function drawWorld(){
   // swaps concrete walls for timber crates and live TNT blocks.
   for(const o of activeObstacles()){
     if(o.kind==='tnt'){
+      const hp=arenaTntHp(o.id),ratio=clamp(hp/ARENA_TNT_HP,0,1),barY=o.y-10/zoom,barH=5/zoom;
       ctx.fillStyle='#a9322b'; ctx.fillRect(o.x,o.y,o.w,o.h);
       ctx.strokeStyle='#ff806e'; ctx.lineWidth=2/zoom; ctx.strokeRect(o.x,o.y,o.w,o.h);
       ctx.fillStyle='#e8b658'; ctx.fillRect(o.x,o.y+o.h*.18,o.w,o.h*.12); ctx.fillRect(o.x,o.y+o.h*.70,o.w,o.h*.12);
       ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff1c0';ctx.font='800 '+(10/zoom)+'px ui-monospace,Consolas,monospace';
       ctx.fillText('TNT',o.x+o.w/2,o.y+o.h/2);ctx.textAlign='left';ctx.textBaseline='alphabetic';
+      if(hp<ARENA_TNT_HP){
+        ctx.strokeStyle='rgba(55,10,8,.9)';ctx.lineWidth=1.5/zoom;ctx.beginPath();
+        ctx.moveTo(o.x+o.w*.28,o.y+o.h*.08);ctx.lineTo(o.x+o.w*.48,o.y+o.h*.40);ctx.lineTo(o.x+o.w*.36,o.y+o.h*.62);
+        if(ratio<=.5){ctx.moveTo(o.x+o.w*.76,o.y+o.h*.16);ctx.lineTo(o.x+o.w*.58,o.y+o.h*.48);ctx.lineTo(o.x+o.w*.72,o.y+o.h*.82);}
+        ctx.stroke();
+      }
+      ctx.fillStyle='rgba(0,0,0,.78)';ctx.fillRect(o.x,barY,o.w,barH);
+      ctx.fillStyle=ratio>.5?'#e8b658':ratio>.25?'#ff9b3d':'#ff5f50';ctx.fillRect(o.x,barY,o.w*ratio,barH);
+      ctx.strokeStyle='#ffcf78';ctx.lineWidth=1/zoom;ctx.strokeRect(o.x,barY,o.w,barH);
+      ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillStyle='#fff1c0';ctx.font='800 '+(7/zoom)+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(Math.ceil(hp)+'/'+ARENA_TNT_HP,o.x+o.w/2,barY-2/zoom);ctx.textAlign='left';ctx.textBaseline='alphabetic';
     } else if(o.kind==='crate'){
       ctx.fillStyle='#6b4a28'; ctx.fillRect(o.x,o.y,o.w,o.h);
       ctx.strokeStyle='#bb8750'; ctx.lineWidth=3/zoom; ctx.strokeRect(o.x,o.y,o.w,o.h);
@@ -578,6 +590,9 @@ function drawHUD(){
     ctx.fillText(fitLine(roundLine,W-36),W/2,pad+32);
     ctx.textAlign='left';
     }
+    const hudMapId=typeof activeArenaMapId==='function'?activeArenaMapId():(arena.mapId||'arena');
+    ctx.textAlign='center';ctx.fillStyle='#8a9268';ctx.font='700 '+(W<360?8:10)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText('MAP \u00b7 '+arenaMapName(hudMapId),W/2,pad+50);ctx.textAlign='left';
   } else {
     ctx.fillStyle='#e8b658'; ctx.font='700 22px ui-monospace,Consolas,monospace';
     ctx.fillText('SCORE '+score, pad, pad);
@@ -654,7 +669,7 @@ function drawHUD(){
   let cdX = pad + slots.length*66 + 16;
   const CDW=104;                                // column stride (70px bar + gap, wide enough for labels)
   const cdFits=()=>cdX+96<=W-pad;               // narrow screens: drop columns that would run off
-  // melee ability charge/cooldown (F, or RMB while that melee is held)
+  // melee ability charge/cooldown (E/F, or RMB while that melee is held)
   if((w.melee || player.cur==='warpwave' || player.cur==='timeturner') && cdFits()){
     let frac, lbl;
     if(player.cur==='warpwave'){
@@ -666,7 +681,7 @@ function drawHUD(){
       const cdMax=abilityCdOf('timeturner')||1;
       frac=clamp(1-((abilityCD.timeturner||0)-now)/cdMax, 0, 1);
     } else if(player.cur==='bdaggers'){
-      lbl='F/RMB: HURL';
+      lbl='E/F/RMB: HURL';
       const cdMax=abilityCdOf('bdaggers')||1;
       frac=clamp(1-((abilityCD.bdaggers||0)-now)/cdMax,0,1);
     } else if(player.cur==='terafists'){
@@ -680,7 +695,7 @@ function drawHUD(){
     } else {
       const cdMax=abilityCdOf(player.cur)||1;
       frac=clamp(1-((abilityCD[player.cur]||0)-now)/cdMax, 0, 1);
-      lbl = player.cur==='scythe' ? 'F/RMB: DASH' : player.cur==='knife' ? 'F/RMB: CRIT' : player.cur==='hammer' ? 'F/RMB: SLAM' : player.cur==='twinsai' ? 'F/RMB: PARRY' : 'F/RMB: RIP';
+      lbl = player.cur==='scythe' ? 'E/F/RMB: DASH' : player.cur==='knife' ? 'E/F/RMB: CRIT' : player.cur==='hammer' ? 'E/F/RMB: SLAM' : player.cur==='twinsai' ? 'E/F/RMB: PARRY' : 'E/F/RMB: RIP';
     }
     ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace'; ctx.textAlign='left';
     ctx.fillText(lbl, cdX, H-124);
@@ -729,8 +744,8 @@ function drawHUD(){
   ctx.fillStyle='rgba(138,146,104,0.8)'; ctx.font='11px ui-monospace,Consolas,monospace';
   if(W>=900){
     const help=practiceMode==='arena'
-      ? 'WASD move · LMB fire · R reload · 1-3 / Q swap · F melee ability · melee RMB ability · ESC menu'
-      : 'WASD move · LMB fire · '+(utilityOut&&loadout.utility==='medkit'?'RMB quick med':'E scope')+' · R reload · 1-4 / Q swap · G/RMB utility'+(perks.dash?' · SPACE dash':'')+' · F melee ability · ESC menu';
+      ? 'WASD move · LMB fire · R reload · 1-3 / Q swap · E/F melee ability · melee RMB ability · ESC menu'
+      : 'WASD move · LMB fire · '+(utilityOut&&loadout.utility==='medkit'?'RMB quick med':'E scope / melee ability')+' · R reload · 1-4 / Q swap · G/RMB utility'+(perks.dash?' · SPACE dash':'')+' · F quick melee ability · ESC menu';
     ctx.fillText(fitLine(help,W-pad-300),W-pad,H-26);
   }
   ctx.textAlign='left';
@@ -834,7 +849,7 @@ function drawHUD(){
   }
 
   // minimap
-  const miniDuel=isDuelArena(), miniBounds=activeArenaBounds();
+  const miniDuel=isArenaMapBattlefield(), miniBounds=activeArenaBounds();
   const mapLeft=miniDuel?miniBounds.left:0, mapTop=miniDuel?miniBounds.top:0;
   const mapRight=miniDuel?miniBounds.right:WORLD.w, mapBottom=miniDuel?miniBounds.bottom:WORLD.h;
   const mapW=mapRight-mapLeft, mapH=mapBottom-mapTop;

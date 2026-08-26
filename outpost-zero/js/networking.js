@@ -18,21 +18,45 @@ const PUBLIC_BOARD_LIMIT=5;
 let sb = null, authUser = null, board = [], arenaBoard = [], boardT = 0, recovering = false;
 let arenaAuthPending=false, arena=null;
 let leaderboardRowRects=[];
-let publicProfileCache={};
 const ONBOARDING_VERSION=1;
 let onboardingVersion=ONBOARDING_VERSION;
 let firstAccountTutorialUserId='', firstAccountWelcomeOpen=false, firstAccountWelcomeRects=[];
 let authProfileRequestVersion=0;
 const $ = id => document.getElementById(id);
 
+function cleanUsername(value){
+  return String(value||'').trim().replace(/^@/,'').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
+}
+function leaderboardNeedsUsername(row){
+  if(!row) return false;
+  if(row.needsUsername===true) return true;
+  const username=cleanUsername(row.username!=null?row.username:row.name).toLowerCase();
+  const suffix=String(row.user_id!=null?row.user_id:row.userId||'').replace(/-/g,'').toLowerCase();
+  return !!suffix&&(username==='op_'+suffix.slice(0,20)||username==='op_'+suffix.slice(0,8));
+}
 function displayName(u){
   if(!u) return 'guest';
-  return (u.user_metadata && (u.user_metadata.full_name || u.user_metadata.name))
-      || (u.email ? u.email.split('@')[0] : 'operator');
+  if(authUser&&String(u.id||'')===String(authUser.id||'')&&typeof socialProfile!=='undefined'&&socialProfile&&socialProfile.handle){
+    const live=cleanUsername(socialProfile.handle);
+    if(live){
+      const suffix=String(u.id||'').replace(/-/g,'').toLowerCase();
+      const pending=!!suffix&&live.toLowerCase()==='op_'+suffix.slice(0,20);
+      return pending?'operator':live;
+    }
+  }
+  const meta=u.user_metadata||{};
+  return cleanUsername(meta.username||meta.preferred_username||meta.full_name||meta.name)||'operator';
+}
+function leaderboardUsername(row){
+  if(leaderboardNeedsUsername(row)){
+    const mine=authUser&&String(row.user_id!=null?row.user_id:row.userId||'')===String(authUser.id||'');
+    return mine?'CHOOSE USERNAME':'USERNAME NOT SET';
+  }
+  return cleanUsername(row&&((row.username!=null?row.username:row.name)))||'USERNAME NOT SET';
 }
 function paintUserbar(){
   $('uname').textContent = authUser ? displayName(authUser) : 'not signed in';
-  $('uemail').textContent = authUser && authUser.email ? authUser.email : '';
+  $('uemail').textContent = '';
   $('ubtn').textContent  = authUser ? 'SIGN OUT' : 'SIGN IN';
 }
 async function initAuth(){
@@ -41,9 +65,11 @@ async function initAuth(){
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
       const { data } = await sb.auth.getSession();
       authUser = data.session ? data.session.user : null;
+      void refreshGlobalBotTraining(true);
       sb.auth.onAuthStateChange((_e, sess)=>{
         authUser = sess ? sess.user : null;
         const profileUserId=authUser ? String(authUser.id) : '';
+        void refreshGlobalBotTraining(false);
         const profileRequestVersion=++authProfileRequestVersion;
         if(profileUserId && firstAccountTutorialUserId && firstAccountTutorialUserId!==profileUserId){
           firstAccountWelcomeOpen=false;
@@ -75,7 +101,6 @@ async function initAuth(){
           // the account that is signed in now.
           const liveUserId=authUser ? String(authUser.id) : '';
           if(!profileReady || profileRequestVersion!==authProfileRequestVersion || liveUserId!==profileUserId) return;
-          publishPublicProfile(true);
           processReferral();
           if(!openDailyGate()) maybeFirstRunTutorial();
         });
@@ -127,6 +152,7 @@ function setupRealtime(){
       if(authUser && changed==='outpost-zero-referral:'+authUser.id) payReferralClaims();
     });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_prices'}, ()=>{ rtBump(); fetchPrices(); });
+    ch=ch.on('postgres_changes', {event:'UPDATE', schema:'public', table:'global_bot_training'}, ()=>{ rtBump(); refreshGlobalBotTraining(true); });
     // admins only: roster changes, inbox, report feed
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admins'},        ()=>{ rtBump(); fetchAdmins(); });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admin_msgs'},    ()=>{ rtBump(); if(isAdmin()) fetchMsgs(); });
@@ -182,25 +208,22 @@ async function fetchBoard(){
   if(!sb) return;
   const read=async(game,setter)=>{
     try{
-      const {data,error}=await sb.from('scores').select('user_id,name,score')
-        .eq('game',game).order('score',{ascending:false}).limit(PUBLIC_BOARD_LIMIT);
+      const {data,error}=await sb.rpc('get_outpost_zero_leaderboard',{p_game:game,p_limit:PUBLIC_BOARD_LIMIT});
       if(error) throw error;
-      setter(data||[]);
+      setter((data||[]).map(row=>({
+        user_id:row.user_id,
+        username:cleanUsername(row.username),
+        name:cleanUsername(row.username),
+        needsUsername:leaderboardNeedsUsername(row),
+        score:+row.score||0
+      })));
     }catch(err){ console.warn(game+' board fetch failed',err); }
   };
   await Promise.all([
     read('outpost-zero',rows=>{ board=rows; }),
     read('outpost-zero-arena-wins',rows=>{ arenaBoard=rows; })
   ]);
-  boardT=Date.now(); syncFallAccess(); fetchPublicProfiles();
-}
-async function fetchPublicProfiles(){
-  if(!sb) return;
-  try{
-    const {data}=await sb.from('scores').select('user_id,name,score').eq('game','outpost-zero-profile').limit(500);
-    const next={}; for(const r of (data||[])){ try{ next[r.user_id]=JSON.parse(r.name||'{}'); }catch(e){} }
-    publicProfileCache=next;
-  }catch(e){}
+  boardT=Date.now(); syncFallAccess();
 }
 // ---- report a problem: small form -> Supabase 'reports' table (write-only) ----
 let reportOpen=false, lastReportT=0;
@@ -243,6 +266,9 @@ async function toggleAuth(){
 }
 function creds(){
   return { email: $('aemail').value.trim(), password: $('apass').value };
+}
+function signupUsername(){
+  return String($('ausername')&&$('ausername').value||'').trim().replace(/^@/,'');
 }
 function bindDomEvents(){
   $('repsend').onclick=sendReport;
@@ -291,15 +317,25 @@ function bindDomEvents(){
   };
   $('aup').onclick = async ()=>{
   if(!sb){ $('authmsg').textContent='Sign-in unavailable here \u2014 works once deployed.'; return; }
-  const c=creds();
+  const c=creds(), username=signupUsername();
+  if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){
+    $('authmsg').textContent='Choose a username: 3\u201332 letters, numbers, or underscores.'; return;
+  }
   if(!c.email||!c.password){ $('authmsg').textContent='Email and password required.'; return; }
-  const { error } = await sb.auth.signUp(c);
+  let available=null, availabilityWarning='';
+  try{
+    const checked=await sb.rpc('outpost_zero_username_available',{p_username:username});
+    if(checked.error) throw checked.error;
+    available=checked.data===true;
+  }catch(error){ availabilityWarning=' Username availability could not be checked; open Social after sign-in to confirm it.'; }
+  if(available===false){ $('authmsg').textContent='That username is already taken.'; return; }
+  const { error } = await sb.auth.signUp({email:c.email,password:c.password,options:{data:{username}}});
   if(error){ $('authmsg').textContent=error.message; return; }
   // with email confirmation off, signUp signs the user in immediately
   const { error: e2 } = await sb.auth.signInWithPassword(c);
-  $('authmsg').textContent = e2
+  $('authmsg').textContent = (e2
     ? 'Account created. Now press SIGN IN with the same email and password.'
-    : 'Account created \u2014 you are signed in.';
+    : 'Account created \u2014 you are signed in.')+availabilityWarning;
   };
   $('aforgot').onclick = async (ev)=>{
   ev.preventDefault();

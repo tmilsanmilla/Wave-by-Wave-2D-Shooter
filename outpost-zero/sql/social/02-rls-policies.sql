@@ -1,5 +1,5 @@
--- OUTPOST ZERO / SOCIAL / 04: ROW LEVEL SECURITY
--- Requires 01 through 03. Safe to run again; policies are refreshed.
+-- OUTPOST ZERO / SOCIAL / 02: ROW LEVEL SECURITY
+-- Requires 01-social-core.sql. Safe to run again; policies are refreshed.
 
 alter table public.social_profiles enable row level security;
 alter table public.friendships enable row level security;

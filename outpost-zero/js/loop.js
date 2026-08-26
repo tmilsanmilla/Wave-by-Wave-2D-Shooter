@@ -52,7 +52,10 @@ function frame(){
   const ub=$('userbar').style;
   if(ub.display !== 'none') ub.display='none';
 
-  if(profilePending && Date.now()>profileSaveT){ profilePending=false; saveProfile(); }   // any state
+  if(profilePending && Date.now()>profileSaveT){
+    const saveUserId=profilePendingUserId; profilePending=false; profilePendingUserId='';
+    if(authUser&&String(authUser.id)===saveUserId) saveProfile(); // a delayed save must never cross accounts
+  }
 
   if(state==='select'){
     // keep the home-page leaderboard fresh (throttled to every 30s, on wall time)

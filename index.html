@@ -8,14 +8,27 @@
 </head>
 <body>
 <canvas id="c"></canvas>
+<div id="socialidentity" class="ui" aria-live="polite">
+  <div id="socialidentitytext"></div>
+  <button id="socialhandlecopy" class="btn" type="button">COPY USERNAME</button>
+  <button id="socialprofileedit" class="btn" type="button">EDIT USERNAME</button>
+</div>
+<div id="socialpartyjoinwrap" class="ui">
+  <label class="sr-only" for="socialpartycode">Join party code</label>
+  <input id="socialpartycode" type="text" maxlength="6" inputmode="text" autocomplete="off"
+    autocapitalize="characters" spellcheck="false" placeholder="JOIN CODE" aria-label="Join party code">
+  <button id="socialpartyjoin" class="btn" type="button">JOIN</button>
+</div>
 <div class="llr" id="llrL"></div><div class="llr" id="llrR"></div>
 <div id="userbar" class="ui"><span id="uname">not signed in</span><span id="uemail"></span><button id="ubtn" class="btn">SIGN IN</button></div>
 <div id="authwrap" class="ui">
   <div id="authbox">
     <h2>OUTPOST ZERO</h2>
-    <p>Sign in to save your best score to the leaderboard.<br><br>
+    <p>Your username is public. Your email stays private and is used to sign in or recover your account.<br><br>
     If you sign up and get a verification email, the link may not load the site.
     Just come back here and sign in normally.</p>
+    <input id="ausername" type="text" placeholder="username (required for sign up)" autocomplete="off"
+      minlength="3" maxlength="32" autocapitalize="none" spellcheck="false">
     <input id="aemail" type="email" placeholder="you@example.com" autocomplete="email">
     <input id="apass" type="password" placeholder="password" autocomplete="current-password">
     <button id="ain" class="btn">SIGN IN</button>
@@ -101,8 +114,8 @@
 <div id="scorewrap" class="ui">
   <div id="scorebox">
     <h2 id="scoretitle">✎ PLAYER EDIT</h2>
-    <p id="scorehint">Look up a player by account email. Leave a field blank to leave it unchanged.</p>
-    <input id="scoreemail" type="email" placeholder="player@email.com" autocomplete="off">
+    <p id="scorehint">Look up a player by username.</p>
+    <input id="scoreemail" type="text" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false">
     <input id="scoreval" type="number" placeholder="high score" min="0" step="1">
     <input id="pgems" type="number" placeholder="gems" min="0" step="1">
     <input id="pcoins" type="number" placeholder="coins" min="0" step="1">

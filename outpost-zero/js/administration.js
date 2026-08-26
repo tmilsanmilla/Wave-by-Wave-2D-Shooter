@@ -18,6 +18,7 @@ let unrankedRun=false;                              // next-season (early access
 let adminOpen=false, adminUsed=false, adminBtnRect={x:-99,y:-99,w:0,h:0}, adminRects=[];
 let testMode=false;                                 // test mode (all admins); storage is a viewer popout now
 let adminPanelOpen=false, adminHubBtnRect=null, adminPanelRects=[];
+let aiLearningOpen=false, aiLearningRects=[], aiLearningModelLevel=1, aiLearningNotice='';
 const ROOT_ADMIN='tmilsanmilla@gmail.com';          // can never be kicked or demoted
 let adminRoles={};                                  // email -> 'main'|'co' (from the Supabase admins table)
 let banners=[], pendingBanners=[], updatesFeed={staff:[],player:[]};
@@ -28,42 +29,72 @@ let scoresOpen=false, scoresRects=[], scoreEditOpen=false, scoreReqs=[];
 let pePanelTab='items';
 let peStep='choose', peMode='edit', peTarget='', peData=null, peEdit=null, peBusy=false;
 let lookupBtnRect=null;
-// Inventory and moderation details stay admin-only; public profiles expose only the small stat summary.
+// Public lookup is username + high score only. Private account state is loaded
+// only through the existing admin-only RPC after an admin enters an email.
 function canSeeStats(){ return isAdmin(); }
 function canEditPlayer(){ return isMainAdmin(); }
+function canEditLoadedPlayer(){ return canEditPlayer()&&peData&&!peData.publicOnly&&peTarget.indexOf('@')>0; }
 function canBan(){ return isMainAdmin(); }            // main admins may ban directly now
+function openAiLearning(){
+  if(!isMainAdmin()){ aiLearningOpen=false; sfx('dry'); return false; }
+  aiLearningModelLevel=typeof botTrainingLevel==='function'?botTrainingLevel():1;
+  aiLearningNotice='Refreshing the shared model...';
+  adminPanelOpen=false; aiLearningOpen=true;
+  if(typeof refreshGlobalBotTraining==='function') void refreshGlobalBotTraining(true).then(()=>{
+    if(!aiLearningOpen) return;
+    aiLearningModelLevel=botTrainingLevel(); aiLearningNotice='Shared model is up to date.';
+  });
+  return true;
+}
+function closeAiLearning(){ aiLearningOpen=false; aiLearningNotice=''; }
 const PE_ITEMS=()=>GEM_SHOP.map(it=>it.key);          // everything ownable
+function normalizedPlayerOwned(value){
+  if(Array.isArray(value)){ const out={}; for(const key of value) out[key]=true; return out; }
+  return value&&typeof value==='object'?value:{};
+}
+function normalizedPlayerData(value,publicOnly){
+  const d=value&&typeof value==='object'?value:{};
+  return {
+    score:Math.max(0,Math.floor(+(d.high_score!=null?d.high_score:d.score)||0)),
+    publicMetric:d.public_metric==='arena_wins'?'1v1 WINS':'ENDLESS SCORE',
+    gems:Math.max(0,Math.floor(+d.gems||0)),coins:Math.max(0,Math.floor(+d.coins||0)),
+    streak:Math.max(0,Math.floor(+d.streak||0)),
+    longestStreak:Math.max(0,Math.floor(+(d.longest_streak!=null?d.longest_streak:d.longestStreak)||0)),
+    lastLogin:d.last_login||d.lastLogin||'',owned:normalizedPlayerOwned(d.owned),
+    pow:d.pow&&typeof d.pow==='object'?d.pow:{},cosmetics:Math.max(0,Math.floor(+d.cosmetics||0)),
+    animations:Math.max(0,Math.floor(+d.animations||0)),daily:Array.isArray(d.daily)?d.daily:[],
+    wheelSpins:Math.max(0,Math.floor(+(d.wheel_spins!=null?d.wheel_spins:d.wheelSpins)||0)),
+    ban:d.ban||null,publicOnly:!!publicOnly
+  };
+}
 async function lookupPlayer(target){
   peBusy=true; peData=null; peEdit=null;
   try{
-    const q=String(target||'').trim(), uuid=/^[0-9a-f-]{36}$/i.test(q);
-    let req=sb.from('scores').select('user_id,name,score').eq('game','outpost-zero-profile').limit(1);
-    req=uuid?req.eq('user_id',q):req.ilike('name','%"email":"'+q.toLowerCase().replace(/[%_]/g,'')+'"%');
-    const {data,error}=await req; if(error) throw error;
-    const row=(data||[])[0]; if(!row) throw new Error('not found');
-    let p={}; try{ p=JSON.parse(row.name||'{}'); }catch(e){}
-    const owned={}; for(const k of (p.owned||[])) owned[k]=true;
-    const resetWallet=(+p.gre||0)>=GEM_RESET_VERSION;
-    peData={score:p.highScore||0,gems:resetWallet?(p.gems||0):0,coins:p.coins||0,streak:p.streak||0,longestStreak:p.longestStreak||p.streak||0,
-            lastLogin:p.lastLogin||new Date((row.score||0)*1000).toISOString(),owned,pow:p.powerups||{},
-            cosmetics:p.cosmetics||0,animations:p.animations||0,daily:p.daily||[],wheelSpins:p.wheelSpins||0,ban:null};
-    if(isAdmin()&&p.email){
-      try{
-        const {data:ad,error:ae}=await sb.rpc('admin_get_player',{target_email:p.email}); if(ae) throw ae;
-        const d=Array.isArray(ad)?ad[0]:ad;
-        if(d){ peData.score=d.score||peData.score; if(resetWallet) peData.gems=d.gems||0; peData.coins=d.coins||0;
-          peData.owned=d.owned||{}; peData.pow=d.pow||{}; peData.ban=d.ban||null; }
-      }catch(e){}
+    const q=String(target||'').trim();
+    if(isAdmin()&&q.indexOf('@')>0){
+      const {data,error}=await sb.rpc('admin_get_player',{target_email:q.toLowerCase()});
+      if(error) throw error;
+      const d=Array.isArray(data)?data[0]:data; if(!d) throw new Error('not found');
+      peData=normalizedPlayerData(d,false);
+      peTarget=q.toLowerCase();
+    } else {
+      const publicQuery=/^[A-Za-z0-9_]{3,32}$/.test(q)||
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(q);
+      if(!publicQuery) throw new Error('invalid public lookup');
+      const {data,error}=await sb.rpc('get_outpost_zero_public_player',{p_query:q});
+      if(error) throw error;
+      const d=Array.isArray(data)?data[0]:data; if(!d||!d.user_id) throw new Error('not found');
+      peData=normalizedPlayerData(d,true);
+      peTarget=leaderboardUsername(d);
     }
     peEdit={score:peData.score, gems:peData.gems, coins:peData.coins,
             owned:Object.assign({}, peData.owned), pow:Object.assign({}, peData.pow)};
-    peTarget=p.email||p.display||q;
     peStep='panel';
   }catch(e){ peData=null; }
   peBusy=false;
 }
 function peDirty(){
-  if(!peData||!peEdit) return false;
+  if(!canEditLoadedPlayer()||!peEdit) return false;
   if(peEdit.score!==peData.score||peEdit.gems!==peData.gems||peEdit.coins!==peData.coins) return true;
   for(const k of PE_ITEMS()) if(!!peEdit.owned[k]!==!!peData.owned[k]) return true;
   for(const pu of POWERUPS) if((peEdit.pow[pu.id]||0)!==(peData.pow[pu.id]||0)) return true;
@@ -91,7 +122,7 @@ function pePatch(){
   return pt;
 }
 async function peApply(){
-  if(!peDirty()) return;
+  if(!canEditLoadedPlayer()||!peDirty()) return;
   const pt=pePatch();
   peBusy=true;
   try{
@@ -173,16 +204,23 @@ function openScoreEdit(){
   $('pban').value='';
   $('pscope_account').checked=true; $('pscope_device').checked=false; $('pscope_board').checked=false;
   const banning = peMode==='ban';
-  // EDIT just needs the email; the panel does the rest. BAN needs its own fields.
+  // Admin edit/ban targets private email; normal player lookup targets username.
   for(const id of ['scoreval','pgems','pcoins','pgrant','prevoke']) $(id).style.display='none';
   $('pban').style.display   = banning?'':'none';
   $('pscopes').style.display= banning?'':'none';
   $('pnote').style.display  = banning?'':'none';
   $('scoretitle').textContent = banning ? '\u26D4 BAN PLAYER'
                               : canEditPlayer() ? '\u270E PLAYER EDIT' : '\uD83D\uDD0D PLAYER LOOKUP';
+  const privateEmailMode=banning||isAdmin(), targetInput=$('scoreemail');
+  targetInput.type=privateEmailMode?'email':'text';
+  targetInput.inputMode=privateEmailMode?'email':'text';
+  targetInput.autocomplete='off';
+  targetInput.autocapitalize='none';
   $('scorehint').textContent = banning
     ? 'Who are you banning? Pick how long, what it covers, and leave a note.'
-    : 'Enter the player\u2019s account email to look them up.';
+    : isAdmin() ? 'Enter the player\u2019s private account email.'
+    : 'Enter the player\u2019s username.';
+  targetInput.placeholder=privateEmailMode?'player@email.com':'username';
   $('scoresend').textContent = banning ? (isCreator()?'BAN':'REQUEST BAN') : 'LOOK UP';
   try{ $('scoreemail').focus(); }catch(e){}
 }
@@ -230,13 +268,17 @@ async function applyPlayerEdit(email, patch){          // creator only: the serv
 }
 function closeScoreEdit(){ scoreEditOpen=false; $('scorewrap').style.display='none'; if(!scoresOpen){ scoresOpen=true; peStep=peData?'panel':'choose'; } }
 async function submitScoreEdit(){
-  if(peMode!=='ban'){                                 // EDIT: just resolve the email, then show the panel
-    const email=String($('scoreemail').value||'').trim().toLowerCase();
-    if(!email || email.indexOf('@')<0){ $('scorestatus').textContent='enter a valid email'; return; }
+  if(peMode!=='ban'){
+    const query=String($('scoreemail').value||'').trim();
+    if(isAdmin()){
+      if(!query||query.indexOf('@')<1){ $('scorestatus').textContent='enter a valid email'; return; }
+    } else if(!/^[A-Za-z0-9_]{3,32}$/.test(query)){
+      $('scorestatus').textContent='enter a valid username'; return;
+    }
     if(!sb){ $('scorestatus').textContent='preview build \u2014 works on the live site'; return; }
-    $('scorestatus').textContent='looking up...';    // the lookup itself is open to anyone
-    await lookupPlayer(email);
-    if(!peData){ $('scorestatus').textContent='no player with that email'; return; }
+    $('scorestatus').textContent='looking up...';
+    await lookupPlayer(query);
+    if(!peData){ $('scorestatus').textContent=isAdmin()?'no player with that email':'username not found'; return; }
     closeScoreEdit(); scoresOpen=true; peStep='panel';
     return;
   }

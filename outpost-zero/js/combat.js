@@ -5,6 +5,7 @@ function switchWeapon(k){
   if(tutorialOn && k!==player.cur) tutSwapped=true;
   if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
   if(state!=='play') return;
+  resetFireCadence();
   cancelMedHeal();                                   // swapping away always interrupts either Medkit heal
   if(utilityOut){                                     // stow the utility, even back to the same gun
     utilityOut=false; player.equipEnd=now+EQUIP_WAIT; sfx('swap');
@@ -89,6 +90,7 @@ function meleeSwing(w, mul, flurryGenerated=false){
 }
 function equipUtility(){
   if(state!=='play' || !loadout.utility) return;
+  resetFireCadence();
   utilityOut=true;
   player.equipEnd=now+EQUIP_WAIT; aiming=false; rmbAim=false;
   sfx('swap');
@@ -209,35 +211,36 @@ function startReload(){
   if(w.cell) return;                                 // battery weapons recharge on their own
   if(player.reloadEnd>now || player.mags[player.cur]>=magSize(player.cur)) return;
   if(player.reserve[player.cur]<=0){ sfx('dry'); return; }
+  resetFireCadence();
   player.reloadEnd = now + w.reload*perks.reload;
   aiming=false; rmbAim=false;
   sfx('reload');
 }
 function tryFire(carryCadence=false){
-  if(state!=='play' || now<fireSuppressT) return;
-  if(practiceMode==='arena' && !arenaCanAct()) return;
+  if(state!=='play' || now<fireSuppressT) return false;
+  if(practiceMode==='arena' && !arenaCanAct()) return false;
   const w=WEAPONS[player.cur];
-  if(player.reloadEnd>now || player.equipEnd>now) return;
+  if(player.reloadEnd>now || player.equipEnd>now) return false;
   const shotInterval=w.fireRate*perks.rate*wm(player.cur).rate*(now<surgeT?0.77:1);
-  if(now-player.lastShot<shotInterval) return;
+  if(now-player.lastShot<shotInterval) return false;
   // Held automatic fire keeps the fractional timer remainder instead of losing
   // it to the 60 Hz step. Fresh presses and shots after an idle gap still fire now.
   const shotStamp=carryCadence&&player.lastShot>0&&now-player.lastShot<shotInterval*4
     ? player.lastShot+shotInterval : now;
   if(w.melee){
-    if(w.combo && daggersOut){ sfx('dry'); return; }   // can't swing while daggers are thrown
+    if(w.combo && daggersOut){ sfx('dry'); return false; }   // can't swing while daggers are thrown
     if(w.saw){
-      if(sawLock || sawFuel<=0){ sawLock=true; player.lastShot=now; sfx('dry'); return; }
+      if(sawLock || sawFuel<=0){ sawLock=true; player.lastShot=now; sfx('dry'); return false; }
       sawFuel=Math.max(0, sawFuel-w.drain*wm('chainsaw').drain);
       player.lastSaw=now;
       if(sawFuel<=0) sawLock=true;
     }
     player.lastShot=shotStamp;
     meleeSwing(w, 1);
-    return;
+    return true;
   }
   if(player.mags[player.cur]<1){
-    player.lastShot=now; sfx('dry'); if(!w.cell) startReload(); return;
+    player.lastShot=now; sfx('dry'); if(!w.cell) startReload(); return false;
   }
   // fireworks: lobbed firecracker that detonates at the crosshair (within range)
   if(w.firework){
@@ -258,7 +261,7 @@ function tryFire(carryCadence=false){
     grenades.push({x:player.x, y:player.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd,
                    t:now+flight, firework:true, tx, ty});
     player.flash=now+55; sfx('shot',w);
-    return;
+    return true;
   }
   player.lastShot=shotStamp;
   player.mags[player.cur]--; if(tutorialOn) tutFired++;
@@ -285,6 +288,7 @@ function tryFire(carryCadence=false){
   sfx('shoot', w);
   if(player.mags[player.cur]<1 && !w.cell) startReload();
   if(w.cell) player.mags[player.cur]=Math.floor(player.mags[player.cur]);   // keep the readout whole
+  return true;
 }
 
 /* ---------------- update ---------------- */
@@ -343,7 +347,9 @@ function update(dtms){
     } else fanShots=0;
   }
   // full-auto
-  if(!utilityOut && (w.auto || perks.autoAll) && mouse.down) tryFire(true);
+  if(!utilityOut && (w.auto || perks.autoAll) && mouse.down){
+    if(tryFire(mouseFireCadence)&&player.reloadEnd<=now) mouseFireCadence=true;
+  }
 
   // movement
   let mx=0,my=0;
@@ -362,7 +368,7 @@ function update(dtms){
   clampActorToArena(player);
   collideRects(player);
   clampActorToArena(player);
-  if(isDuelArena()) arenaPortalStep(player,now);
+  if(isArenaMapBattlefield()) arenaPortalStep(player,now);
 
   // The Offline 1v1 opponent lives in the same fixed 60 Hz simulation as the
   // player, so low or very high render FPS never changes its speed or fire rate.
@@ -401,7 +407,7 @@ function update(dtms){
       if(utilityOut){
         if(!touchUtilityUsed){ if(loadout.utility==='medkit') medChannelStart(); else utilQuick(); touchUtilityUsed=true; }
       }
-      else tryFire(true);                              // same accurate held-fire cadence as mouse controls
+      else if(tryFire(touchFireCadence)&&player.reloadEnd<=now) touchFireCadence=true; // carry only within this held touch
     }
   }
 
@@ -626,7 +632,7 @@ function update(dtms){
   // A duel is a fixed, centered board. Fit the entire map when un-aimed and
   // retain weapon aiming as a centered zoom (capped so both spawn lanes remain
   // navigable). Endless and team modes keep their player/crosshair camera.
-  if(isDuelArena()){
+  if(isArenaMapBattlefield()){
     const viewBounds=activeArenaBounds(),fit=duelArenaFitZoom();
     const aimZoom=aiming?Math.min(w.zoom||1,1.6):1;
     zoom += (fit*aimZoom-zoom)*Math.min(1,0.11*dt);
@@ -890,10 +896,10 @@ function update(dtms){
         }
         dead=true; break;
       }
-      // Construction Site TNT is a solid, once-per-round hazard. Resolve it
-      // before the generic rectangle check so the shot detonates instead of
-      // producing an ordinary wall spark.
-      if(isDuelArena()&&activeArenaMapId()==='construction'&&arenaTryTriggerTntAt(b.x,b.y,'local',4)){
+      // Construction Site TNT absorbs the projectile's real post-falloff
+      // damage before the generic solid-rectangle collision consumes it.
+      if(isArenaMapBattlefield()&&activeArenaMapId()==='construction'&&
+         arenaTryTriggerTntAt(b.x,b.y,'local',4,b.dmg*dmgMul(b))){
         dead=true; break;
       }
       // walls: bounce off the nearest face if bounces remain
@@ -1002,7 +1008,8 @@ function update(dtms){
       if(projectileOutsideArena(b,edgeRadius)){
         clampProjectileToArena(b,edgeRadius); dead=true; break;
       }
-      if(b.botArena&&isDuelArena()&&activeArenaMapId()==='construction'&&arenaTryTriggerTntAt(b.x,b.y,'bot',edgeRadius)){
+      if(b.botArena&&isArenaMapBattlefield()&&activeArenaMapId()==='construction'&&
+         arenaTryTriggerTntAt(b.x,b.y,'bot',edgeRadius,(b.dmg||WEAPONS.ar.dmg)*dmgMul(b),LOCAL_DUEL_BOT)){
         dead=true; break;
       }
       if(!b.h&&pointInRects(b.x,b.y)){ dead=true; break; }

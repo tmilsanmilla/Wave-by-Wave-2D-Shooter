@@ -8,6 +8,7 @@ capturePendingReferral();
 loadMeta();
 bindDomEvents();
 bindCoreEvents();
+bindSocialDomControls();
 
 initAuth().finally(()=>{
   // The local file must still restore layout work when Supabase is unavailable.

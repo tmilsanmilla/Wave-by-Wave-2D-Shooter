@@ -1190,19 +1190,19 @@ function drawScores(){
         ctx.fillText(label,x0+9,y+h/2); ctx.textAlign='right'; ctx.fillStyle='#e8d9a8';
         ctx.fillText(fitLine(String(value),rw*0.62),x0+rw-9,y+h/2); ctx.textBaseline='alphabetic'; y+=h+4;
       };
-      let loginText='unknown';
-      if(peData.lastLogin){ const d=new Date(peData.lastLogin); if(!isNaN(+d)) loginText=d.toLocaleString(); }
-      infoRow('LAST LOGIN',loginText);
-      infoRow('CURRENT STREAK',peData.streak+' days');
-      infoRow('LONGEST STREAK',peData.longestStreak+' days');
-      if(canSeeStats()){
+      if(canSeeStats()&&!peData.publicOnly){
+        let loginText='unknown';
+        if(peData.lastLogin){ const d=new Date(peData.lastLogin); if(!isNaN(+d)) loginText=d.toLocaleString(); }
+        infoRow('LAST LOGIN',loginText);
+        infoRow('CURRENT STREAK',peData.streak+' days');
+        infoRow('LONGEST STREAK',peData.longestStreak+' days');
         infoRow('READY WHEEL SPINS',peData.wheelSpins||0);
         infoRow('COSMETICS / ANIMATIONS',(peData.cosmetics||0)+' / '+(peData.animations||0));
       }
       // numeric rows
       const numRow=(id,label,val,was)=>{
         const h=26;
-        if(canEditPlayer()) scoresRects.push({x:x0,y,w:rw,h,id});
+        if(canEditLoadedPlayer()) scoresRects.push({x:x0,y,w:rw,h,id});
         const hv=mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+h;
         ctx.fillStyle=hv?'rgba(127,216,255,0.16)':'rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
         ctx.strokeStyle=(val!==was)?'#7fd8ff':'#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
@@ -1212,19 +1212,19 @@ function drawScores(){
         ctx.textAlign='right';
         ctx.fillStyle=(val!==was)?'#7fd8ff':'#e8d9a8'; ctx.font='700 10px ui-monospace,Consolas,monospace';
         ctx.fillText(String(val)+(val!==was?'  (was '+was+')':''), x0+rw-52, y+h/2);
-        if(canEditPlayer()){
+        if(canEditLoadedPlayer()){
           ctx.textAlign='center'; ctx.fillStyle='#bfe8ff'; ctx.font='700 8px ui-monospace,Consolas,monospace';
           ctx.fillText('EDIT', x0+rw-24, y+h/2);
         }
         ctx.textBaseline='alphabetic';
         y+=h+5;
       };
-      const pre=canEditPlayer()?'EDIT ':'';
-      numRow('n_score',pre+'HIGH SCORE', peEdit.score, peData.score);
+      const pre=canEditLoadedPlayer()?'EDIT ':'';
+      numRow('n_score',peData.publicOnly?peData.publicMetric:(pre+'HIGH SCORE'), peEdit.score, peData.score);
+      if(peData.publicOnly||!canSeeStats()) return peFooter(px,py,pw,ph);
       numRow('n_gems', pre+'GEMS',  peEdit.gems,  peData.gems);
       numRow('n_coins',pre+'COINS', peEdit.coins, peData.coins);
       y+=4;
-      if(!canSeeStats()) return peFooter(px,py,pw,ph);   // players see the score and nothing else
       // toggle: weapons and upgrades are both long lists, so they share the panel by turns
       const PT=[['items','\u2699 WEAPONS'],['ups','\u2B06 UPGRADES']];
       const ptw=Math.min(140,(rw-8)/2), pth=20;
@@ -1306,7 +1306,7 @@ function drawScores(){
 }
 function peFooter(px,py,pw,ph){
   const fb=[];
-  if(peStep==='panel' && peData && canEditPlayer())
+  if(peStep==='panel' && canEditLoadedPlayer())
     fb.push(['apply', peDirty()?(isCreator()?'APPLY':'REQUEST'):'NO CHANGES', peDirty()?'#a7c15e':'#5a5648']);
   if(peStep!=='choose') fb.push(['back','\u2039 BACK','#7fd8ff']);
   fb.push(['close','CLOSE','#d05548']);
@@ -1334,8 +1334,8 @@ function scoresClick(){
       if(id==='back'){ peStep='choose'; peData=null; sfx('swap'); return; }
       if(id==='go_edit'){ peMode='edit'; openScoreEdit(); sfx('swap'); return; }
       if(id==='go_ban'){ if(!canEditPlayer()){ sfx('dry'); return; } peMode='ban'; openScoreEdit(); sfx('swap'); return; }
-      if(id==='apply'){ if(canEditPlayer() && peDirty()) peApply(); else sfx('dry'); return; }
-      if(!canEditPlayer() && (id.indexOf('n_')===0||id.indexOf('p:')===0||id.indexOf('m:')===0)){ sfx('dry'); return; }
+      if(id==='apply'){ if(canEditLoadedPlayer() && peDirty()) peApply(); else sfx('dry'); return; }
+      if(!canEditLoadedPlayer() && (id.indexOf('n_')===0||id.indexOf('p:')===0||id.indexOf('m:')===0||id.indexOf('pp:')===0||id.indexOf('pm:')===0)){ sfx('dry'); return; }
       if(id==='n_score'){ peEdit.score=peNum('new high score for '+peTarget+':', peEdit.score, 99999999); sfx('aim'); return; }
       if(id==='n_gems'){  peEdit.gems =peNum('new gem count for '+peTarget+':',  peEdit.gems, 9999999); sfx('aim'); return; }
       if(id==='n_coins'){ peEdit.coins=peNum('new coin count for '+peTarget+':', peEdit.coins, 9999999); sfx('aim'); return; }
@@ -1544,6 +1544,110 @@ function msgsClick(){
     }
   }
 }
+function aiLearningSelectedXp(){
+  const liveLevel=botTrainingLevel(), level=clamp(Math.floor(+aiLearningModelLevel||1),1,liveLevel);
+  aiLearningModelLevel=level;
+  return level===liveLevel?botTrainingXp:(level-1)*BOT_TRAINING_XP_PER_LEVEL;
+}
+function aiLearningMetricRows(xp){
+  const base=arenaBotTuning(0), model=arenaBotTuning(xp), n=(value,digits)=>Number(value).toFixed(digits);
+  return [
+    ['REACTION',base.reactionMs+' ms',model.reactionMs+' ms'],
+    ['DECISION REFRESH',base.thinkMs+' ms',model.thinkMs+' ms'],
+    ['MOVEMENT SPEED',n(base.moveSpeed,2),n(model.moveSpeed,2)],
+    ['AIM NOISE',n(base.aimNoise,3),n(model.aimNoise,3)],
+    ['SHOT JITTER',n(base.shotJitter,3),n(model.shotJitter,3)],
+    ['FIRE TOLERANCE',n(base.fireAimError,3),n(model.fireAimError,3)],
+    ['MOVEMENT LEAD',n(base.leadFactor,2),n(model.leadFactor,2)],
+    ['LEAD HORIZON',base.maxLeadMs+' ms',model.maxLeadMs+' ms'],
+    ['TURN RATE',n(base.turnRate,3),n(model.turnRate,3)],
+  ];
+}
+function drawAiLearning(){
+  if(!isMainAdmin()){ closeAiLearning(); return; }
+  aiLearningRects=[];
+  ctx.fillStyle='rgba(4,6,3,0.97)';ctx.fillRect(0,0,W,H);
+  const tiny=W<430||H<430,dense=H<610,pw=Math.min(720,W-16),ph=Math.min(620,H-12),px=W/2-pw/2,py=H/2-ph/2;
+  ctx.fillStyle='#080f12';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#7fd8ff';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#bfe8ff';ctx.font='700 '+(tiny?15:20)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('AI BOT LEARNING',W/2,py+(tiny?18:25));
+  ctx.fillStyle='#8a9268';ctx.font=(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('CREATOR + MAIN ADMINS ONLY · TESTS ARE LOCAL AND NEVER CHANGE THE LIVE MODEL',pw-18),W/2,py+(tiny?34:44));
+
+  const live=currentGlobalBotTraining(),liveLevel=botTrainingLevel(live.xp),selectedXp=aiLearningSelectedXp(),selectedLevel=botTrainingLevel(selectedXp),
+    cardX=px+(tiny?7:14),cardW=pw-(tiny?14:28),cardY=py+(tiny?45:57),cardH=tiny?38:48;
+  ctx.fillStyle='rgba(127,216,255,.09)';ctx.fillRect(cardX,cardY,cardW,cardH);ctx.strokeStyle='#315568';ctx.strokeRect(cardX+.5,cardY+.5,cardW,cardH);
+  ctx.fillStyle='#7fd8ff';ctx.font='700 '+(tiny?9:12)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('LIVE GLOBAL · LV '+liveLevel+' · '+live.xp+'/'+BOT_TRAINING_MAX_XP+' XP',W/2,cardY+(tiny?11:15));
+  ctx.fillStyle='#8a9268';ctx.font=(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine(live.matches+' CURATED MATCHES · '+live.wins+' CREATOR/MAIN WINS · '+String(botTrainingSyncState).toUpperCase(),cardW-12),W/2,cardY+(tiny?27:34));
+
+  const chooserY=cardY+cardH+(tiny?5:8),arrowW=tiny?40:54,arrowH=tiny?24:30,labelW=Math.max(100,cardW-arrowW*2-12);
+  const chooser=(id,x,label,enabled)=>{
+    const r={id,x,y:chooserY,w:id==='model_label'?labelW:arrowW,h:arrowH,enabled};aiLearningRects.push(r);
+    const hv=enabled&&mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
+    ctx.fillStyle=!enabled?'rgba(255,255,255,.025)':hv?'#7fd8ff':'rgba(127,216,255,.10)';ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle=enabled?'#7fd8ff':'#3a3f38';ctx.strokeRect(r.x+.5,r.y+.5,r.w,r.h);
+    ctx.fillStyle=hv?'#101208':enabled?'#d7efff':'#5a6259';ctx.font='700 '+(tiny?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(label,r.w-8),r.x+r.w/2,r.y+r.h/2);
+  };
+  const groupW=arrowW*2+labelW+12,gx=W/2-groupW/2;
+  chooser('model_prev',gx,'‹ PREV',selectedLevel>1);
+  chooser('model_label',gx+arrowW+6,(selectedLevel===liveLevel?'LIVE':'ARCHIVE')+' MODEL · LV '+selectedLevel,false);
+  chooser('model_next',gx+arrowW+labelW+12,'NEXT ›',selectedLevel<liveLevel);
+
+  const rows=aiLearningMetricRows(selectedXp),sectionY=chooserY+arrowH+(tiny?9:15);
+  ctx.textAlign='left';ctx.fillStyle='#a7c15e';ctx.font='700 '+(tiny?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText('XP-TUNED EXECUTION · LV 1  →  SELECTED',cardX,sectionY);
+  if(tiny){
+    const groups=[
+      rows.slice(0,3).map(r=>r[0]+' '+r[1]+'→'+r[2]).join(' · '),
+      rows.slice(3,6).map(r=>r[0]+' '+r[1]+'→'+r[2]).join(' · '),
+      rows.slice(6).map(r=>r[0]+' '+r[1]+'→'+r[2]).join(' · '),
+    ];
+    ctx.fillStyle='#cdd6b0';ctx.font='7px ui-monospace,Consolas,monospace';
+    groups.forEach((line,i)=>ctx.fillText(fitLine(line,cardW),cardX,sectionY+14+i*13));
+  }else{
+    const cols=2,colGap=18,colW=(cardW-colGap)/2,rowH=dense?18:21;
+    rows.forEach((r,i)=>{
+      const col=i%cols,row=Math.floor(i/cols),x=cardX+col*(colW+colGap),y=sectionY+18+row*rowH;
+      ctx.fillStyle='rgba(255,255,255,.035)';ctx.fillRect(x,y-8,colW,rowH-2);
+      ctx.fillStyle='#8a9268';ctx.font='8px ui-monospace,Consolas,monospace';ctx.fillText(r[0],x+6,y+1);
+      ctx.textAlign='right';ctx.fillStyle='#cdd6b0';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(r[1]+'  →  '+r[2],x+colW-6,y+1);ctx.textAlign='left';
+    });
+  }
+  const coreY=tiny?sectionY+61:sectionY+18+Math.ceil(rows.length/2)*(dense?18:21)+7;
+  ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText('SHARED TACTICAL ENGINE · CORE AT EVERY LEVEL',cardX,coreY);
+  const core=['WALL + CORNER ROUTING','COVER SELECTION','STUCK RECOVERY','DELIBERATE PORTAL MOBILITY'];
+  ctx.fillStyle='#cdd6b0';ctx.font='700 '+(tiny?7:9)+'px ui-monospace,Consolas,monospace';
+  if(tiny)ctx.fillText(fitLine(core.map(v=>'✓ '+v).join(' · '),cardW),cardX,coreY+15);
+  else core.forEach((v,i)=>ctx.fillText('✓ '+v+'  ·  ENABLED',cardX+(i%2)*(cardW/2),coreY+18+Math.floor(i/2)*18));
+  const explainY=tiny?coreY+30:coreY+58;
+  ctx.fillStyle='#65725d';ctx.font=(tiny?'7':'8')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('Archived levels reconstruct the fixed tuning curve. Core navigation stays enabled so the comparison isolates learned execution.',cardW),cardX,explainY);
+  if(aiLearningNotice){ctx.fillStyle='#8a9268';ctx.textAlign='center';ctx.fillText(fitLine(aiLearningNotice,cardW),W/2,explainY+(tiny?13:16));ctx.textAlign='left';}
+
+  const btnH=tiny?25:32,btnY=py+ph-btnH-(tiny?6:10),gap=6,totalW=cardW,btnW=(totalW-gap*2)/3;
+  const actions=[['model_test','TEST LV '+selectedLevel,'#a7c15e'],['model_refresh','REFRESH','#7fd8ff'],['model_close','CLOSE','#d05548']];
+  actions.forEach((a,i)=>{
+    const x=cardX+i*(btnW+gap),r={id:a[0],x,y:btnY,w:btnW,h:btnH,enabled:true};aiLearningRects.push(r);
+    const hv=mouse.x>=x&&mouse.x<=x+btnW&&mouse.y>=btnY&&mouse.y<=btnY+btnH;
+    ctx.fillStyle=hv?a[2]:'rgba(255,255,255,.05)';ctx.fillRect(x,btnY,btnW,btnH);ctx.strokeStyle=a[2];ctx.strokeRect(x+.5,btnY+.5,btnW,btnH);
+    ctx.fillStyle=hv?'#101208':'#e8d9a8';ctx.textAlign='center';ctx.font='700 '+(tiny?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText(a[1],x+btnW/2,btnY+btnH/2);
+  });
+  ctx.textAlign='left';ctx.textBaseline='alphabetic';
+}
+function aiLearningClick(){
+  if(!isMainAdmin()){ closeAiLearning(); return; }
+  for(const r of aiLearningRects){
+    if(!r.enabled||mouse.x<r.x||mouse.x>r.x+r.w||mouse.y<r.y||mouse.y>r.y+r.h) continue;
+    const live=botTrainingLevel();
+    if(r.id==='model_prev') aiLearningModelLevel=clamp(aiLearningModelLevel-1,1,live);
+    else if(r.id==='model_next') aiLearningModelLevel=clamp(aiLearningModelLevel+1,1,live);
+    else if(r.id==='model_refresh'){ aiLearningNotice='Refreshing the shared model...';void refreshGlobalBotTraining(true).then(()=>{if(aiLearningOpen){aiLearningModelLevel=botTrainingLevel();aiLearningNotice='Shared model is up to date.';}}); }
+    else if(r.id==='model_test'){ startAiLearningModelTest(aiLearningSelectedXp()); }
+    else if(r.id==='model_close') closeAiLearning();
+    sfx('swap');return;
+  }
+}
 function drawAdminPanel(){
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
   const pw=Math.min(430,W-30), ph=Math.min(430,H-24), px=W/2-pw/2, py=H/2-ph/2;
@@ -1593,6 +1697,7 @@ function drawAdminPanel(){
   // everyone with admin: broadcast a banner
   actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 banner for all players'+(isMainAdmin()?'':' (needs approval)'));
   actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up \u00b7 ban \u00b7 log');
+  if(isMainAdmin()) actionBtn('ailearning','\uD83E\uDDE0 AI BOT LEARNING \u2014 progress \u00b7 compare old models');
   if(isMainAdmin()) actionBtn('layout','\u2194 LAYOUT EDITOR \u2014 move home page sections');
   if(isMainAdmin()) actionBtn('promos','\uD83C\uDF81 PROMO CODES \u2014 create \u00b7 edit \u00b7 expire');
 
@@ -1648,6 +1753,7 @@ function adminPanelClick(){
       if(id==='post'){ openPost(); sfx('swap'); return; }
       if(id==='promos'){ adminPanelOpen=false; promoAdminOpen=true; fetchPromos(); sfx('swap'); return; }
       if(id==='players'){ adminPanelOpen=false; playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
+      if(id==='ailearning'){ openAiLearning(); sfx('swap'); return; }
       if(id==='layout'){
         if(!isMainAdmin()){ sfx('dry'); return; }
         adminPanelOpen=false; selPage='hub'; layoutMode=true; layoutPick=null; sfx('swap'); return;

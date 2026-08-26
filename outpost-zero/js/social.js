@@ -6,6 +6,7 @@ let socialLoading=false, socialStatus='', socialLastFetch=0, socialChannel=null;
 let socialBackend={profiles:null,friends:null,messages:null};
 let socialFriendPage=0, socialMessagePage=0;
 let socialMessageTo=null, msgKind='admin';
+let socialDomPageActive=false;
 
 function socialHandleKey(value){
   return String(value||'').trim().replace(/^@/,'').toLowerCase().replace(/[^a-z0-9_]/g,'').slice(0,32);
@@ -14,9 +15,13 @@ function socialDefaultHandle(){
   const suffix=String(authUser&&authUser.id||'guest').replace(/-/g,'').slice(0,20).toLowerCase();
   return ('op_'+suffix).slice(0,32);
 }
+function socialHasGeneratedUsername(profile=socialProfile){
+  return !!(profile&&socialHandleKey(profile.handle)===socialDefaultHandle());
+}
 function socialSafeDisplayName(){
-  const meta=authUser&&authUser.user_metadata||{};
-  return String(meta.full_name||meta.name||socialProfile&&socialProfile.handle||'operator').slice(0,48);
+  // `display_name` is retained in the existing table for compatibility, but
+  // Outpost Zero has one public identity: the unique username in `handle`.
+  return String(socialProfile&&socialProfile.handle||socialDefaultHandle()||'operator').slice(0,32);
 }
 function socialSetupMissing(error){
   const text=String(error&&error.message||error||'').toLowerCase();
@@ -58,7 +63,8 @@ function socialFriendshipWith(userId){
 function socialAcceptedFriend(userId){ const r=socialFriendshipWith(userId); return !!(r&&r.status==='accepted'); }
 function socialPerson(userId){
   const p=socialProfiles[String(userId||'')]||{};
-  return {handle:String(p.handle||'operator'),display:String(p.display_name||p.handle||'operator')};
+  const username=String(p.handle||'operator');
+  return {handle:username,display:username};
 }
 function socialMergeRows(a,b){
   const byId=new Map(); for(const row of [...(a||[]),...(b||[])]) if(row&&row.id!=null) byId.set(String(row.id),row);
@@ -68,19 +74,27 @@ async function fetchSocial(force=false){
   if(!authUser){ resetSocialState(); return false; }
   if(!sb||typeof navigator!=='undefined'&&navigator.onLine===false){ socialStatus='SOCIAL IS OFFLINE · PARTY ALSO NEEDS A CONNECTION'; return false; }
   if(socialLoading||(!force&&Date.now()-socialLastFetch<2500)) return false;
-  socialLoading=true; socialStatus='SYNCING SOCIAL...';
+  socialLoading=true; socialStatus='REFRESHING SOCIAL...';
   try{
+    const previousUsername=socialProfile&&String(socialProfile.handle||'');
     let profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',authUser.id).maybeSingle();
     if(profileResult.error){ socialBackend.profiles=false; throw profileResult.error; }
     socialBackend.profiles=true;
     if(!profileResult.data){
       const handle=socialDefaultHandle();
-      const made=await sb.from(SOCIAL_PROFILE_TABLE).insert({user_id:authUser.id,handle,handle_key:handle,display_name:socialSafeDisplayName()});
+      const made=await sb.from(SOCIAL_PROFILE_TABLE).insert({user_id:authUser.id,handle,handle_key:handle,display_name:handle});
       if(made&&made.error){ socialBackend.profiles=false; throw made.error; }
       profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',authUser.id).maybeSingle();
       if(profileResult.error||!profileResult.data) throw profileResult.error||new Error('Social profile could not be created.');
     }
     socialProfile=profileResult.data; socialProfiles={[String(authUser.id)]:socialProfile};
+    // Auth metadata can be stale or absent. Repaint as soon as the canonical
+    // Social username arrives so the header never keeps showing an old alias.
+    if(typeof paintUserbar==='function') paintUserbar();
+    if(previousUsername!==String(socialProfile.handle||'')){
+      if(typeof partyRefreshUsername==='function') partyRefreshUsername();
+      if(typeof arenaRefreshUsername==='function') arenaRefreshUsername();
+    }
 
     const fr=await sb.from(SOCIAL_FRIEND_TABLE).select('id,requester_id,addressee_id,status,blocked_by,created_at,updated_at').order('updated_at',{ascending:false}).limit(60);
     if(fr.error){ socialBackend.friends=false; throw fr.error; }
@@ -101,7 +115,10 @@ async function fetchSocial(force=false){
       const people=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name').in('user_id',wanted);
       if(!people.error) for(const p of people.data||[]) socialProfiles[String(p.user_id)]=p;
     }
-    socialStatus='SOCIAL SYNCED · PRIVATE MESSAGES ARE FRIENDS-ONLY'; socialLastFetch=Date.now();
+    socialStatus=socialHasGeneratedUsername()
+      ? 'CHOOSE YOUR USERNAME · THIS REPLACES THE TEMPORARY ACCOUNT NAME EVERYWHERE'
+      : 'SOCIAL READY · PRIVATE MESSAGES ARE FRIENDS-ONLY';
+    socialLastFetch=Date.now();
     setupSocialRealtime();
     const unread=socialMessages.some(m=>String(m.recipient_id)===String(authUser.id)&&!m.read_at);
     if(unread){
@@ -112,24 +129,24 @@ async function fetchSocial(force=false){
   }catch(error){
     console.warn('social sync failed',error);
     if(socialSetupMissing(error)) socialStatus=socialSetupStatus();
-    else socialStatus='SOCIAL COULD NOT SYNC · CHECK YOUR CONNECTION AND TRY AGAIN';
+    else socialStatus='SOCIAL COULD NOT REFRESH · CHECK YOUR CONNECTION AND TRY AGAIN';
     socialDropRealtime(); return false;
   }finally{ socialLoading=false; }
 }
 function socialPromptAddFriend(){
   if(!authUser){ toggleAuth(); return; }
-  openForm({title:'ADD FRIEND',hint:'Enter their Outpost handle. Email addresses are never exposed here.',saveLabel:'SEND REQUEST',
-    fields:[{id:'handle',label:'HANDLE',type:'text',placeholder:'op_...'}],onSave:v=>socialSendFriendRequest(v.handle)});
+  openForm({title:'ADD FRIEND',hint:'Enter their unique Outpost username. Email addresses are never exposed here.',saveLabel:'SEND REQUEST',
+    fields:[{id:'handle',label:'USERNAME',type:'text',placeholder:'operator_7'}],onSave:v=>socialSendFriendRequest(v.handle)});
 }
 async function socialSendFriendRequest(value){
   const key=socialHandleKey(value);
-  if(key.length<3){ formError('enter a valid handle (3–32 letters, numbers, or _)'); return false; }
+  if(key.length<3){ formError('enter a valid username (3–32 letters, numbers, or _)'); return false; }
   if(!sb||!authUser){ formError('sign in and reconnect first'); return false; }
   try{
     const found=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,display_name').eq('handle_key',key).maybeSingle();
     if(found.error) throw found.error;
-    if(!found.data){ formError('no player has that handle'); return false; }
-    if(String(found.data.user_id)===String(authUser.id)){ formError('that is your own handle'); return false; }
+    if(!found.data){ formError('no player has that username'); return false; }
+    if(String(found.data.user_id)===String(authUser.id)){ formError('that is your own username'); return false; }
     if(socialFriendshipWith(found.data.user_id)){ formError('a friend request or friendship already exists'); return false; }
     const sent=await sb.from(SOCIAL_FRIEND_TABLE).insert({requester_id:authUser.id,addressee_id:found.data.user_id,status:'pending'});
     if(sent&&sent.error) throw sent.error;
@@ -137,18 +154,99 @@ async function socialSendFriendRequest(value){
   }catch(error){ formError(socialSetupMissing(error)?socialSetupStatus():'could not send — the request may already exist'); return false; }
 }
 function socialPromptEditHandle(){
+  socialPromptEditProfile();
+}
+function socialPromptEditProfile(){
   if(!authUser){ toggleAuth(); return; }
-  openForm({title:'YOUR SOCIAL HANDLE',hint:'Friends use this handle to find you. Email stays private.',saveLabel:'SAVE HANDLE',
-    fields:[{id:'handle',label:'HANDLE',type:'text',value:socialProfile&&socialProfile.handle||socialDefaultHandle()}],onSave:v=>socialUpdateHandle(v.handle)});
+  const firstChoice=socialHasGeneratedUsername();
+  openForm({title:firstChoice?'CHOOSE USERNAME':'EDIT USERNAME',hint:(firstChoice
+      ? 'Your account has a temporary private-safe label. Choose the public username shown on leaderboards, parties, friends, and messages.'
+      : 'This unique username is shown everywhere and is how friends find you. Username changes are free. Email stays private.'),saveLabel:firstChoice?'CHOOSE USERNAME':'SAVE USERNAME',
+    fields:[{id:'handle',label:'USERNAME',type:'text',value:firstChoice?'':socialProfile&&socialProfile.handle||'',placeholder:'operator_7'}],
+    onSave:v=>socialUpdateHandle(v.handle)});
 }
 async function socialUpdateHandle(value){
-  const key=socialHandleKey(value);
-  if(key.length<3){ formError('use 3–32 letters, numbers, or _'); return false; }
+  const username=String(value||'').trim().replace(/^@/,'');
+  if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){ formError('use 3–32 letters, numbers, or _'); return false; }
+  const key=username.toLowerCase();
+  if(key===socialDefaultHandle()){ formError('choose a real username, not the temporary account label'); return false; }
   try{
-    const result=await sb.from(SOCIAL_PROFILE_TABLE).update({handle:key,handle_key:key,display_name:socialSafeDisplayName()}).eq('user_id',authUser.id);
+    const result=await sb.from(SOCIAL_PROFILE_TABLE).update({handle:username,handle_key:key,display_name:username}).eq('user_id',authUser.id);
     if(result&&result.error) throw result.error;
-    closeForm(); await fetchSocial(true); socialStatus='YOUR HANDLE IS NOW @'+key; sfx('swap'); return true;
-  }catch(error){ formError(socialSetupMissing(error)?socialSetupStatus():'that handle is unavailable'); return false; }
+    closeForm(); await fetchSocial(true); paintUserbar(); fetchBoard(); socialStatus='USERNAME UPDATED · @'+username; sfx('swap'); return true;
+  }catch(error){ formError(socialSetupMissing(error)?socialSetupStatus():'that username is unavailable'); return false; }
+}
+
+function socialPartyCodeClean(value){
+  return String(value||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
+}
+function socialSetDomPageActive(active){
+  socialDomPageActive=!!active;
+  for(const id of ['socialidentity','socialpartyjoinwrap']){
+    const el=document.getElementById(id); if(el&&!socialDomPageActive) el.style.display='none';
+  }
+}
+function socialPlaceDomElement(el,rect,display='flex'){
+  if(!el||!rect||!socialDomPageActive){ if(el) el.style.display='none'; return; }
+  el.style.left=Math.round(rect.x)+'px'; el.style.top=Math.round(rect.y)+'px';
+  el.style.width=Math.max(1,Math.round(rect.w))+'px'; el.style.height=Math.max(1,Math.round(rect.h))+'px';
+  el.style.display=display;
+}
+function socialLayoutIdentity(rect){
+  const box=document.getElementById('socialidentity'), text=document.getElementById('socialidentitytext');
+  const copy=document.getElementById('socialhandlecopy'), edit=document.getElementById('socialprofileedit');
+  if(!box||!authUser){ if(box) box.style.display='none'; return; }
+  const ready=!!socialProfile;
+  box.classList.toggle('narrow',rect.w<500);
+  const firstChoice=ready&&socialHasGeneratedUsername();
+  if(text) text.textContent=ready?(firstChoice?'USERNAME REQUIRED · CHOOSE ONE NOW':'USERNAME  @'+socialProfile.handle):'LOADING YOUR USERNAME...';
+  if(copy) copy.disabled=!ready||firstChoice;
+  if(edit){ edit.disabled=!ready; edit.textContent=ready&&socialHasGeneratedUsername()?'CHOOSE USERNAME':'EDIT USERNAME'; }
+  socialPlaceDomElement(box,rect);
+}
+function socialLayoutPartyJoin(rect,enabled){
+  const box=document.getElementById('socialpartyjoinwrap'), field=document.getElementById('socialpartycode'), join=document.getElementById('socialpartyjoin');
+  if(!box) return;
+  if(field) field.disabled=!enabled; if(join) join.disabled=!enabled;
+  socialPlaceDomElement(box,rect);
+}
+function socialPartyJoinFromInline(){
+  const field=document.getElementById('socialpartycode'), code=socialPartyCodeClean(field&&field.value);
+  if(field) field.value=code;
+  if(typeof partyPromptJoin!=='function'){ socialStatus='PARTY JOIN IS NOT READY'; sfx('dry'); return false; }
+  // The shared join form remains the final validator. Forward partial input as
+  // a prefill so a player can finish typing there instead of losing their work.
+  return partyPromptJoin(code);
+}
+async function socialCopyOwnHandle(){
+  if(!socialProfile||!socialProfile.handle){ socialStatus='YOUR SOCIAL PROFILE IS STILL LOADING'; sfx('dry'); return false; }
+  if(socialHasGeneratedUsername()){
+    socialStatus='CHOOSE A USERNAME BEFORE COPYING IT';
+    socialPromptEditProfile(); sfx('dry'); return false;
+  }
+  const value='@'+socialProfile.handle;
+  try{
+    if(!navigator.clipboard||typeof navigator.clipboard.writeText!=='function') throw new Error('clipboard unavailable');
+    await navigator.clipboard.writeText(value);
+  }catch(error){
+    try{
+      const temp=document.createElement('textarea'); temp.value=value; temp.setAttribute('readonly','');
+      temp.style.position='fixed'; temp.style.opacity='0'; document.body.appendChild(temp); temp.select();
+      if(!document.execCommand('copy')) throw new Error('copy failed'); temp.remove();
+    }catch(fallbackError){ socialStatus='YOUR USERNAME IS '+value; sfx('dry'); return false; }
+  }
+  socialStatus='USERNAME COPIED · '+value; sfx('pickup'); return true;
+}
+function bindSocialDomControls(){
+  const field=document.getElementById('socialpartycode'), join=document.getElementById('socialpartyjoin');
+  const copy=document.getElementById('socialhandlecopy'), edit=document.getElementById('socialprofileedit');
+  if(field){
+    field.addEventListener('input',()=>{ const clean=socialPartyCodeClean(field.value); if(field.value!==clean) field.value=clean; });
+    field.addEventListener('keydown',event=>{ if(event.key==='Enter'){ event.preventDefault(); socialPartyJoinFromInline(); } });
+  }
+  if(join) join.addEventListener('click',socialPartyJoinFromInline);
+  if(copy) copy.addEventListener('click',socialCopyOwnHandle);
+  if(edit) edit.addEventListener('click',socialPromptEditProfile);
 }
 async function socialAcceptFriend(rowId){
   if(!sb||!authUser) return;
@@ -173,8 +271,8 @@ async function socialRemoveFriend(rowId){
 }
 function socialPromptMessage(){
   if(!authUser){ toggleAuth(); return; }
-  openForm({title:'NEW PRIVATE MESSAGE',hint:'Enter an accepted friend\'s handle.',saveLabel:'WRITE MESSAGE',
-    fields:[{id:'handle',label:'FRIEND HANDLE',type:'text',placeholder:'op_...'}],onSave:v=>{
+  openForm({title:'NEW PRIVATE MESSAGE',hint:'Enter an accepted friend\'s username.',saveLabel:'WRITE MESSAGE',
+    fields:[{id:'handle',label:'FRIEND USERNAME',type:'text',placeholder:'operator_7'}],onSave:v=>{
       const key=socialHandleKey(v.handle), p=Object.values(socialProfiles).find(x=>socialHandleKey(x.handle_key||x.handle)===key);
       if(!p||!socialAcceptedFriend(p.user_id)){ formError('private messages are only for accepted friends'); return; }
       closeForm(); openSocialMessageCompose(p.user_id,p.handle);

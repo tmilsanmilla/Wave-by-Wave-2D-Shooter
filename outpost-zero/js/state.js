@@ -22,7 +22,8 @@ const ARENA_MAPS=Object.freeze([
 ]);
 const ARENA_MAP_IDS=Object.freeze(ARENA_MAPS.map(m=>m.id));
 const ARENA_MAP_VOTE_MS=5000, ARENA_MAP_REVEAL_MS=2200;
-const LOCAL_DUEL_PLAYER='local-player', LOCAL_DUEL_BOT='local-bot', LOCAL_CPU2V2_PLAYER='local-cpu2v2-player';
+const LOCAL_DUEL_PLAYER='local-player', LOCAL_DUEL_BOT='local-bot', LOCAL_CPU2V2_PLAYER='local-cpu2v2-player',
+  LOCAL_CPU2V2_CPU_TEAM='local-cpu2v2-cpu-team';
 let arenaRects=[];
 function freshArena(status){
   return {phase:'menu',mode:null,room:'',status:status||'',queueChannel:null,matchChannel:null,
@@ -31,7 +32,7 @@ function freshArena(status){
     active:false,matchEpoch:0,round:0,scores:{},roundStartAt:0,roundEndAt:0,nextRoundAt:0,roundResolved:false,winRecorded:false,
     mapId:'arena',mapVotePhase:'idle',mapVoteId:'',mapVoteDeadline:0,mapVotes:{},mapVoteResult:null,
     mapVoteAcks:new Set(),mapVoteRevealUntil:0,mapVoteSyncAt:0,mapVoteStartPending:false,
-    detonatedTnt:new Set(),tntFx:[],portalLocks:{},pendingHazards:new Map(),hazardReceipts:new Map(),hazardArbitrations:new Map(),localKoCause:null,
+    detonatedTnt:new Set(),tntDamage:new Map(),tntFx:[],portalLocks:{},pendingHazards:new Map(),hazardReceipts:new Map(),hazardArbitrations:new Map(),localKoCause:null,
     syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),rematchVotes:new Set(),savedUtility:undefined};
 }
 arena=freshArena('Sign in, choose a loadout, then enter Casual 1v1.');

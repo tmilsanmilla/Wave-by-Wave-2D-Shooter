@@ -1,35 +1,12 @@
 "use strict";
 
 // ---- account progress sync: purchases + currency live with the account, not the device ----
-let profileLoaded=false, profileSaveT=0, profilePending=false;
-let currentLoginAt='';
+let profileLoaded=false, profileSaveT=0, profilePending=false, profilePendingUserId='';
 function metaPayload(){
   return {gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
           hi:hiScore, mv:musicVol, sv:sfxVol, onboardV:onboardingVersion};
-}
-function publicProfilePayload(){
-  return {
-    v:1, email:String((authUser&&authUser.email)||'').toLowerCase(), display:displayName(authUser),
-    lastLogin:currentLoginAt||new Date().toISOString(), gems, gre:gemResetVersion, coins, streak:streakDays, longestStreak:streakLongest, highScore:hiScore,
-    owned:Object.keys(gemOwned).filter(k=>gemOwned[k]),
-    powerups:Object.fromEntries(Object.entries(powerStock).filter(([,v])=>v>0)),
-    cosmetics:Object.keys(cosmeticOwned).filter(k=>cosmeticOwned[k]).length,
-    animations:Object.keys(animOwned).filter(k=>animOwned[k]).length,
-    daily:dailyTasks.map(t=>({id:t.id,prog:t.prog,goal:t.goal,done:!!t.done})),
-    wheelSpins:wheelReady
-  };
-}
-async function publishPublicProfile(isLogin){
-  if(!sb||!authUser) return;
-  if(isLogin||!currentLoginAt) currentLoginAt=new Date().toISOString();
-  try{
-    const {error}=await sb.from('scores').upsert({user_id:authUser.id,
-      name:JSON.stringify(publicProfilePayload()), game:'outpost-zero-profile',
-      score:Math.floor(Date.parse(currentLoginAt)/1000)},{onConflict:'user_id,game'});
-    if(error) throw error;
-  }catch(e){ console.warn('public profile update failed',e); }
 }
 function applyProfile(m){
   if(!m) return;
@@ -103,6 +80,7 @@ async function fetchProfile(expectedUserId,requestVersion){
     if(data && data.data){
       const migrateGems=data.data.gv!==GEM_ECONOMY_VERSION;
       const resetGems=(+data.data.gre||0)<GEM_RESET_VERSION;
+      const removeLegacyBotTrain=Object.prototype.hasOwnProperty.call(data.data,'botTrain');
       const hasOnboarding=Object.prototype.hasOwnProperty.call(data.data,'onboardV') &&
         data.data.onboardV!==null && Number.isFinite(Number(data.data.onboardV));
       // Profiles created before account onboarding existed are established
@@ -112,7 +90,7 @@ async function fetchProfile(expectedUserId,requestVersion){
       applyProfile(data.data); profileLoaded=true; saveMetaLocal();
       if(onboardingVersion<ONBOARDING_VERSION) firstAccountTutorialUserId=userId;
       else if(firstAccountTutorialUserId===userId) firstAccountTutorialUserId='';
-      if(migrateGems||resetGems||!hasOnboarding) await saveProfile(true); // persist all migration markers
+      if(migrateGems||resetGems||!hasOnboarding||removeLegacyBotTrain) await saveProfile(true); // persist all migration markers
     }
     else {                                            // a new account never inherits another account's device gems
       onboardingVersion=0;
@@ -137,13 +115,15 @@ async function saveProfile(force){
   if(!force && !profileLoaded) return;               // never overwrite the cloud before we've read it
   try{ await sb.from('profiles').upsert({user_id:authUser.id, data:metaPayload(), updated_at:new Date().toISOString()}); }
   catch(e){}
-  publishPublicProfile(false);
 }
 function queueProfileSave(){                          // debounce: batch rapid changes into one write
   if(!sb || !authUser) return;
-  profilePending=true; profileSaveT=Date.now()+1200;
+  profilePending=true; profilePendingUserId=String(authUser.id); profileSaveT=Date.now()+1200;
 }
 function loadMeta(){
+  // Retire the old device/account-specific training cache without importing
+  // its client-forgeable value into the shared global total.
+  try{ localStorage.removeItem('oz_bot_training_v1'); }catch(e){}
   try{
     const m=JSON.parse(localStorage.getItem('oz_meta')||'{}');
     gems=savedGemBalance(m); gemResetVersion=Math.max(GEM_RESET_VERSION,+m.gre||0); gemOwned=m.owned||{}; tasksDate=m.date||''; dailyTasks=m.tasks||[];

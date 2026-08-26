@@ -4,7 +4,7 @@
    The lobby is ephemeral and casual. Supabase Presence supplies liveness;
    the elected host owns the four-seat roster and versioned assignment plan. */
 function partyServiceAvailable(){ return !!(sb&&navigator.onLine!==false&&typeof sb.channel==='function'); }
-function partyCleanName(v){ return String(v||'').replace(/[\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,18); }
+function partyCleanName(v){ return String(v||'').replace(/[\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,32); }
 function partySessionIdentity(chosenName){
   let sid='';
   try{ sid=sessionStorage.getItem('oz_party_session_v1')||''; }catch(e){}
@@ -17,14 +17,38 @@ function partySessionIdentity(chosenName){
   // Keep the Presence key per-tab even for signed-in accounts, so opening a
   // second local player does not silently collapse two party seats into one.
   const id=(authUser?('user:'+authUser.id+':'+sid):('guest:'+sid)).slice(0,80);
-  let fallback=authUser?displayName(authUser):('GUEST-'+sid.slice(-4).toUpperCase());
-  let name=partyCleanName(chosenName)||partyCleanName(fallback)||'OPERATOR';
+  const profile=typeof socialProfile!=='undefined'&&socialProfile;
+  let fallback=authUser?partyCleanName(profile&&profile.handle):('GUEST-'+sid.slice(-4).toUpperCase());
+  // Signed-in players always use their canonical Outpost username. Only
+  // guests may choose a temporary Party alias.
+  let name=authUser
+    ? (partyCleanName(fallback)||'OPERATOR')
+    : (partyCleanName(chosenName)||partyCleanName(fallback)||'OPERATOR');
   try{ sessionStorage.setItem('oz_party_name_v1',name); }catch(e){}
   return {id,name,joined:Date.now(),order:1,ready:false,team:''};
 }
 function partyDefaultName(){
-  if(authUser) return partyCleanName(displayName(authUser));
+  if(authUser){
+    const profile=typeof socialProfile!=='undefined'&&socialProfile;
+    return partyCleanName(profile&&profile.handle);
+  }
   try{ return partyCleanName(sessionStorage.getItem('oz_party_name_v1')); }catch(e){ return ''; }
+}
+function partyRefreshUsername(){
+  const username=partyDefaultName();
+  if(!authUser||!username||!party||!party.accepted||!party.self) return false;
+  party.self.name=username;
+  const mine=partyMember(party.self.id); if(mine) mine.name=username;
+  try{
+    const tracked=party.channel&&party.channel.track({id:party.self.id,name:username,joined:party.self.joined});
+    if(tracked&&typeof tracked.catch==='function') tracked.catch(()=>{});
+  }catch(e){}
+  // Do not alter Party lobby state in the middle of the shared CPU session.
+  // Presence still carries the new username; the next lobby state will too.
+  if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen()) return true;
+  if(partyIsHost()) partyHostCommit('Username updated to @'+username+'.');
+  else partySend('identity_update',{name:username});
+  return true;
 }
 function partyPresence(ch){ return arenaPresenceList(ch).map(m=>({id:String(m.id||''),name:partyCleanName(m.name),joined:+m.joined||0})); }
 function partyIsHost(){ return !!(party.accepted&&party.self&&party.hostId===party.self.id); }
@@ -221,6 +245,13 @@ function partyReceive(event,p){
     partySetDefaultPairings(); partyHostCommit('A new operator joined.');
     partySend('join_accept',{to:from,state:partySnapshot()}); return;
   }
+  if(event==='identity_update'&&partyIsHost()){
+    const member=partyMember(from), username=partyCleanName(p.name);
+    if(member&&username&&!(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())){
+      member.name=username; partyHostCommit('A player updated their username.');
+    }
+    return;
+  }
   if(event==='join_accept'&&String(p.to||'')===party.self.id&&!party.accepted){
     if(p.state&&from===String(p.state.hostId||'')&&partyApplyState(p.state,true)) partySend('state_request',{to:party.hostId}); return;
   }
@@ -274,7 +305,7 @@ function partyConnect(code,creating,name){
   if(creating){ party.accepted=true; party.hostId=self.id; party.hostEpoch=1; party.members=[self]; partySetDefaultPairings(); }
   const ch=sb.channel('oz-party-v1-'+clean,{config:{presence:{key:self.id}}}); party.channel=ch;
   ch.on('presence',{event:'sync'},()=>partyPresenceSync(ch));
-  for(const event of ['join_request','join_accept','join_reject','state_request','party_state','action_request','kick','chat_request','chat_message','leave',
+  for(const event of ['join_request','join_accept','join_reject','state_request','party_state','identity_update','action_request','kick','chat_request','chat_message','leave',
                        'cpu_prepare','cpu_ready','cpu_cancel','cpu_abort','cpu_round_start','cpu_player_state','cpu_bot_snapshot','cpu_bot_shot','cpu_damage','cpu_hit','cpu_round_result'])
     ch.on('broadcast',{event},msg=>partyReceive(event,msg&&msg.payload));
   ch.subscribe(async st=>{
@@ -294,19 +325,35 @@ function partyConnect(code,creating,name){
 }
 function partyPromptCreate(){
   if(!partyServiceAvailable()){ party.status='PARTIES NEED AN INTERNET CONNECTION.'; sfx('dry'); return; }
-  openForm({title:'CREATE PARTY',hint:'No sign-in needed. Choose the name friends will see.',saveLabel:'CREATE',
-    fields:[{id:'name',label:'DISPLAY NAME',type:'text',value:partyDefaultName(),placeholder:'OPERATOR'}],
-    onSave:v=>{ const name=partyCleanName(v.name); if(!name){ formError('Enter a display name.'); return; } closeForm(); partyConnect(randomArenaCode(),true,name); }});
+  const signedIn=!!authUser, username=partyDefaultName();
+  if(signedIn&&!username){ party.status='YOUR USERNAME IS STILL LOADING. TRY AGAIN IN A MOMENT.'; fetchSocial(true); sfx('dry'); return; }
+  openForm({title:'CREATE PARTY',hint:signedIn?('You will appear as @'+username+', your Outpost username.'):'No sign-in needed. Choose a temporary guest name.',saveLabel:'CREATE',
+    fields:signedIn?[]:[{id:'name',label:'GUEST NAME',type:'text',value:username,placeholder:'OPERATOR'}],
+    onSave:v=>{ const name=signedIn?username:partyCleanName(v.name); if(!name){ formError('Enter a guest name.'); return; } closeForm(); partyConnect(randomArenaCode(),true,name); }});
 }
-function partyPromptJoin(){
+function partyPromptJoin(prefill=''){
   if(!partyServiceAvailable()){ party.status='PARTIES NEED AN INTERNET CONNECTION.'; sfx('dry'); return; }
-  openForm({title:'JOIN PARTY',hint:'Enter the code your friend shared. No sign-in needed.',saveLabel:'JOIN',
-    fields:[{id:'code',label:'PARTY CODE',type:'text',value:'',placeholder:'ABC123',upper:true},
-            {id:'name',label:'DISPLAY NAME',type:'text',value:partyDefaultName(),placeholder:'OPERATOR'}],
-    onSave:v=>{ const code=String(v.code||'').replace(/[^A-Z0-9]/g,'').slice(0,6),name=partyCleanName(v.name);
+  const initialCode=String(prefill||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
+  if(party.accepted&&party.code&&initialCode.length===6&&initialCode===party.code){
+    selPage='party'; sfx('swap'); return true;
+  }
+  const signedIn=!!authUser, username=partyDefaultName();
+  if(signedIn&&!username){ party.status='YOUR USERNAME IS STILL LOADING. TRY AGAIN IN A MOMENT.'; fetchSocial(true); sfx('dry'); return; }
+  openForm({title:'JOIN PARTY',hint:signedIn?('Enter the code. You will appear as @'+username+'.'):'Enter the code and choose a temporary guest name.',saveLabel:'JOIN',
+    fields:[{id:'code',label:'PARTY CODE',type:'text',value:initialCode,placeholder:'ABC123',upper:true}]
+      .concat(signedIn?[]:[{id:'name',label:'GUEST NAME',type:'text',value:username,placeholder:'OPERATOR'}]),
+    onSave:v=>{ const code=String(v.code||'').replace(/[^A-Z0-9]/g,'').slice(0,6),name=signedIn?username:partyCleanName(v.name);
       if(code.length!==6){ formError('Enter the full 6-character code.'); return; }
-      if(!name){ formError('Enter a display name.'); return; }
-      closeForm(); partyConnect(code,false,name); }});
+      if(!name){ formError('Enter a guest name.'); return; }
+      if(party.accepted&&party.code&&code===party.code){ closeForm(); selPage='party'; sfx('swap'); return true; }
+      if(party.accepted&&party.code&&code!==party.code){
+        const warning='Joining another party will leave your current party. Continue?';
+        let confirmed=false;
+        try{ confirmed=window.confirm(warning); }catch(error){ try{ confirmed=confirm(warning); }catch(ignore){} }
+        if(!confirmed) return false;
+      }
+      closeForm(); partyConnect(code,false,name); return true; }});
+  return true;
 }
 function partyCopyCode(){
   if(!party.code) return;
@@ -441,9 +488,17 @@ function partyCpuMaybeStart(){
 }
 function partyCpuMakeBot(id,team,x,y,startAt){
   const w=WEAPONS.ar;
-  return {id,team,name:team==='A'?'ALLY CPU':'',r:15,hp:PARTY_CPU_HP,x,y,tx:x,ty:y,angle:team==='A'?0:Math.PI,cur:'ar',
+  const seed=typeof cpuAiSeed==='function'?cpuAiSeed(partyCpuMatch.aiSeed,partyCpuMatch.round,arena&&arena.mapId,id):1;
+  const bot={id,team,name:team==='A'?'ALLY CPU':'',r:15,hp:PARTY_CPU_HP,x,y,tx:x,ty:y,angle:team==='A'?0:Math.PI,cur:'ar',
     mag:w.mag,reloadEnd:0,lastShot:0,flash:0,hitT:0,thinkAt:startAt,aimNoiseAt:startAt,aimNoise:0,
-    strafe:Math.random()<0.5?-1:1,strafeUntil:startAt+rand(900,1500),reactionAt:startAt+450,moveX:0,moveY:0,lastThinkX:x,lastThinkY:y};
+    strafe:1,strafeUntil:startAt,reactionAt:startAt+450,moveX:0,moveY:0,lastThinkX:x,lastThinkY:y,
+    aiSeed:seed,aiRng:seed,aiTracks:{},aiRole:team==='A'?'guardian':(String(id).endsWith('1')?'anchor':'flanker'),
+    aiTactic:'hold',aiTacticUntil:startAt,targetId:'',targetLockUntil:0,targetThinkAt:startAt,tntThinkAt:startAt,tntPlan:null,
+    aiStuckTicks:0,aiStuckUntil:0,aiFailedMoveX:0,aiFailedMoveY:0,aiNavPath:[],aiNavUntil:0,aiUsingPortal:false,
+    lastAttackerId:'',underFireUntil:0};
+  bot.strafe=typeof cpuAiNext==='function'&&cpuAiNext(bot)<.5?-1:1;
+  bot.strafeUntil=startAt+(typeof cpuAiRange==='function'?cpuAiRange(bot,700,1300):1000);
+  return bot;
 }
 // Shared four-actor simulation setup. Party mode supplies wall-clock values
 // and transport-owned human IDs; Offline 2v2 supplies the pausable game clock
@@ -452,6 +507,7 @@ function cpuTeamBeginRound(options){
   const round=Math.max(1,Math.floor(+options.round||1));
   const clock=Number.isFinite(+options.clock)?+options.clock:cpuTeamClock();
   const startDelay=clamp(+options.startDelay||0,0,10000);
+  const selectedMap=typeof arenaMapValid==='function'&&arenaMapValid(options.mapId)?String(options.mapId):'arena';
   const localId=cpuTeamLocalId(); if(!localId) return false;
   const kits={};
   for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(options.kits&&options.kits[id]); if(!kit)return false;kits[id]=kit; }
@@ -461,11 +517,15 @@ function cpuTeamBeginRound(options){
   loadout={primary:mine.primary,secondary:mine.secondary,melee:mine.melee,utility:null};
   startGame();
   practiceMode='arena';arena=freshArena(options.status||'2v2 vs CPUs');arena.mode=options.mode;arena.active=true;arena.phase='countdown';
+  arena.matchEpoch=partyCpuMatch.epoch;arena.mapId=selectedMap;arena.mapVotePhase=options.mode==='ai2v2'?'locked':'idle';
   arena.round=round;arena.roundStartAt=clock+startDelay;arena.roundEndAt=arena.roundStartAt+PARTY_CPU_ROUND_MS;
   partyCpuMatch.round=round;partyCpuMatch.scores={allies:Math.max(0,Math.floor(+options.scores?.allies||0)),cpus:Math.max(0,Math.floor(+options.scores?.cpus||0))};
   partyCpuMatch.roundStartAt=arena.roundStartAt;partyCpuMatch.roundEndAt=arena.roundEndAt;partyCpuMatch.nextRoundAt=0;
   partyCpuMatch.roundResolved=false;partyCpuMatch.phase='countdown';partyCpuMatch.seenHits=new Set();partyCpuMatch.seenShots=new Set();
-  partyCpuMatch.shots=[];partyCpuMatch.humans={};partyCpuMatch.bots=[];partyCpuMatch.simAt=clock;partyCpuMatch.simAcc=0;
+  partyCpuMatch.shots=[];partyCpuMatch.humans={};partyCpuMatch.bots=[];
+  partyCpuMatch.simAt=clock;partyCpuMatch.simClock=clock;partyCpuMatch.simAcc=0;
+  partyCpuMatch.threat={A:{},B:{}};
+  partyCpuMatch.aiSeed=typeof cpuAiSeed==='function'?cpuAiSeed(partyCpuMatch.epoch,round,selectedMap,'cpu-team'):1;
   perks.maxhp=PARTY_CPU_HP;player.hp=PARTY_CPU_HP;player.hurtCd=0;player.hurtFlash=0;
   bullets=[];ebullets=[];enemies=[];particles=[];pickups=[];damageNumbers=[];grenades=[];pearls=[];balls=[];flames=[];freezeFx=[];
   abilityCD={};quickReadyT=0;sawFuel=100;sawLock=false;daggersOut=null;comboStep=0;comboNextT=0;
@@ -474,16 +534,23 @@ function cpuTeamBeginRound(options){
   for(const k of [mine.primary,mine.secondary,mine.melee]){
     player.mags[k]=magSize(k);player.reserve[k]=WEAPONS[k].melee?Infinity:magSize(k)*5;
   }
-  const cx=WORLD.w/2,cy=WORLD.h/2,count=partyCpuMatch.humanIds.length;
+  if(typeof arenaResetMapRuntime==='function')arenaResetMapRuntime();
+  const cx=WORLD.w/2,cy=WORLD.h/2,count=partyCpuMatch.humanIds.length,
+    mapped=options.mode==='ai2v2'&&typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena(),
+    mapSpawns=mapped&&typeof cpuTeamArenaSpawns==='function'?cpuTeamArenaSpawns():null;
   partyCpuMatch.humanIds.forEach((id,i)=>{
-    const x=cx-500,y=cy+(count===1?0:(i===0?-125:125)),kit=kits[id];
+    const spawn=mapSpawns?mapSpawns.allies[Math.min(i,1)]:null,
+      x=spawn?spawn.x:cx-500,y=spawn?spawn.y:cy+(count===1?0:(i===0?-125:125)),kit=kits[id];
     partyCpuMatch.humans[id]={id,name:partyCpuMatch.humanNames[id]||'OPERATOR',team:'A',r:15,hp:PARTY_CPU_HP,x,y,tx:x,ty:y,angle:0,cur:kit.primary,
       parrySeq:0,parryUsedSeq:-1,parryUntil:0,parryReadyAt:0};
     if(id===localId){player.x=x;player.y=y;cam.x=x;cam.y=y;}
   });
-  if(count===1)partyCpuMatch.bots.push(partyCpuMakeBot('cpu-ally','A',cx-500,cy+150,arena.roundStartAt));
-  partyCpuMatch.bots.push(partyCpuMakeBot('cpu-red-1','B',cx+500,cy-145,arena.roundStartAt));
-  partyCpuMatch.bots.push(partyCpuMakeBot('cpu-red-2','B',cx+500,cy+145,arena.roundStartAt));
+  const allySpawn=mapSpawns?mapSpawns.allies[1]:{x:cx-500,y:cy+150},
+    redOne=mapSpawns?mapSpawns.cpus[0]:{x:cx+500,y:cy-145},redTwo=mapSpawns?mapSpawns.cpus[1]:{x:cx+500,y:cy+145};
+  if(count===1)partyCpuMatch.bots.push(partyCpuMakeBot('cpu-ally','A',allySpawn.x,allySpawn.y,arena.roundStartAt));
+  partyCpuMatch.bots.push(partyCpuMakeBot('cpu-red-1','B',redOne.x,redOne.y,arena.roundStartAt));
+  partyCpuMatch.bots.push(partyCpuMakeBot('cpu-red-2','B',redTwo.x,redTwo.y,arena.roundStartAt));
+  if(mapped){const bounds=activeArenaBounds();cam.x=(bounds.left+bounds.right)/2;cam.y=(bounds.top+bounds.bottom)/2;zoom=duelArenaFitZoom();}
   state='play';menuOpen=false;aiming=false;rmbAim=false;pendingGameMode=options.pendingMode||pendingGameMode;
   waveMsg='ROUND '+round+' — GET READY';waveMsgT=now+2800;sfx('wave');return true;
 }
@@ -528,14 +595,16 @@ function startOfflineCpu2v2(){
   partyCpuMatch.epoch=Math.max(1,Math.floor(now));partyCpuMatch.hostEpoch=1;partyCpuMatch.hostId=LOCAL_CPU2V2_PLAYER;
   partyCpuMatch.humanIds=[LOCAL_CPU2V2_PLAYER];partyCpuMatch.humanNames[LOCAL_CPU2V2_PLAYER]='YOU';
   partyCpuMatch.loadouts[LOCAL_CPU2V2_PLAYER]=mine;partyCpuMatch.localLoadout=mine;partyCpuMatch.savedLoadout=savedLoadout;
-  arena=freshArena('Offline 2v2 vs CPUs ready.');arena.mode='ai2v2';arena.active=true;
-  return cpuTeamBeginRound({round:1,startDelay:3000,scores:{allies:0,cpus:0},kits:partyCpuMatch.loadouts,clock:now,
-    mode:'ai2v2',status:'Offline 2v2 vs CPUs',pendingMode:'ai2v2'});
+  partyCpuMatch.phase='map_vote';
+  arena=freshArena('Vote for the Offline 2v2 map.');arena.mode='ai2v2';arena.active=true;arena.matchEpoch=partyCpuMatch.epoch;
+  if(typeof arenaStartMapVote==='function'&&arenaStartMapVote())return true;
+  return offlineCpu2v2BeginRound();
 }
 function offlineCpu2v2BeginRound(){
   if(!isLocalCpu2v2())return false;
+  const mapId=typeof arenaMapValid==='function'&&arenaMapValid(arena&&arena.mapId)?arena.mapId:'arena';
   return cpuTeamBeginRound({round:partyCpuMatch.round+1,startDelay:3000,scores:partyCpuMatch.scores,kits:partyCpuMatch.loadouts,clock:now,
-    mode:'ai2v2',status:'Offline 2v2 vs CPUs',pendingMode:'ai2v2'});
+    mode:'ai2v2',status:'Offline 2v2 vs CPUs',pendingMode:'ai2v2',mapId});
 }
 function offlineCpu2v2RoundTick(){
   if(!isLocalCpu2v2()||!arena.active)return;
@@ -567,7 +636,10 @@ function offlineCpu2v2Resolve(winner){
 }
 function offlineCpu2v2Rematch(){
   if(!isLocalCpu2v2()||partyCpuMatch.phase!=='match_end')return false;
-  partyCpuMatch.round=0;partyCpuMatch.scores={allies:0,cpus:0};partyCpuMatch.roundResolved=false;arena.active=true;
+  partyCpuMatch.epoch=Math.max(partyCpuMatch.epoch+1,Math.floor(now));partyCpuMatch.round=0;partyCpuMatch.scores={allies:0,cpus:0};
+  partyCpuMatch.roundResolved=false;partyCpuMatch.phase='map_vote';
+  arena.active=true;arena.phase='lobby';arena.matchEpoch=partyCpuMatch.epoch;
+  if(typeof arenaStartMapVote==='function'&&arenaStartMapVote())return true;
   return offlineCpu2v2BeginRound();
 }
 function offlineCpu2v2Leave(status,toHub=false){
@@ -594,9 +666,51 @@ function partyCpuNearest(actor,team){
   for(const target of partyCpuActors(team)){ const d=dist2(actor.x,actor.y,target.x,target.y); if(d<bd){ bd=d; best=target; } }
   return best;
 }
+function partyCpuAiClock(){return Number.isFinite(+partyCpuMatch.simClock)&&partyCpuMatch.simClock>0?+partyCpuMatch.simClock:cpuTeamClock();}
+function partyCpuRecordThreat(attackerId,victimTeam,dmg,clock=partyCpuAiClock()){
+  attackerId=String(attackerId||'');victimTeam=String(victimTeam||'');
+  if(!attackerId||!['A','B'].includes(victimTeam)||!Number.isFinite(+dmg)||+dmg<=0)return false;
+  if(!partyCpuMatch.threat||typeof partyCpuMatch.threat!=='object')partyCpuMatch.threat={A:{},B:{}};
+  const ledger=partyCpuMatch.threat[victimTeam]||(partyCpuMatch.threat[victimTeam]={}),old=ledger[attackerId]||{value:0,at:clock},
+    oldAt=Number.isFinite(+old.at)?+old.at:clock;
+  const decayed=Math.max(0,(+old.value||0)*(1-clamp((clock-oldAt)/6000,0,1)));
+  ledger[attackerId]={value:Math.min(120,decayed+clamp(+dmg,0,PARTY_CPU_HP)),at:clock};return true;
+}
+function partyCpuThreatValue(victimTeam,attackerId,clock){
+  const row=partyCpuMatch.threat&&partyCpuMatch.threat[victimTeam]&&partyCpuMatch.threat[victimTeam][String(attackerId||'')];
+  if(!row)return 0;
+  const rowAt=Number.isFinite(+row.at)?+row.at:clock;
+  return Math.max(0,(+row.value||0)*(1-clamp((clock-rowAt)/6000,0,1)));
+}
+function partyCpuThreatScore(bot,target,clock){
+  if(!bot||!target||target.hp<=0)return -Infinity;
+  const dx=target.x-bot.x,dy=target.y-bot.y,d=Math.hypot(dx,dy)||1;
+  const blocked=(typeof cpuAiLosBlocked==='function'?cpuAiLosBlocked:losBlocked)(bot.x,bot.y,target.x,target.y);
+  const proximity=1-clamp(d/1100,0,1),missing=1-clamp((+target.hp||0)/PARTY_CPU_HP,0,1);
+  const threat=partyCpuThreatValue(bot.team,target.id,clock)/120;
+  const facing=Number.isFinite(+target.angle)&&Math.cos(Math.atan2(bot.y-target.y,bot.x-target.x)-target.angle)>.72?1:0;
+  const incumbent=String(bot.targetId||'')===String(target.id)?1:0;
+  const attacker=String(bot.lastAttackerId||'')===String(target.id)&&clock<(bot.underFireUntil||0)?1:0;
+  const tie=(typeof cpuAiSeed==='function'?cpuAiSeed(bot.aiSeed,target.id)%1000:0)/50000;
+  return (blocked?0:1)+proximity*.55+missing*.45+threat*1.1+facing*.30+incumbent*.20+attacker*.7+tie;
+}
+function partyCpuThreatTarget(bot,enemyTeam,clock){
+  const candidates=partyCpuActors(enemyTeam),current=candidates.find(t=>String(t.id)===String(bot.targetId||''));
+  const attacker=candidates.find(t=>String(t.id)===String(bot.lastAttackerId||''));
+  if(attacker&&clock<(bot.underFireUntil||0)&&attacker!==current){bot.targetThinkAt=0;bot.targetLockUntil=0;}
+  if(current&&clock<(bot.targetLockUntil||0))return current;
+  if(current&&clock<(bot.targetThinkAt||0))return current;
+  let best=null,bestScore=-Infinity;
+  for(const target of candidates){const score=partyCpuThreatScore(bot,target,clock);if(score>bestScore){best=target;bestScore=score;}}
+  if(current&&best&&best!==current&&bestScore<partyCpuThreatScore(bot,current,clock)+.15)best=current;
+  if(!best)return null;
+  if(best!==current)bot.targetLockUntil=clock+(typeof cpuAiRange==='function'?cpuAiRange(bot,450,750):600);
+  bot.targetId=String(best.id);bot.targetThinkAt=clock+250;return best;
+}
 function partyCpuSpawnBotShot(bot,target){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight') return;
-  const a=bot.angle+rand(-0.035,0.035), speed=weaponBulletSpeed('ar'), id=partyCpuMatch.epoch+':'+partyCpuMatch.round+':shot:'+(++partyCpuMatch.shotSeq);
+  const jitter=typeof cpuAiRange==='function'?cpuAiRange(bot,-.028,.028):0;
+  const a=bot.angle+jitter, speed=weaponBulletSpeed('ar'), id=partyCpuMatch.epoch+':'+partyCpuMatch.round+':shot:'+(++partyCpuMatch.shotSeq);
   const shot={id,ownerId:bot.id,team:bot.team,targetId:target&&target.id||'',x:bot.x+Math.cos(a)*7,y:bot.y+Math.sin(a)*7,
     vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:weaponBulletLife('ar',1200),dmg:Math.min(18,WEAPONS.ar.dmg*.85),dist:0,rng:WEAPONS.ar.range,fall:WEAPONS.ar.fall};
   partyCpuMatch.seenShots.add(id); partyCpuMatch.shots.push(shot);
@@ -604,32 +718,53 @@ function partyCpuSpawnBotShot(bot,target){
 }
 function partyCpuHostStep(dtms,clock){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight'||partyCpuMatch.roundResolved) return;
-  const dt=dtms/16.667, w=WEAPONS.ar;
+  const dt=dtms/16.667,w=WEAPONS.ar,profile={approach:560,retreat:260,maxRange:1050,leadFactor:.68,maxLeadMs:220,
+    aimNoise:.075,fireAimError:.11,turnRate:.07,moveSpeed:2.75},
+    shotProfile={damage:Math.min(18,w.dmg*.85),rng:w.range,fall:w.fall,maxRange:1050};
   for(const b of partyCpuMatch.bots){
     if(b.hp<=0) continue;
-    const target=partyCpuNearest(b,b.team==='A'?'B':'A'); if(!target) continue;
+    const enemyTeam=b.team==='A'?'B':'A',foes=partyCpuActors(enemyTeam),allies=partyCpuActors(b.team);
+    const target=partyCpuThreatTarget(b,enemyTeam,clock);if(!target)continue;
+    cpuAiTrackTarget(b,target,dtms);
     if(b.reloadEnd&&clock>=b.reloadEnd){ b.reloadEnd=0; b.mag=w.mag; }
-    if(clock>=b.thinkAt){
-      const moved=Math.hypot(b.x-(b.lastThinkX||b.x),b.y-(b.lastThinkY||b.y)); if(moved<2) b.strafe*=-1;
-      b.lastThinkX=b.x; b.lastThinkY=b.y; b.thinkAt=clock+150;
-      if(clock>=b.strafeUntil){ if(Math.random()<.75)b.strafe*=-1; b.strafeUntil=clock+rand(900,1500); }
-      if(clock>=b.aimNoiseAt){ b.aimNoise=rand(-.095,.095); b.aimNoiseAt=clock+rand(450,750); }
-      const dx=target.x-b.x,dy=target.y-b.y,d=Math.hypot(dx,dy)||1,fx=dx/d,fy=dy/d,px=-fy*b.strafe,py=fx*b.strafe;
-      const blocked=losBlocked(b.x,b.y,target.x,target.y), forward=blocked?1:(d>430?.72:(d<280?-.9:0));
-      let mx=fx*forward+px*(blocked?.28:.82),my=fy*forward+py*(blocked?.28:.82),m=Math.hypot(mx,my)||1; b.moveX=mx/m;b.moveY=my/m;
+    if(clock>=(b.tntThinkAt||0)){
+      b.tntThinkAt=clock+CPU_AI_TNT_RETHINK_MS;b.tntPlan=cpuAiTntPlan(b,foes,allies,shotProfile,clock);
     }
-    const desired=Math.atan2(target.y-b.y,target.x-b.x)+(b.aimNoise||0), turn=Math.atan2(Math.sin(desired-b.angle),Math.cos(desired-b.angle));
-    b.angle+=clamp(turn,-.07*dt,.07*dt);
-    const spd=2.75*dt,nx=b.x+b.moveX*spd,ny=b.y+b.moveY*spd;
+    if(clock>=b.thinkAt){
+      if(cpuAiObserveMovement(b,clock))b.aiTacticUntil=clock;
+      b.thinkAt=clock+150;
+      if(clock>=b.aimNoiseAt){b.aimNoise=cpuAiRange(b,-profile.aimNoise,profile.aimNoise);b.aimNoiseAt=clock+cpuAiRange(b,450,750);}
+      const move=cpuAiPickMove(b,target,allies,clock,profile,b.tntPlan);b.moveX=move.x;b.moveY=move.y;
+    }
+    const lead=cpuAiLeadPoint(b,target,'ar',profile.leadFactor,profile.maxLeadMs),liveTnt=activeArenaTnt(),
+      plannedTnt=b.tntPlan&&b.tntPlan.targetId?liveTnt.find(t=>String(t.id)===String(b.tntPlan.targetId)):null;
+    let aimX=lead.x,aimY=lead.y,aimTntId='';
+    if(plannedTnt&&!cpuAiLosBlocked(b.x,b.y,b.tntPlan.aimX,b.tntPlan.aimY,plannedTnt.id)){
+      aimX=b.tntPlan.aimX;aimY=b.tntPlan.aimY;aimTntId=String(plannedTnt.id);
+    }
+    const desired=Math.atan2(aimY-b.y,aimX-b.x)+(b.aimNoise||0),turn=cpuAiAngleDelta(desired,b.angle);
+    b.angle+=clamp(turn,-profile.turnRate*dt,profile.turnRate*dt);
+    const tacticSpeed=b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=profile.moveSpeed*tacticSpeed*dt,
+      nx=b.x+b.moveX*spd,ny=b.y+b.moveY*spd;
     if(!pointInRects(nx,b.y))b.x=nx; if(!pointInRects(b.x,ny))b.y=ny;
-    b.x=clamp(b.x,40,WORLD.w-40);b.y=clamp(b.y,40,WORLD.h-40);collideRects(b);b.tx=b.x;b.ty=b.y;
-    if(clock<b.reactionAt||b.reloadEnd||losBlocked(b.x,b.y,target.x,target.y)) continue;
-    const dx=target.x-b.x,dy=target.y-b.y,d=Math.hypot(dx,dy)||1,targetA=Math.atan2(dy,dx),aimErr=Math.abs(Math.atan2(Math.sin(targetA-b.angle),Math.cos(targetA-b.angle)));
-    if(d>850||aimErr>.13) continue;
+    clampActorToArena(b);collideRects(b);clampActorToArena(b);
+    if(typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena()&&typeof arenaPortalStep==='function')arenaPortalStep(b,clock);
+    b.tx=b.x;b.ty=b.y;
+    if(clock<b.reactionAt||b.reloadEnd)continue;
+    if(aimTntId){
+      const fresh=cpuAiTntPlan(b,foes,allies,shotProfile,clock),freshTnt=liveTnt.find(t=>String(t.id)===String(fresh.targetId));
+      b.tntPlan=fresh;b.tntThinkAt=clock+CPU_AI_TNT_RETHINK_MS;
+      if(freshTnt){aimTntId=String(freshTnt.id);aimX=fresh.aimX;aimY=fresh.aimY;}
+      else{aimTntId='';aimX=lead.x;aimY=lead.y;}
+    }
+    const blocked=aimTntId?cpuAiLosBlocked(b.x,b.y,aimX,aimY,aimTntId):(!lead.visible||cpuAiLosBlocked(b.x,b.y,target.x,target.y));
+    if(blocked)continue;
+    const dx=aimX-b.x,dy=aimY-b.y,d=Math.hypot(dx,dy)||1,targetA=Math.atan2(dy,dx),aimErr=Math.abs(cpuAiAngleDelta(targetA,b.angle));
+    if(d>profile.maxRange||aimErr>profile.fireAimError)continue;
     if(b.mag<=0){ b.reloadEnd=clock+w.reload; continue; }
     const interval=w.fireRate*1.55; if(clock-b.lastShot<interval) continue;
     b.lastShot=b.lastShot>0&&clock-b.lastShot<interval*4?b.lastShot+interval:clock;b.mag--;b.flash=clock+55;
-    partyCpuSpawnBotShot(b,target); if(b.mag<=0)b.reloadEnd=clock+w.reload;
+    partyCpuSpawnBotShot(b,aimTntId?{id:aimTntId,kind:'tnt'}:target);if(b.mag<=0)b.reloadEnd=clock+w.reload;
   }
 }
 function partyCpuTakeLocalDamage(dmg){
@@ -651,7 +786,11 @@ function partyCpuHostTryParry(target,shot){
   else { target.parryUntil=0; target.parryUsedSeq=target.parrySeq; }
   const source=partyCpuMatch.bots.find(b=>b.id===String(shot.ownerId||'')&&b.team==='B'&&b.hp>0);
   const reflected=source?Math.min(source.hp,120):0;
-  if(source){ source.hp=Math.max(0,source.hp-120); partyCpuMatch.snapshotAt=0; if(local) addDamageNumber(source,reflected,true); }
+  if(source){
+    source.hp=Math.max(0,source.hp-120);source.lastAttackerId=String(target.id||'');source.underFireUntil=partyCpuAiClock()+900;
+    partyCpuRecordThreat(target.id,source.team,reflected,partyCpuAiClock());partyCpuMatch.snapshotAt=0;
+    if(local) addDamageNumber(source,reflected,true);
+  }
   if(!local&&!isLocalCpu2v2()){
     const packet={to:target.id,matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,round:partyCpuMatch.round,
       id:String(shot.id)+':parry',shotId:String(shot.id),dmg:0,hp:target.hp,parried:true,
@@ -664,6 +803,7 @@ function partyCpuHostDamageHuman(target,shot,dmg){
   if(!cpuTeamIsAuthority()||!target||target.team!=='A'||target.hp<=0||partyCpuMatch.phase!=='fight')return false;
   const hit=clamp(+dmg||0,0,PARTY_CPU_HP);if(!hit)return false;
   if(partyCpuHostTryParry(target,shot))return true;
+  partyCpuRecordThreat(shot.ownerId,target.team,hit,partyCpuAiClock());
   if(target.id===cpuTeamLocalId())partyCpuTakeLocalDamage(hit);
   else {
     target.hp=Math.max(0,target.hp-hit);
@@ -696,19 +836,27 @@ function partyCpuStepShots(dtms){
     const mx=b.vx*dt,my=b.vy*dt,steps=Math.max(1,Math.ceil(Math.hypot(mx,my)/7));
     for(let s=0;s<steps&&!dead;s++){
       b.x+=mx/steps;b.y+=my/steps;b.dist+=Math.hypot(mx,my)/steps;
-      if(projectileOutsideArena(b,3)||pointInRects(b.x,b.y)){ dead=true;break; }
+      if(projectileOutsideArena(b,3)){dead=true;break;}
+      const fall=b.dist<=b.rng?1:Math.max(b.fall,1-(1-b.fall)*Math.min(1,(b.dist-b.rng)/b.rng));
+      if(cpuTeamIsAuthority()&&typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena()&&
+         activeArenaMapId()==='construction'&&arenaTryTriggerTntAt(b.x,b.y,'cpu',3,b.dmg*fall,b.ownerId)){
+        dead=true;break;
+      }
+      if(pointInRects(b.x,b.y)){dead=true;break;}
       if(cpuTeamIsAuthority()){
         if(b.team==='B'){
           const target=partyCpuMatch.humans[b.targetId];
           if(target&&target.hp>0&&dist2(b.x,b.y,target.x,target.y)<(target.r+4)*(target.r+4)){
-            const fall=b.dist<=b.rng?1:Math.max(b.fall,1-(1-b.fall)*Math.min(1,(b.dist-b.rng)/b.rng));
             partyCpuHostDamageHuman(target,b,b.dmg*fall);dead=true;
           }
         }
         if(!dead)for(const target of partyCpuMatch.bots){
           if(target.team===b.team||target.hp<=0||target.id===b.ownerId||target.id!==b.targetId) continue;
           if(dist2(b.x,b.y,target.x,target.y)<(target.r+4)*(target.r+4)){
-            target.hp=Math.max(0,target.hp-b.dmg);dead=true;partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();break;
+            const dealt=Math.min(target.hp,b.dmg);target.hp=Math.max(0,target.hp-b.dmg);
+            partyCpuRecordThreat(b.ownerId,target.team,dealt,partyCpuAiClock());
+            target.lastAttackerId=b.ownerId;target.underFireUntil=partyCpuAiClock()+900;
+            dead=true;partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();break;
           }
         }
       }
@@ -718,6 +866,7 @@ function partyCpuStepShots(dtms){
 }
 function partyCpuFixedStep(dtms,clock){
   if(!isCpuTeamArena()) return;
+  if(Number.isFinite(+clock))partyCpuMatch.simClock=+clock;
   partyCpuSyncLocalActor();
   if(partyCpuMatch.phase==='fight'){ partyCpuHostStep(dtms,clock); partyCpuStepShots(dtms); }
 }
@@ -737,7 +886,10 @@ function partyCpuWallTick(clock){
   }
   if(partyCpuIsHost()&&partyCpuMatch.phase==='round_end'&&partyCpuMatch.nextRoundAt&&clock>=partyCpuMatch.nextRoundAt){ partyCpuMatch.nextRoundAt=0;partyCpuHostStartRound(); }
   const elapsed=partyCpuMatch.simAt?clamp(clock-partyCpuMatch.simAt,0,250):16.667; partyCpuMatch.simAt=clock;partyCpuMatch.simAcc+=elapsed;
-  let steps=0; while(partyCpuMatch.simAcc>=PARTY_CPU_STEP&&steps<8){ partyCpuFixedStep(PARTY_CPU_STEP,clock);partyCpuMatch.simAcc-=PARTY_CPU_STEP;steps++; }
+  let steps=0; while(partyCpuMatch.simAcc>=PARTY_CPU_STEP&&steps<8){
+    const stepClock=(partyCpuMatch.simClock||clock-elapsed)+PARTY_CPU_STEP;
+    partyCpuFixedStep(PARTY_CPU_STEP,stepClock);partyCpuMatch.simAcc-=PARTY_CPU_STEP;steps++;
+  }
   if(steps===8&&partyCpuMatch.simAcc>=PARTY_CPU_STEP)partyCpuMatch.simAcc=0;
   const alpha=1-Math.pow(.78,elapsed/16.667);
   for(const h of Object.values(partyCpuMatch.humans)) if(!party.self||h.id!==party.self.id){ h.x+=(h.tx-h.x)*alpha;h.y+=(h.ty-h.y)*alpha; }
@@ -805,20 +957,24 @@ function partyCpuHitBot(target,dmg,kind){
     id:localId+':'+partyCpuMatch.round+':'+(++partyCpuMatch.hitSeq),targetId:target.id,dmg:clamp(+dmg||0,0,PARTY_CPU_HP),kind:String(kind||'shot').slice(0,16)};
   if(!p.dmg)return false;
   addDamageNumber(target,Math.min(target.hp,p.dmg),p.kind==='crit');
-  if(isLocalCpu2v2())cpuTeamApplyBotHit(target,p.dmg);
+  if(isLocalCpu2v2())cpuTeamApplyBotHit(target,p.dmg,localId);
   else if(partyCpuIsHost())partyCpuHostApplyHit(p);else partySend('cpu_hit',p);return true;
 }
-function cpuTeamApplyBotHit(target,dmg){
+function cpuTeamApplyBotHit(target,dmg,attackerId=cpuTeamLocalId()){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight'||!target||target.team!=='B'||target.hp<=0)return false;
   const hit=clamp(+dmg||0,0,PARTY_CPU_HP);if(!hit)return false;
-  target.hp=Math.max(0,target.hp-hit);partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();return true;
+  target.hp=Math.max(0,target.hp-hit);target.lastAttackerId=String(attackerId||'');target.underFireUntil=partyCpuAiClock()+900;
+  partyCpuRecordThreat(attackerId,target.team,hit,partyCpuAiClock());
+  partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();return true;
 }
 function partyCpuHostApplyHit(p){
   if(!partyCpuIsHost()||!partyCpuEnvelope(p,false)||p.round!==partyCpuMatch.round||partyCpuMatch.phase!=='fight'||!partyCpuMatch.humanIds.includes(String(p.from||'')))return false;
   const id=String(p.id||'').slice(0,120);if(!id||partyCpuMatch.seenHits.has(id))return false;
   const target=partyCpuMatch.bots.find(b=>b.id===String(p.targetId||'')&&b.team==='B'&&b.hp>0);const dmg=clamp(+p.dmg||0,0,PARTY_CPU_HP);if(!target||!dmg)return false;
   partyCpuMatch.seenHits.add(id);if(partyCpuMatch.seenHits.size>500)partyCpuMatch.seenHits=new Set([...partyCpuMatch.seenHits].slice(-250));
-  target.hp=Math.max(0,target.hp-dmg);partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();return true;
+  target.hp=Math.max(0,target.hp-dmg);target.lastAttackerId=String(p.from||'');target.underFireUntil=partyCpuAiClock()+900;
+  partyCpuRecordThreat(p.from,target.team,dmg,partyCpuAiClock());
+  partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();return true;
 }
 function partyCpuHostEvaluate(){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight'||partyCpuMatch.roundResolved)return;

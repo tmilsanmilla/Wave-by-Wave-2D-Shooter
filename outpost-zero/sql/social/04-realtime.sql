@@ -1,5 +1,5 @@
--- OUTPOST ZERO / SOCIAL / 06: REALTIME REFRESH HINTS
--- Requires 01 through 05. Safe to run again.
+-- OUTPOST ZERO / SOCIAL / 04: REALTIME REFRESH HINTS
+-- Requires 01 through 03. Safe to run again.
 
 -- Realtime is used only as a refresh hint; RLS still controls which rows arrive.
 do $$

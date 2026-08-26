@@ -3,11 +3,27 @@
 const keys={};
 const mouse={x:W/2,y:H/2,down:false};
 let menuRects={}, dragSlider=null, menuOpen=false, gearRect={x:-99,y:-99,w:0,h:0}, powerBtnRect={x:-99,y:-99,w:0,h:0};
+// Cadence carry is valid only after a shot has fired during this uninterrupted
+// physical press. Resetting it on release prevents a second quick press from
+// replaying the automatic-fire intervals that elapsed while the button was up.
+let mouseFireCadence=false;
+function resetFireCadence(){ mouseFireCadence=false; touchFireCadence=false; }
 
 /* ---------------- input ---------------- */
 function typingInField(e){
   const t=e.target;
   return t && (t.tagName==='INPUT' || t.tagName==='TEXTAREA' || t.isContentEditable);
+}
+function activateContextAction(){
+  if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
+  // Arena does not simulate the two vaulted ranged specials, but melee
+  // abilities use the normal Arena hit path and are valid once play starts.
+  if(practiceMode==='arena'&&(player.cur==='warpwave'||player.cur==='timeturner')){ sfx('dry'); return; }
+  if(utilityOut){ utilQuick(); return; }
+  if(player.cur==='warpwave'){ warpStun(); return; }
+  if(player.cur==='timeturner'){ timeDragField(); return; }
+  if(WEAPONS[player.cur].melee){ quickMelee(); return; }
+  aiming=!aiming; sfx('aim');
 }
 addEventListener('keydown', e=>{
   if(typingInField(e)) return;          // don't eat keys while typing in the auth form
@@ -20,7 +36,7 @@ addEventListener('keydown', e=>{
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
   if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
   if(layoutMode && e.key==='Escape'){ layoutMode=false; layoutDrag=null; layoutPick=null; sfx('swap'); return; }
-  if(adminPanelOpen||updatesOpen||adminsOpen||msgsOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||readerOpen){ if(e.key==='Escape'){ if(wheelSpinning) return; if(readerOpen){ readerOpen=false; sfx('swap'); return; } wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; adminPanelOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
+  if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||readerOpen){ if(e.key==='Escape'){ if(wheelSpinning) return; if(readerOpen){ readerOpen=false; sfx('swap'); return; } wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
   if(['w','a','s','d',' '].includes(k)) e.preventDefault();
   keys[k]=true;
@@ -55,13 +71,7 @@ addEventListener('keydown', e=>{
 
   if(k==='e'){
     if(e.repeat) return;                                  // one physical press toggles aim once
-    if(practiceMode==='arena'&&!arenaCanAct()) sfx('dry');
-    else if(practiceMode==='arena'&&(WEAPONS[player.cur].melee||player.cur==='warpwave'||player.cur==='timeturner')) sfx('dry');
-    else if(utilityOut) utilQuick();                       // holding the medkit: E is the quick med
-    else if(player.cur==='warpwave') warpStun();
-    else if(player.cur==='timeturner') timeDragField();
-    else if(WEAPONS[player.cur].melee) sfx('dry');         // melee specials are F, or RMB with melee held
-    else { aiming=!aiming; sfx('aim'); }
+    activateContextAction();                              // melee ability, ranged aim, or visible utility
   }
   if(k==='r') startReload();
   if(k===' ') doDash();
@@ -90,6 +100,7 @@ cv.addEventListener('mousedown', e=>{
   initAudio();
   if(e.button===0){
     mouse.down=true;
+    mouseFireCadence=false;
     if(chestRewardOpen){ chestRewardClick(); return; }
     if(respawnPromptT){ respawnPromptClick(); return; }        // modal
     if(powerMenuOpen){ powerMenuClick(); return; }
@@ -106,7 +117,9 @@ cv.addEventListener('mousedown', e=>{
       else utilQuick();
       return;
     }
-    if(state==='play' && (!WEAPONS[player.cur].auto || WEAPONS[player.cur].melee)) tryFire();
+    // Every physical press gets one immediate attempt. Automatic weapons then
+    // continue from that shot only while this same press remains held.
+    if(state==='play') mouseFireCadence=!!tryFire(false)&&player.reloadEnd<=now;
   } else if(e.button===2 && state==='play'){
     if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); }
     else if(utilityOut){                                 // the visible utility owns RMB, never the hidden melee
@@ -118,7 +131,7 @@ cv.addEventListener('mousedown', e=>{
 });
 addEventListener('mouseup', e=>{
   layoutMouseUp();
-  if(e.button===0){ mouse.down=false; dragSlider=null; if(utilityOut) utilRelease(); }
+  if(e.button===0){ mouse.down=false; mouseFireCadence=false; dragSlider=null; if(utilityOut) utilRelease(); }
   if(e.button===2 && rmbAim){ rmbAim=false; aiming=false; }
 });
 cv.addEventListener('contextmenu', e=> e.preventDefault());
@@ -128,7 +141,7 @@ const touchUI = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
 const STICK_R=60;
 const sticks={ move:{id:null,cx:0,cy:0,dx:0,dy:0}, aim:{id:null,cx:0,cy:0,dx:0,dy:0} };
 let touchButtons=[], pressedBtn=null, menuTouchId=null;
-let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null, touchUtilityUsed=false;
+let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null, touchUtilityUsed=false, touchFireCadence=false;
 function resetHeldGameplayInput(){
   // A click/touch/Enter used to launch a mode must never become gameplay input.
   // Fullscreen changes can swallow the matching release event, so clear every
@@ -136,6 +149,7 @@ function resetHeldGameplayInput(){
   for(const k in keys) keys[k]=false;
   mouse.down=false; dragSlider=null;
   pressedBtn=null; menuTouchId=null; aimStickId=null; touchUtilityUsed=false; tapShootUntil=0;
+  resetFireCadence();
   for(const stick of [sticks.move,sticks.aim]){ stick.id=null; stick.dx=0; stick.dy=0; }
   aiming=false; rmbAim=false;
   fireSuppressT=Math.max(fireSuppressT,now+250);
@@ -153,7 +167,7 @@ function buttonAt(x,y){
 function doButton(k){
   if(k==='rld') startReload();
   else if(k==='swp') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
-  else if(k==='e'){ if(practiceMode==='arena'&&!arenaCanAct()) sfx('dry'); else if(practiceMode==='arena'&&(WEAPONS[player.cur].melee||player.cur==='warpwave'||player.cur==='timeturner')) sfx('dry'); else if(utilityOut) utilQuick(); else if(player.cur==='warpwave') warpStun(); else if(player.cur==='timeturner') timeDragField(); else if(WEAPONS[player.cur].melee) sfx('dry'); else { aiming=!aiming; sfx('aim'); } }
+  else if(k==='e') activateContextAction();
   else if(k==='g') utilQuick();
   else if(k==='dsh') doDash();
   else if(k==='f') quickMelee();
@@ -190,6 +204,11 @@ cv.addEventListener('touchstart', e=>{
     tapShootUntil=now+220;              // brief fire window per tap
     aimStickId=t.identifier;            // drag to keep firing along the finger
     touchUtilityUsed=false;
+    touchFireCadence=false;
+    if(utilityOut){
+      if(loadout.utility==='medkit') medChannelStart(); else utilQuick();
+      touchUtilityUsed=true;
+    } else touchFireCadence=!!tryFire(false)&&player.reloadEnd<=now;
   }
 },{passive:false});
 cv.addEventListener('touchmove', e=>{
@@ -220,7 +239,7 @@ function touchEnd(e){
   e.preventDefault();
   for(const t of e.changedTouches){
     if(t.identifier===menuTouchId){ menuTouchId=null; mouse.down=false; dragSlider=null; }
-    if(t.identifier===aimStickId){ aimStickId=null; touchUtilityUsed=false; }
+    if(t.identifier===aimStickId){ aimStickId=null; touchUtilityUsed=false; touchFireCadence=false; tapShootUntil=0; }
     if(sticks.move.id===t.identifier){ sticks.move.id=null; sticks.move.dx=0; sticks.move.dy=0; }
   }
   pressedBtn=null;
@@ -249,6 +268,7 @@ let utilLockMsgT=0;
 // keeping one list for both drawing and clicking is what stops CLOSE landing on a hidden screen.
 const MODALS=[
   {k:'adminPanel', is:()=>adminPanelOpen,  draw:()=>drawAdminPanel(),  click:()=>adminPanelClick()},
+  {k:'aiLearning', is:()=>aiLearningOpen, draw:()=>drawAiLearning(), click:()=>aiLearningClick()},
   {k:'updates',    is:()=>updatesOpen,     draw:()=>drawUpdates(),     click:()=>updatesClick()},
   {k:'admins',     is:()=>adminsOpen,      draw:()=>drawAdminsMenu(),  click:()=>adminsClick()},
   {k:'msgs',       is:()=>msgsOpen,        draw:()=>{ if(composePickOpen) drawComposePick(); else drawMsgs(); },
@@ -270,8 +290,20 @@ function topModal(){
 function clickSelect(){
   const inR=r=>r&&mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
   const openBoardPlayer=r=>{
-    scoresOpen=true; peStep='panel'; peMode='edit'; peData=null; peEdit=null;
-    peTarget=r.name; lookupPlayer(r.userId); sfx('swap');
+    const mine=authUser&&String(r.userId||'')===String(authUser.id||'');
+    if(r.needsUsername&&mine){
+      scoresOpen=false; selPage='social';
+      if(socialProfile) socialPromptEditProfile();
+      else void Promise.resolve(fetchSocial(true)).then(()=>{ if(authUser&&socialProfile) socialPromptEditProfile(); });
+      sfx('swap'); return;
+    }
+    // This row already came from the narrow public leaderboard RPC, so it is
+    // the authoritative public snapshot. Reusing it avoids a fragile second
+    // request that used to turn a valid click into "player not found".
+    scoresOpen=true; peStep='panel'; peMode='edit'; peTarget=r.name;
+    peData=normalizedPlayerData({high_score:r.score,public_metric:r.metric},true);
+    peEdit={score:peData.score,gems:0,coins:0,owned:{},pow:{}};
+    peBusy=false; sfx('swap');
   };
   const top=topModal();
   if(top){ top.click(); return; }                    // whatever is on top owns the click
