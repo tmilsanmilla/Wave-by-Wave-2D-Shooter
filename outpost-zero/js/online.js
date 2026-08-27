@@ -955,8 +955,7 @@ function arenaApplyRoundStart(p){
   if(typeof arenaResetMapRuntime==='function') arenaResetMapRuntime();
   const left=authUser.id===arena.hostId, mine=typeof duelArenaSpawn==='function'?duelArenaSpawn(left?0:1):{x:WORLD.w/2+(left?-500:500),y:WORLD.h/2,angle:left?0:Math.PI};
   const theirs=typeof duelArenaSpawn==='function'?duelArenaSpawn(left?1:0):{x:WORLD.w/2+(left?500:-500),y:WORLD.h/2,angle:left?Math.PI:0};
-  const viewBounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:0,top:0,right:WORLD.w,bottom:WORLD.h};
-  player.x=mine.x; player.y=mine.y; cam.x=(viewBounds.left+viewBounds.right)/2; cam.y=(viewBounds.top+viewBounds.bottom)/2;
+  player.x=mine.x; player.y=mine.y; cam.x=player.x;cam.y=player.y;
   if(typeof duelArenaFitZoom==='function') zoom=duelArenaFitZoom();
   arena.opponent.x=theirs.x; arena.opponent.y=theirs.y; arena.opponent.tx=theirs.x; arena.opponent.ty=theirs.y; arena.opponent.angle=theirs.angle;
   arena.opponent.hp=ARENA_HP; arena.opponent.cur=arena.opponent.loadout.primary||'ar';

@@ -495,8 +495,8 @@ function update(dtms){
   if(touchUI){
     if(aimStickId!==null) tapShootUntil=now+120;    // finger still down -> keep firing
     if(now<tapShootUntil){
-      mouse.x=(tapAimX-cam.x)*zoom+W/2;
-      mouse.y=(tapAimY-cam.y)*zoom+H/2;
+      const aimScreen=worldToScreen(tapAimX,tapAimY);
+      mouse.x=aimScreen.x;mouse.y=aimScreen.y;
       if(utilityOut){
         if(!touchUtilityUsed){ if(loadout.utility==='medkit') medChannelStart(); else utilQuick(); touchUtilityUsed=true; }
       }
@@ -722,29 +722,18 @@ function update(dtms){
   if(player.hurtCd>0) player.hurtCd-=dtms;
   if(player.hurtFlash>0) player.hurtFlash-=dtms*0.002;
 
-  // A duel is a fixed, centered board. Fit the entire map when un-aimed and
-  // retain weapon aiming as a centered zoom (capped so both spawn lanes remain
-  // navigable). Endless and team modes keep their player/crosshair camera.
+  // Zoom changes around the local player in every mode. Keeping the camera
+  // target exactly on the player prevents scope/aim from pushing them toward
+  // a screen edge and deliberately allows the view beyond a map boundary.
   if(isArenaMapBattlefield()){
-    const viewBounds=activeArenaBounds(),fit=duelArenaFitZoom();
+    const fit=duelArenaFitZoom();
     const aimZoom=aiming?Math.min(w.zoom||1,1.6):1;
     zoom += (fit*aimZoom-zoom)*Math.min(1,0.11*dt);
-    cam.x=(viewBounds.left+viewBounds.right)/2;
-    cam.y=(viewBounds.top+viewBounds.bottom)/2;
   } else {
-    const mw = screenToWorld(mouse.x, mouse.y);
-    const bias = aiming ? (w.scoped?0.62:0.35) : 0.12;
     const tzoom = aiming ? w.zoom : 1;
     zoom += (tzoom-zoom)*Math.min(1,0.11*dt);
-    const tx = player.x + (mw.x-player.x)*bias;
-    const ty = player.y + (mw.y-player.y)*bias;
-    cam.x += (tx-cam.x)*Math.min(1,0.09*dt);
-    cam.y += (ty-cam.y)*Math.min(1,0.09*dt);
-    const hw=W/2/zoom, hh=H/2/zoom;
-    // Preserve the original camera limits in Endless and Party play.
-    cam.x=WORLD.w<hw*2?WORLD.w/2:clamp(cam.x,hw,WORLD.w-hw);
-    cam.y=WORLD.h<hh*2?WORLD.h/2:clamp(cam.y,hh,WORLD.h-hh);
   }
+  centerCameraOnPlayer();
 
   shakeMag*=Math.pow(0.88,dt);
   shakeX=rand(-1,1)*shakeMag/zoom; shakeY=rand(-1,1)*shakeMag/zoom;

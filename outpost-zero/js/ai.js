@@ -1095,9 +1095,8 @@ function arenaBotStartRound(){
   if(typeof arenaResetMapRuntime==='function') arenaResetMapRuntime();
   const tuning=arena.botTuning||arenaBotTuning(arena.botDifficulty,arena.botModelId), b=arena.opponent,bw=WEAPONS[BOT_AI.weapon],
     left=typeof duelArenaSpawn==='function'?duelArenaSpawn(0):{x:880,y:900,angle:0},
-    right=typeof duelArenaSpawn==='function'?duelArenaSpawn(1):{x:1520,y:900,angle:Math.PI},
-    bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:600,top:450,right:1800,bottom:1350};
-  player.x=left.x; player.y=left.y; cam.x=(bounds.left+bounds.right)/2; cam.y=(bounds.top+bounds.bottom)/2;
+    right=typeof duelArenaSpawn==='function'?duelArenaSpawn(1):{x:1520,y:900,angle:Math.PI};
+  player.x=left.x; player.y=left.y; cam.x=player.x;cam.y=player.y;
   zoom=typeof duelArenaFitZoom==='function'?duelArenaFitZoom():1;
   const seedIdentity=arena.botAdminTest?(arena.botAdminTestSeed||'outpost-zero-ai-difficulty-comparison-v2'):
     (arena.mapVoteId||arena.matchEpoch),

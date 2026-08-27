@@ -4,6 +4,13 @@
 function screenToWorld(sx,sy){
   return { x: cam.x + (sx - W/2)/zoom, y: cam.y + (sy - H/2)/zoom };
 }
+function worldToScreen(wx,wy){
+  return { x: (wx-cam.x)*zoom+W/2, y: (wy-cam.y)*zoom+H/2 };
+}
+function centerCameraOnPlayer(){
+  if(!player||!Number.isFinite(+player.x)||!Number.isFinite(+player.y))return false;
+  cam.x=+player.x;cam.y=+player.y;return true;
+}
 function swayScreen(){
   const w = WEAPONS[player.cur];
   const s = aiming ? (w.scoped ? 1 : 0.35) : 0;

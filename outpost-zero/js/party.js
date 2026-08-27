@@ -962,7 +962,7 @@ function cpuTeamBeginRound(options){
   if(count===1)partyCpuMatch.bots.push(partyCpuMakeBot('cpu-ally','A',allySpawn.x,allySpawn.y,arena.roundStartAt));
   partyCpuMatch.bots.push(partyCpuMakeBot('cpu-red-1','B',redOne.x,redOne.y,arena.roundStartAt));
   partyCpuMatch.bots.push(partyCpuMakeBot('cpu-red-2','B',redTwo.x,redTwo.y,arena.roundStartAt));
-  if(mapped){const bounds=activeArenaBounds();cam.x=(bounds.left+bounds.right)/2;cam.y=(bounds.top+bounds.bottom)/2;zoom=duelArenaFitZoom();}
+  if(mapped){cam.x=player.x;cam.y=player.y;zoom=duelArenaFitZoom();}
   state='play';menuOpen=false;aiming=false;rmbAim=false;pendingGameMode=options.pendingMode||pendingGameMode;
   waveMsg='ROUND '+round+' — GET READY';waveMsgT=now+2800;sfx('wave');return true;
 }

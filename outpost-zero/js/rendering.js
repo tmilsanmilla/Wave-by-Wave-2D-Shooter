@@ -75,18 +75,15 @@ function drawWorld(){
   ctx.fillRect(0,0,W,H);
 
   const duelView=isArenaMapBattlefield(),playBounds=activeArenaBounds(),mapId=activeArenaMapId();
-  // Countdown simulation is intentionally frozen, so rendering also pins the
-  // initial frame to the arena center instead of briefly showing a spawn-side
-  // camera until FIGHT.
-  if(duelView){
-    cam.x=(playBounds.left+playBounds.right)/2; cam.y=(playBounds.top+playBounds.bottom)/2;
-    if(arena.phase!=='fight') zoom=duelArenaFitZoom();
-  }
-  const viewShakeX=duelView?0:shakeX, viewShakeY=duelView?0:shakeY;
+  // Rendering enforces the same invariant even while countdowns, menus, or
+  // other gameplay modals freeze simulation. Scope zoom and map edges never
+  // move the local player away from the exact screen center.
+  centerCameraOnPlayer();
+  if(duelView&&arena.phase!=='fight') zoom=duelArenaFitZoom();
   ctx.save();
   ctx.translate(W/2,H/2);
   ctx.scale(zoom,zoom);
-  ctx.translate(-cam.x+viewShakeX,-cam.y+viewShakeY);
+  ctx.translate(-cam.x,-cam.y);
   if(duelView){
     ctx.beginPath();
     ctx.rect(playBounds.left,playBounds.top,playBounds.right-playBounds.left,playBounds.bottom-playBounds.top);
@@ -913,10 +910,11 @@ function drawHUD(){
   ctx.fillRect(mmX+(player.x-mapLeft)*sx-2,mmY+(player.y-mapTop)*sy-2,4,4);
   ctx.strokeStyle='rgba(232,182,88,0.5)';
   const rawVw=W/zoom*sx, rawVh=H/zoom*sy;
-  const vw=miniDuel?Math.min(mmW,rawVw):rawVw, vh=miniDuel?Math.min(mmH,rawVh):rawVh;
-  const viewX=miniDuel?clamp(mmX+(cam.x-mapLeft)*sx-vw/2,mmX,mmX+mmW-vw):mmX+cam.x*sx-vw/2;
-  const viewY=miniDuel?clamp(mmY+(cam.y-mapTop)*sy-vh/2,mmY,mmY+mmH-vh):mmY+cam.y*sy-vh/2;
-  ctx.strokeRect(viewX,viewY,vw,vh);
+  const vw=Math.min(mmW,rawVw), vh=Math.min(mmH,rawVh);
+  const viewX=clamp(mmX+(cam.x-mapLeft)*sx-vw/2,mmX,mmX+mmW-vw);
+  const viewY=clamp(mmY+(cam.y-mapTop)*sy-vh/2,mmY,mmY+mmH-vh);
+  ctx.save();ctx.beginPath();ctx.rect(mmX,mmY,mmW,mmH);ctx.clip();
+  ctx.strokeRect(viewX,viewY,vw,vh);ctx.restore();
 
   // boss bar
   const bossE = enemies.find(e=>ETYPES[e.type].boss);
