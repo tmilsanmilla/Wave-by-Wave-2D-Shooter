@@ -673,16 +673,17 @@ function startBotArena(options){
 function arenaBotStartRound(){
   if(!isBotArena()||!arena.opponent) return;
   resetHeldGameplayInput();
+  resetWeaponGimmickState();
   clearCameraShake();
   arena.round++; arena.roundResolved=false; arena.phase='countdown'; arena.nextRoundAt=0;
   arena.roundStartAt=now+3000; arena.roundEndAt=arena.roundStartAt+ARENA_ROUND_MS;
   perks.maxhp=ARENA_HP; player.hp=ARENA_HP; player.hurtCd=0; player.hurtFlash=0;
   bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; damageNumbers=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[];
   abilityCD={}; quickReadyT=0; sawFuel=100; sawLock=false; daggersOut=null; comboStep=0; comboNextT=0;
-  fanShots=0; fanNextT=0; fanBurstUntil=0; parryUntil=0; parrySeq=0; teraHitCharge=15; fistFlurryUntil=0; sawChargeUntil=0;
+  parryUntil=0; parrySeq=0; teraHitCharge=15; fistFlurryUntil=0; sawChargeUntil=0;
   player.cur=loadout.primary; player.reloadEnd=0; player.equipEnd=now+600; player.bloom=0; player.lastShot=0;
   for(const k of [loadout.primary,loadout.secondary,loadout.melee]) if(k&&WEAPONS[k]){
-    player.mags[k]=magSize(k); player.reserve[k]=WEAPONS[k].melee?Infinity:magSize(k)*5;
+    player.mags[k]=magSize(k); player.reserve[k]=(WEAPONS[k].melee||WEAPONS[k].energy||WEAPONS[k].infinite)?Infinity:magSize(k)*5;
   }
   if(typeof arenaResetMapRuntime==='function') arenaResetMapRuntime();
   const tuning=arena.botTuning||arenaBotTuning(arena.botDifficulty,arena.botModelId), b=arena.opponent,bw=WEAPONS[BOT_AI.weapon],

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OUTPOST ZERO — Tactical 2D Shooter</title>
-<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260826-practice-weapons">
+<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260827-cpu-flow">
 </head>
 <body>
 <canvas id="c"></canvas>
@@ -51,13 +51,67 @@
 <div id="usernameclaimwrap" class="ui" role="dialog" aria-modal="true" aria-labelledby="usernameclaimtitle">
   <div id="usernameclaimbox">
     <h2 id="usernameclaimtitle">CHOOSE YOUR USERNAME</h2>
-    <p id="usernameclaimhint">Every signed-in operator needs one unique public username. Your sign-in email is shown only inside this private setup until that username is saved.</p>
+    <p id="usernameclaimhint">Every signed-in operator needs one unique public username. Open Settings to choose it; your sign-in email stays private.</p>
     <input id="usernameclaiminput" type="text" placeholder="operator_7" autocomplete="off"
       minlength="3" maxlength="32" autocapitalize="none" spellcheck="false" aria-label="Choose username">
-    <button id="usernameclaimsave" class="btn" type="button">USE THIS USERNAME</button>
+    <button id="usernameclaimsave" class="btn" type="button">OPEN SETTINGS</button>
     <button id="usernameclaimretry" class="btn" type="button">RETRY</button>
     <button id="usernameclaimsignout" class="btn" type="button">SIGN OUT</button>
     <div id="usernameclaimstatus" aria-live="polite"></div>
+  </div>
+</div>
+<button id="accountmenutrigger" type="button" aria-haspopup="dialog" aria-controls="accountmenuwrap"
+  aria-label="Open account menu"></button>
+<div id="accountmenuwrap" class="ui" role="dialog" aria-modal="true" aria-labelledby="accountmenutitle"
+  aria-describedby="accountmenudetail" aria-hidden="true">
+  <div id="accountmenubox" tabindex="-1">
+    <h2 id="accountmenutitle">YOUR ACCOUNT</h2>
+    <p id="accountmenuidentity"></p>
+    <p id="accountmenuemail"></p>
+    <p id="accountmenudetail">Manage your username and password, or safely sign out of this device.</p>
+    <div id="accountmenuactions">
+      <button id="accountmenusettings" class="btn" type="button">ACCOUNT SETTINGS</button>
+      <button id="accountmenusignout" class="btn danger" type="button">SIGN OUT</button>
+      <button id="accountmenucancel" class="btn" type="button">CANCEL</button>
+    </div>
+    <div id="accountmenuconfirm" hidden>
+      <h3>SIGN OUT?</h3>
+      <p id="accountmenuwarning">You will need to sign in again on this device.</p>
+      <div id="accountmenuconfirmactions">
+        <button id="accountmenusignoutcancel" class="btn" type="button">CANCEL</button>
+        <button id="accountmenusignoutconfirm" class="btn danger" type="button">YES, SIGN OUT</button>
+      </div>
+      <div id="accountmenustatus" role="status" aria-live="polite"></div>
+    </div>
+  </div>
+</div>
+<div id="settingswrap" class="ui" role="dialog" aria-modal="true" aria-labelledby="settingstitle">
+  <div id="settingsbox">
+    <h2 id="settingstitle">ACCOUNT SETTINGS</h2>
+    <p id="settingsaccount"></p>
+    <section class="settings-section" aria-labelledby="settingsusernametitle">
+      <h3 id="settingsusernametitle">PUBLIC USERNAME</h3>
+      <p id="settingsusernamehint">Your username is shown in matches, parties, friends, messages, and leaderboards. After choosing one, you can change it once every 21 days.</p>
+      <label class="sr-only" for="settingsusername">Public username</label>
+      <input id="settingsusername" type="text" placeholder="operator_7" autocomplete="off"
+        minlength="3" maxlength="32" autocapitalize="none" spellcheck="false">
+      <button id="settingsusernamesave" class="btn" type="button">SAVE USERNAME</button>
+      <div id="settingsusernamestatus" class="settings-status" aria-live="polite"></div>
+    </section>
+    <section class="settings-section" aria-labelledby="settingspasswordtitle">
+      <h3 id="settingspasswordtitle">CHANGE PASSWORD</h3>
+      <p>Use at least 6 characters. This changes the password for your current signed-in account.</p>
+      <label class="sr-only" for="settingspass1">New password</label>
+      <input id="settingspass1" type="password" placeholder="new password (min 6)" autocomplete="new-password">
+      <label class="sr-only" for="settingspass2">Confirm new password</label>
+      <input id="settingspass2" type="password" placeholder="confirm new password" autocomplete="new-password">
+      <button id="settingspasswordsave" class="btn" type="button">CHANGE PASSWORD</button>
+      <div id="settingspasswordstatus" class="settings-status" aria-live="polite"></div>
+    </section>
+    <div id="settingsactions">
+      <button id="settingssignout" class="btn" type="button">SIGN OUT</button>
+      <button id="settingsclose" class="btn" type="button">BACK</button>
+    </div>
   </div>
 </div>
 <div id="repwrap" class="ui">
@@ -154,34 +208,34 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./outpost-zero/js/networking.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/core.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/audio.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/weapons.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/economy-state.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/layout.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/progression.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/administration.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/persistence.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/world.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/enemies.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/state.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/party-state.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/social.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/cpu-state.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/upgrades.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/admin-ui.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/abilities.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/input.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/gameplay.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/ai.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/ai-training.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/online.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/party.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/combat.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/rendering.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/ui.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/loop.js?v=20260826-practice-weapons"></script>
-<script src="./outpost-zero/js/bootstrap.js?v=20260826-practice-weapons"></script>
+<script src="./outpost-zero/js/networking.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/core.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/audio.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/weapons.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/economy-state.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/layout.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/progression.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/administration.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/persistence.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/world.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/enemies.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/state.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/party-state.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/social.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/cpu-state.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/upgrades.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/admin-ui.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/abilities.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/input.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/gameplay.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/ai.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/ai-training.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/online.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/party.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/combat.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/rendering.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/ui.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/loop.js?v=20260827-cpu-flow"></script>
+<script src="./outpost-zero/js/bootstrap.js?v=20260827-cpu-flow"></script>
 </body>
 </html>

@@ -57,7 +57,78 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   #usernameclaimwrap.error #usernameclaimretry{display:block!important}
   #usernameclaimwrap.checking #usernameclaiminput,#usernameclaimwrap.checking #usernameclaimsave,
   #usernameclaimwrap.error #usernameclaiminput,#usernameclaimwrap.error #usernameclaimsave{display:none}
+  #usernameclaimwrap.required #usernameclaiminput{display:none}
   #usernameclaimstatus{color:#c4d48d;font-size:11px;min-height:16px;margin-top:5px;line-height:1.45}
+  /* The account control is painted on the canvas. This transparent DOM twin
+     gives keyboard and screen-reader users the same control without stealing
+     pointer/touch hover events from the canvas. */
+  #accountmenutrigger{position:fixed;display:none;z-index:8;box-sizing:border-box;padding:0;border:0;
+    background:transparent;color:transparent;pointer-events:none;border-radius:0}
+  #accountmenutrigger:focus-visible{outline:3px solid #bfe8ff;outline-offset:2px}
+  #accountmenuwrap{inset:0;background:rgba(5,6,4,.82);display:none;align-items:flex-start;justify-content:flex-start;
+    z-index:90;padding:max(64px,calc(54px + env(safe-area-inset-top))) max(10px,env(safe-area-inset-right))
+      max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left));box-sizing:border-box}
+  #accountmenuwrap.confirming{z-index:120;background:rgba(5,6,4,.94);align-items:center;justify-content:center;padding:10px}
+  #accountmenubox{width:min(360px,calc(100vw - 20px));max-height:calc(100dvh - 76px);overflow:auto;
+    box-sizing:border-box;background:#101208;border:1px solid #e8b658;padding:20px;text-align:left;
+    box-shadow:0 12px 42px rgba(0,0,0,.48),0 0 34px rgba(232,182,88,.11)}
+  #accountmenubox:focus{outline:none}
+  #accountmenutitle{color:#e8b658;font-size:20px;margin:0 0 12px;text-align:left}
+  #accountmenuidentity{color:#f0ddb0;font:700 17px ui-monospace,Consolas,monospace;margin:0 0 4px;
+    overflow-wrap:anywhere}
+  #accountmenuemail{color:#aab38a;font-size:10px;line-height:1.45;margin:0 0 14px;overflow-wrap:anywhere}
+  #accountmenudetail{color:#8a9268;font-size:10px;line-height:1.5;margin:0 0 16px}
+  #accountmenuactions{display:grid;gap:9px}
+  #accountmenuactions .btn,#accountmenuconfirmactions .btn{width:100%;min-height:44px;padding:10px 12px}
+  #accountmenuwrap .danger{border-color:#d05548;color:#ffd0ca;background:rgba(208,85,72,.14)}
+  #accountmenuwrap .danger:hover,#accountmenuwrap .danger:focus-visible{background:#d05548;color:#101208}
+  #accountmenuconfirm[hidden],#accountmenuactions[hidden]{display:none!important}
+  #accountmenuconfirm h3{color:#ff8d7f;font-size:20px;margin:0 0 10px;text-align:center}
+  #accountmenuwarning{color:#e8d9a8;font-size:11px;line-height:1.55;margin:0 0 16px;text-align:center}
+  #accountmenuconfirmactions{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+  #accountmenustatus{color:#a7c15e;font-size:10px;line-height:1.45;min-height:15px;margin-top:10px;text-align:center}
+  #accountmenuwrap.busy .btn{opacity:.5;cursor:wait}
+  #settingswrap{inset:0;background:rgba(5,6,4,.96);display:none;align-items:center;justify-content:center;
+    z-index:110;padding:10px;box-sizing:border-box}
+  #settingsbox{background:#101208;border:1px solid #e8b658;padding:clamp(16px,4vw,26px);
+    width:min(620px,96vw);max-height:94vh;overflow:auto;box-sizing:border-box;text-align:center;
+    box-shadow:0 0 46px rgba(232,182,88,.13)}
+  #settingsbox h2{color:#e8b658;font-size:clamp(18px,4vw,22px);margin:0 0 5px}
+  #settingsaccount{color:#aab38a;font-size:10px;margin:0 0 14px;line-height:1.45;overflow-wrap:anywhere}
+  .settings-section{border:1px solid #4a4634;background:rgba(0,0,0,.24);padding:14px;margin:0 0 12px;text-align:left}
+  .settings-section h3{color:#e8d9a8;font-size:13px;margin:0 0 5px}
+  .settings-section p{color:#8a9268;font-size:10px;line-height:1.5;margin:0 0 10px}
+  .settings-section input{width:100%;box-sizing:border-box;background:rgba(0,0,0,.58);border:1px solid #5b5744;
+    color:#f0ddb0;font:700 14px ui-monospace,Consolas,monospace;padding:10px;margin:0 0 8px;
+    user-select:text;-webkit-user-select:text;border-radius:0}
+  .settings-section input:focus{outline:2px solid rgba(232,182,88,.24);outline-offset:1px;border-color:#e8b658}
+  .settings-section input:disabled{opacity:.48;cursor:not-allowed}
+  .settings-section .btn{display:block;width:100%;min-height:38px}
+  .settings-section .btn:disabled{opacity:.46;cursor:not-allowed;background:rgba(255,255,255,.03);color:#77727f;border-color:#555}
+  .settings-status{color:#a7c15e;font-size:10px;min-height:15px;margin-top:7px;line-height:1.45}
+  .settings-status.error{color:#e0a8a0}
+  #settingsactions{display:flex;gap:9px}
+  #settingsactions .btn{flex:1;min-height:40px}
+  #settingssignout{border-color:#d05548;color:#e0a8a0;background:rgba(208,85,72,.12)}
+  #settingssignout:hover{background:#d05548;color:#101208}
+  #settingswrap.required #settingsclose{display:none}
+  @media (max-width:480px),(max-height:600px){
+    #accountmenuwrap{padding:max(58px,calc(50px + env(safe-area-inset-top))) 6px 6px}
+    #accountmenuwrap.confirming{padding:6px}
+    #accountmenubox{width:100%;max-height:calc(100dvh - 64px);padding:15px}
+    #accountmenuwrap.confirming #accountmenubox{max-height:calc(100dvh - 12px)}
+    #accountmenutitle{font-size:17px;margin-bottom:9px}
+    #accountmenuidentity{font-size:15px}
+    #accountmenuconfirmactions{grid-template-columns:1fr}
+    #settingswrap{padding:5px}
+    #settingsbox{width:98vw;max-height:98vh;padding:12px}
+    #settingsbox h2{font-size:17px}
+    #settingsaccount{margin-bottom:8px;font-size:9px}
+    .settings-section{padding:10px;margin-bottom:8px}
+    .settings-section p{font-size:9px;margin-bottom:7px}
+    .settings-section input{padding:8px;font-size:13px;margin-bottom:6px}
+    .settings-section .btn,#settingsactions .btn{min-height:34px;padding:7px}
+  }
   #repwrap{inset:0;background:rgba(8,9,5,.86);display:none;align-items:center;justify-content:center;z-index:60}
   #repbox{background:#101208;border:1px solid #4a4634;padding:26px;width:340px;text-align:center}
   #repbox h2{color:#e8b658;font-size:18px;margin:0 0 6px}

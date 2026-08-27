@@ -8,6 +8,18 @@ let menuRects={}, dragSlider=null, menuOpen=false, gearRect={x:-99,y:-99,w:0,h:0
 // replaying the automatic-fire intervals that elapsed while the button was up.
 let mouseFireCadence=false;
 function resetFireCadence(){ mouseFireCadence=false; touchFireCadence=false; }
+function activateOfflineCpuAction(rect){
+  if(!rect||rect.enabled===false){sfx('dry');return false;}
+  const id=String(rect.id||'');offlineCpuFocusId=id;
+  if(id==='cpu_root_1v1'){offlineCpuView='1v1';offlineCpuInfoKey='';offlineCpuFocusId='cpu_start_1v1';sfx('swap');}
+  else if(id==='cpu_root_2v2'){offlineCpuView='2v2';offlineCpuInfoKey='';offlineCpuFocusId='cpu_local_2v2';sfx('swap');}
+  else if(id==='cpu_start_1v1')chooseGameMode('ai1v1','offlinecpu');
+  else if(id==='cpu_local_2v2')chooseGameMode('ai2v2','offlinecpu');
+  else if(id==='cpu_friend_2v2'&&typeof partyOpenCpuFriendFlow==='function')partyOpenCpuFriendFlow();
+  else if(/^cpu_info_/.test(id)){const key=id.slice(9);offlineCpuInfoKey=offlineCpuInfoKey===key?'':key;sfx('swap');}
+  else return false;
+  return true;
+}
 
 /* ---------------- input ---------------- */
 function typingInField(e){
@@ -27,6 +39,11 @@ function activateContextAction(){
 }
 addEventListener('keydown', e=>{
   if(typingInField(e)) return;          // don't eat keys while typing in the auth form
+  if(typeof accountMenuOpen!=='undefined'&&accountMenuOpen){e.preventDefault();return;}
+  if(typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen){
+    if(e.key==='Escape'&&typeof closeAccountSettings==='function') closeAccountSettings();
+    e.preventDefault(); return;
+  }
   if((typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay())||
      (typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen)){
     if(typeof requireResolvedUsernameForGameplay==='function') requireResolvedUsernameForGameplay();
@@ -43,7 +60,7 @@ addEventListener('keydown', e=>{
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
   if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
   if(layoutMode && e.key==='Escape'){ layoutMode=false; layoutDrag=null; layoutPick=null; sfx('swap'); return; }
-  if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||readerOpen){ if(e.key==='Escape'){ if(wheelSpinning) return; if(readerOpen){ readerOpen=false; sfx('swap'); return; } wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
+  if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
   if(['w','a','s','d',' '].includes(k)) e.preventDefault();
   keys[k]=true;
@@ -61,6 +78,13 @@ addEventListener('keydown', e=>{
   if(menuOpen) return;
 
   if(state==='select'){
+    if(selPage==='offlinecpu'&&['arrowleft','arrowright','arrowup','arrowdown','enter'].includes(k)){
+      e.preventDefault();const choices=offlineCpuRects.filter(r=>r&&r.enabled!==false&&r.id),at=Math.max(0,choices.findIndex(r=>r.id===offlineCpuFocusId));
+      offlineCpuKeyboardActive=true;
+      if(k==='enter'){if(choices.length)activateOfflineCpuAction(choices[at]||choices[0]);}
+      else if(choices.length){const direction=(k==='arrowleft'||k==='arrowup')?-1:1;offlineCpuFocusId=choices[(at+direction+choices.length)%choices.length].id;sfx('swap');}
+      return;
+    }
     if(k==='enter' && selPage==='loadout') launchSelectedMode();
     return;
   }
@@ -93,6 +117,8 @@ addEventListener('keydown', e=>{
 });
 addEventListener('keyup', e=>{
   if(typingInField(e)) return;
+  if(typeof accountMenuOpen!=='undefined'&&accountMenuOpen){keys[e.key.toLowerCase()]=false;return;}
+  if(typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen){ keys[e.key.toLowerCase()]=false; return; }
   if((typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay())||
      (typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen)){ keys[e.key.toLowerCase()]=false; return; }
   keys[e.key.toLowerCase()]=false;
@@ -103,6 +129,20 @@ cv.addEventListener('mousemove', e=>{
   if(layoutMode && mouse.down) layoutMouseMove();
   if(dragSlider && mouse.down) setSliderFromMouse();
 });
+cv.addEventListener('wheel',e=>{
+  const x=px(e.clientX),y=e.clientY;
+  mouse.x=x; mouse.y=y;
+  const modal=typeof topModal==='function'?topModal():null;
+  if(!modal)return;
+  const scores=modal.k==='scores'&&playerEditScrollContains(x,y),audit=modal.k==='audit'&&adminAuditScrollContains(x,y);
+  if(!scores&&!audit)return;
+  const viewport=scores?peScrollViewport:auditScrollViewport;
+  const amount=e.deltaMode===1?e.deltaY*20:e.deltaMode===2?e.deltaY*Math.max(1,viewport.h):e.deltaY;
+  if(scores)scrollPlayerEditBy(amount);else scrollAdminAuditBy(amount);
+  // Keep a boundary wheel gesture inside the canvas modal instead of letting
+  // it scroll/overscroll the surrounding browser page.
+  if((scores?peScrollMax:auditScrollMax)>0)e.preventDefault();
+},{passive:false});
 cv.addEventListener('mousedown', e=>{
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     mouse.down=false; resetFireCadence(); e.preventDefault(); return;
@@ -154,6 +194,7 @@ const touchUI = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
 const STICK_R=60;
 const sticks={ move:{id:null,cx:0,cy:0,dx:0,dy:0}, aim:{id:null,cx:0,cy:0,dx:0,dy:0} };
 let touchButtons=[], touchWeaponSelectorBounds=null, pressedBtn=null, menuTouchId=null;
+let peScrollTouchId=null,peScrollTouchStartX=0,peScrollTouchStartY=0,peScrollTouchLastY=0,peScrollTouchMoved=false,peScrollTouchKind='';
 let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null, touchUtilityUsed=false, touchFireCadence=false;
 function resetHeldGameplayInput(){
   // A click/touch/Enter used to launch a mode must never become gameplay input.
@@ -162,6 +203,7 @@ function resetHeldGameplayInput(){
   for(const k in keys) keys[k]=false;
   mouse.down=false; dragSlider=null;
   pressedBtn=null; menuTouchId=null; aimStickId=null; touchUtilityUsed=false; tapShootUntil=0;
+  peScrollTouchId=null; peScrollTouchMoved=false;peScrollTouchKind='';
   resetFireCadence();
   for(const stick of [sticks.move,sticks.aim]){ stick.id=null; stick.dx=0; stick.dy=0; }
   aiming=false; rmbAim=false;
@@ -221,6 +263,18 @@ cv.addEventListener('touchstart', e=>{
     if(x>=gearRect.x&&x<=gearRect.x+gearRect.w&&y>=gearRect.y&&y<=gearRect.y+gearRect.h){
       menuOpen=!menuOpen; sfx('swap'); continue;
     }
+    const scrollModal=typeof topModal==='function'?topModal():null;
+    const scoreScroll=scrollModal&&scrollModal.k==='scores'&&playerEditScrollContains(x,y);
+    const auditScroll=scrollModal&&scrollModal.k==='audit'&&adminAuditScrollContains(x,y);
+    if(!menuOpen&&peScrollTouchId===null&&(scoreScroll||auditScroll)){
+      // Defer the row click until touchend. Otherwise beginning a swipe on a
+      // +/- weapon button would award/remove it before we know it is a drag.
+      mouse.x=x; mouse.y=y; mouse.down=true; peScrollTouchId=t.identifier;
+      peScrollTouchKind=scoreScroll?'scores':'audit';
+      peScrollTouchStartX=x; peScrollTouchStartY=y; peScrollTouchLastY=y; peScrollTouchMoved=false;
+      continue;
+    }
+    if(peScrollTouchId!==null&&scrollModal&&scrollModal.k===peScrollTouchKind) continue;
     if(state!=='play' || menuOpen){
       mouse.x=x; mouse.y=y; mouse.down=true; menuTouchId=t.identifier;
       if(menuOpen) menuClick();
@@ -253,6 +307,18 @@ cv.addEventListener('touchstart', e=>{
 cv.addEventListener('touchmove', e=>{
   e.preventDefault();
   for(const t of e.changedTouches){
+    if(t.identifier===peScrollTouchId){
+      const x=px(t.clientX),y=t.clientY;
+      mouse.x=x; mouse.y=y;
+      if(!peScrollTouchMoved&&Math.hypot(x-peScrollTouchStartX,y-peScrollTouchStartY)>=7){
+        peScrollTouchMoved=true;
+        if(peScrollTouchKind==='scores')scrollPlayerEditBy(peScrollTouchStartY-y);else scrollAdminAuditBy(peScrollTouchStartY-y);
+      } else if(peScrollTouchMoved){
+        if(peScrollTouchKind==='scores')scrollPlayerEditBy(peScrollTouchLastY-y);else scrollAdminAuditBy(peScrollTouchLastY-y);
+      }
+      peScrollTouchLastY=y;
+      continue;
+    }
     if(t.identifier===menuTouchId){
       mouse.x=px(t.clientX); mouse.y=t.clientY;
       if(dragSlider) setSliderFromMouse();
@@ -274,17 +340,26 @@ cv.addEventListener('touchmove', e=>{
     }
   }
 },{passive:false});
-function touchEnd(e){
+function touchEnd(e,cancelled){
   e.preventDefault();
   for(const t of e.changedTouches){
+    if(t.identifier===peScrollTouchId){
+      const modal=typeof topModal==='function'?topModal():null;
+      const tap=!cancelled&&!peScrollTouchMoved&&modal&&modal.k===peScrollTouchKind&&
+        (peScrollTouchKind==='scores'?playerEditScrollContains(peScrollTouchStartX,peScrollTouchStartY):
+          adminAuditScrollContains(peScrollTouchStartX,peScrollTouchStartY));
+      peScrollTouchId=null; peScrollTouchMoved=false;peScrollTouchKind='';mouse.down=false;
+      if(tap){ mouse.x=peScrollTouchStartX; mouse.y=peScrollTouchStartY; clickSelect(); }
+      continue;
+    }
     if(t.identifier===menuTouchId){ menuTouchId=null; mouse.down=false; dragSlider=null; }
     if(t.identifier===aimStickId){ aimStickId=null; touchUtilityUsed=false; touchFireCadence=false; tapShootUntil=0; }
     if(sticks.move.id===t.identifier){ sticks.move.id=null; sticks.move.dx=0; sticks.move.dy=0; }
   }
   pressedBtn=null;
 }
-cv.addEventListener('touchend', touchEnd, {passive:false});
-cv.addEventListener('touchcancel', touchEnd, {passive:false});
+cv.addEventListener('touchend',e=>touchEnd(e,false),{passive:false});
+cv.addEventListener('touchcancel',e=>touchEnd(e,true),{passive:false});
 addEventListener('blur', ()=>{
   const localArena=isBotArena()||(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2());
   if(state==='play'&&(practiceMode!=='arena'||localArena)) menuOpen=true;
@@ -313,6 +388,7 @@ const MODALS=[
   {k:'admins',     is:()=>adminsOpen,      draw:()=>drawAdminsMenu(),  click:()=>adminsClick()},
   {k:'msgs',       is:()=>msgsOpen,        draw:()=>{ if(composePickOpen) drawComposePick(); else drawMsgs(); },
                                            click:()=>msgsClick()},
+  {k:'audit',      is:()=>auditOpen,       draw:()=>drawAdminAuditLog(),click:()=>adminAuditClick()},
   {k:'promos',     is:()=>promoAdminOpen,  draw:()=>drawPromoAdmin(),  click:()=>promoAdminClick()},
   {k:'players',    is:()=>playersOpen,     draw:()=>drawPlayers(),     click:()=>playersClick()},
   {k:'scores',     is:()=>scoresOpen,      draw:()=>drawScores(),      click:()=>scoresClick()},
@@ -332,7 +408,7 @@ function clickSelect(){
   const openBoardPlayer=r=>{
     const mine=authUser&&String(r.userId||'')===String(authUser.id||'');
     if(r.needsUsername&&mine){
-      scoresOpen=false; selPage='social';
+      scoresOpen=false; resetPlayerEditScroll(); selPage='social';
       if(socialProfile) socialPromptEditProfile();
       else void Promise.resolve(fetchSocial(true)).then(()=>{ if(authUser&&socialProfile) socialPromptEditProfile(); });
       sfx('swap'); return;
@@ -340,7 +416,7 @@ function clickSelect(){
     // This row already came from the narrow public leaderboard RPC, so it is
     // the authoritative public snapshot. Reusing it avoids a fragile second
     // request that used to turn a valid click into "player not found".
-    scoresOpen=true; peStep='panel'; peMode='edit'; peTarget=r.name;
+    resetPlayerEditScroll(); scoresOpen=true; peStep='panel'; peMode='edit'; peTarget=r.name;
     peData=normalizedPlayerData({high_score:r.score,public_metric:r.metric},true);
     peEdit={score:peData.score,gems:0,coins:0,owned:{},pow:{}};
     peBusy=false; sfx('swap');
@@ -351,12 +427,15 @@ function clickSelect(){
   if(dailyGateOpen){ dailyGateClick(); return; }
   if(firstAccountWelcomeOpen){ firstAccountWelcomeClick(); return; }
   if(signUpPromptOpen){ signUpPromptClick(); return; }
-  if(signBtnRect && inR(signBtnRect) && !adminPanelOpen && !updatesOpen && !adminsOpen && !msgsOpen && !archOpen && !storageOpen && !scoresOpen && !detailKey){ toggleAuth(); sfx('swap'); return; }
+  const accountRect=accountBtnRect||signBtnRect;
+  if(accountRect&&inR(accountRect)&&!adminPanelOpen&&!updatesOpen&&!adminsOpen&&!msgsOpen&&!auditOpen&&!archOpen&&!storageOpen&&!scoresOpen&&!detailKey){
+    activateAccountTrigger();sfx('swap');return;
+  }
   // ADMIN / UPDATES live beside the gear, so they work from any select page
   if(selPage==='hub'){ for(const xr of feedXRects){ if(inR(xr)){ deleteBanner(xr.id); sfx('dry'); return; } } }
   if(isAdmin() && inR(adminHubBtnRect)){ adminPanelOpen=true; fetchAdmins(); fetchBanners(); sfx('swap'); return; }
   if(isMainAdmin() && inR(adminsHubBtnRect)){ adminsOpen=true; fetchAdmins(); sfx('swap'); return; }
-  if(isAdmin() && inR(msgsHubBtnRect)){ msgsOpen=true; fetchMsgs().then(()=>markMsgsRead()); sfx('swap'); return; }
+  if(isAdmin() && inR(msgsHubBtnRect)){ inboxTab='msgs';msgsOpen=true; fetchMsgs().then(ok=>{if(ok)markMsgsRead();}); sfx('swap'); return; }
   if(detailKey){
     if(inR(detailRects.close) || !inR(detailRects.panel)){ detailKey=null; sfx('swap'); }
     return;
@@ -373,7 +452,7 @@ function clickSelect(){
     if(inR(shareBtnRect)){ shareReferral(); return; }
     if(inR(wheelBtnRect)){ openWheel(); sfx('swap'); return; }
     if(inR(streakBtnRect)){ collectStreak(); return; }
-    if(inR(lookupBtnRect)){ if(isAdmin()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
+    if(inR(lookupBtnRect)){ resetPlayerEditScroll(); if(isAdmin()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
     for(const r of homePlayRects) if(inR(r)){
       if(!r.enabled){ sfx('dry'); return; }
       if(r.id==='play') openModeLeaderboard();
@@ -383,6 +462,7 @@ function clickSelect(){
       return;
     }
     if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
+    if(inR(settingsBtnRect)){ openAccountSettings(); sfx('swap'); return; }
     if(inR(shopBtnRect)){ selPage='shop'; sfx('swap'); return; }
     return;
   }
@@ -433,7 +513,7 @@ function clickSelect(){
       // Play dashboard always enters the dedicated Party menu first.
       else if(r.id==='party_create') partyPromptCreate();
       else if(r.id==='party_join') partyPromptJoin();
-      else if(r.id==='offline_cpu_menu') { selPage='offlinecpu'; if(typeof refreshBotLadder==='function')void refreshBotLadder(true); if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true); sfx('swap'); }
+      else if(r.id==='offline_cpu_menu') { offlineCpuView='modes';offlineCpuInfoKey='';offlineCpuFocusId='cpu_root_1v1';offlineCpuKeyboardActive=false;selPage='offlinecpu'; if(typeof refreshBotLadder==='function')void refreshBotLadder(true); if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true); sfx('swap'); }
       else chooseGameMode(r.mode,'modeboard');
       return;
     }
@@ -442,8 +522,7 @@ function clickSelect(){
   if(selPage==='offlinecpu'){
     if(inR(backRect)){ navigateSelectBack(); return; }
     for(const r of offlineCpuRects) if(inR(r)){
-      if(r.enabled===false){ sfx('dry'); return; }
-      chooseGameMode(r.mode,'offlinecpu'); return;
+      offlineCpuKeyboardActive=false;activateOfflineCpuAction(r);return;
     }
     return;
   }
@@ -473,6 +552,7 @@ function clickSelect(){
       else if(r.id==='friend_prev'){ socialFriendPage=Math.max(0,socialFriendPage-1); sfx('swap'); }
       else if(r.id==='friend_next'){ socialFriendPage++; sfx('swap'); }
       else if(r.id==='friend_message'||r.id==='dm_reply') openSocialMessageCompose(r.userId,r.handle);
+      else if(r.id==='cpu_invite_join'&&typeof partyJoinCpuInvite==='function') partyJoinCpuInvite(r.code);
       else if(r.id==='dm_new') socialPromptMessage();
       else if(r.id==='dm_prev'){ socialMessagePage=Math.max(0,socialMessagePage-1); sfx('swap'); }
       else if(r.id==='dm_next'){ socialMessagePage++; sfx('swap'); }
@@ -496,9 +576,13 @@ function clickSelect(){
       else if(r.id==='back'){
         // Returning to Social must never dissolve an accepted Party.
         if(!party.accepted&&party.channel) leaveParty('',false);
-        selPage='social'; fetchSocial(true); sfx('swap');
+        if(party.accepted&&party.cpuIntent){selPage='offlinecpu';offlineCpuView='2v2';offlineCpuInfoKey='';sfx('swap');}
+        else{selPage='social';fetchSocial(true);sfx('swap');}
       }
-      else if(r.id==='leave'){ leaveParty('',false); selPage='social'; fetchSocial(true); sfx('swap'); }
+      else if(r.id==='leave'){
+        const cpuOrigin=!!party.cpuIntent;leaveParty('',false);
+        if(cpuOrigin){selPage='offlinecpu';offlineCpuView='2v2';offlineCpuInfoKey='';}else{selPage='social';fetchSocial(true);}sfx('swap');
+      }
       else if(r.id==='browse') {
         if(!partyRequirePlayers()) return;
         // The old lobby exposed a dedicated cancel button. PLAY now safely
@@ -507,6 +591,7 @@ function clickSelect(){
         selPage='partymodes'; sfx('swap');
       }
       else if(r.id==='cpu2v2') { if(partyCpuSessionOpen()) partyCpuAbort('Party CPU match setup was cancelled.',true); else partyCpuHostPrepare(); }
+      else if(r.id==='invite_cpu_friend') partyPromptCpuFriendInvite();
       else if(r.id==='copy') partyCopyCode();
       else if(r.id==='mode') partySetMode(r.mode);
       else if(r.id==='lock') partyToggleLock();

@@ -6,7 +6,7 @@ Each feature has its own numbered scripts and may be installed independently.
 ## Social
 
 The Social feature provides unique public usernames, friendships, private messages, row
-level security, API privileges, and realtime refresh hints. Profiles,
+level security, API privileges, Realtime refresh hints, and account-setting rules. Profiles,
 friendships, and messages share one core data script because they form the same
 Social model. Security, privileges, and Realtime remain separate.
 
@@ -17,10 +17,34 @@ them one at a time in this exact order:
 2. `social/02-rls-policies.sql` — row-level security policies
 3. `social/03-privileges.sql` — narrow API permissions, including signup username availability
 4. `social/04-realtime.sql` — friendship and message refresh events
+5. `social/05-account-settings.sql` — authenticated username-setting RPC and the server-enforced 21-day change clock
 
-All four scripts are rerunnable. Run the complete sequence again after changing
+All five scripts are rerunnable. Run the complete sequence again after changing
 the Social schema so tables are preserved while functions, triggers, policies,
 privileges, and realtime membership are refreshed.
+
+What each Social file does, concretely:
+
+- Run Social `01` once on a project that has never installed Social. It creates
+  the three Social tables, gives every existing Auth account a collision-safe
+  temporary username, and provisions future accounts automatically. Rerunning
+  it preserves rows.
+- Run Social `02` immediately after `01`. It turns on row-level security so a
+  signed-in player can see public usernames but only participants can see a
+  friendship or private message.
+- Run Social `03` immediately after `02`. It removes broad browser table access,
+  grants only the columns each feature needs, and exposes the boolean username
+  availability check used during signup.
+- Run Social `04` immediately after `03`. It adds only friendships and private
+  messages to Supabase Realtime so screens refresh after a change; RLS still
+  filters every delivered row.
+- Run Social `05` after `04`. It adds `username_changed_at`, moves every username
+  write behind `outpost_zero_set_username`, and enforces one change per 21 days
+  with a database trigger and row lock. Replacing a generated `op_<uuid>` name
+  for the first time never has a wait. Because old databases did not record
+  historical username-change dates, each already-chosen account receives one
+  immediate migration-grace change; the 21-day clock starts when that change is
+  saved. It does not read, store, or publish account emails.
 
 Future database features should get a sibling folder under `sql/` with their
 own numbered scripts and a dependency order documented here.
@@ -33,9 +57,10 @@ after Social core has created and backfilled player usernames:
 
 1. `leaderboards/01-public-board.sql`
 
-If you already finished Social `01` through `04`,
-run only this one Leaderboards script next; do not combine it with or rerun the
-Social scripts for this fix.
+If you already finished Social `01` through `04`, run only this one Leaderboards
+script next. If `leaderboards/01-public-board.sql` is the last database script
+you already ran, your only new paste is `social/05-account-settings.sql`; do not
+replace any table and do not rerun Leaderboards `01` for the Settings update.
 It uses the existing `public.scores` table that already stores game scores; it
 does not create or replace the table.
 
@@ -48,12 +73,73 @@ referrals retain their existing authenticated access and RLS checks.
 
 This script is rerunnable. It exposes only user ID, username, and score, and it
 hard-limits requests to the two public Outpost Zero boards and five rows.
-Accounts created before usernames were required display `USERNAME_NOT_SET`
-instead of an email or UUID-like temporary label. This covers both the current
-20-character generated handle and the legacy 8-character version. The game
-sends the account owner to Social to choose a username; username changes are
-free. Cleanup is restricted to score games beginning with `outpost-zero`, so it
-does not rename rows belonging to another game that shares the table.
+Accounts created before usernames were required use `USERNAME_NOT_SET` as an
+internal RPC marker instead of publishing an email or UUID-like temporary
+label. This covers both the current 20-character generated handle and the
+legacy 8-character version. The signed-in owner may see their own email from
+their private Auth session until they choose a username; everyone else sees a
+non-identifying placeholder. The leaderboard RPC never selects from
+`auth.users` and never returns an email. Cleanup is restricted to score games
+beginning with `outpost-zero`, so it does not rename rows belonging to another
+game that shares the table.
+
+## Account password changes
+
+There is no password SQL file. Passwords belong to Supabase Auth, not a public
+game table. The signed-in Settings action calls `supabase.auth.updateUser` with
+the new password; Supabase hashes and stores it in Auth. Do not create a
+password column, function, or trigger in `public`, and never paste a password
+into the SQL Editor.
+
+## Administration: temporary gifts and the private LOG
+
+Run this after the project's existing administration tables/RPCs are installed:
+
+1. `administration/01-temporary-grants-and-audit.sql`
+
+This is the only new SQL paste needed for temporary weapon gifts and the
+creator/main LOG. It requires the already-live `admins`, `profiles`, `scores`,
+`bans`, `ban_appeals`, and `player_requests` tables plus the existing
+`admin_edit_player(target_email, patch)` RPC. It does not replace those tables,
+does not alter permanent ownership, and is safe to run again. A rerun preserves
+all temporary grants, request/appeal rows, and append-only audit history.
+
+What the Administration file does, concretely:
+
+- Creates a server-owned temporary-grant table for the nine `GEM_SHOP` weapon
+  keys. Creator/main admins choose 5 minutes through 365 days. Expiry is based
+  on the database clock and an expired row stops granting access even if no
+  cleanup job runs. Permanent `profiles.data.owned` values remain separate.
+- Makes grant/revoke/edit operations exact-once with caller-supplied operation
+  UUIDs. The UUID identifies a retry, never an account. Per-player/per-weapon
+  transaction locks prevent two requests from classifying or extending the
+  same missing grant concurrently.
+- Wraps the existing player editor, compares actual before/after profile,
+  leaderboard, and ban rows, and atomically records permanent gifts/revokes,
+  score, gems, coins, upgrades, bans, unbans, rejected edits, and no-change
+  retries. Actor identity and role are reread from Auth and `admins`; the
+  browser cannot supply them. Only the creator can apply permanent score,
+  currency, upgrade, or ownership edits. Main admins submit those through the
+  locked approval queue; they may directly apply only ban/unban patches.
+- Moves player-request submission/approval/rejection and ban-appeal
+  submission/lift/deny behind locked RPC transactions. An approved request or
+  lifted ban and its decision log either both commit or both roll back. Appeal
+  submission is limited to one open row and three submissions per account per
+  rolling day so changing operation UUIDs cannot flood the private LOG.
+- Exposes keyset-paginated audit rows only to the creator/main admins. Co-admins
+  retain view-only ban/appeal lists through narrow RPCs but cannot see the LOG
+  or mutate grants. Players can read only their own active grant keys/expiry;
+  ban enforcement uses an account-derived/bounded-device RPC instead of raw
+  reads of the bans table.
+- Forces RLS on the new tables, removes all direct browser table privileges,
+  retires direct access to legacy `player_log` and `admin_edit_player`, and
+  exposes only the documented RPCs. The old `player_log` table/rows are left in
+  place rather than deleted.
+
+Deploy the matching game JavaScript at the same time as this SQL. The migration
+intentionally revokes the old direct edit/request/appeal paths so an old tab
+cannot bypass the audit. After running it, sign out/in or hard-refresh before
+testing creator/main controls.
 
 ## AI bot ladder
 

@@ -2,6 +2,9 @@
 
 /* ---------------- state ---------------- */
 let now = performance.now(), last = now, fireSuppressT=0, fanShots=0, fanNextT=0, fanBurstUntil=0;
+// Per-weapon timing stays separate from player.lastShot so switching away never
+// erases a weapon's own identity (for example, the SCAR's rested first shot).
+let weaponLastShotAt=Object.create(null);
 
 const player = {
   x:WORLD.w/2, y:WORLD.h/2, r:15, hp:100, spd:3.4,

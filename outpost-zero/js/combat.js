@@ -6,13 +6,14 @@ function switchWeapon(k){
   if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
   if(state!=='play') return;
   resetFireCadence();
+  cancelFanTheHammer();
   cancelMedHeal();                                   // swapping away always interrupts either Medkit heal
   if(utilityOut){                                     // stow the utility, even back to the same gun
-    utilityOut=false; player.equipEnd=now+EQUIP_WAIT; sfx('swap');
+    utilityOut=false; player.equipEnd=now+weaponEquipMs(k); player.animT=now; sfx('swap');
     if(k===player.cur) return;
   }
   if(k===player.cur) return;
-  player.cur=k; player.reloadEnd=0; player.equipEnd=now+EQUIP_WAIT; player.bloom=0;
+  player.cur=k; player.reloadEnd=0; player.equipEnd=now+weaponEquipMs(k); player.bloom=0;
   player.animT=now;                                  // equip flourish (cosmetic only)
   aiming=false; rmbAim=false;
   if(tutorialOn){
@@ -106,6 +107,7 @@ function meleeSwing(w, mul, flurryGenerated=false){
 function equipUtility(){
   if(state!=='play' || !loadout.utility) return;
   resetFireCadence();
+  cancelFanTheHammer();
   utilityOut=true;
   player.equipEnd=now+EQUIP_WAIT; aiming=false; rmbAim=false;
   sfx('swap');
@@ -235,6 +237,8 @@ function quickMelee(){
   if(state!=='play' || !loadout.melee) return;
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
   cancelMedHeal();
+  cancelFanTheHammer();
+  const stowedUtility=utilityOut;
   utilityOut=false;
   const saved=player.cur, savedEquip=player.equipEnd;
   const meleeKey=loadout.melee;
@@ -242,16 +246,22 @@ function quickMelee(){
   player.equipEnd=0;
   meleeAbility();
   player.cur=saved;
-  player.equipEnd=savedEquip;
+  player.equipEnd=stowedUtility?now+weaponEquipMs(saved):savedEquip;
+  if(stowedUtility) player.animT=now;
 }
 
 function startReload(){
+  if(typeof isLocked==='function'&&isLocked(player.cur)){
+    if(typeof dropExpiredTemporaryLoadout==='function')dropExpiredTemporaryLoadout([player.cur]);
+    sfx('dry');return;
+  }
   const w=WEAPONS[player.cur];
   if(w.melee) return;
   if(w.cell) return;                                 // battery weapons recharge on their own
   if(player.reloadEnd>now || player.mags[player.cur]>=magSize(player.cur)) return;
   if(player.reserve[player.cur]<=0){ sfx('dry'); return; }
   resetFireCadence();
+  cancelFanTheHammer();
   player.reloadEnd = now + w.reload*perks.reload;
   aiming=false; rmbAim=false;
   sfx('reload');
@@ -259,14 +269,27 @@ function startReload(){
 function tryFire(carryCadence=false){
   if(state!=='play' || now<fireSuppressT) return false;
   if(practiceMode==='arena' && !arenaCanAct()) return false;
+  if(typeof isLocked==='function'&&isLocked(player.cur)){
+    if(typeof dropExpiredTemporaryLoadout==='function')dropExpiredTemporaryLoadout([player.cur]);
+    resetFireCadence();sfx('dry');return false;
+  }
   const w=WEAPONS[player.cur];
   if(player.reloadEnd>now || player.equipEnd>now) return false;
-  const shotInterval=w.fireRate*perks.rate*wm(player.cur).rate*(now<surgeT?0.77:1);
-  if(now-player.lastShot<shotInterval) return false;
+  const preShotMag=player.mags[player.cur];
+  const frenzyMul=Number.isFinite(+w.frenzyAt)&&preShotMag<=+w.frenzyAt
+    ? (Number.isFinite(+w.frenzyRateMul)?+w.frenzyRateMul:1) : 1;
+  const shotInterval=w.fireRate*frenzyMul*perks.rate*wm(player.cur).rate*(now<surgeT?0.77:1);
+  // Quickdraw has a per-M9 cadence clock: a primary shot must not secretly
+  // extend its advertised 120ms draw, while two M9 shots still respect 200ms.
+  const weaponCadence=Number.isFinite(+w.quickdrawMs);
+  const cadenceLastShot=weaponCadence
+    ? (Number.isFinite(+weaponLastShotAt[player.cur])?+weaponLastShotAt[player.cur]:-Infinity)
+    : player.lastShot;
+  if(now-cadenceLastShot<shotInterval) return false;
   // Held automatic fire keeps the fractional timer remainder instead of losing
   // it to the 60 Hz step. Fresh presses and shots after an idle gap still fire now.
-  const shotStamp=carryCadence&&player.lastShot>0&&now-player.lastShot<shotInterval*4
-    ? player.lastShot+shotInterval : now;
+  const shotStamp=carryCadence&&cadenceLastShot>0&&now-cadenceLastShot<shotInterval*4
+    ? cadenceLastShot+shotInterval : now;
   if(w.melee){
     if(w.combo && daggersOut){ sfx('dry'); return false; }   // can't swing while daggers are thrown
     if(w.saw){
@@ -303,25 +326,43 @@ function tryFire(carryCadence=false){
     player.flash=now+55; sfx('shoot',w,player.cur);
     return true;
   }
+  const shotWeapon=player.cur;
+  const focusedShot=Number.isFinite(+w.focusMs)&&
+    (!Number.isFinite(+weaponLastShotAt[shotWeapon])||now-weaponLastShotAt[shotWeapon]>=+w.focusMs);
+  const startsFan=!!(w.fan&&aiming&&fanShots<=0&&now>=fanBurstUntil);
+  const fanRound=!!(w.fan&&(startsFan||fanShots>0));
   player.lastShot=shotStamp;
-  player.mags[player.cur]--; if(tutorialOn) tutFired++;
-  // aimed revolver shot fans the hammer: 5 fast follow-up shots
-  if(w.fan && aiming && fanShots<=0 && now>=fanBurstUntil){
-    fanShots=5; fanNextT=now+115; fanBurstUntil=now+900;
+  weaponLastShotAt[shotWeapon]=shotStamp;
+  player.mags[shotWeapon]--; if(tutorialOn) tutFired++;
+  // Aimed Python fire starts one six-round, ammo-honest fan. Follow-ups use
+  // the same real firing path, but cannot recursively start another volley.
+  if(startsFan){
+    fanShots=Math.max(0,Math.floor(+w.fanExtraShots||5));
+    fanNextT=now+(+w.fanGapMs||115);
+    fanBurstUntil=now+(+w.fanLockMs||900);
   }
-  const base=aimAngle(), sp=effSpread(), shotStart=bullets.length;
-  const shotWeapon=player.cur,unscopedShot=shotWeapon==='sniper'&&!aiming;
+  const base=aimAngle();
+  const sp=focusedShot?w.aimSpread*wm(shotWeapon).spread*perks.acc:effSpread();
+  const shotStart=bullets.length;
+  const unscopedShot=shotWeapon==='sniper'&&!aiming;
   for(let i=0;i<w.pellets+wm(player.cur).pellets;i++){
     const a = base + (Math.random()-0.5)*2*sp;
     const tx = player.x + Math.cos(base)*6, ty = player.y + Math.sin(base)*6; // spawn at body, not muzzle: point-blank shots connect
     const bulletSpeed=weaponBulletSpeed(player.cur)*perks.velo;
     bullets.push({ x:tx, y:ty, vx:Math.cos(a)*bulletSpeed, vy:Math.sin(a)*bulletSpeed,
-                   dmg:w.dmg*perks.dmg*wm(player.cur).dmg, pierce:(w.pierce||0)+perks.pierce+wm(player.cur).pierce,
+                   dmg:w.dmg*(fanRound?(+w.fanDmgMul||1):1)*perks.dmg*wm(player.cur).dmg, pierce:(w.pierce||0)+perks.pierce+wm(player.cur).pierce,
                    life: weaponBulletLife(player.cur,w.range>2000 ? 6000 : 1200), // faster travel, same max distance
                    rng:w.range*wm(player.cur).range*perks.range, fall:1-(1-w.fall)*wm(player.cur).fall, dist:0,
                    bounce: w.bounce||0, fire: !!w.fire, poison:!!w.poison, fg:w.fg||0, wv:!!w.wave, ox:tx, oy:ty, ba:a, chrono:!!w.chrono,
                    wamp: w.wave ? 24*(1+0.5*Math.sin(now/700)) : 0, wk: w.wave ? 0.05*(1+0.4*Math.sin(now/1100+2)) : 0,
-                   col:weaponColor(player.cur, w.tracer||null),weapon:shotWeapon,unscopedShot });
+                   col:weaponColor(player.cur, w.tracer||null),weapon:shotWeapon,unscopedShot,
+                   focusedShot,phaseWalls:Math.max(0,Math.floor(+w.phaseWalls||0)),phaseWallActive:false,
+                   closeRange:Number.isFinite(+w.closeRange)?+w.closeRange:0,closeMult:Number.isFinite(+w.closeMult)?+w.closeMult:1 });
+  }
+  if(Number.isFinite(+w.selfRecoil)&&w.selfRecoil>0){
+    player.x-=Math.cos(base)*w.selfRecoil;
+    player.y-=Math.sin(base)*w.selfRecoil;
+    clampActorToArena(player); collideRects(player); clampActorToArena(player);
   }
   const spawnedShot=bullets.slice(shotStart);
   const partyShotSent=typeof partyCpuBroadcastPlayerShot==='function'&&partyCpuBroadcastPlayerShot(player.cur,spawnedShot);
@@ -389,10 +430,13 @@ function update(dtms){
   // revolver fan-the-hammer: rapid follow-up shots
   if(fanShots>0 && now>=fanNextT){
     if(state==='play' && player.cur==='revolver' && player.mags.revolver>0 && player.reloadEnd<=now){
-      player.lastShot = now - WEAPONS.revolver.fireRate*perks.rate*wm('revolver').rate;   // bypass the slow hammer
-      tryFire();
-      fanShots--; fanNextT=now+115;
-    } else fanShots=0;
+      const rw=WEAPONS.revolver;
+      player.lastShot = now - rw.fireRate*perks.rate*wm('revolver').rate;   // bypass the slow hammer
+      if(tryFire()){
+        fanShots=Math.max(0,fanShots-1);
+        fanNextT=now+(+rw.fanGapMs||115);
+      } else cancelFanTheHammer();
+    } else cancelFanTheHammer();
   }
   // full-auto
   if(!utilityOut && (w.auto || perks.autoAll) && mouse.down){
@@ -410,7 +454,8 @@ function update(dtms){
     const m=Math.max(1,Math.hypot(mx,my));
     const surgeMul = now<surgeT ? 1.3 : 1;
     const healMul = (medChan||medChanHeal) ? 0.9 : 1;
-    const spd = player.spd * perks.spd * surgeMul * healMul * w.moveMod * (aiming?0.45:1) * dt;
+    const aimMove=Number.isFinite(+w.aimMoveMul)?+w.aimMoveMul:0.45;
+    const spd = player.spd * perks.spd * surgeMul * healMul * w.moveMod * (aiming?aimMove:1) * dt;
     player.x += mx/m*spd; player.y += my/m*spd;
   }
   clampActorToArena(player);
@@ -951,7 +996,7 @@ function update(dtms){
         dead=true; break;
       }
       // walls: bounce off the nearest face if bounces remain
-      if(pointInRects(b.x,b.y)){
+      if(projectileHitsSolidWall(b)){
         if(b.bounce>0){
           // reflect off whichever axis penetrated less (approximate face normal)
           const bx=b.x-b.vx*dt/steps, by=b.y-b.vy*dt/steps;   // pre-move position
@@ -1163,6 +1208,7 @@ function hurtPlayer(dmg){
   damagePlayerHp(dmg*waveDmg*perks.armor*DIFFS[diffMode].dmg); player.hurtCd=550; player.hurtFlash=1;
   addShake(6); sfx('hurt');
   if(player.hp<=0){
+    cancelFanTheHammer();
     if(practiceMode){
       player.hp=perks.maxhp; player.hurtCd=1500;
       player.x=WORLD.w/2-380; player.y=WORLD.h/2;

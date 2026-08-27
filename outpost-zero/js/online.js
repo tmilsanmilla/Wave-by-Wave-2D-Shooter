@@ -302,6 +302,8 @@ function remoteShotBuild(packet,sender,loadout){
   return angles.map(a=>({x,y,ox:x,oy:y,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life,dist:0,
     bounce:Math.max(0,Math.min(8,Math.floor(+w.bounce||0))),wv:!!w.wave,ba:a,
     wamp:w.wave?24*(1+0.5*Math.sin(now/700)):0,wk:w.wave?0.05*(1+0.4*Math.sin(now/1100+2)):0,
+    phaseWalls:Math.max(0,Math.min(2,Math.floor(+w.phaseWalls||0))),phaseWallActive:false,
+    gimmickId:w.gimmick&&typeof w.gimmick.id==='string'?w.gimmick.id:'',
     col:weaponColor(weaponId,w.tracer||null),weapon:weaponId,ownerId:String(packet.from||'')}));
 }
 function remoteShotPacketFromBullets(id,weaponId,spawned){
@@ -347,7 +349,14 @@ function stepRemoteShotVisuals(list,dtms){
         }
         dead=true;break;
       }
-      if(pointInRects(b.x,b.y)){
+      // Remote tracers are cosmetic only, but must mirror the real collision
+      // order: live Construction TNT absorbs a Railgun before wall phasing.
+      // This receiver-owned visual path never mutates TNT health or authority.
+      if(isArenaMapBattlefield()&&activeArenaMapId()==='construction'&&
+         typeof arenaTntAtPoint==='function'&&arenaTntAtPoint(b.x,b.y,4)){
+        dead=true;break;
+      }
+      if(projectileHitsSolidWall(b)){
         if(b.bounce>0){
           if(!pointInRects(bx,b.y))b.vx*=-1;else if(!pointInRects(b.x,by))b.vy*=-1;else{b.vx*=-1;b.vy*=-1;}
           b.x=bx;b.y=by;b.bounce--;continue;
@@ -409,6 +418,7 @@ function arenaApplyForfeitResult(p){
   if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
   practiceMode=null; state='select'; selPage='arena'; menuOpen=false; aiming=false; rmbAim=false;
   resetHeldGameplayInput();
+  resetWeaponGimmickState();
   arena.phase='match_end';
   arena.status=winner===me
     ?'MATCH WON BY FORFEIT — '+String(arena.opponent.name||'your opponent')+' disconnected.'
@@ -922,6 +932,7 @@ function arenaApplyRoundStart(p){
      (p.mapResultId&&arena.mapVoteResult.resultId!==p.mapResultId))) return;
   arena.mapId=packetMap; arena.mapVotePhase='locked'; arena.mapVoteStartPending=false;
   resetHeldGameplayInput();
+  resetWeaponGimmickState();
   clearCameraShake();
   arena.round=p.round; arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=false;
   arena.seenShots=new Set();arena.shotSeq=0;arena.remoteShots=[];arena.pendingUnscopedHits=new Set();
@@ -939,7 +950,7 @@ function arenaApplyRoundStart(p){
   parryUntil=0; parrySeq=0; teraHitCharge=15; fistFlurryUntil=0; sawChargeUntil=0;
   player.cur=loadout.primary; player.reloadEnd=0; player.equipEnd=now+600; player.bloom=0; player.lastShot=0;
   for(const k of [loadout.primary,loadout.secondary,loadout.melee]) if(k&&WEAPONS[k]){
-    player.mags[k]=magSize(k); player.reserve[k]=WEAPONS[k].melee?Infinity:magSize(k)*5;
+    player.mags[k]=magSize(k); player.reserve[k]=(WEAPONS[k].melee||WEAPONS[k].energy||WEAPONS[k].infinite)?Infinity:magSize(k)*5;
   }
   if(typeof arenaResetMapRuntime==='function') arenaResetMapRuntime();
   const left=authUser.id===arena.hostId, mine=typeof duelArenaSpawn==='function'?duelArenaSpawn(left?0:1):{x:WORLD.w/2+(left?-500:500),y:WORLD.h/2,angle:left?0:Math.PI};

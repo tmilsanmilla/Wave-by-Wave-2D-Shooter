@@ -1,7 +1,8 @@
 "use strict";
 
 // daily login streak: rolls over at 12:00 UTC like the tasks, and must be COLLECTED by hand
-let streakDays=0, streakLongest=0, streakLastDay='', streakBtnRect=null, streakMsgT=0, streakMsg='';
+let streakDays=0, streakLongest=0, streakLastDay='', streakBtnRect=null, streakMsgT=0, streakMsg='',streakClaimBusy=false,streakClaimAccountEpoch=0;
+const STREAK_GEM_REWARDS=Object.freeze([10,20,30,40,50,60,100]);
 let referralUsed=false, referralPaid=0, referralMsg='', referralMsgT=0, shareBtnRect=null, referralPending='';
 const referralPayInFlight=new Map();
 const REFERRAL_GEMS=5;
@@ -349,31 +350,45 @@ function wheelUpdate(){
   if(t>=1) wheelSettle();
 }
 function todayIndex(){ return String(Math.floor((Date.now()-43200000)/86400000)); }
-function streakClaimable(){ return !!(sb ? authUser : true) && streakLastDay!==todayIndex(); }
+function streakClaimable(){
+  const accountReady=!sb||!!(authUser&&profileLoaded&&profileOwnerUserId===String(authUser.id||''));
+  return accountReady&&streakLastDay!==todayIndex();
+}
 // what the NEXT collect would put the streak at
 function streakNext(){
   const t=+todayIndex();
   return (streakLastDay!=='' && +streakLastDay===t-1) ? streakDays+1 : 1;
 }
-function streakReward(day){                          // coins every day, gems on every 7th
-  const coinsR=Math.min(300, 25+ (day-1)*25);
-  const gemsR = day%7===0 ? 10*GEM_REWARD_SCALE : 0;
+function streakReward(day){                          // coins keep climbing; gems repeat on a clear seven-day cycle
+  day=Math.max(1,Math.floor(+day||1));
+  const coinsR=Math.min(300,25+(day-1)*25);
+  const gemsR=STREAK_GEM_REWARDS[(day-1)%STREAK_GEM_REWARDS.length];
   return {coins:coinsR, gems:gemsR};
 }
 function collectStreak(){
-  if(!streakClaimable()){ sfx('dry'); return; }
-  if(testMode){ streakMsg='TEST MODE DOES NOT CONSUME DAILY REWARDS'; streakMsgT=now+1800; sfx('dry'); return; }
-  if(sb && !authUser){ streakMsg='sign in to start a streak'; streakMsgT=now+1800; sfx('dry'); return; }
-  const day=streakNext(), r=streakReward(day);
-  const broke = day===1 && streakDays>0;
-  streakDays=day; streakLastDay=todayIndex();
-  streakLongest=Math.max(streakLongest,streakDays);
-  addCoins(r.coins);
-  if(r.gems) addGems(r.gems);
-  saveMeta();
-  streakMsg = (broke?'streak reset \u2014 ':'')+'+'+r.coins+' \uD83E\uDE99'+(r.gems?('  +'+r.gems+' \uD83D\uDC8E'):'');
-  streakMsgT=now+2400;
-  sfx('pickup');
+  if(streakClaimBusy||!streakClaimable()){sfx('dry');return false;}
+  if(testMode){streakMsg='TEST MODE DOES NOT CONSUME DAILY REWARDS';streakMsgT=now+1800;sfx('dry');return false;}
+  if(sb&&!authUser){streakMsg='sign in to start a streak';streakMsgT=now+1800;sfx('dry');return false;}
+  const claimOwner=authUser?String(authUser.id||''):'',claimEpoch=streakClaimAccountEpoch,claimDay=todayIndex();
+  streakClaimBusy=true;
+  try{
+    // The day marker, both balances, and streak count enter one local/profile
+    // snapshot. Re-entry and a stale account callback cannot award it twice.
+    if((authUser?String(authUser.id||''):'')!==claimOwner||claimEpoch!==streakClaimAccountEpoch||streakLastDay===claimDay)return false;
+    const day=streakNext(),r=streakReward(day),broke=day===1&&streakDays>0;
+    streakDays=day;streakLastDay=claimDay;streakLongest=Math.max(streakLongest,streakDays);
+    coins+=r.coins;gems+=r.gems;
+    saveMeta();                                      // marker + both balances share one account snapshot
+    if(sb&&authUser)void saveProfile(true);           // narrow claim -> close loss; queued save remains the retry
+    streakMsg=(broke?'streak reset \u2014 ':'')+'+'+r.gems+' \uD83D\uDC8E  +'+r.coins+' \uD83E\uDE99';
+    streakMsgT=now+2400;sfx('pickup');return true;
+  }finally{streakClaimBusy=false;}
+}
+function resetDailyStreakUiForAccountChange(){
+  streakClaimAccountEpoch++;streakClaimBusy=false;streakMsg='';streakMsgT=0;streakBtnRect=null;
+  if(typeof dailyGateOpen!=='undefined')dailyGateOpen=false;
+  if(typeof dailyGateReward!=='undefined')dailyGateReward=null;
+  if(typeof dailyGateRects!=='undefined')dailyGateRects=[];
 }
 let coins=0, cosmeticOwned={}, cosmeticEquipped={};   // per-weapon color unlocks
 // color cosmetics anyone can unlock with coins, per weapon
@@ -387,9 +402,13 @@ const COSMIC_COLORS=[
 ];
 const COSMETIC_COST=100;   // coins per cosmetic
 // equip animations: how the weapon flourishes as it lands in your hand (coins, shop-bought)
-// how long you must wait after drawing a weapon before it can fire.
-// every equip animation is exactly this long, so cosmetics never cost you time.
+// How long you must wait after drawing a weapon before it can fire. Most gear
+// uses the shared duration; genuine handling gimmicks can shorten their own draw.
 const EQUIP_WAIT=380;
+function weaponEquipMs(k){
+  const w=WEAPONS[k],ms=w&&Number.isFinite(+w.quickdrawMs)?+w.quickdrawMs:EQUIP_WAIT;
+  return Math.max(80,Math.min(EQUIP_WAIT,ms));
+}
 const EQUIP_ANIMS=[
   {id:'none',  name:'Standard',   cost:0,   dur:EQUIP_WAIT, d:'a clean draw'},
   {id:'spin',  name:'Spin',       cost:120, dur:EQUIP_WAIT, d:'full 360 twirl'},
@@ -421,7 +440,9 @@ function meleeSwingPhase(){
 function equipFlourish(){
   const a=animDef(animOf(player.cur));                // each weapon has its own flourish
   if(a.id==='none' || !player.animT) return null;
-  const t=(now-player.animT)/a.dur;
+  // Match the visual to the real firing lock. A quick-draw weapon must not keep
+  // spinning for 380ms after it is already allowed to shoot.
+  const t=(now-player.animT)/Math.min(a.dur,weaponEquipMs(player.cur));
   if(t<0 || t>=1) return null;
   const ease=1-Math.pow(1-t,2);                      // fast out, soft landing
   if(a.id==='spin')  return {rot:ease*TAU, lift:0, scale:1};

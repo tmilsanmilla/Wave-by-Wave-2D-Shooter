@@ -28,9 +28,13 @@ function effSpread(){
   return (base + player.bloom * (aiming ? 0.3 : 1)) * perks.acc;
 }
 function dmgMul(b){
-  if(b.dist<=b.rng) return 1;
-  const t=Math.min(1,(b.dist-b.rng)/b.rng);   // linear falloff from range to 2x range
-  return 1-(1-b.fall)*t;
+  let mul=1;
+  if(b.dist>b.rng){
+    const t=Math.min(1,(b.dist-b.rng)/b.rng);   // linear falloff from range to 2x range
+    mul=1-(1-b.fall)*t;
+  }
+  if(Number.isFinite(+b.closeRange)&&b.dist<=+b.closeRange) mul*=Number.isFinite(+b.closeMult)?+b.closeMult:1;
+  return mul;
 }
 function addShake(m){
   if(practiceMode==='arena') return;                      // keep online fights clear and inexpensive
@@ -145,6 +149,21 @@ function pointInRects(x,y){
     if(x>=o.x && x<=o.x+o.w && y>=o.y && y<=o.y+o.h) return true;
   return false;
 }
+// Returns true only when a projectile must stop or ricochet. A phase-enabled
+// slug spends one charge on wall entry, remains intangible inside that same
+// wall, and rearms ordinary collision only after it has exited the geometry.
+// Arena fences and TNT are handled before this helper and are never bypassed.
+function projectileHitsSolidWall(b){
+  const inside=pointInRects(b.x,b.y);
+  if(!inside){ b.phaseWallActive=false; return false; }
+  if(b.phaseWallActive) return false;
+  if(Number.isFinite(+b.phaseWalls)&&b.phaseWalls>0){
+    b.phaseWalls=Math.max(0,Math.floor(+b.phaseWalls)-1);
+    b.phaseWallActive=true;
+    return false;
+  }
+  return true;
+}
 // true if a wall blocks the straight line from (x0,y0) to (x1,y1)
 function losBlocked(x0,y0,x1,y1){
   const dx=x1-x0, dy=y1-y0, d=Math.hypot(dx,dy);
@@ -164,9 +183,18 @@ function burst(x,y,col,n,pow){
 }
 
 /* ---------------- game flow ---------------- */
+function cancelFanTheHammer(clearLock=false){
+  fanShots=0; fanNextT=0;
+  if(clearLock) fanBurstUntil=0;
+}
+function resetWeaponGimmickState(){
+  weaponLastShotAt=Object.create(null);
+  cancelFanTheHammer(true);
+}
 function startGame(){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
   resetHeldGameplayInput();
+  resetWeaponGimmickState();
   clearCameraShake();
   selPage='hub';
   perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,pierce:0,acc:1,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};

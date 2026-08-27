@@ -5,6 +5,9 @@
    the elected host owns the four-seat roster and versioned assignment plan. */
 function partyServiceAvailable(){ return !!(sb&&navigator.onLine!==false&&typeof sb.channel==='function'); }
 function partyCleanName(v){ return String(v||'').replace(/[\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,32); }
+function partyRotateSessionIdentity(){
+  try{sessionStorage.removeItem('oz_party_session_v1');sessionStorage.removeItem('oz_party_name_v1');}catch(e){}
+}
 function partySessionIdentity(chosenName){
   let sid='';
   try{ sid=sessionStorage.getItem('oz_party_session_v1')||''; }catch(e){}
@@ -14,9 +17,9 @@ function partySessionIdentity(chosenName){
     sid=Array.from(a,n=>n.toString(36)).join('').slice(0,20);
     try{ sessionStorage.setItem('oz_party_session_v1',sid); }catch(e){}
   }
-  // Keep the Presence key per-tab even for signed-in accounts, so opening a
-  // second local player does not silently collapse two party seats into one.
-  const id=(authUser?('user:'+authUser.id+':'+sid):('guest:'+sid)).slice(0,80);
+  // Party peers need a per-tab transport key, not an account identifier.
+  // Keep Auth UUIDs and emails off Presence and every Party packet.
+  const id=('party:'+sid).slice(0,80);
   const profile=typeof socialProfile!=='undefined'&&socialProfile;
   const profileForAccount=profile&&authUser&&(profile.user_id==null||String(profile.user_id)===String(authUser.id||''));
   const profileClaimed=profileForAccount&&!(typeof usernameNeedsClaim==='function'&&usernameNeedsClaim(profile,authUser));
@@ -28,6 +31,23 @@ function partySessionIdentity(chosenName){
     : (partyCleanName(chosenName)||partyCleanName(fallback)||'OPERATOR');
   try{ sessionStorage.setItem('oz_party_name_v1',name); }catch(e){}
   return {id,name,joined:Date.now(),order:1,ready:false,team:''};
+}
+function partyPrepareForAuthChange(nextUserId){
+  const next=String(nextUserId||''),changed=partyAuthOwnerId!==next;
+  if(!changed)return false;
+  const hadParty=!!(party&&(party.channel||party.accepted||party.self)),cpuOrigin=!!(party&&party.cpuIntent)||
+    !!(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen());
+  if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())partyCpuAbort('Party CPU match ended because the account changed.',true);
+  const old=party;
+  if(old&&old.chatComposing&&typeof formOpen!=='undefined'&&formOpen)closeForm();
+  if(old&&old.channel){try{partySend('leave',{});}catch(e){}partyDropChannel(old.channel);}
+  party=freshParty(hadParty?'Account changed. Create or join a new party.':'Create a party or join with a 6-character code.');
+  partyAuthOwnerId=next;partyInviteSendBusy=false;partyRotateSessionIdentity();
+  if(typeof pendingGameMode!=='undefined'&&pendingGameMode===PARTY_CPU_MODE)pendingGameMode=null;
+  if(typeof selPage!=='undefined'&&(selPage==='party'||selPage==='partymodes')){
+    state='select';selPage=cpuOrigin?'offlinecpu':'social';offlineCpuView=cpuOrigin?'2v2':'modes';offlineCpuInfoKey='';menuOpen=false;
+  }
+  return true;
 }
 function partyDefaultName(){
   if(authUser){
@@ -191,7 +211,7 @@ function partyBuildPlan(){
 }
 function partySnapshot(){
   return {from:party.self.id,code:party.code,hostId:party.hostId,hostEpoch:party.hostEpoch,revision:party.revision,
-          mode:party.mode,locked:false,chatEnabled:!!party.chatEnabled,
+          mode:party.mode,locked:false,cpuIntent:!!party.cpuIntent,chatEnabled:!!party.chatEnabled,
           kickedIds:Array.from(party.kickedIds),members:party.members.map(partyMemberCopy),plan:party.plan};
 }
 function partyHostCommit(message){
@@ -226,7 +246,7 @@ function partyApplyState(p,force){
   }
   party.hostId=hostId; party.hostEpoch=epoch; party.revision=rev; party.members=members;
   const validMode=['endless','1v1','1v1v1','2v2'].includes(p.mode);
-  party.mode=validMode?p.mode:'endless'; party.locked=false; party.chatEnabled=p.chatEnabled!==false;
+  party.mode=validMode?p.mode:'endless'; party.locked=false;party.cpuIntent=p.cpuIntent===true;party.chatEnabled=p.chatEnabled!==false;
   party.kickedIds=new Set((Array.isArray(p.kickedIds)?p.kickedIds:[]).map(id=>String(id||'').slice(0,80)).filter(Boolean));
   if(!validMode) partySetDefaultPairings();
   party.plan=validMode&&Array.isArray(p.plan)?p.plan.slice(0,6).map(r=>({title:String(r.title||'').slice(0,42),body:String(r.body||'').slice(0,110),ready:!!r.ready})):partyBuildPlan();
@@ -243,6 +263,7 @@ function partyReceive(event,p){
     if(partyCpuSessionOpen()){ partySend('join_reject',{to:from,reason:'PARTY MATCH IN PROGRESS'}); return; }
     const existing=partyMember(from);
     if(existing){ partySend('join_accept',{to:from,state:partySnapshot()}); return; }
+    if(party.cpuIntent&&party.members.length>=2){partySend('join_reject',{to:from,reason:'CPU 2V2 PARTY FULL · EXACTLY 2 PLAYERS'});return;}
     if(party.members.length>=PARTY_MAX){ partySend('join_reject',{to:from,reason:'PARTY FULL \u00b7 MAX 4'}); return; }
     const nextOrder=party.members.reduce((n,m)=>Math.max(n,m.order||0),0)+1;
     party.members.push({id:from,name:partyCleanName(p.name)||'OPERATOR',joined:+p.joined||Date.now(),order:nextOrder,ready:false,team:''});
@@ -282,6 +303,10 @@ function partyReceive(event,p){
       if(!partyRequirePlayers()) return;
       partyMember(from).ready=!!p.value; partyHostCommit(partyMember(from).name+(p.value?' is ready.':' is not ready.'));
     }
+    if(p.action==='cpu_intent'){
+      party.cpuIntent=true;party.mode='endless';partySetDefaultPairings();
+      partyHostCommit(partyMember(from).name+' wants to play 2v2 vs CPUs.');
+    }
     return;
   }
   if(event==='leave'&&partyIsHost()&&partyMember(from)){
@@ -300,6 +325,7 @@ function partyPresenceSync(ch){
   }
 }
 function partyConnect(code,creating,name){
+  const options=arguments[3]||{};
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     party.status='CHOOSE YOUR USERNAME BEFORE JOINING A PARTY.'; sfx('dry'); return false;
   }
@@ -308,13 +334,14 @@ function partyConnect(code,creating,name){
   const self=partySessionIdentity(name), clean=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
   if(clean.length!==6){ party=freshParty('Enter a full 6-character party code.'); selPage='party'; sfx('dry'); return false; }
   party=freshParty(creating?'Opening party...':'Looking for that party...');
-  party.phase='joining'; party.code=clean; party.self=self; party.creating=!!creating; party.joinDeadline=Date.now()+PARTY_JOIN_MS;
+  party.phase='joining';party.code=clean;party.self=self;party.creating=!!creating;party.joinDeadline=Date.now()+PARTY_JOIN_MS;
+  party.cpuIntent=!!(options&&options.cpuIntent);partyAuthOwnerId=authUser?String(authUser.id||''):'';
   if(creating){ party.accepted=true; party.hostId=self.id; party.hostEpoch=1; party.members=[self]; partySetDefaultPairings(); }
   const ch=sb.channel('oz-party-v1-'+clean,{config:{presence:{key:self.id}}}); party.channel=ch;
   ch.on('presence',{event:'sync'},()=>partyPresenceSync(ch));
   for(const event of ['join_request','join_accept','join_reject','state_request','party_state','identity_update','action_request','kick','chat_request','chat_message','leave',
                        'cpu_prepare','cpu_ready','cpu_cancel','cpu_abort','cpu_round_start','cpu_player_state','cpu_player_shot','cpu_bot_snapshot','cpu_bot_shot','cpu_damage','cpu_hit','cpu_kill_confirm','cpu_round_result'])
-    ch.on('broadcast',{event},msg=>partyReceive(event,msg&&msg.payload));
+    ch.on('broadcast',{event},msg=>{if(ch===party.channel)partyReceive(event,msg&&msg.payload);});
   ch.subscribe(async st=>{
     if(ch!==party.channel) return;
     if(st==='SUBSCRIBED'){
@@ -331,6 +358,7 @@ function partyConnect(code,creating,name){
   selPage='party'; return true;
 }
 function partyPromptCreate(){
+  const options=arguments[0]||{};
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     party.status='CHOOSE YOUR USERNAME BEFORE CREATING A PARTY.'; sfx('dry'); return false;
   }
@@ -339,9 +367,10 @@ function partyPromptCreate(){
   if(signedIn&&!username){ party.status='YOUR USERNAME IS STILL LOADING. TRY AGAIN IN A MOMENT.'; fetchSocial(true); sfx('dry'); return; }
   openForm({title:'CREATE PARTY',hint:signedIn?('You will appear as @'+username+', your Outpost username.'):'No sign-in needed. Choose a temporary guest name.',saveLabel:'CREATE',
     fields:signedIn?[]:[{id:'name',label:'GUEST NAME',type:'text',value:username,placeholder:'OPERATOR'}],
-    onSave:v=>{ const name=signedIn?username:partyCleanName(v.name); if(!name){ formError('Enter a guest name.'); return; } closeForm(); partyConnect(randomArenaCode(),true,name); }});
+    onSave:v=>{ const name=signedIn?username:partyCleanName(v.name); if(!name){ formError('Enter a guest name.'); return; } closeForm(); partyConnect(randomArenaCode(),true,name,options); }});
 }
 function partyPromptJoin(prefill=''){
+  const options=arguments[1]||{};
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     party.status='CHOOSE YOUR USERNAME BEFORE JOINING A PARTY.'; sfx('dry'); return false;
   }
@@ -365,7 +394,69 @@ function partyPromptJoin(prefill=''){
         try{ confirmed=window.confirm(warning); }catch(error){ try{ confirmed=confirm(warning); }catch(ignore){} }
         if(!confirmed) return false;
       }
-      closeForm(); partyConnect(code,false,name); return true; }});
+      closeForm(); partyConnect(code,false,name,options); return true; }});
+  return true;
+}
+function partySetCpuIntent(enabled,message){
+  if(!partyIsHost())return false;
+  party.cpuIntent=!!enabled;party.mode='endless';partySetDefaultPairings();
+  partyHostCommit(message||(party.cpuIntent?'2v2 vs CPUs lobby ready.':'Normal Party modes restored.'));
+  return true;
+}
+function partyOpenCpuFriendFlow(){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay())return false;
+  if(!partyServiceAvailable()){
+    party.status='INVITE A FRIEND NEEDS AN INTERNET CONNECTION.';modeBoardNotice=party.status;modeBoardNoticeT=performance.now()+3000;sfx('dry');return false;
+  }
+  offlineCpuInfoKey='';
+  if(party.accepted){
+    selPage='party';
+    if(partyIsHost())partySetCpuIntent(true,'2v2 vs CPUs lobby ready. Invite exactly one friend.');
+    else{partySend('action_request',{action:'cpu_intent'});party.status='Asked the party host to open 2v2 vs CPUs.';}
+    if(party.members.length>2){party.status='2v2 VS CPUs NEEDS EXACTLY 2 PARTY PLAYERS. REMOVE EXTRA PLAYERS FIRST.';sfx('dry');}
+    else sfx('swap');
+    return true;
+  }
+  const username=partyDefaultName();
+  if(authUser&&username){
+    const opened=partyConnect(randomArenaCode(),true,username,{cpuIntent:true});
+    if(opened)party.status='CPU co-op party opening. Invite exactly one friend.';
+    return opened;
+  }
+  partyPromptCreate({cpuIntent:true});return true;
+}
+function partyJoinCpuInvite(code){
+  const clean=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
+  if(clean.length!==6){socialStatus='THAT CPU 2v2 INVITE IS INVALID';sfx('dry');return false;}
+  return partyPromptJoin(clean,{cpuIntent:true});
+}
+function partyPromptCpuFriendInvite(){
+  if(!party.accepted||!party.code||!party.cpuIntent){party.status='OPEN A CPU 2v2 PARTY FIRST.';sfx('dry');return false;}
+  if(!partyIsHost()){party.status='ONLY THE PARTY HOST CAN INVITE FROM THIS LOBBY.';sfx('dry');return false;}
+  if(!authUser){partyCopyCode();party.status='CODE COPIED. SEND IT TO YOUR FRIEND.';return true;}
+  if(partyInviteSendBusy)return false;
+  if(!socialBackend||socialBackend.friends!==true){
+    const code=party.code,owner=String(authUser.id||'');party.status='Loading your accepted friends...';sfx('swap');
+    void Promise.resolve(fetchSocial(true)).then(()=>{
+      if(authUser&&String(authUser.id||'')===owner&&party&&party.code===code&&party.cpuIntent){
+        if(socialBackend&&socialBackend.friends===true)partyPromptCpuFriendInvite();
+        else party.status='Friends could not load. Copy the party code instead.';
+      }
+    });return false;
+  }
+  const accepted=(Array.isArray(socialFriends)?socialFriends:[]).filter(row=>row&&row.status==='accepted');
+  if(!accepted.length){partyCopyCode();party.status='NO ACCEPTED FRIENDS YET · CODE COPIED FOR MANUAL INVITE.';return true;}
+  openForm({title:'INVITE A FRIEND',hint:'Send this CPU 2v2 party code privately to an accepted friend.',saveLabel:'SEND INVITE',
+    fields:[{id:'handle',label:'FRIEND USERNAME',type:'text',placeholder:'operator_7'}],onSave:v=>{
+      const key=typeof socialHandleKey==='function'?socialHandleKey(v.handle):String(v.handle||'').toLowerCase(),
+        person=Object.values(socialProfiles||{}).find(profile=>socialHandleKey(profile.handle_key||profile.handle)===key);
+      if(!person||!socialAcceptedFriend(person.user_id)){formError('Choose an accepted friend.');return;}
+      const code=party.code,recipient=String(person.user_id||''),owner=String(authUser.id||'');closeForm();partyInviteSendBusy=true;party.status='Sending private CPU 2v2 invite...';
+      Promise.resolve(socialSendCpuPartyInvite(recipient,code)).then(ok=>{
+        if(!authUser||String(authUser.id||'')!==owner||!party||party.code!==code)return;
+        party.status=ok?('Invite sent privately to @'+partyCleanName(person.handle)+'.'):'Could not send that invite. Copy the party code instead.';
+      }).finally(()=>{if(!authUser||String(authUser.id||'')===owner)partyInviteSendBusy=false;});
+    }});
   return true;
 }
 function partyCopyCode(){
@@ -425,7 +516,9 @@ function partyToggleLock(){
    modes face two authority-simulated Team B CPUs through the neutral core. */
 function partyCpuKit(raw){
   const primary=String(raw&&raw.primary||''), secondary=String(raw&&raw.secondary||''), melee=String(raw&&raw.melee||'');
-  if(!PRIMARIES.concat(TEMP_PRIMARY).includes(primary)||!SECONDARIES.concat(TEMP_SECONDARY).includes(secondary)||!MELEES.concat(TEMP_MELEE).includes(melee)) return null;
+  const publicShopPrimary=typeof GEM_SHOP!=='undefined'&&GEM_SHOP.some(it=>it.key===primary&&it.slot==='primary')&&!!WEAPONS[primary];
+  if(!(PRIMARIES.concat(TEMP_PRIMARY).includes(primary)||publicShopPrimary)||
+     !SECONDARIES.concat(TEMP_SECONDARY).includes(secondary)||!MELEES.concat(TEMP_MELEE).includes(melee)) return null;
   return {primary,secondary,melee,utility:null};
 }
 function partyCpuEnvelope(p,hostOnly){
@@ -531,6 +624,7 @@ function cpuTeamBeginRound(options){
   for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(options.kits&&options.kits[id]); if(!kit)return false;kits[id]=kit; }
   const mine=kits[localId]; if(!mine)return false;
   resetHeldGameplayInput();
+  resetWeaponGimmickState();
   partyCpuMatch.loadouts=kits;partyCpuMatch.localLoadout=mine;
   loadout={primary:mine.primary,secondary:mine.secondary,melee:mine.melee,utility:null};
   startGame();
@@ -551,10 +645,10 @@ function cpuTeamBeginRound(options){
   perks.maxhp=PARTY_CPU_HP;player.hp=PARTY_CPU_HP;player.hurtCd=0;player.hurtFlash=0;
   bullets=[];ebullets=[];enemies=[];particles=[];pickups=[];damageNumbers=[];grenades=[];pearls=[];balls=[];flames=[];freezeFx=[];
   abilityCD={};quickReadyT=0;sawFuel=100;sawLock=false;daggersOut=null;comboStep=0;comboNextT=0;
-  fanShots=0;fanNextT=0;fanBurstUntil=0;parryUntil=0;parrySeq=0;teraHitCharge=15;fistFlurryUntil=0;sawChargeUntil=0;
+  parryUntil=0;parrySeq=0;teraHitCharge=15;fistFlurryUntil=0;sawChargeUntil=0;
   player.cur=mine.primary;player.reloadEnd=0;player.equipEnd=now+600;player.bloom=0;player.lastShot=0;
   for(const k of [mine.primary,mine.secondary,mine.melee]){
-    player.mags[k]=magSize(k);player.reserve[k]=WEAPONS[k].melee?Infinity:magSize(k)*5;
+    player.mags[k]=magSize(k);player.reserve[k]=(WEAPONS[k].melee||WEAPONS[k].energy||WEAPONS[k].infinite)?Infinity:magSize(k)*5;
   }
   if(typeof arenaResetMapRuntime==='function')arenaResetMapRuntime();
   const cx=WORLD.w/2,cy=WORLD.h/2,count=partyCpuMatch.humanIds.length,

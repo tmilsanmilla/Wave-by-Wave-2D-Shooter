@@ -11,12 +11,16 @@ function frame(){
   arenaWallTick(wall);                              // online clocks + snapshots never pause with the campaign clock
   partyTick(Date.now());                            // party admission, liveness, and host snapshots keep running on menus
   partyCpuWallTick(Date.now());                     // host-run Party CPUs and round clocks never depend on render FPS
+  if(typeof temporaryWeaponGrantTick==='function')temporaryWeaponGrantTick(Date.now());
+  if(typeof myBanTick==='function')myBanTick();
   if(raw>0){ const inst=1000/raw; fpsEMA += (inst-fpsEMA)*0.1; }
   if(layoutDirty && Date.now()>layoutLocalSaveT){ persistLayoutDraft(); layoutLocalSaveT=Date.now()+250; }
 
   // `now` is a GAME clock. It freezes while the pause menu (or a modal) is open, so
   // utility cooldowns, reloads, ability timers and burn/freeze don't tick while paused.
   const frozen = menuOpen || powerMenuOpen || respawnPromptT || chestRewardOpen || reportOpen || postOpen || msgOpen || scoreEditOpen || appealOpen || promoOpen || formOpen ||
+    (typeof accountMenuOpen!=='undefined'&&accountMenuOpen) ||
+    (typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen) ||
     (typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()) ||
     (typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen);
   if(frozen){

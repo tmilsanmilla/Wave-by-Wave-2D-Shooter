@@ -25,9 +25,105 @@ let banners=[], pendingBanners=[], updatesFeed={staff:[],player:[]};
 let inboxTab='msgs';
 let postOpen=false, updatesOpen=false, updatesHubBtnRect=null, updatesRects=[], staffReport=false;
 let adminsOpen=false, msgsOpen=false, adminsHubBtnRect=null, msgsHubBtnRect=null, adminsRects=[], msgsRects=[];
-let scoresOpen=false, scoresRects=[], scoreEditOpen=false, scoreReqs=[];
+let auditOpen=false, auditRects=[], auditScroll=0, auditScrollMax=0, auditScrollViewport=null;
+let adminAuditPages=[], adminAuditPageMore=[], adminAuditPage=0, adminAuditLoading=false, adminAuditError='', adminAuditHasMore=false;
+let adminPrivacyEpoch=0;
+const ADMIN_AUDIT_PAGE_SIZE=25;
+let scoresOpen=false, scoresRects=[], scoreEditOpen=false, scoreEditBusy=false, scoreEditOperationReceipt=null, scoreReqs=[];
+const scoreRequestDecisionBusy=new Set();
 let pePanelTab='items';
-let peStep='choose', peMode='edit', peTarget='', peData=null, peEdit=null, peBusy=false;
+let peGiftMode='permanent', peCustomGiftMinutes=180, peNotice='';
+const PE_GIFT_DURATIONS=Object.freeze([
+  {id:'permanent',label:'PERMANENT',minutes:0},
+  {id:'1h',label:'1 HOUR',minutes:60},
+  {id:'1d',label:'1 DAY',minutes:1440},
+  {id:'7d',label:'7 DAYS',minutes:10080},
+  {id:'30d',label:'30 DAYS',minutes:43200},
+  {id:'custom',label:'CUSTOM',minutes:null}
+]);
+let peStep='choose', peMode='edit', peTarget='', peData=null, peEdit=null, peBusy=false, peBusyToken=0, peEditorSession=0;
+let peApplyRetryReceipt=null;
+// The loaded-player editor is taller than a phone (and grows as weapons are
+// added), so its body scrolls independently while the title/footer stay put.
+// Bounds are recalculated by drawScores every frame from the actual content.
+let peScroll=0, peScrollMax=0, peScrollViewport=null;
+function resetPlayerEditScroll(){ peScroll=0; peScrollMax=0; peScrollViewport=null; scoresRects=[]; }
+function scrollPlayerEditBy(delta){
+  const before=peScroll;
+  peScroll=Math.max(0,Math.min(peScrollMax,peScroll+(Number.isFinite(+delta)?+delta:0)));
+  // A wheel event can be followed by a click before the next animation frame.
+  // Discard pre-scroll hitboxes so that click can never affect the wrong row.
+  if(peScroll!==before) scoresRects=[];
+  return peScroll!==before;
+}
+function playerEditScrollContains(x,y){
+  const r=peScrollViewport;
+  return !!(scoresOpen&&peStep==='panel'&&r&&x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);
+}
+function resetAdminAuditScroll(){ auditScroll=0; auditScrollMax=0; auditScrollViewport=null; auditRects=[]; }
+function scrollAdminAuditBy(delta){
+  const before=auditScroll;
+  auditScroll=Math.max(0,Math.min(auditScrollMax,auditScroll+(Number.isFinite(+delta)?+delta:0)));
+  if(auditScroll!==before) auditRects=[];
+  return auditScroll!==before;
+}
+function adminAuditScrollContains(x,y){
+  const r=auditScrollViewport;
+  return !!(auditOpen&&r&&x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);
+}
+function currentAuthUserId(){return authUser?String(authUser.id||''):'';}
+function adminPrivacyRequestCurrent(epoch,userId){return epoch===adminPrivacyEpoch&&currentAuthUserId()===String(userId||'');}
+function clearAdminAuditCache(){
+  auditOpen=false;adminAuditPages=[];adminAuditPageMore=[];adminAuditPage=0;adminAuditLoading=false;adminAuditError='';adminAuditHasMore=false;
+  resetAdminAuditScroll();
+}
+function clearPrivatePlayerEditor(){
+  peBusyToken++;peEditorSession++;peBusy=false;peStep='choose';peMode='edit';peTarget='';peData=null;peEdit=null;peNotice='';peApplyRetryReceipt=null;
+  scoresOpen=false;scoreEditBusy=false;scoreEditOperationReceipt=null;scoreEditOpen=false;resetPlayerEditScroll();
+  if(typeof document!=='undefined'){
+    const wrap=document.getElementById('scorewrap'),send=document.getElementById('scoresend'),cancel=document.getElementById('scorecancel');
+    if(wrap)wrap.style.display='none';if(send)send.disabled=false;if(cancel)cancel.disabled=false;
+  }
+}
+function clearMainOnlyAdminState(){
+  const closeStaffReport=!!staffReport;
+  clearAdminAuditCache();scoreReqs=[];updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];
+  aiLearningOpen=false;adminsOpen=false;storageOpen=false;postOpen=false;staffReport=false;
+  composePickOpen=false;
+  if(msgOpen&&typeof msgKind!=='undefined'&&msgKind==='admin'){msgOpen=false;msgTo='';}
+  if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
+  if(typeof weaponEditOpen!=='undefined')weaponEditOpen=false;
+  if(typeof layoutMode!=='undefined'){layoutMode=false;if(typeof layoutDrag!=='undefined')layoutDrag=null;if(typeof layoutPick!=='undefined')layoutPick=null;}
+  if(closeStaffReport&&typeof reportOpen!=='undefined')reportOpen=false;
+  if(typeof document!=='undefined')for(const id of ['msgwrap','postwrap'].concat(closeStaffReport?['repwrap']:[])){const el=document.getElementById(id);if(el)el.style.display='none';}
+  if(typeof enforceReaderAccess==='function')enforceReaderAccess();
+}
+function scrubPrivilegedUiForAccountChange(){
+  adminPrivacyEpoch++;adminRoles={};
+  adminOpen=adminPanelOpen=aiLearningOpen=adminsOpen=msgsOpen=updatesOpen=archOpen=storageOpen=scoresOpen=false;
+  if(typeof playersOpen!=='undefined')playersOpen=false;
+  if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
+  if(typeof weaponEditOpen!=='undefined')weaponEditOpen=false;
+  if(typeof layoutMode!=='undefined')layoutMode=false;
+  inboxTab='msgs';composePickOpen=false;scoreReqs=[];adminMsgs=[];unreadMsgs=0;updatesFeed={staff:[],player:[]};updatesResolved=[];
+  clearAdminAuditCache();clearPrivatePlayerEditor();scoreRequestDecisionBusy.clear();
+  if(typeof banList!=='undefined')banList=[];if(typeof appealList!=='undefined')appealList=[];
+  if(typeof appealDecisionBusy!=='undefined')appealDecisionBusy.clear();if(typeof playerBanActionBusy!=='undefined')playerBanActionBusy.clear();
+  if(typeof appealOperationReceipt!=='undefined')appealOperationReceipt=null;if(typeof appealSubmitBusy!=='undefined')appealSubmitBusy=false;
+  if(typeof clearReaderState==='function')clearReaderState();
+  msgOpen=false;msgTo='';postOpen=false;staffReport=false;if(typeof appealOpen!=='undefined')appealOpen=false;
+  if(typeof document!=='undefined')for(const id of ['scorewrap','msgwrap','appealwrap','postwrap','repwrap']){const el=document.getElementById(id);if(el)el.style.display='none';}
+}
+function enforceAdminRolePrivacy(previousRank=''){
+  if(!isMainAdmin()){
+    clearMainOnlyAdminState();
+    // Main-only temporary-gift rows and edit controls must not survive a
+    // demotion to co-admin. A co-admin may reopen a fresh view-only lookup.
+    if(previousRank==='main'||previousRank==='creator')clearPrivatePlayerEditor();
+  }
+  if(!isAdmin()&&previousRank)scrubPrivilegedUiForAccountChange();
+  else if(typeof enforceReaderAccess==='function')enforceReaderAccess();
+}
 let lookupBtnRect=null;
 // Public lookup is username + high score only. Private account state is loaded
 // only through the existing admin-only RPC after an admin enters an email.
@@ -70,6 +166,93 @@ async function confirmAiLearningModelRestore(modelId){
   }finally{aiLearningRestoreBusyId='';}
 }
 const PE_ITEMS=()=>GEM_SHOP.map(it=>it.key);          // everything ownable
+function normalizedPlayerTempGrants(value){
+  const out={};
+  const put=(key,entry)=>{
+    key=String(key||'').trim().toLowerCase();
+    if(!PE_ITEMS().includes(key)) return;
+    const expiresAt=String(entry&&typeof entry==='object'?(entry.expires_at||entry.expiresAt||''):entry||'');
+    const expiry=Date.parse(expiresAt);
+    // admin_list RPC already returns server-active rows. The browser clock is
+    // display-only here; a skewed device must never hide the Revoke control.
+    if(!Number.isFinite(expiry)) return;
+    out[key]={expiresAt:new Date(expiry).toISOString(),grantedAt:String(entry&&entry.granted_at||''),
+      grantedBy:String(entry&&entry.granted_by_email||''),durationMinutes:null,draft:false};
+  };
+  if(Array.isArray(value)) for(const row of value) put(row&&row.weapon_key,row);
+  else if(value&&typeof value==='object') for(const key of Object.keys(value)) put(key,value[key]);
+  return out;
+}
+function clonePlayerTempGrants(value){
+  const out={}; for(const key of Object.keys(value||{})) out[key]=Object.assign({},value[key]); return out;
+}
+function adminOperationUuid(){
+  try{if(globalThis.crypto&&typeof globalThis.crypto.randomUUID==='function')return globalThis.crypto.randomUUID();}catch(error){}
+  // RFC-4122 v4-shaped fallback for older embedded browsers. It is generated
+  // once when an action is staged and then reused for every network retry.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,ch=>{
+    const n=Math.floor(Math.random()*16);return (ch==='x'?n:(n&3|8)).toString(16);
+  });
+}
+function peGiftDuration(){
+  const preset=PE_GIFT_DURATIONS.find(row=>row.id===peGiftMode);
+  return preset&&preset.minutes!=null?preset.minutes:Math.max(5,Math.min(525600,Math.round(+peCustomGiftMinutes||180)));
+}
+function peGiftDurationLabel(minutes){
+  minutes=Math.max(1,Math.round(+minutes||0));
+  if(minutes%43200===0) return (minutes/43200)+' month'+(minutes===43200?'':'s');
+  if(minutes%10080===0) return (minutes/10080)+' week'+(minutes===10080?'':'s');
+  if(minutes%1440===0) return (minutes/1440)+' day'+(minutes===1440?'':'s');
+  if(minutes%60===0) return (minutes/60)+' hour'+(minutes===60?'':'s');
+  return minutes+' minutes';
+}
+function peExpiryLabel(value){
+  const stamp=Date.parse(value&&typeof value==='object'?value.expiresAt:value);
+  if(!Number.isFinite(stamp)) return 'expiry unavailable';
+  try{return new Date(stamp).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}
+  catch(error){return new Date(stamp).toISOString().slice(0,16).replace('T',' ');}
+}
+function pePermanentDirty(){
+  if(!canEditLoadedPlayer()||!peEdit) return false;
+  if(peEdit.score!==peData.score||peEdit.gems!==peData.gems||peEdit.coins!==peData.coins) return true;
+  for(const k of PE_ITEMS()) if(!!peEdit.owned[k]!==!!peData.owned[k]) return true;
+  for(const pu of POWERUPS) if((peEdit.pow[pu.id]||0)!==(peData.pow[pu.id]||0)) return true;
+  return false;
+}
+function peTemporaryChanges(){
+  const changes={set:[],revoke:[]};
+  if(!canEditLoadedPlayer()||!peEdit||!peData||!peData.tempGrantsLoaded) return changes;
+  const before=peData.tempGrants||{},after=peEdit.tempGrants||{};
+  for(const key of Object.keys(after)){
+    const entry=after[key];
+    if(entry&&entry.draft&&Number.isFinite(+entry.durationMinutes)&&entry.operationId)
+      changes.set.push({key,durationMinutes:Math.round(+entry.durationMinutes),operationId:String(entry.operationId)});
+  }
+  for(const key of Object.keys(before)) if(!after[key]&&peEdit.tempRevokes&&peEdit.tempRevokes[key])
+    changes.revoke.push({key,operationId:String(peEdit.tempRevokes[key])});
+  return changes;
+}
+function peTemporaryDirty(){ const c=peTemporaryChanges(); return !!(c.set.length||c.revoke.length); }
+function pePermanentApplyReceipt(target,patch){
+  const fingerprint=String(target||'').toLowerCase()+'\n'+JSON.stringify(patch||{}),stamp=Date.now();
+  // Preserve the receipt after an ambiguous timeout. If a main admin stages
+  // the same permanent request again, SQL sees the same operation instead of
+  // creating a duplicate pending request. A changed patch is a new action.
+  if(peApplyRetryReceipt&&peApplyRetryReceipt.fingerprint===fingerprint&&stamp-peApplyRetryReceipt.createdAt<10*60000)
+    return peApplyRetryReceipt;
+  peApplyRetryReceipt={fingerprint,operationId:adminOperationUuid(),createdAt:stamp};
+  return peApplyRetryReceipt;
+}
+function pePendingSummary(){
+  if(!peEdit||!peData) return '';
+  const bits=[],pt=pePatch(),tc=peTemporaryChanges();
+  if(pt.score!=null)bits.push('score '+pt.score); if(pt.gems!=null)bits.push('gems '+pt.gems); if(pt.coins!=null)bits.push('coins '+pt.coins);
+  if(pt.pow)bits.push('upgrades');
+  if(pt.grant)bits.push('permanent +'+pt.grant.join('/')); if(pt.revoke)bits.push('permanent -'+pt.revoke.join('/'));
+  for(const row of tc.set)bits.push('temporary +'+row.key+' '+peGiftDurationLabel(row.durationMinutes));
+  for(const row of tc.revoke)bits.push('temporary revoke '+row.key);
+  return bits.join(' · ');
+}
 function normalizedPlayerOwned(value){
   if(Array.isArray(value)){ const out={}; for(const key of value) out[key]=true; return out; }
   return value&&typeof value==='object'?value:{};
@@ -86,41 +269,55 @@ function normalizedPlayerData(value,publicOnly){
     pow:d.pow&&typeof d.pow==='object'?d.pow:{},cosmetics:Math.max(0,Math.floor(+d.cosmetics||0)),
     animations:Math.max(0,Math.floor(+d.animations||0)),daily:Array.isArray(d.daily)?d.daily:[],
     wheelSpins:Math.max(0,Math.floor(+(d.wheel_spins!=null?d.wheel_spins:d.wheelSpins)||0)),
-    ban:d.ban||null,publicOnly:!!publicOnly
+    ban:d.ban||null,publicOnly:!!publicOnly,tempGrants:normalizedPlayerTempGrants(d.temp_grants||d.tempGrants),
+    tempGrantsLoaded:!!(d.temp_grants_loaded||d.tempGrantsLoaded),tempGrantError:''
   };
 }
 async function lookupPlayer(target){
-  peBusy=true; peData=null; peEdit=null;
+  resetPlayerEditScroll();
+  const busyToken=++peBusyToken,session=++peEditorSession;
+  peBusy=true; peData=null; peEdit=null; peNotice=''; peGiftMode='permanent';
   try{
     const q=String(target||'').trim();
     if(isAdmin()&&q.indexOf('@')>0){
       const {data,error}=await sb.rpc('admin_get_player',{target_email:q.toLowerCase()});
       if(error) throw error;
+      if(session!==peEditorSession)return;
       const d=Array.isArray(data)?data[0]:data; if(!d) throw new Error('not found');
       peData=normalizedPlayerData(d,false);
       peTarget=q.toLowerCase();
+      if(isMainAdmin()){
+        try{
+          const grants=await sb.rpc('admin_list_outpost_zero_weapon_grants',{p_target_email:peTarget});
+          if(grants.error) throw grants.error;
+          if(session!==peEditorSession)return;
+          peData.tempGrants=normalizedPlayerTempGrants(grants.data||[]); peData.tempGrantsLoaded=true;
+        }catch(error){
+          if(session!==peEditorSession)return;
+          peData.tempGrants={}; peData.tempGrantsLoaded=false; peData.tempGrantError='Temporary gifts could not be loaded. Refresh before editing them.';
+        }
+      }
     } else {
       const publicQuery=/^[A-Za-z0-9_]{3,32}$/.test(q)||
         /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(q);
       if(!publicQuery) throw new Error('invalid public lookup');
       const {data,error}=await sb.rpc('get_outpost_zero_public_player',{p_query:q});
       if(error) throw error;
+      if(session!==peEditorSession)return;
       const d=Array.isArray(data)?data[0]:data; if(!d||!d.user_id) throw new Error('not found');
       peData=normalizedPlayerData(d,true);
       peTarget=leaderboardUsername(d);
     }
+    if(session!==peEditorSession)return;
     peEdit={score:peData.score, gems:peData.gems, coins:peData.coins,
-            owned:Object.assign({}, peData.owned), pow:Object.assign({}, peData.pow)};
+            owned:Object.assign({}, peData.owned), pow:Object.assign({}, peData.pow),
+            tempGrants:clonePlayerTempGrants(peData.tempGrants),tempRevokes:{}};
     peStep='panel';
-  }catch(e){ peData=null; }
-  peBusy=false;
+  }catch(e){ if(session===peEditorSession)peData=null; }
+  if(busyToken===peBusyToken)peBusy=false;
 }
 function peDirty(){
-  if(!canEditLoadedPlayer()||!peEdit) return false;
-  if(peEdit.score!==peData.score||peEdit.gems!==peData.gems||peEdit.coins!==peData.coins) return true;
-  for(const k of PE_ITEMS()) if(!!peEdit.owned[k]!==!!peData.owned[k]) return true;
-  for(const pu of POWERUPS) if((peEdit.pow[pu.id]||0)!==(peData.pow[pu.id]||0)) return true;
-  return false;
+  return pePermanentDirty()||peTemporaryDirty();
 }
 function pePatch(){
   const pt={};
@@ -144,25 +341,71 @@ function pePatch(){
   return pt;
 }
 async function peApply(){
-  if(!canEditLoadedPlayer()||!peDirty()) return;
-  const pt=pePatch();
-  peBusy=true;
+  if(peBusy||!canEditLoadedPlayer()||!peDirty()) return;
+  const applyTarget=String(peTarget||'').toLowerCase(),editorSession=peEditorSession,pt=pePatch(),temp=peTemporaryChanges(),hasPermanent=Object.keys(pt).length>0,
+    permanentReceipt=hasPermanent?pePermanentApplyReceipt(applyTarget,pt):null,
+    permanentOperationId=permanentReceipt&&permanentReceipt.operationId,
+    applyActor=currentAuthUserId(),privacyEpoch=adminPrivacyEpoch;
+  const busyToken=++peBusyToken;peBusy=true;
   try{
-    if(isCreator()){ await applyPlayerEdit(peTarget, pt); await lookupPlayer(peTarget); fetchBoard(); }
-    else{
-      await sb.from('player_requests').insert({requested_by:adminEmail(), target_email:peTarget, patch:pt, status:'pending'});
-      peEdit={score:peData.score, gems:peData.gems, coins:peData.coins, owned:Object.assign({}, peData.owned)};
+    const assertCurrentApply=()=>{
+      if(editorSession!==peEditorSession||peTarget!==applyTarget||!adminPrivacyRequestCurrent(privacyEpoch,applyActor)||!canEditLoadedPlayer())
+        throw new Error('admin session changed');
+    };
+    const callReceiptRpc=async(name,args)=>{
+      let lastError=null;
+      for(let attempt=0;attempt<2;attempt++){
+        assertCurrentApply();
+        const result=await sb.rpc(name,args);
+        assertCurrentApply();
+        if(!result.error){
+          const answer=Array.isArray(result.data)?result.data[0]:result.data;
+          if(answer&&answer.accepted!==false)return answer;
+          lastError=new Error(String(answer&&answer.reason||'admin action rejected'));
+        }else lastError=result.error;
+      }
+      throw lastError||new Error('admin action unavailable');
+    };
+    for(const row of temp.set){
+      assertCurrentApply();
+      await callReceiptRpc('admin_set_outpost_zero_weapon_grant',{p_target_email:applyTarget,p_weapon_key:row.key,
+        p_duration_minutes:row.durationMinutes,p_note:'Player Lookup temporary gift',p_operation_id:row.operationId});
+    }
+    for(const row of temp.revoke){
+      assertCurrentApply();
+      await callReceiptRpc('admin_revoke_outpost_zero_weapon_grant',{p_target_email:applyTarget,p_weapon_key:row.key,
+        p_note:'Player Lookup temporary gift revoked',p_operation_id:row.operationId});
+    }
+    assertCurrentApply();
+    if(hasPermanent&&isCreator()){ await applyPlayerEdit(applyTarget,pt,permanentOperationId); fetchBoard(); }
+    else if(hasPermanent){
+      await submitPlayerEditRequest(applyTarget,pt,permanentOperationId);
       fetchScoreReqs();
     }
-  }catch(e){}
-  peBusy=false;
+    assertCurrentApply();
+    if(editorSession===peEditorSession&&peTarget===applyTarget){
+      await lookupPlayer(applyTarget);
+      if(peTarget===applyTarget)peNotice=hasPermanent&&!isCreator()?'Temporary gifts applied. Permanent edits were sent to the creator.':'Changes applied and logged.';
+    }
+    if(permanentReceipt&&peApplyRetryReceipt===permanentReceipt)peApplyRetryReceipt=null;
+  }catch(error){
+    if(!adminPrivacyRequestCurrent(privacyEpoch,applyActor)||editorSession!==peEditorSession)return;
+    if(editorSession===peEditorSession&&peTarget===applyTarget)peNotice='Could not apply every change · '+String(error&&error.message||'try again');
+    // Reload the authoritative server state after any partial success so Retry
+    // cannot accidentally extend the same temporary gift twice.
+    if(editorSession===peEditorSession&&peTarget===applyTarget){
+      await lookupPlayer(applyTarget);
+      if(peTarget===applyTarget)peNotice='Could not apply every change. Server state was refreshed; review and try again.';
+    }
+  }finally{ if(busyToken===peBusyToken)peBusy=false; }
 }
 function peNum(label, cur, cap){
   let v; try{ v=window.prompt(label, String(cur)); }catch(e){ v=null; }
   if(v===null || String(v).trim()==='') return cur;
   return Math.max(0, Math.min(cap, Math.round(+v||0)));
 }
-let myBan=null, banMsgT=0;                            // {until, note, scopes} when banned
+let myBan=null, banMsgT=0, myBanRequestSeq=0, myBanRequest=null, myBanOwnerUserId=null, myBanLastAttemptAt=-Infinity;
+const MY_BAN_POLL_MS=60000;                          // {until, note, scopes} when banned
 function deviceId(){
   let d=null;
   try{ d=localStorage.getItem('oz_device'); }catch(e){}
@@ -175,13 +418,45 @@ function deviceId(){
 function banScopes(){ return (myBan && myBan.scopes) ? myBan.scopes : []; }
 function banBlocksPlay(){ const sc=banScopes(); return sc.includes('account')||sc.includes('device'); }
 function banBlocksBoard(){ return !!myBan; }          // any live ban keeps you off the leaderboard
+function banRefreshMonotonicNow(){return typeof performance!=='undefined'&&typeof performance.now==='function'?performance.now():Date.now();}
+function clearMyBanForAuthChange(nextUserId=''){
+  const deviceBan=!!(myBan&&Array.isArray(myBan.scopes)&&myBan.scopes.includes('device'));
+  myBanRequestSeq++;myBanRequest=null;myBan=deviceBan?myBan:null;
+  myBanOwnerUserId=deviceBan?String(nextUserId||''):null;myBanLastAttemptAt=-Infinity;
+}
+function myBanTick(){
+  if(sb&&!myBanRequest&&banRefreshMonotonicNow()-myBanLastAttemptAt>=MY_BAN_POLL_MS)void fetchMyBan();
+}
 async function fetchScoreReqs(){
   if(!sb || !isMainAdmin()) return;
+  const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   try{
-    const { data } = await sb.from('player_requests').select('id,requested_by,target_email,patch,status,created_at')
-      .eq('status','pending').order('id',{ascending:false}).limit(20);
+    const {data,error}=await sb.rpc('list_outpost_zero_player_requests',{p_limit:20});
+    if(error)throw error;
+    if(!adminPrivacyRequestCurrent(epoch,userId)||!isMainAdmin())return;
     scoreReqs=data||[];
-  }catch(e){ scoreReqs=[]; }
+  }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId))scoreReqs=[]; }
+}
+async function adminReceiptRpc(name,args,operationId=adminOperationUuid()){
+  let lastError=null;const actor=currentAuthUserId(),privacyEpoch=adminPrivacyEpoch;
+  const input=Object.assign({},args,{p_operation_id:operationId});
+  for(let attempt=0;attempt<2;attempt++){
+    if(!adminPrivacyRequestCurrent(privacyEpoch,actor))throw new Error('account changed');
+    const {data,error}=await sb.rpc(name,input);
+    if(!adminPrivacyRequestCurrent(privacyEpoch,actor))throw new Error('account changed');
+    if(!error){
+      const row=Array.isArray(data)?data[0]:data;
+      if(row&&row.accepted!==false)return row;
+      lastError=new Error(String(row&&row.reason||'admin action rejected'));
+    }else lastError=error;
+  }
+  throw lastError||new Error('admin service unavailable');
+}
+function submitPlayerEditRequest(email,patch,operationId=adminOperationUuid()){
+  return adminReceiptRpc('submit_outpost_zero_player_request',{p_target_email:String(email||'').toLowerCase(),p_patch:patch},operationId);
+}
+function resolvePlayerEditRequest(id,decision,operationId=adminOperationUuid()){
+  return adminReceiptRpc('resolve_outpost_zero_player_request',{p_request_id:id,p_decision:decision},operationId);
 }
 // a short human summary of a patch, for the pending list
 function patchSummary(pt){
@@ -200,15 +475,31 @@ function patchSummary(pt){
   return bits.join(' \u00b7 ') || 'no changes';
 }
 async function fetchMyBan(){
-  if(!sb){ myBan=null; return; }
-  try{
-    const { data } = await sb.rpc('my_ban', {p_device: deviceId()});   // matches this account or this device
-    const d = Array.isArray(data) ? data[0] : data;
-    if(!d){ myBan=null; return; }
-    if(d.until && Date.parse(d.until) < Date.now()){ myBan=null; return; }          // expired
-    if(isCreator()){ myBan=null; return; }                                          // the creator is never banned
-    myBan={until:d.until, note:d.note||'', scopes: Array.isArray(d.scopes)? d.scopes : ['account']};
-  }catch(e){ myBan=null; }
+  const userId=authUser?String(authUser.id||''):'',requestVersion=authProfileRequestVersion;
+  if(!sb){myBan=null;myBanOwnerUserId=userId;return false;}
+  if(myBanRequest&&myBanRequest.userId===userId&&myBanRequest.version===requestVersion)return myBanRequest.promise;
+  const token=++myBanRequestSeq;myBanLastAttemptAt=banRefreshMonotonicNow();
+  const request={token,userId,version:requestVersion,promise:null};
+  request.promise=(async()=>{
+    try{
+      const {data,error}=await sb.rpc('get_my_outpost_zero_ban',{p_device:deviceId()}); // server resolves this account + device
+      if(error)throw error;
+      if(token!==myBanRequestSeq||(authUser?String(authUser.id||''):'')!==userId||requestVersion!==authProfileRequestVersion)return false;
+      const d=Array.isArray(data)?data[0]:data;
+      myBanOwnerUserId=userId;
+      if(!d||isCreator()){myBan=null;return true;}                                  // successful empty result means expired/lifted
+      myBan={until:d.until,note:d.note||'',scopes:Array.isArray(d.scopes)?d.scopes:['account']};
+      return true;
+    }catch(error){
+      // A transport failure cannot prove that a known ban ended. Keep the
+      // same identity fail-closed until a successful server poll says empty.
+      if(token===myBanRequestSeq&&(authUser?String(authUser.id||''):'')===userId&&myBanOwnerUserId!==userId)myBan=null;
+      return false;
+    }finally{
+      if(myBanRequest&&myBanRequest.token===token)myBanRequest=null;
+    }
+  })();
+  myBanRequest=request;return request.promise;
 }
 function banBlurb(){
   if(!myBan) return '';
@@ -243,7 +534,8 @@ function openScoreEdit(){
     : isAdmin() ? 'Enter the player\u2019s private account email.'
     : 'Enter the player\u2019s username.';
   targetInput.placeholder=privateEmailMode?'player@email.com':'username';
-  $('scoresend').textContent = banning ? (isCreator()?'BAN':'REQUEST BAN') : 'LOOK UP';
+  $('scoresend').textContent = banning ? (canBan()?'BAN':'REQUEST BAN') : 'LOOK UP';
+  scoreEditBusy=false;scoreEditOperationReceipt=null;$('scoresend').disabled=false;
   try{ $('scoreemail').focus(); }catch(e){}
 }
 function itemList(v){
@@ -280,16 +572,30 @@ function buildPatch(){                                // read the form into a pa
   if(pt.ban && pt.ban!=='unban' && !pt.note) return {err:'a ban needs a note'};
   return {email, patch:pt};
 }
-async function applyPlayerEdit(email, patch){          // creator only: the server re-checks the rank
+async function applyPlayerEdit(email, patch, operationId=adminOperationUuid()){ // server re-checks rank + receipts retries
   email=String(email).toLowerCase();
   if(patch && patch.ban && patch.ban!=='unban' && email===ROOT_ADMIN) throw new Error('creator cannot be banned');
-  const { data, error } = await sb.rpc('admin_edit_player', {target_email:email, patch});
-  if(error) throw error;
-  if(data===false || data===null) throw new Error('no such player');
-  return true;
+  let lastError=null;const actor=currentAuthUserId(),privacyEpoch=adminPrivacyEpoch;
+  for(let attempt=0;attempt<2;attempt++){
+    if(!adminPrivacyRequestCurrent(privacyEpoch,actor))throw new Error('account changed');
+    const {data,error}=await sb.rpc('outpost_zero_admin_edit_player',{p_target_email:email,p_patch:patch,p_operation_id:operationId});
+    if(!adminPrivacyRequestCurrent(privacyEpoch,actor))throw new Error('account changed');
+    if(!error&&data!==false&&data!==null)return true;
+    lastError=error||new Error('no such player');
+  }
+  throw lastError||new Error('player edit unavailable');
 }
-function closeScoreEdit(){ scoreEditOpen=false; $('scorewrap').style.display='none'; if(!scoresOpen){ scoresOpen=true; peStep=peData?'panel':'choose'; } }
+function setScoreEditBusy(value){
+  scoreEditBusy=!!value;
+  const button=$('scoresend');if(button)button.disabled=scoreEditBusy;
+  const cancel=$('scorecancel');if(cancel)cancel.disabled=scoreEditBusy;
+}
+function closeScoreEdit(){
+  if(scoreEditBusy)return false;
+  scoreEditOpen=false; $('scorewrap').style.display='none'; if(!scoresOpen){ scoresOpen=true; peStep=peData?'panel':'choose'; } return true;
+}
 async function submitScoreEdit(){
+  if(scoreEditBusy)return;
   if(peMode!=='ban'){
     const query=String($('scoreemail').value||'').trim();
     if(isAdmin()){
@@ -298,9 +604,11 @@ async function submitScoreEdit(){
       $('scorestatus').textContent='enter a valid username'; return;
     }
     if(!sb){ $('scorestatus').textContent='preview build \u2014 works on the live site'; return; }
-    $('scorestatus').textContent='looking up...';
-    await lookupPlayer(query);
-    if(!peData){ $('scorestatus').textContent=isAdmin()?'no player with that email':'username not found'; return; }
+    $('scorestatus').textContent='looking up...';setScoreEditBusy(true);
+    try{
+      await lookupPlayer(query);
+      if(!peData){ $('scorestatus').textContent=isAdmin()?'no player with that email':'username not found'; return; }
+    }finally{setScoreEditBusy(false);}
     closeScoreEdit(); scoresOpen=true; peStep='panel';
     return;
   }
@@ -308,49 +616,107 @@ async function submitScoreEdit(){
   if(f.err){ $('scorestatus').textContent=f.err; return; }
   if(!sb){ $('scorestatus').textContent='preview build \u2014 works on the live site'; return; }
   if(!canEditPlayer()){ $('scorestatus').textContent='not allowed'; return; }
-  $('scorestatus').textContent='working...';
+  const fingerprint=f.email+'\n'+JSON.stringify(f.patch);
+  if(!scoreEditOperationReceipt||scoreEditOperationReceipt.fingerprint!==fingerprint)
+    scoreEditOperationReceipt={fingerprint,operationId:adminOperationUuid()};
+  const operationId=scoreEditOperationReceipt.operationId;
+  $('scorestatus').textContent='working...';setScoreEditBusy(true);
+  let completed=false;
   try{
     if(isCreator() || (peMode==='ban' && canBan())){      // mains can ban outright
-      await applyPlayerEdit(f.email, f.patch);
+      await applyPlayerEdit(f.email, f.patch,operationId);
       $('scorestatus').textContent='player updated';
       fetchBoard(); fetchPlayersData();
     } else {
-      const { error } = await sb.from('player_requests').insert(
-        {requested_by: adminEmail(), target_email: f.email, patch: f.patch, status:'pending'});
-      if(error) throw error;
+      await submitPlayerEditRequest(f.email,f.patch,operationId);
       $('scorestatus').textContent='sent to the creator for approval';
     }
-    setTimeout(closeScoreEdit, 1200);
+    completed=true;scoreEditOperationReceipt=null;
+    setTimeout(()=>{setScoreEditBusy(false);closeScoreEdit();},1200);
   }catch(err){ $('scorestatus').textContent='failed \u2014 check the email and try again'; }
+  finally{if(!completed)setScoreEditBusy(false);}
 }
 async function approveScoreReq(r){                  // creator only
   if(!isCreator() || !sb) return;
+  const key=String(r&&r.id||'');if(!key||scoreRequestDecisionBusy.has(key))return;
+  scoreRequestDecisionBusy.add(key);const operationId=adminOperationUuid();
   try{
-    await applyPlayerEdit(r.target_email, r.patch);
-    await sb.from('player_requests').update({status:'approved', decided_by:adminEmail()}).eq('id',r.id);
+    await resolvePlayerEditRequest(r.id,'approve',operationId);
     fetchBoard();
-  }catch(e){
-    try{ await sb.from('player_requests').update({status:'failed', decided_by:adminEmail()}).eq('id',r.id); }catch(e2){}
-  }
-  fetchScoreReqs();
+  }catch(e){}finally{await fetchScoreReqs();scoreRequestDecisionBusy.delete(key);}
 }
 async function rejectScoreReq(r){
   if(!isCreator() || !sb) return;
-  try{ await sb.from('player_requests').update({status:'rejected', decided_by:adminEmail()}).eq('id',r.id); }catch(e){}
-  fetchScoreReqs();
+  const key=String(r&&r.id||'');if(!key||scoreRequestDecisionBusy.has(key))return;
+  scoreRequestDecisionBusy.add(key);const operationId=adminOperationUuid();
+  try{ await resolvePlayerEditRequest(r.id,'reject',operationId); }catch(e){}finally{await fetchScoreReqs();scoreRequestDecisionBusy.delete(key);}
 }
 let archOpen=false, archTab='msgs', archRects=[], storageOpen=false, storageRects=[], archHubBtnRect=null;
 let updatesResolved=[];
 let adminMsgs=[], unreadMsgs=0, msgOpen=false, msgTo='';
+function normalizeAdminAuditRow(row){
+  const r=row&&typeof row==='object'?row:{};
+  return {eventId:/^\d+$/.test(String(r.event_id||''))?String(r.event_id):'',actor:String(r.actor_email||'?'),target:String(r.target_email||''),
+    action:String(r.action||'admin.action'),result:String(r.result||'ok'),details:r.details&&typeof r.details==='object'?r.details:{},
+    createdAt:String(r.created_at||'')};
+}
+function adminAuditPageRows(){ return adminAuditPages[adminAuditPage]||[]; }
+function adminAuditDetailsText(row){
+  if(!row) return '';
+  const lines=['ACTION: '+row.action.toUpperCase(),'RESULT: '+row.result.toUpperCase(),'ACTOR: '+row.actor,
+    'TARGET: '+(row.target||'GLOBAL'),'TIME: '+(row.createdAt||'unknown')];
+  const detail=row.details&&Object.keys(row.details).length?JSON.stringify(row.details,null,2):'No extra details.';
+  lines.push('',detail); return lines.join('\n');
+}
+async function fetchAdminAuditLog(reset=false){
+  if(!sb||!authUser||!isMainAdmin()){
+    adminAuditPages=[]; adminAuditPage=0; adminAuditHasMore=false; adminAuditError='Main-admin access required.'; return false;
+  }
+  if(adminAuditLoading) return false;
+  const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
+  adminAuditLoading=true; adminAuditError='';
+  try{
+    if(reset){adminAuditPages=[];adminAuditPageMore=[];adminAuditPage=0;adminAuditHasMore=false;resetAdminAuditScroll();}
+    const existing=adminAuditPages[adminAuditPage];
+    if(existing){adminAuditHasMore=!!adminAuditPageMore[adminAuditPage];return true;}
+    const previous=adminAuditPage>0?adminAuditPages[adminAuditPage-1]:null;
+    const before=previous&&previous.length?previous[previous.length-1].eventId:null;
+    const {data,error}=await sb.rpc('list_outpost_zero_admin_audit',{p_before_event_id:before,p_limit:ADMIN_AUDIT_PAGE_SIZE+1});
+    if(error) throw error;
+    if(!adminPrivacyRequestCurrent(epoch,userId)||!isMainAdmin())return false;
+    const fetched=(data||[]).map(normalizeAdminAuditRow).filter(row=>row.eventId);
+    adminAuditHasMore=fetched.length>ADMIN_AUDIT_PAGE_SIZE;
+    adminAuditPages[adminAuditPage]=fetched.slice(0,ADMIN_AUDIT_PAGE_SIZE);adminAuditPageMore[adminAuditPage]=adminAuditHasMore;resetAdminAuditScroll();
+    return true;
+  }catch(error){
+    if(!adminPrivacyRequestCurrent(epoch,userId))return false;
+    adminAuditError=String(error&&error.message||'Audit log unavailable.');
+    adminAuditHasMore=false; return false;
+  }finally{if(adminPrivacyRequestCurrent(epoch,userId))adminAuditLoading=false;}
+}
+async function adminAuditOlder(){
+  if(adminAuditLoading||!adminAuditHasMore)return false;
+  adminAuditPage++; resetAdminAuditScroll();
+  const ok=await fetchAdminAuditLog(false);
+  if(!ok&&adminAuditPage>0){adminAuditPage--;adminAuditHasMore=!!adminAuditPageMore[adminAuditPage];}
+  return ok;
+}
+function adminAuditNewer(){
+  if(adminAuditLoading||adminAuditPage<=0)return false;
+  adminAuditPage--;adminAuditHasMore=!!adminAuditPageMore[adminAuditPage];resetAdminAuditScroll();return true;
+}
 async function fetchMsgs(){
-  if(!sb || !authUser){ return; }
+  if(!sb || !authUser || !isAdmin()){ return false; }
+  const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   try{
     const { data } = await sb.from('admin_msgs').select('id,from_email,to_email,message,read,read_at,archived,created_at')
       .order('id',{ascending:false}).limit(30);
+    if(!adminPrivacyRequestCurrent(epoch,userId)||!isAdmin())return false;
     adminMsgs=data||[];
     const me=adminEmail();
     unreadMsgs=adminMsgs.filter(m=>m.to_email===me && !m.read).length;
-  }catch(e){}
+    return true;
+  }catch(e){return false;}
 }
 function msgArchived(m){                             // manual archive, or auto 7 days after being read
   if(m.archived) return true;
@@ -358,12 +724,14 @@ function msgArchived(m){                             // manual archive, or auto 
   return false;
 }
 async function markMsgsRead(){
-  const me=adminEmail(), ts=new Date().toISOString();
+  const me=adminEmail(),ts=new Date().toISOString(),epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   if(sb && authUser){
     try{ await sb.from('admin_msgs').update({read:true, read_at:ts}).eq('to_email',me).eq('read',false); }catch(e){}
   }
+  if(!adminPrivacyRequestCurrent(epoch,userId)||!isAdmin())return false;
   for(const m of adminMsgs) if(m.to_email===me && !m.read){ m.read=true; m.read_at=ts; }
   unreadMsgs=0;
+  return true;
 }
 async function archiveMsg(id){                        // recipients can tuck a message away early
   const me=adminEmail();
@@ -450,11 +818,22 @@ async function sendMsg(){
 let bannerXRect=null, hubPostsRect=null, bannerDismissed=+((typeof localStorage!=='undefined'&&localStorage.getItem('oz_banner_dismiss'))||0);
 async function fetchAdmins(){
   if(!sb || !authUser) return;
+  const epoch=adminPrivacyEpoch,userId=currentAuthUserId(),previousRank=myRank();
   try{
-    const { data } = await sb.from('admins').select('email,role');
+    const { data,error } = await sb.from('admins').select('email,role');
+    if(error)throw error;
+    if(!adminPrivacyRequestCurrent(epoch,userId))return;
     adminRoles={}; (data||[]).forEach(r=>{ adminRoles[String(r.email||'').toLowerCase()]=r.role; });
   }catch(e){}
+  if(!adminPrivacyRequestCurrent(epoch,userId))return;
+  const nextRank=myRank();
+  if(nextRank!==previousRank)adminPrivacyEpoch++;
+  enforceAdminRolePrivacy(previousRank);
   syncFallAccess();                                  // role changes immediately grant/revoke admin preview
+  if(nextRank&&nextRank!==previousRank){
+    void fetchMsgs();if(typeof fetchPlayersData==='function')void fetchPlayersData();
+    if(isMainAdmin()){void fetchScoreReqs();void fetchUpdatesFeed();}
+  }
 }
 async function fetchBanners(){
   if(!sb) return;
@@ -467,16 +846,18 @@ async function fetchBanners(){
   }catch(e){}
 }
 async function fetchUpdatesFeed(){
-  if(!sb){ updatesFeed={staff:[],player:[]}; updatesResolved=[]; return; }
+  if(!sb||!isMainAdmin()){ updatesFeed={staff:[],player:[]}; updatesResolved=[]; return; }
+  const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   try{
     const { data } = await sb.from('reports').select('id,name,message,created_at,meta,resolved')
       .order('id',{ascending:false}).limit(40);
+    if(!adminPrivacyRequestCurrent(epoch,userId)||!isMainAdmin())return;
     const all=data||[];
     const isStaff=r=>(r.meta&&r.meta.staff) || String(r.message||'').indexOf('[STAFF]')===0;
     const open=all.filter(r=>!r.resolved);
     updatesFeed={ staff: open.filter(isStaff), player: open.filter(r=>!isStaff(r)) };
     updatesResolved=all.filter(r=>r.resolved);
-  }catch(e){ updatesFeed={staff:[],player:[]}; updatesResolved=[]; }
+  }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId)){updatesFeed={staff:[],player:[]};updatesResolved=[];} }
 }
 async function resolveReport(id){                    // mains: mark handled; it moves to the archive
   if(!isMainAdmin()) return;
@@ -598,5 +979,5 @@ function normalizeDailyRewards(){
     t.prog=clamp(+t.prog||0,0,t.goal); if(t.done) t.prog=t.goal;
   }
 }
-function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); persistLastLoadoutLocal(); }catch(e){} }
+function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({owner:profileOwnerUserId==null?null:String(profileOwnerUserId), gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); persistLastLoadoutLocal(); }catch(e){} }
 function saveMeta(){ saveMetaLocal(); queueProfileSave(); }

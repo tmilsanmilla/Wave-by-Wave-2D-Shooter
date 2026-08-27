@@ -1,12 +1,184 @@
 "use strict";
 
 // ---- account progress sync: purchases + currency live with the account, not the device ----
-let profileLoaded=false, profileSaveT=0, profilePending=false, profilePendingUserId='';
+let profileLoaded=false, profileSaveT=0, profilePending=false, profilePendingUserId='', profileOwnerUserId=null;
+// Temporary admin gifts are a separate server-backed entitlement. They are
+// deliberately excluded from metaPayload/localStorage so no device can turn a
+// timed gift into permanent ownership by editing its local profile cache.
+let temporaryWeaponGrants=Object.create(null), temporaryWeaponGrantUserId='', temporaryWeaponGrantsLoaded=false;
+let temporaryWeaponGrantAttemptAt=0, temporaryWeaponGrantRequest=null, temporaryWeaponGrantRequestSeq=0;
+let temporaryWeaponLaunchVerification=null;
+const TEMP_WEAPON_GRANT_POLL_MS=60000;
+function prepareAccountProgressForAuth(accountId=''){
+  const id=String(accountId||'');
+  if(profileOwnerUserId!==null&&id===profileOwnerUserId)return false; // token refresh / same account: keep loaded state
+  profileOwnerUserId=id;profileLoaded=false;profilePending=false;profilePendingUserId='';
+  if(typeof resetDailyStreakUiForAccountChange==='function')resetDailyStreakUiForAccountChange();
+  // Fail closed synchronously during A -> B (and sign-out). A slow or failed B
+  // profile read must never leave A's wallet or permanent inventory usable.
+  // This reset is memory-only: never save it to either account from here.
+  gems=0;gemResetVersion=GEM_RESET_VERSION;coins=0;hiScore=0;
+  gemOwned={};cosmeticOwned={};cosmeticEquipped={};animOwned={};animEquipped={};powerStock={};
+  tasksDate=todayIndex();dailyTasks=freshDailyTasks();streakDays=0;streakLongest=0;streakLastDay='';
+  referralUsed=false;referralPaid=0;wheelReady=0;wheelAcc=0;
+  return true;
+}
 function metaPayload(){
   return {gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
           hi:hiScore, mv:musicVol, sv:sfxVol, onboardV:onboardingVersion, loadout:storedLastLoadout()};
+}
+function temporaryGrantMonotonicNow(){
+  return typeof performance!=='undefined'&&typeof performance.now==='function'?performance.now():Date.now();
+}
+function activeTemporaryWeaponGrant(key,at=temporaryGrantMonotonicNow()){
+  if(!authUser||!temporaryWeaponGrantsLoaded||temporaryWeaponGrantUserId!==String(authUser.id||''))return null;
+  const row=temporaryWeaponGrants[String(key||'')];
+  return row&&Number.isFinite(+row.deadline)&&+row.deadline>at?row:null;
+}
+function temporarilyOwnsWeapon(key,at=temporaryGrantMonotonicNow()){return !!activeTemporaryWeaponGrant(key,at);}
+function temporaryGrantKeys(){return Object.keys(temporaryWeaponGrants);}
+function dropExpiredTemporaryLoadout(keys,options){
+  options=options||{};
+  const expired=new Set(keys||[]),forgetSaved=options.forgetSaved!==false,
+    persistCloud=forgetSaved&&options.persistCloud!==false;
+  let liveChanged=false,savedChanged=false,
+    expiredCurrent=typeof player!=='undefined'&&player&&expired.has(player.cur)&&isLocked(player.cur);
+  for(const slot of LOADOUT_SLOTS){
+    const selected=loadout&&loadout[slot];
+    if(selected&&expired.has(selected)&&isLocked(selected)){
+      if(typeof player!=='undefined'&&player&&player.cur===selected)expiredCurrent=true;
+      if(slot==='utility'&&typeof utilityOut!=='undefined')utilityOut=false;
+      loadout[slot]=null;liveChanged=true;
+    }
+    if(forgetSaved&&lastLoadout&&lastLoadout[slot]&&expired.has(lastLoadout[slot])&&isLocked(lastLoadout[slot])){
+      lastLoadout[slot]=SHARED_LOADOUT_DEFAULTS[slot];savedChanged=true;
+    }
+  }
+  // Expiry/revoke is immediate, including during a live run. Move the player
+  // to the first still-authorized carried weapon; tryFire also rechecks as a
+  // final guard so a stale held trigger can never keep the expired gun firing.
+  if(expiredCurrent&&typeof player!=='undefined'&&player){
+    const next=[loadout.primary,loadout.secondary,loadout.melee].find(key=>key&&WEAPONS[key]&&!isLocked(key));
+    const fallback=SHARED_LOADOUT_DEFAULTS.primary;
+    if(next&&typeof switchWeapon==='function'&&state==='play')switchWeapon(next);
+    else player.cur=next||(!isLocked(fallback)?fallback:PRIMARIES.find(key=>WEAPONS[key]&&!isLocked(key)))||'smg';
+  }
+  if(savedChanged){
+    persistLastLoadoutLocal();
+    const userId=String(authUser&&authUser.id||'');
+    if(persistCloud&&profileLoaded&&userId&&profileOwnerUserId===userId&&lastLoadoutAccountId===userId)queueProfileSave();
+  }
+  if((liveChanged||savedChanged)&&canRestoreAccountLoadout())restoreLastLoadoutForMode(pendingGameMode);
+  return liveChanged||savedChanged;
+}
+function clearTemporaryWeaponGrants(accountId='',drop=true){
+  const old=temporaryGrantKeys();
+  temporaryWeaponGrants=Object.create(null);temporaryWeaponGrantUserId=String(accountId||'');temporaryWeaponGrantsLoaded=false;
+  temporaryWeaponGrantRequestSeq++;temporaryWeaponGrantRequest=null;temporaryWeaponLaunchVerification=null;
+  if(drop&&old.length)dropExpiredTemporaryLoadout(old);
+}
+function prepareTemporaryWeaponGrantsForAccount(accountId='',drop=true){
+  const id=String(accountId||'');
+  if(id!==temporaryWeaponGrantUserId)clearTemporaryWeaponGrants(id,drop);
+  else if(!id)clearTemporaryWeaponGrants('',drop);
+}
+function failClosedTemporaryWeaponGrants(userId){
+  const old=temporaryGrantKeys();
+  temporaryWeaponGrants=Object.create(null);temporaryWeaponGrantUserId=String(userId||'');temporaryWeaponGrantsLoaded=false;
+  temporaryWeaponGrantRequestSeq++;
+  // A transport failure proves nothing about expiry. Remove effective access,
+  // but keep the remembered kit so a later authoritative success can restore it.
+  if(old.length)dropExpiredTemporaryLoadout(old,{forgetSaved:false,persistCloud:false});
+}
+function normalizeOwnTemporaryWeaponGrants(rows){
+  const out=Object.create(null),receipt=temporaryGrantMonotonicNow();
+  for(const row of Array.isArray(rows)?rows:[]){
+    const key=String(row&&row.weapon_key||'').trim().toLowerCase(),expiry=Date.parse(row&&row.expires_at||''),server=Date.parse(row&&row.server_now||'');
+    const remaining=expiry-server;
+    if(!GEM_SHOP.some(item=>item.key===key)||!Number.isFinite(expiry)||!Number.isFinite(server)||remaining<=0)continue;
+    out[key]={expiresAt:new Date(expiry).toISOString(),deadline:receipt+remaining};
+  }
+  return out;
+}
+function syncTemporaryWeaponAccess(){
+  const stamp=temporaryGrantMonotonicNow(),expired=[];
+  for(const key of temporaryGrantKeys()){
+    const deadline=+(temporaryWeaponGrants[key]&&temporaryWeaponGrants[key].deadline);
+    if(!Number.isFinite(deadline)||deadline<=stamp){delete temporaryWeaponGrants[key];expired.push(key);continue;}
+    const item=GEM_SHOP.find(entry=>entry.key===key);if(item)gemUnlock(item);
+  }
+  if(expired.length)dropExpiredTemporaryLoadout(expired);
+  return expired;
+}
+function fetchTemporaryWeaponGrants(expectedUserId,requestVersion){
+  if(!sb||!authUser)return Promise.resolve(false);
+  const userId=String(expectedUserId||authUser.id||'');
+  if(!userId||String(authUser.id||'')!==userId)return Promise.resolve(false);
+  if(temporaryWeaponGrantRequest&&temporaryWeaponGrantRequest.userId===userId&&temporaryWeaponGrantRequest.version===requestVersion)
+    return temporaryWeaponGrantRequest.promise;
+  const token=++temporaryWeaponGrantRequestSeq;temporaryWeaponGrantAttemptAt=temporaryGrantMonotonicNow();
+  const request={token,userId,version:requestVersion,promise:null};
+  request.promise=(async()=>{
+    try{
+      const {data,error}=await sb.rpc('get_my_outpost_zero_weapon_grants');
+      if(error)throw error;
+      if(token!==temporaryWeaponGrantRequestSeq||!authUser||String(authUser.id||'')!==userId||temporaryWeaponGrantUserId!==userId||
+         (requestVersion!=null&&requestVersion!==authProfileRequestVersion))return false;
+      const old=temporaryGrantKeys();temporaryWeaponGrants=normalizeOwnTemporaryWeaponGrants(data||[]);
+      temporaryWeaponGrantsLoaded=true;syncTemporaryWeaponAccess();
+      const removed=old.filter(key=>!temporaryWeaponGrants[key]);if(removed.length)dropExpiredTemporaryLoadout(removed);
+      // On a reload, `old` is empty even when the cloud loadout remembers a
+      // now-revoked gift. Server success is the authority that may clean it.
+      const unavailableSaved=LOADOUT_SLOTS.map(slot=>lastLoadout&&lastLoadout[slot]).filter(key=>
+        key&&GEM_SHOP.some(item=>item.key===key)&&!gemOwned[key]&&!temporarilyOwnsWeapon(key));
+      if(unavailableSaved.length)dropExpiredTemporaryLoadout(unavailableSaved);
+      if(profileLoaded&&profileOwnerUserId===userId&&lastLoadoutAccountId===userId&&canRestoreAccountLoadout())
+        restoreLastLoadoutForMode(pendingGameMode);
+      return true;
+    }catch(error){
+      if(token===temporaryWeaponGrantRequestSeq&&authUser&&String(authUser.id||'')===userId&&temporaryWeaponGrantUserId===userId)
+        failClosedTemporaryWeaponGrants(userId); // fail closed live access without treating transport failure as a revoke
+      return false;
+    }finally{
+      if(temporaryWeaponGrantRequest&&temporaryWeaponGrantRequest.token===token)temporaryWeaponGrantRequest=null;
+    }
+  })();
+  temporaryWeaponGrantRequest=request;return request.promise;
+}
+function temporaryWeaponGrantTick(){
+  if(!authUser||!profileLoaded){if(!authUser&&temporaryWeaponGrantUserId)clearTemporaryWeaponGrants('',true);return;}
+  syncTemporaryWeaponAccess();
+  if(!temporaryWeaponGrantRequest&&temporaryGrantMonotonicNow()-temporaryWeaponGrantAttemptAt>=TEMP_WEAPON_GRANT_POLL_MS)
+    void fetchTemporaryWeaponGrants(String(authUser.id||''),authProfileRequestVersion);
+}
+function temporaryWeaponLoadoutReady(){
+  syncTemporaryWeaponAccess();
+  for(const slot of LOADOUT_SLOTS){const key=loadout&&loadout[slot];if(key&&isLocked(key))return false;}
+  return true;
+}
+function temporaryWeaponLoadoutGrantKeys(){
+  const out=[];
+  for(const slot of LOADOUT_SLOTS){const key=loadout&&loadout[slot];if(key&&!gemOwned[key]&&temporarilyOwnsWeapon(key))out.push(key);}
+  return out;
+}
+function verifyTemporaryWeaponLoadoutForLaunch(onVerified,onFailed){
+  const keys=temporaryWeaponLoadoutGrantKeys();
+  if(!keys.length)return true;
+  if(temporaryWeaponLaunchVerification)return false;
+  const userId=String(authUser&&authUser.id||''),version=authProfileRequestVersion,
+    kit=LOADOUT_SLOTS.map(slot=>loadout&&loadout[slot]||'').join('|'),token={};
+  temporaryWeaponLaunchVerification=token;
+  void fetchTemporaryWeaponGrants(userId,version).then(ok=>{
+    if(temporaryWeaponLaunchVerification!==token)return;
+    temporaryWeaponLaunchVerification=null;
+    const same=ok&&authUser&&String(authUser.id||'')===userId&&version===authProfileRequestVersion&&
+      LOADOUT_SLOTS.map(slot=>loadout&&loadout[slot]||'').join('|')===kit&&keys.every(key=>temporarilyOwnsWeapon(key)||!!gemOwned[key]);
+    if(same){if(typeof onVerified==='function')onVerified();}
+    else{syncTemporaryWeaponAccess();dropUnownedFromLoadout();if(typeof onFailed==='function')onFailed();}
+  });
+  return false;
 }
 const LOADOUT_SLOTS=['primary','secondary','melee','utility'];
 const GUEST_LOADOUT_STORAGE_KEY='oz_loadout_guest_v1',ACCOUNT_LOADOUT_STORAGE_PREFIX='oz_loadout_account_v1:';
@@ -83,10 +255,11 @@ function canRestoreAccountLoadout(){
 }
 function applyProfile(m){
   if(!m) return;
+  profileOwnerUserId=authUser?String(authUser.id||''):profileOwnerUserId;
   // the account is the source of truth for what you own: a purchase made elsewhere arrives,
   // and an item an admin removed actually goes away (a union here would ignore every revoke)
   const take=(cloud, local)=>{ const o={}; for(const k in (cloud||{})) if(cloud[k]) o[k]=true; return (cloud==null)?(local||{}):o; };
-  gemOwned      = take(m.owned, gemOwned);
+  gemOwned      = take(m.owned, {});                 // a legacy missing field is empty, never the prior account's inventory
   cosmeticOwned = take(m.cos,   cosmeticOwned);
   animOwned     = take(m.anim,  animOwned);
   dropUnownedFromLoadout();
@@ -141,9 +314,11 @@ function applyProfile(m){
 // an older account may have a leaderboard score but no saved profile yet
 async function fetchOwnBest(){
   if(!sb || !authUser) return;
+  const userId=String(authUser.id||''),requestVersion=authProfileRequestVersion;
   try{
     const { data } = await sb.from('scores').select('score')
-      .eq('user_id',authUser.id).eq('game','outpost-zero').maybeSingle();
+      .eq('user_id',userId).eq('game','outpost-zero').maybeSingle();
+    if(!authUser||String(authUser.id||'')!==userId||profileOwnerUserId!==userId||requestVersion!==authProfileRequestVersion)return;
     if(data && typeof data.score==='number' && data.score>hiScore){ hiScore=data.score; saveMetaLocal(); }
   }catch(e){}
 }
@@ -151,6 +326,7 @@ async function fetchProfile(expectedUserId,requestVersion){
   if(!sb || !authUser) return false;
   const userId=String(expectedUserId||authUser.id);
   if(String(authUser.id)!==userId) return false;
+  prepareAccountProgressForAuth(userId);
   try{
     const { data, error } = await sb.from('profiles').select('data').eq('user_id', userId).maybeSingle();
     if(error) throw error;                            // a failed read is not a new account
@@ -175,7 +351,13 @@ async function fetchProfile(expectedUserId,requestVersion){
     else {                                            // a new account never inherits another account's device gems
       onboardingVersion=0;
       firstAccountTutorialUserId=userId;
-      gems=0; gemResetVersion=GEM_RESET_VERSION; referralUsed=false; referralPaid=0;
+      // Auth can switch from a rich account straight to a never-seen account
+      // without reloading the page. Clear every account-owned field before the
+      // first cloud write; keep only device preferences such as music/SFX.
+      gems=0;gemResetVersion=GEM_RESET_VERSION;coins=0;hiScore=0;
+      gemOwned={};cosmeticOwned={};cosmeticEquipped={};animOwned={};animEquipped={};powerStock={};
+      tasksDate=todayIndex();dailyTasks=freshDailyTasks();streakDays=0;streakLongest=0;streakLastDay='';
+      referralUsed=false;referralPaid=0;wheelReady=0;wheelAcc=0;
       lastLoadoutAccountId=userId; lastLoadout=storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
       if(canRestoreAccountLoadout()) restoreLastLoadoutForMode(pendingGameMode);
       saveMetaLocal();
@@ -209,6 +391,10 @@ function loadMeta(){
   try{ localStorage.removeItem('oz_bot_training_v1'); }catch(e){}
   try{
     const m=JSON.parse(localStorage.getItem('oz_meta')||'{}');
+    // `owner:''` is a real guest cache. A UUID belongs to that account. Older
+    // caches without the marker are unknown and get one fail-closed reset when
+    // a cloud client starts, rather than being trusted as guest ownership.
+    profileOwnerUserId=Object.prototype.hasOwnProperty.call(m,'owner')&&typeof m.owner==='string'?m.owner:null;
     gems=savedGemBalance(m); gemResetVersion=Math.max(GEM_RESET_VERSION,+m.gre||0); gemOwned=m.owned||{}; tasksDate=m.date||''; dailyTasks=m.tasks||[];
     coins=m.coins||0; cosmeticOwned=m.cos||{}; cosmeticEquipped=m.cosEq||{}; powerStock=m.pow||{};
     animOwned=m.anim||{}; animEquipped=(m.animEq && typeof m.animEq==='object') ? m.animEq : {};
@@ -246,6 +432,7 @@ function dropUnownedFromLoadout(){                    // a removed weapon must l
 }
 function syncOwnedWeapons(){                          // owned shop weapons must exist in the rosters
   for(const it of GEM_SHOP) if(gemOwned[it.key]) gemUnlock(it);
+  syncTemporaryWeaponAccess();
 }
 function gemUnlock(it){
   if(it.slot==='utility'){
@@ -349,6 +536,6 @@ function isLocked(k){
   if(FALL_KEYS.includes(k)) return !fallEligible();  // unreleased: admins in Test Mode only
   if(!sb) return false;                              // preview/offline: everything open
   if(testMode) return false;                         // TEST MODE: every weapon free + usable
-  if(GEM_SHOP.some(it=>it.key===k)) return !gemOwned[k];   // shop weapons: unlocked once bought
+  if(GEM_SHOP.some(it=>it.key===k)) return !gemOwned[k]&&!temporarilyOwnsWeapon(k); // timed gifts never enter gemOwned
   return !authUser && LOCKED_KEYS.includes(k);       // seasonal weapons: sign-in only; utilities free
 }

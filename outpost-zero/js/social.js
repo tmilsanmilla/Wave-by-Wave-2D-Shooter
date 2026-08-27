@@ -96,24 +96,30 @@ function closeUsernameClaim(force=false){
 }
 function openUsernameClaim(mode='checking',message='Checking your account username...'){
   if(!authUser||recovering){ closeUsernameClaim(); return false; }
+  // The mandatory username gate outranks the optional account popover. Keep a
+  // sign-out confirmation above the gate, but never leave the normal account
+  // menu showing stale/private identity behind it.
+  if(typeof accountMenuOpen!=='undefined'&&accountMenuOpen&&
+     !(typeof accountMenuConfirming!=='undefined'&&accountMenuConfirming)&&typeof closeAccountMenu==='function')closeAccountMenu(true);
   const id=String(authUser.id||'');
   if(!id){ closeUsernameClaim(); return false; }
   const el=usernameClaimElements(), preserveRequiredInput=usernameClaimOpen&&usernameClaimUserId===id&&usernameClaimMode==='required';
   usernameClaimOpen=true; usernameClaimMode=mode; usernameClaimUserId=id;
-  if(el.wrap){ el.wrap.className='ui '+mode; el.wrap.style.display='flex'; }
+  const settingsOwnsRequired=mode==='required'&&typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen;
+  if(el.wrap){ el.wrap.className='ui '+mode; el.wrap.style.display=settingsOwnsRequired?'none':'flex'; }
   if(el.title) el.title.textContent=mode==='required'?'CHOOSE YOUR USERNAME':mode==='error'?'USERNAME REQUIRED':'CHECKING USERNAME';
   if(el.hint) el.hint.textContent=mode==='required'
-    ? 'Choose the unique public username shown on leaderboards, parties, friends, and messages. Your sign-in email is visible only in this private setup.'
+    ? 'Open Settings to choose the unique public username shown on leaderboards, parties, friends, and messages. Your sign-in email is visible only in this private setup.'
     : mode==='error'?'Your username could not be verified. Retry the secure profile check or sign out.':'Checking the public username attached to your account.';
   if(el.status) el.status.textContent=usernameClaimPrivateStatus(message);
-  if(el.save) el.save.disabled=mode!=='required';
+  if(el.save){ el.save.disabled=mode!=='required'; el.save.textContent='OPEN SETTINGS'; }
   if(el.signout) el.signout.disabled=false;
   if(mode==='required'&&!preserveRequiredInput&&el.input){
     const existing=socialProfile&&String(socialProfile.user_id||id)===id&&
       usernameIsChosenForUser(socialProfile.handle,id)?String(socialProfile.handle):'';
     el.input.value=existing;
   }
-  if(mode==='required') try{ setTimeout(()=>el.input&&el.input.focus(),0); }catch(e){}
+  if(mode==='required'&&!settingsOwnsRequired) try{ setTimeout(()=>el.save&&el.save.focus(),0); }catch(e){}
   return true;
 }
 function beginUsernameClaimCheck(){
@@ -148,8 +154,9 @@ function usernameClaimBusy(busy,status){
   if(status&&el.status) el.status.textContent=usernameClaimPrivateStatus(status);
 }
 async function usernameClaimSubmit(){
-  const el=usernameClaimElements();
-  return socialUpdateHandle(el.input&&el.input.value,true);
+  if(typeof openAccountSettings==='function')
+    return openAccountSettings({focus:'username',requiredUsername:true});
+  const el=usernameClaimElements(); return socialUpdateHandle(el.input&&el.input.value,true);
 }
 async function usernameClaimRetry(){
   if(!authUser) return false;
@@ -221,7 +228,14 @@ function socialFriendshipWith(userId){
 function socialAcceptedFriend(userId){ const r=socialFriendshipWith(userId); return !!(r&&r.status==='accepted'); }
 function socialPerson(userId){
   const p=socialProfiles[String(userId||'')]||{};
-  const username=usernameIsGeneratedForUser(p.handle,userId)?'USERNAME NOT SET':String(p.handle||'USERNAME NOT SET');
+  const pending=usernameIsGeneratedForUser(p.handle,userId);
+  const owner=typeof authUser!=='undefined'?authUser:null;
+  const mine=owner&&String(userId||'')===String(owner.id||'');
+  // Only the owner may see their Auth email. Friend/message lists never expose
+  // another account login identifier while its username is unfinished.
+  const username=pending
+    ? (mine?(String(owner.email||'').trim().slice(0,160)||'NEW OPERATOR'):'NEW OPERATOR')
+    : String(p.handle||'NEW OPERATOR');
   return {handle:username,display:username};
 }
 function socialMergeRows(a,b){
@@ -267,7 +281,7 @@ async function fetchSocialOnce(userId){
   const stillCurrent=()=>socialFetchVersion===fetchVersion&&authUser&&String(authUser.id||'')===userId;
   try{
     const previousUsername=socialProfile&&String(socialProfile.handle||'');
-    let profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',userId).maybeSingle();
+    let profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,username_changed_at,updated_at').eq('user_id',userId).maybeSingle();
     if(!stillCurrent()) return false;
     if(profileResult.error){ socialBackend.profiles=false; throw profileResult.error; }
     socialBackend.profiles=true;
@@ -276,7 +290,7 @@ async function fetchSocialOnce(userId){
       const made=await sb.from(SOCIAL_PROFILE_TABLE).insert({user_id:userId,handle,handle_key:handle,display_name:handle});
       if(!stillCurrent()) return false;
       if(made&&made.error){ socialBackend.profiles=false; throw made.error; }
-      profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',userId).maybeSingle();
+      profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,username_changed_at,updated_at').eq('user_id',userId).maybeSingle();
       if(!stillCurrent()) return false;
       if(profileResult.error||!profileResult.data) throw profileResult.error||new Error('Social profile could not be created.');
     }
@@ -286,6 +300,7 @@ async function fetchSocialOnce(userId){
     // Auth metadata can be stale or absent. Repaint as soon as the canonical
     // Social username arrives so the header never keeps showing an old alias.
     if(typeof paintUserbar==='function') paintUserbar();
+    if(typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen&&typeof accountSettingsSync==='function') accountSettingsSync();
     if(previousUsername!==String(socialProfile.handle||'')){
       if(typeof partyRefreshUsername==='function') partyRefreshUsername();
       if(typeof arenaRefreshUsername==='function') arenaRefreshUsername();
@@ -363,16 +378,22 @@ function socialPromptEditHandle(){
 function socialPromptEditProfile(){
   if(!authUser){ toggleAuth(); return; }
   const firstChoice=usernameNeedsClaim(socialProfile,authUser);
+  if(typeof openAccountSettings==='function'){
+    openAccountSettings({focus:'username',requiredUsername:firstChoice}); return;
+  }
   openForm({title:firstChoice?'CHOOSE USERNAME':'EDIT USERNAME',hint:(firstChoice
       ? 'Your account has a temporary private-safe label. Choose the public username shown on leaderboards, parties, friends, and messages.'
-      : 'This unique username is shown everywhere and is how friends find you. Username changes are free. Email stays private.'),saveLabel:firstChoice?'CHOOSE USERNAME':'SAVE USERNAME',
+      : 'This unique username is shown everywhere and is how friends find you. Username changes are limited to once every 21 days. Email stays private.'),saveLabel:firstChoice?'CHOOSE USERNAME':'SAVE USERNAME',
     fields:[{id:'handle',label:'USERNAME',type:'text',value:firstChoice?'':socialProfile&&socialProfile.handle||'',placeholder:'operator_7'}],
     onSave:v=>socialUpdateHandle(v.handle)});
 }
 async function socialUpdateHandle(value,requiredClaim=false){
   const username=String(value||'').trim().replace(/^@/,'');
+  const settingsOpen=typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen;
   const showError=message=>{
-    if(requiredClaim){ const el=usernameClaimElements(); if(el.status) el.status.textContent=usernameClaimPrivateStatus(message); usernameClaimBusy(false); }
+    if(requiredClaim) usernameClaimBusy(false);
+    if(settingsOpen&&typeof accountSettingsSetStatus==='function') accountSettingsSetStatus('username',message,true);
+    else if(requiredClaim){ const el=usernameClaimElements(); if(el.status) el.status.textContent=usernameClaimPrivateStatus(message); }
     else formError(message);
   };
   if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){ showError('Use 3–32 letters, numbers, or _.'); return false; }
@@ -383,43 +404,73 @@ async function socialUpdateHandle(value,requiredClaim=false){
   if(requiredClaim) usernameClaimBusy(true,'Saving your unique username...');
   let markerFailure=false;
   try{
-    const result=await sb.from(SOCIAL_PROFILE_TABLE).update({handle:username,handle_key:key,display_name:username}).eq('user_id',userId);
+    const result=await sb.rpc('outpost_zero_set_username',{p_username:username});
     if(result&&result.error) throw result.error;
     if(!authUser||String(authUser.id||'')!==userId) return false;
+    const row=Array.isArray(result&&result.data)?result.data[0]:result&&result.data;
+    const saved=String(row&&row.username||username).trim();
     // Auth metadata is the durable proof that this account explicitly chose
     // its username. It distinguishes older imported profile labels from a
     // completed claim after verification or a future login.
     markerFailure=true;
-    const markerResult=await sb.auth.updateUser({data:{username}});
+    const markerResult=await sb.auth.updateUser({data:{username:saved}});
     if(markerResult&&markerResult.error) throw markerResult.error;
     markerFailure=false;
     if(!authUser||String(authUser.id||'')!==userId) return false;
     const returnedUser=markerResult&&markerResult.data&&markerResult.data.user;
     authUser=returnedUser&&String(returnedUser.id||'')===userId
       ? returnedUser
-      : {...authUser,user_metadata:{...(authUser.user_metadata||{}),username}};
+      : {...authUser,user_metadata:{...(authUser.user_metadata||{}),username:saved}};
     if(socialProfile&&String(socialProfile.user_id||'')===userId){
-      socialProfile={...socialProfile,handle:username,handle_key:key,display_name:username};
+      socialProfile={...socialProfile,handle:saved,handle_key:saved.toLowerCase(),display_name:saved,
+        username_changed_at:row&&row.changed_at||socialProfile.username_changed_at,
+        next_username_change_at:row&&row.next_change_at||null};
       socialProfiles[userId]=socialProfile;
     }
-    if(requiredClaim) syncUsernameClaim(); else closeForm();
+    if(requiredClaim) syncUsernameClaim(); else if(!settingsOpen) closeForm();
     if(typeof partyRefreshUsername==='function') partyRefreshUsername();
     if(typeof arenaRefreshUsername==='function') arenaRefreshUsername();
     if(typeof resumeAfterUsernameClaim==='function') resumeAfterUsernameClaim();
     await fetchSocial(true);
     if(!authUser||String(authUser.id||'')!==userId) return false;
-    paintUserbar(); fetchBoard(); socialStatus='USERNAME UPDATED · @'+username; sfx('swap'); return true;
+    paintUserbar(); fetchBoard(); socialStatus='USERNAME UPDATED · @'+saved;
+    if(settingsOpen&&typeof accountSettingsSync==='function') accountSettingsSync(true);
+    sfx('swap'); return true;
   }catch(error){
     if(!authUser||String(authUser.id||'')!==userId) return false;
+    const code=String(error&&error.code||''), message=String(error&&error.message||'');
+    const cooldown=code==='P0001'&&message.includes('USERNAME_CHANGE_COOLDOWN');
+    const retryAt=cooldown&&Date.parse(error&&error.details||'');
     showError(markerFailure
-      ? 'The username was saved, but account confirmation failed. Retry to finish.'
-      : socialSetupMissing(error)?socialSetupStatus():'That username is unavailable. Try another one.');
+      ? 'The username was saved, but account confirmation failed. Retry the same username to finish.'
+      : cooldown
+        ? 'Username changes are limited to once every 21 days.'+(Number.isFinite(retryAt)&&typeof accountSettingsDate==='function'?' Try again on '+accountSettingsDate(retryAt)+'.':'')
+        : code==='23505'?'That username is already taken. Try another one.'
+        : socialSetupMissing(error)?'Username Settings needs the Social 05 SQL update.':'That username is unavailable. Try another one.');
     return false;
   }
 }
 
 function socialPartyCodeClean(value){
   return String(value||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
+}
+function socialCpuPartyInviteCode(value){
+  const match=/^OUTPOST ZERO · CPU 2V2 INVITE · PARTY CODE ([A-Z0-9]{6})$/.exec(String(value||'').trim().toUpperCase());
+  return match?match[1]:'';
+}
+async function socialSendCpuPartyInvite(recipientId,code){
+  const recipient=String(recipientId||''),clean=socialPartyCodeClean(code),owner=authUser?String(authUser.id||''):'';
+  if(!sb||!owner||clean.length!==6||!socialAcceptedFriend(recipient)){socialStatus='CPU 2v2 INVITES REQUIRE AN ACCEPTED FRIEND';sfx('dry');return false;}
+  try{
+    const body='OUTPOST ZERO · CPU 2V2 INVITE · PARTY CODE '+clean;
+    const result=await sb.from(SOCIAL_MESSAGE_TABLE).insert({sender_id:owner,recipient_id:recipient,body});
+    if(result&&result.error)throw result.error;
+    if(!authUser||String(authUser.id||'')!==owner)return false;
+    socialStatus='CPU 2v2 INVITE SENT PRIVATELY';void fetchSocial(true);sfx('pickup');return true;
+  }catch(error){
+    if(authUser&&String(authUser.id||'')===owner){socialStatus=socialSetupMissing(error)?socialSetupStatus():'COULD NOT SEND THAT CPU 2v2 INVITE';sfx('dry');}
+    return false;
+  }
 }
 function socialSetDomPageActive(active){
   socialDomPageActive=!!active;
@@ -491,7 +542,7 @@ function bindSocialDomControls(){
   const claim=usernameClaimElements();
   if(claim.save) claim.save.addEventListener('click',usernameClaimSubmit);
   if(claim.retry) claim.retry.addEventListener('click',usernameClaimRetry);
-  if(claim.signout) claim.signout.addEventListener('click',()=>toggleAuth());
+  if(claim.signout) claim.signout.addEventListener('click',()=>requestSignOut('username'));
   if(claim.input) claim.input.addEventListener('keydown',event=>{
     if(event.key==='Enter'){ event.preventDefault(); usernameClaimSubmit(); }
   });

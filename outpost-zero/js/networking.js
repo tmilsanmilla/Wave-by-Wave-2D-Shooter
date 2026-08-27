@@ -25,6 +25,8 @@ let onboardingVersion=ONBOARDING_VERSION;
 let firstAccountTutorialUserId='', firstAccountWelcomeOpen=false, firstAccountWelcomeRects=[];
 let authProfileRequestVersion=0;
 let postUsernameGateUserId='';
+let accountSettingsOpen=false, accountSettingsRequiredUsername=false, accountSettingsBusy=false, accountSettingsUserId='';
+let accountMenuOpen=false, accountMenuConfirming=false, accountMenuBusy=false, accountMenuUserId='', accountMenuReturnView='';
 const $ = id => document.getElementById(id);
 
 function cleanUsername(value){
@@ -69,9 +71,14 @@ function displayName(u){
 function leaderboardUsername(row){
   if(leaderboardNeedsUsername(row)){
     const mine=authUser&&String(row.user_id!=null?row.user_id:row.userId||'')===String(authUser.id||'');
-    return mine?'CHOOSE USERNAME':'USERNAME NOT SET';
+    // The signed-in owner already received this email from Supabase Auth, so
+    // it is safe to use as their private fallback. Never put another player's
+    // email on the public board: the leaderboard RPC deliberately does not
+    // return Auth email addresses.
+    if(mine) return String(authUser.email||'').trim().slice(0,160)||'CHOOSE USERNAME';
+    return 'NEW OPERATOR';
   }
-  return cleanUsername(row&&((row.username!=null?row.username:row.name)))||'USERNAME NOT SET';
+  return cleanUsername(row&&((row.username!=null?row.username:row.name)))||'NEW OPERATOR';
 }
 function paintUserbar(){
   $('uname').textContent = authUser
@@ -100,20 +107,53 @@ async function initAuth(){
   if(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase){
     try{
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      // Do not expose a cached signed-in account while getSession is pending.
+      // A cache explicitly marked owner:'' is legitimate guest progress and is
+      // preserved; an account-owned or legacy-unmarked cache fails closed.
+      if(typeof prepareAccountProgressForAuth==='function')prepareAccountProgressForAuth('');
       const { data } = await sb.auth.getSession();
-      authUser = data.session ? data.session.user : null;
+      const initialUser=data.session?data.session.user:null,initialPreviousUserId=authUser?String(authUser.id||''):'',
+        initialNextUserId=initialUser?String(initialUser.id||''):'';
+      if(initialPreviousUserId!==initialNextUserId){
+        if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange(initialNextUserId);
+        if(typeof closeAccountMenu==='function')closeAccountMenu(true);
+        if(typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
+        if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange(initialNextUserId);
+      }
+      authUser = initialUser;
       prepareSocialForAccount(authUser?String(authUser.id):'');
       if(authUser) beginUsernameClaimCheck();
-      prepareLastLoadoutForAccount(authUser?String(authUser.id):'');
+      const initialProfileUserId=authUser?String(authUser.id):'',initialAccountChanged=
+        typeof prepareAccountProgressForAuth==='function'&&prepareAccountProgressForAuth(initialProfileUserId);
+      if(typeof prepareTemporaryWeaponGrantsForAccount==='function')prepareTemporaryWeaponGrantsForAccount(initialProfileUserId,!initialAccountChanged);
+      prepareLastLoadoutForAccount(initialProfileUserId);
       prepareBotLadderForAccount(authUser?String(authUser.id):'');
       void refreshBotLadder(true);
       if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true);
       sb.auth.onAuthStateChange((_e, sess)=>{
-        if(_e==='PASSWORD_RECOVERY') recovering=true;
-        authUser = sess ? sess.user : null;
+        if(_e==='PASSWORD_RECOVERY'){
+          recovering=true;
+          if(typeof closeAccountMenu==='function')closeAccountMenu(true);
+        }
+        const previousAuthUserId=authUser?String(authUser.id||''):'',nextAuthUser=sess?sess.user:null,
+          nextAuthUserId=nextAuthUser?String(nextAuthUser.id||''):'';
+        if(previousAuthUserId!==nextAuthUserId){
+          if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange(nextAuthUserId);
+          if(typeof closeAccountMenu==='function')closeAccountMenu(true);
+          if(typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
+          if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange(nextAuthUserId);
+        }
+        authUser = nextAuthUser;
+        if(typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen){
+          const liveSettingsUser=authUser?String(authUser.id||''):'';
+          if((!liveSettingsUser||liveSettingsUser!==accountSettingsUserId)&&typeof closeAccountSettings==='function') closeAccountSettings(true);
+          else if(authUser&&typeof accountSettingsSync==='function') accountSettingsSync();
+        }
         const profileUserId=authUser ? String(authUser.id) : '';
         prepareSocialForAccount(profileUserId);
         if(authUser&&!recovering) beginUsernameClaimCheck();
+        const accountChanged=typeof prepareAccountProgressForAuth==='function'&&prepareAccountProgressForAuth(profileUserId);
+        if(typeof prepareTemporaryWeaponGrantsForAccount==='function')prepareTemporaryWeaponGrantsForAccount(profileUserId,!accountChanged);
         prepareLastLoadoutForAccount(profileUserId);
         prepareBotLadderForAccount(profileUserId);
         void refreshBotLadder(false);
@@ -146,12 +186,15 @@ async function initAuth(){
         syncFallAccess();
         fetchAdmins(); fetchBanners(); fetchMsgs(); fetchPrices();
         profileLoaded=false;
-        fetchProfile(profileUserId,profileRequestVersion).then(profileReady=>{ // wait for account progress first
+        fetchProfile(profileUserId,profileRequestVersion).then(async profileReady=>{ // wait for account progress first
           // Auth may change while the profile request is in flight. A response
           // for the previous account must never open rewards or onboarding for
           // the account that is signed in now.
           const liveUserId=authUser ? String(authUser.id) : '';
           if(!profileReady || profileRequestVersion!==authProfileRequestVersion || liveUserId!==profileUserId) return;
+          if(typeof fetchTemporaryWeaponGrants==='function')
+            await fetchTemporaryWeaponGrants(profileUserId,profileRequestVersion);
+          if(profileRequestVersion!==authProfileRequestVersion||!authUser||String(authUser.id)!==profileUserId)return;
           continueAfterUsernameGate(profileUserId);
         });
         fetchScoreReqs(); fetchMyBan(); fetchWeaponDefs(); fetchOwnBest();
@@ -323,26 +366,327 @@ async function sendReport(){
     $('repstatus').textContent='could not send \u2014 try again in a bit';
   }
 }
-async function toggleAuth(){
-  if(authUser && sb){
-    try{ if(typeof arenaForfeitBeforeSignOut==='function') await arenaForfeitBeforeSignOut(); }
-    catch(error){ console.warn('arena sign-out forfeit failed',error); }
-    let signOutError=null;
-    try{ const result=await sb.auth.signOut(); signOutError=result&&result.error||null; }
-    catch(error){ signOutError=error; }
-    if(signOutError) console.warn('cloud sign-out failed; clearing this screen locally',signOutError);
-    authUser=null; authProfileRequestVersion++; postUsernameGateUserId='';
-    if(typeof resetSocialState==='function') resetSocialState('SIGNED OUT');
-    else if(typeof closeUsernameClaim==='function') closeUsernameClaim(true);
-    paintUserbar();
+function prepareLocalGuestAfterAuthLoss(){
+  const accountChanged=typeof prepareAccountProgressForAuth==='function'&&prepareAccountProgressForAuth('');
+  if(typeof prepareTemporaryWeaponGrantsForAccount==='function')prepareTemporaryWeaponGrantsForAccount('',!accountChanged);
+  if(typeof prepareLastLoadoutForAccount==='function')prepareLastLoadoutForAccount('');
+  if(typeof prepareBotLadderForAccount==='function')prepareBotLadderForAccount('');
+  if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
+  return !!accountChanged;
+}
+async function cancelPasswordRecoverySession(){
+  if(!recovering||!sb)return false;
+  // Abandoning recovery must clear locally even when the cloud sign-out
+  // request fails, otherwise the recovery account remains usable as a guest.
+  try{const result=await sb.auth.signOut();if(result&&result.error)console.warn('recovery sign-out failed; clearing this screen locally',result.error);}
+  catch(error){console.warn('recovery sign-out failed; clearing this screen locally',error);}
+  if(authUser&&typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
+  if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange('');
+  if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange('');
+  authUser=null;authProfileRequestVersion++;postUsernameGateUserId='';prepareLocalGuestAfterAuthLoss();
+  if(typeof resetSocialState==='function')resetSocialState('SIGNED OUT');
+  paintUserbar();recovering=false;
+  $('resetbox').style.display='none';
+  $('rsave').style.display='block';$('rdone').style.display='none';
+  $('rpass1').value='';$('rpass2').value='';
+  $('authmsg').textContent='Password reset cancelled. That link is no longer valid \u2014 request a new one if you still need it.';
+  return true;
+}
+function accountMenuElements(){
+  if(typeof document==='undefined')return {};
+  return {
+    trigger:$('accountmenutrigger'),wrap:$('accountmenuwrap'),box:$('accountmenubox'),
+    title:$('accountmenutitle'),identity:$('accountmenuidentity'),email:$('accountmenuemail'),detail:$('accountmenudetail'),
+    actions:$('accountmenuactions'),settings:$('accountmenusettings'),signout:$('accountmenusignout'),cancel:$('accountmenucancel'),
+    confirm:$('accountmenuconfirm'),warning:$('accountmenuwarning'),confirmCancel:$('accountmenusignoutcancel'),
+    confirmSignout:$('accountmenusignoutconfirm'),status:$('accountmenustatus')
+  };
+}
+function accountMenuHasChosenUsername(){
+  return !!(authUser&&typeof socialProfile!=='undefined'&&socialProfile&&
+    String(socialProfile.user_id||authUser.id||'')===String(authUser.id||'')&&
+    !(typeof usernameNeedsClaim==='function'&&usernameNeedsClaim(socialProfile,authUser)));
+}
+function accountMenuForfeitWarning(){
+  const forfeits=typeof arenaForfeitEligible==='function'&&arenaForfeitEligible();
+  return forfeits
+    ? 'WARNING: Signing out during this 1v1 counts as a loss, and your opponent receives the win. You will need to sign in again on this device.'
+    : 'You will need to sign in again on this device.';
+}
+function syncAccountMenu(){
+  if(!accountMenuOpen)return false;
+  const liveUserId=authUser?String(authUser.id||''):'';
+  if(!liveUserId||liveUserId!==accountMenuUserId){closeAccountMenu(true);return false;}
+  const el=accountMenuElements(),chosen=accountMenuHasChosenUsername(),email=String(authUser.email||'').trim().slice(0,160),
+    username=chosen?String(socialProfile.handle||'').trim().slice(0,32):'';
+  if(el.wrap){
+    el.wrap.style.display='flex';el.wrap.setAttribute('aria-hidden','false');
+    el.wrap.classList.toggle('confirming',accountMenuConfirming);el.wrap.classList.toggle('busy',accountMenuBusy);
   }
-  else { arenaAuthPending=false; $('aguest').style.display='block'; $('authwrap').style.display='flex'; }
+  if(el.identity)el.identity.textContent=chosen?('@'+username):(email||'USERNAME REQUIRED');
+  if(el.email)el.email.textContent=chosen
+    ? (email?('PRIVATE EMAIL \u00b7 '+email):'PRIVATE EMAIL UNAVAILABLE')
+    : 'PRIVATE EMAIL \u00b7 shown only to you until you choose a public username';
+  if(el.detail)el.detail.textContent=chosen
+    ? 'Manage your public username and password, or safely sign out of this device.'
+    : 'Choose a public username in Settings before playing. Your email remains private.';
+  if(el.actions)el.actions.hidden=accountMenuConfirming;
+  if(el.confirm)el.confirm.hidden=!accountMenuConfirming;
+  if(el.warning)el.warning.textContent=accountMenuForfeitWarning();
+  for(const button of [el.settings,el.signout,el.cancel,el.confirmCancel,el.confirmSignout])if(button)button.disabled=accountMenuBusy;
+  if(el.status)el.status.textContent=accountMenuBusy?'SIGNING OUT\u2026':'';
+  return true;
+}
+function closeAccountMenu(force=false){
+  if(accountMenuBusy&&!force)return false;
+  const el=accountMenuElements(),hadFocus=!!(el.wrap&&typeof el.wrap.contains==='function'&&el.wrap.contains(document.activeElement));
+  accountMenuOpen=false;accountMenuConfirming=false;accountMenuBusy=false;accountMenuUserId='';accountMenuReturnView='';
+  if(el.wrap){el.wrap.style.display='none';el.wrap.setAttribute('aria-hidden','true');el.wrap.classList.remove('confirming','busy');}
+  if(el.actions)el.actions.hidden=false;if(el.confirm)el.confirm.hidden=true;
+  if(el.identity)el.identity.textContent='';if(el.email)el.email.textContent='';if(el.status)el.status.textContent='';
+  for(const button of [el.settings,el.signout,el.cancel,el.confirmCancel,el.confirmSignout])if(button)button.disabled=false;
+  if(hadFocus&&!force&&typeof restoreAccountTriggerFocus==='function')restoreAccountTriggerFocus();
+  return true;
+}
+function openAccountMenu(){
+  if(!authUser){void toggleAuth();return false;}
+  if(recovering)return false;
+  if(typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()){
+    if(typeof beginUsernameClaimCheck==='function')beginUsernameClaimCheck();return false;
+  }
+  accountMenuOpen=true;accountMenuConfirming=false;accountMenuBusy=false;
+  accountMenuUserId=String(authUser.id||'');accountMenuReturnView='menu';
+  if(typeof resetHeldGameplayInput==='function')resetHeldGameplayInput();
+  syncAccountMenu();
+  const el=accountMenuElements();try{setTimeout(()=>el.settings&&el.settings.focus(),0);}catch(error){}
+  return true;
+}
+function requestSignOut(source=''){
+  if(!authUser){void toggleAuth();return false;}
+  if(accountMenuBusy)return false;
+  const priorMenu=accountMenuOpen&&!accountMenuConfirming;
+  accountMenuReturnView=priorMenu?'menu':accountSettingsOpen?'settings':
+    ((typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen)?'username':String(source||''));
+  accountMenuOpen=true;accountMenuConfirming=true;accountMenuBusy=false;accountMenuUserId=String(authUser.id||'');
+  if(typeof resetHeldGameplayInput==='function')resetHeldGameplayInput();
+  syncAccountMenu();
+  const el=accountMenuElements();try{setTimeout(()=>el.confirmCancel&&el.confirmCancel.focus(),0);}catch(error){}
+  return true;
+}
+function cancelSignOutRequest(){
+  if(!accountMenuOpen||!accountMenuConfirming||accountMenuBusy)return false;
+  const returning=accountMenuReturnView,el=accountMenuElements();
+  if(returning==='menu'){
+    accountMenuConfirming=false;accountMenuReturnView='menu';syncAccountMenu();
+    try{setTimeout(()=>el.signout&&el.signout.focus(),0);}catch(error){}
+    return true;
+  }
+  closeAccountMenu();
+  const target=returning==='settings'?$('settingssignout'):returning==='username'?$('usernameclaimsignout'):null;
+  if(target)try{setTimeout(()=>target.focus(),0);}catch(error){}
+  return true;
+}
+async function confirmSignOut(){
+  if(!accountMenuOpen||!accountMenuConfirming||accountMenuBusy||!authUser)return false;
+  const userId=accountMenuUserId;
+  if(!userId||String(authUser.id||'')!==userId){closeAccountMenu(true);return false;}
+  accountMenuBusy=true;syncAccountMenu();
+  const ok=await toggleAuth({confirmed:true,userId});
+  if(!ok&&authUser&&String(authUser.id||'')===userId){accountMenuBusy=false;syncAccountMenu();}
+  return !!ok;
+}
+function accountMenuKeydown(event){
+  if(!accountMenuOpen)return;
+  event.stopPropagation();
+  if(event.key==='Escape'){
+    event.preventDefault();if(accountMenuBusy)return;
+    if(accountMenuConfirming)cancelSignOutRequest();else closeAccountMenu();return;
+  }
+  if(event.key!=='Tab')return;
+  const el=accountMenuElements(),buttons=(accountMenuConfirming
+    ?[el.confirmCancel,el.confirmSignout]:[el.settings,el.signout,el.cancel]).filter(button=>button&&!button.disabled);
+  if(!buttons.length){event.preventDefault();return;}
+  const first=buttons[0],last=buttons[buttons.length-1],active=document.activeElement;
+  if(event.shiftKey&&(active===first||!buttons.includes(active))){event.preventDefault();last.focus();}
+  else if(!event.shiftKey&&(active===last||!buttons.includes(active))){event.preventDefault();first.focus();}
+}
+function activateAccountTrigger(){
+  if(authUser)return openAccountMenu();
+  void toggleAuth();return true;
+}
+async function toggleAuth(options){
+  if(authUser){
+    const opts=options&&typeof options==='object'?options:{};
+    if(opts.confirmed!==true){requestSignOut('direct');return false;}
+    const expectedUserId=String(opts.userId||''),liveUserId=String(authUser.id||'');
+    if(!expectedUserId||expectedUserId!==liveUserId){closeAccountMenu(true);return false;}
+    if(accountSettingsOpen)closeAccountSettings(true);
+    try{if(typeof arenaForfeitBeforeSignOut==='function')await arenaForfeitBeforeSignOut();}
+    catch(error){console.warn('arena sign-out forfeit failed',error);}
+    let signOutError=null;
+    if(sb)try{const result=await sb.auth.signOut();signOutError=result&&result.error||null;}
+    catch(error){signOutError=error;}
+    if(signOutError)console.warn('cloud sign-out failed; clearing this screen locally',signOutError);
+    if(authUser&&String(authUser.id||'')!==liveUserId){closeAccountMenu(true);return true;}
+    if(authUser&&typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
+    if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange('');
+    if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange('');
+    authUser=null;authProfileRequestVersion++;postUsernameGateUserId='';
+    closeAccountMenu(true);prepareLocalGuestAfterAuthLoss();
+    if(typeof resetSocialState==='function')resetSocialState('SIGNED OUT');
+    else if(typeof closeUsernameClaim==='function')closeUsernameClaim(true);
+    paintUserbar();return true;
+  }
+  closeAccountMenu(true);arenaAuthPending=false;$('aguest').style.display='block';$('authwrap').style.display='flex';
+  return true;
 }
 function creds(){
   return { email: $('aemail').value.trim(), password: $('apass').value };
 }
 function signupUsername(){
   return String($('ausername')&&$('ausername').value||'').trim().replace(/^@/,'');
+}
+function accountSettingsElements(){
+  if(typeof document==='undefined') return {};
+  return {
+    wrap:$('settingswrap'),box:$('settingsbox'),account:$('settingsaccount'),
+    username:$('settingsusername'),usernameHint:$('settingsusernamehint'),
+    usernameSave:$('settingsusernamesave'),usernameStatus:$('settingsusernamestatus'),
+    pass1:$('settingspass1'),pass2:$('settingspass2'),passwordSave:$('settingspasswordsave'),
+    passwordStatus:$('settingspasswordstatus'),signout:$('settingssignout'),close:$('settingsclose')
+  };
+}
+function accountSettingsSetStatus(kind,message,error=false){
+  const el=accountSettingsElements(), target=kind==='password'?el.passwordStatus:el.usernameStatus;
+  if(!target) return;
+  target.textContent=String(message||''); target.className='settings-status'+(error?' error':'');
+}
+function accountSettingsUsernameReadyAt(){
+  if(typeof socialProfile==='undefined'||!socialProfile) return 0;
+  const explicit=Date.parse(socialProfile.next_username_change_at||socialProfile.username_change_available_at||'');
+  if(Number.isFinite(explicit)) return explicit;
+  const changed=Date.parse(socialProfile.username_changed_at||'');
+  return Number.isFinite(changed)?changed+21*24*60*60*1000:0;
+}
+function accountSettingsDate(value){
+  try{return new Date(value).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric'});}catch(error){return new Date(value).toISOString().slice(0,10);}
+}
+function accountSettingsHasUsername(){
+  return !!(authUser&&typeof socialProfile!=='undefined'&&socialProfile&&
+    !(typeof usernameNeedsClaim==='function'&&usernameNeedsClaim(socialProfile,authUser)));
+}
+function accountSettingsSync(resetInput=false){
+  const el=accountSettingsElements(); if(!el.wrap) return false;
+  const signedIn=!!authUser, chosen=accountSettingsHasUsername(), profileReady=signedIn&&typeof socialProfile!=='undefined'&&!!socialProfile;
+  const email=signedIn?String(authUser.email||'').trim():'';
+  if(el.account) el.account.textContent=signedIn
+    ? ('SIGNED IN AS '+(email||'YOUR ACCOUNT')+' · EMAIL IS PRIVATE')
+    : 'SIGN IN TO MANAGE YOUR ACCOUNT';
+  const current=chosen?String(socialProfile.handle||''):'';
+  if(el.username&&(resetInput||!el.username.value)) el.username.value=current;
+  const readyAt=chosen?accountSettingsUsernameReadyAt():0, locked=readyAt>Date.now();
+  if(el.usernameHint) el.usernameHint.textContent=!signedIn
+    ? 'Sign in before choosing a public username.'
+    : !chosen
+      ? 'Choose the public username shown in matches, parties, friends, messages, and leaderboards. Your first choice is available now.'
+      : locked
+        ? 'Your username is @'+current+'. It can be changed again on '+accountSettingsDate(readyAt)+'.'
+        : 'Your username is @'+current+'. After saving a different one, you must wait 21 days before changing it again.';
+  if(el.usernameSave){
+    el.usernameSave.textContent=chosen?'CHANGE USERNAME':'CHOOSE USERNAME';
+    el.usernameSave.disabled=accountSettingsBusy||!profileReady||locked;
+  }
+  if(el.username) el.username.disabled=accountSettingsBusy||!profileReady||locked;
+  if(el.passwordSave) el.passwordSave.disabled=accountSettingsBusy||!signedIn||!sb;
+  if(el.pass1) el.pass1.disabled=accountSettingsBusy||!signedIn;
+  if(el.pass2) el.pass2.disabled=accountSettingsBusy||!signedIn;
+  if(el.signout) el.signout.disabled=accountSettingsBusy||!signedIn;
+  accountSettingsRequiredUsername=!!(signedIn&&accountSettingsRequiredUsername&&!chosen);
+  el.wrap.classList.toggle('required',accountSettingsRequiredUsername);
+  return true;
+}
+function openAccountSettings(options={}){
+  if(!authUser){ toggleAuth(); return false; }
+  if(accountMenuOpen)closeAccountMenu(true);
+  const opts=options&&typeof options==='object'?options:{};
+  accountSettingsOpen=true;
+  accountSettingsUserId=String(authUser.id||'');
+  if(typeof resetHeldGameplayInput==='function') resetHeldGameplayInput();
+  accountSettingsRequiredUsername=!!(opts.requiredUsername||
+    (typeof usernameClaimRequired==='function'&&usernameClaimRequired()));
+  const el=accountSettingsElements();
+  if(el.wrap) el.wrap.style.display='flex';
+  const gate=typeof document!=='undefined'&&document.getElementById('usernameclaimwrap');
+  if(gate) gate.style.display='none';
+  accountSettingsSetStatus('username',''); accountSettingsSetStatus('password','');
+  accountSettingsSync(true);
+  if((!socialProfile||String(socialProfile.user_id||'')!==String(authUser.id||''))&&typeof fetchSocial==='function'){
+    void Promise.resolve(fetchSocial(true)).then(()=>{ if(accountSettingsOpen) accountSettingsSync(true); });
+  }
+  const focus=opts.focus==='password'?el.pass1:el.username;
+  try{ setTimeout(()=>focus&&focus.focus(),0); }catch(error){}
+  return true;
+}
+function closeAccountSettings(force=false){
+  if(!accountSettingsOpen) return true;
+  if(!force&&accountSettingsRequiredUsername&&
+     typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()){
+    accountSettingsSetStatus('username','Choose a username before leaving account setup.',true); return false;
+  }
+  const el=accountSettingsElements();
+  accountSettingsOpen=false; accountSettingsRequiredUsername=false; accountSettingsBusy=false; accountSettingsUserId='';
+  if(el.wrap){ el.wrap.style.display='none'; el.wrap.classList.remove('required'); }
+  if(el.pass1) el.pass1.value=''; if(el.pass2) el.pass2.value='';
+  if(!force&&typeof usernameClaimRequired==='function'&&usernameClaimRequired()&&typeof openUsernameClaim==='function')
+    openUsernameClaim('required','Open Settings to choose your public username.');
+  return true;
+}
+async function saveAccountSettingsUsername(){
+  const el=accountSettingsElements(), value=String(el.username&&el.username.value||'').trim();
+  if(accountSettingsBusy) return false;
+  if(typeof socialUpdateHandle!=='function'){
+    accountSettingsSetStatus('username','Username settings are still loading. Try again.',true); return false;
+  }
+  const userId=String(authUser&&authUser.id||'');
+  accountSettingsBusy=true; accountSettingsSetStatus('username','Saving username…'); accountSettingsSync();
+  let ok=false;
+  try{ ok=await socialUpdateHandle(value,accountSettingsRequiredUsername); }
+  finally{
+    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId){
+      accountSettingsBusy=false; accountSettingsSync(!!ok);
+    }
+  }
+  if(!accountSettingsOpen||accountSettingsUserId!==userId||!authUser||String(authUser.id||'')!==userId) return false;
+  if(ok){
+    accountSettingsRequiredUsername=false; accountSettingsSync(true);
+    accountSettingsSetStatus('username','Username saved. Your public name is now @'+String(socialProfile&&socialProfile.handle||value)+'.');
+  }
+  return ok;
+}
+async function saveAccountSettingsPassword(){
+  const el=accountSettingsElements(), first=String(el.pass1&&el.pass1.value||''), second=String(el.pass2&&el.pass2.value||'');
+  if(accountSettingsBusy) return false;
+  if(!sb||!authUser){ accountSettingsSetStatus('password','Sign in and reconnect first.',true); return false; }
+  if(first.length<6){ accountSettingsSetStatus('password','Password must be at least 6 characters.',true); return false; }
+  if(first!==second){ accountSettingsSetStatus('password','Passwords do not match.',true); return false; }
+  const userId=String(authUser.id||'');
+  accountSettingsBusy=true; accountSettingsSetStatus('password','Changing password…'); accountSettingsSync();
+  try{
+    const result=await sb.auth.updateUser({password:first});
+    if(result&&result.error) throw result.error;
+    if(!accountSettingsOpen||accountSettingsUserId!==userId||!authUser||String(authUser.id||'')!==userId) return false;
+    if(el.pass1) el.pass1.value=''; if(el.pass2) el.pass2.value='';
+    accountSettingsSetStatus('password','Password changed successfully. Use it the next time you sign in.');
+    return true;
+  }catch(error){
+    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId)
+      accountSettingsSetStatus('password',String(error&&error.message||'Could not change password. Try again.'),true);
+    return false;
+  }finally{
+    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId){
+      accountSettingsBusy=false; accountSettingsSync();
+    }
+  }
 }
 function bindDomEvents(){
   $('repsend').onclick=sendReport;
@@ -359,20 +703,52 @@ function bindDomEvents(){
   $('appealcancel').onclick=closeAppeal;
   $('scoresend').onclick=submitScoreEdit;
   $('scorecancel').onclick=closeScoreEdit;
-  $('ubtn').onclick = toggleAuth;
+  $('ubtn').onclick=activateAccountTrigger;
+  const accountMenu=accountMenuElements();
+  if(accountMenu.trigger)accountMenu.trigger.onclick=activateAccountTrigger;
+  if(accountMenu.settings)accountMenu.settings.onclick=()=>{
+    if(accountMenuBusy)return;
+    const required=typeof usernameClaimRequired==='function'&&usernameClaimRequired();
+    closeAccountMenu(true);openAccountSettings({focus:'username',requiredUsername:required});
+  };
+  if(accountMenu.signout)accountMenu.signout.onclick=()=>requestSignOut('menu');
+  if(accountMenu.cancel)accountMenu.cancel.onclick=()=>closeAccountMenu();
+  if(accountMenu.confirmCancel)accountMenu.confirmCancel.onclick=cancelSignOutRequest;
+  if(accountMenu.confirmSignout)accountMenu.confirmSignout.onclick=()=>{void confirmSignOut();};
+  if(accountMenu.wrap){
+    accountMenu.wrap.addEventListener('keydown',accountMenuKeydown);
+    accountMenu.wrap.addEventListener('click',event=>{
+      if(event.target!==accountMenu.wrap||accountMenuBusy)return;
+      if(accountMenuConfirming)cancelSignOutRequest();else closeAccountMenu();
+    });
+  }
+  if(typeof saveAccountSettingsUsername==='function') $('settingsusernamesave').onclick=saveAccountSettingsUsername;
+  if(typeof saveAccountSettingsPassword==='function') $('settingspasswordsave').onclick=saveAccountSettingsPassword;
+  if(typeof closeAccountSettings==='function'){
+    $('settingsclose').onclick=()=>closeAccountSettings();
+    $('settingssignout').onclick=()=>requestSignOut('settings');
+    $('settingswrap').addEventListener('keydown',event=>{
+      // Keep every Settings key inside the DOM modal. Do not prevent normal
+      // Enter/Space button activation; only Escape needs custom handling.
+      event.stopPropagation();
+      if(event.key==='Escape'){ event.preventDefault(); closeAccountSettings(); }
+    });
+  }
+  if(typeof saveAccountSettingsUsername==='function')
+    $('settingsusername').addEventListener('keydown',event=>{ if(event.key==='Enter'){ event.preventDefault(); saveAccountSettingsUsername(); } });
+  if(typeof saveAccountSettingsPassword==='function') for(const id of ['settingspass1','settingspass2'])
+    $(id).addEventListener('keydown',event=>{ if(event.key==='Enter'){ event.preventDefault(); saveAccountSettingsPassword(); } });
+  const refreshTemporaryGifts=()=>{
+    if(authUser&&profileLoaded&&typeof fetchTemporaryWeaponGrants==='function')
+      void fetchTemporaryWeaponGrants(String(authUser.id||''),authProfileRequestVersion);
+    if(sb&&typeof fetchMyBan==='function')void fetchMyBan();
+  };
+  addEventListener('online',refreshTemporaryGifts);
+  addEventListener('focus',refreshTemporaryGifts);
+  if(typeof document!=='undefined')document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTemporaryGifts();});
   $('aguest').onclick = ()=>{ if(!recovering && !arenaAuthPending) $('authwrap').style.display='none'; };
   $('acancel').onclick = async ()=>{
-  if(recovering && sb){
-    // abandoning a password reset: sign out so the recovery session is dropped
-    await sb.auth.signOut();
-    authUser=null; paintUserbar();
-    recovering=false;
-    $('resetbox').style.display='none';
-    $('rsave').style.display='block'; $('rdone').style.display='none';
-    $('rpass1').value=''; $('rpass2').value='';
-    $('authmsg').textContent='Password reset cancelled. That link is no longer valid \u2014 request a new one if you still need it.';
-    return;   // keep the panel open so they see the message
-  }
+  if(await cancelPasswordRecoverySession())return;   // keep the panel open so they see the recovery message
   recovering=false;
   arenaAuthPending=false; $('aguest').style.display='block';
   $('resetbox').style.display='none';
