@@ -1,6 +1,17 @@
 "use strict";
 
 /* ---------------- render: world ---------------- */
+function drawRemoteShotVisuals(list){
+  if(!Array.isArray(list)||!list.length)return;
+  ctx.lineCap='round';
+  for(const b of list){
+    const speed=Math.hypot(+b.vx||0,+b.vy||0),ux=speed?b.vx/speed:0,uy=speed?b.vy/speed:0;
+    ctx.strokeStyle=b.col||'rgba(255,210,145,.9)';ctx.lineWidth=3.2/zoom;
+    ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-ux*22,b.y-uy*22);ctx.stroke();
+    ctx.strokeStyle='#fff5da';ctx.lineWidth=1.2/zoom;
+    ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-ux*12,b.y-uy*12);ctx.stroke();
+  }
+}
 function drawPartyCpuActors(){
   if(!isCpuTeamArena())return;
   const actors=[],localId=cpuTeamLocalId(),clock=cpuTeamClock();
@@ -30,12 +41,14 @@ function drawPartyCpuActors(){
     const col=b.team==='A'?'#7fd8ff':'#ff7468',a=Math.atan2(b.vy,b.vx);
     ctx.strokeStyle=col;ctx.lineWidth=2.2/zoom;ctx.beginPath();ctx.moveTo(b.x-Math.cos(a)*8,b.y-Math.sin(a)*8);ctx.lineTo(b.x+Math.cos(a)*2,b.y+Math.sin(a)*2);ctx.stroke();
   }
+  drawRemoteShotVisuals(partyCpuMatch.visualShots);
 }
 function drawArenaOpponentWorld(){
   if(practiceMode!=='arena') return;
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){drawPartyCpuActors();return;}
   if(!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
+  drawRemoteShotVisuals(arena.remoteShots);
   // Online state owns the existing opponent tag.  The local AI used to expose
   // extra perfect information (exact HP, a tracking nameplate, and a confirmed
   // hit flash) that a normal 1v1 does not give the Offline player.
@@ -658,32 +671,39 @@ function drawHUD(){
   ctx.fillText(ammoTxt, pad, H-42);
   // slots: 1 primary / 2 sidearm / 3 melee / 4 utility. On touch these are
   // real top-left selectors; desktop keeps the original bottom HUD exactly.
-  const slots=[loadout.primary, loadout.secondary, loadout.melee];
-  if(loadout.utility) slots.push(loadout.utility);
+  // Per-card Practice intentionally carries exactly one item. Keep its real
+  // 1/2/3/4 hotkey while omitting the empty slots; dereferencing a null slot
+  // used to abort drawHUD after drawWorld had painted a seemingly black frame.
+  const slots=[
+    {key:loadout.primary,number:1,utility:false},
+    {key:loadout.secondary,number:2,utility:false},
+    {key:loadout.melee,number:3,utility:false},
+    {key:loadout.utility,number:4,utility:true},
+  ].filter(slot=>slot.key);
   touchButtons=[]; touchWeaponSelectorBounds=null;
   const touchSlots=touchUI?touchWeaponSelectorLayout(slots.length):null;
   if(touchSlots) touchWeaponSelectorBounds={x:touchSlots.x,y:touchSlots.y,w:touchSlots.width,h:touchSlots.height};
   for(let i=0;i<slots.length;i++){
     const col=touchSlots?i%touchSlots.columns:i, row=touchSlots?Math.floor(i/touchSlots.columns):0;
     const x=touchSlots?touchSlots.x+col*(touchSlots.w+touchSlots.gap):pad+i*66;
-    const y=touchSlots?touchSlots.y+row*(touchSlots.h+touchSlots.gap):H-102-40, k=slots[i];
+    const y=touchSlots?touchSlots.y+row*(touchSlots.h+touchSlots.gap):H-102-40, slot=slots[i], k=slot.key;
     const slotW=touchSlots?touchSlots.w:60, slotH=touchSlots?touchSlots.h:20;
-    const isU = i===3;
+    const isU = slot.utility;
     const cur = isU ? utilityOut : (!utilityOut && k===player.cur);
-    const pressed=touchSlots&&pressedBtn===String(i+1);
+    const pressed=touchSlots&&pressedBtn===String(slot.number);
     ctx.fillStyle = pressed ? 'rgba(232,182,88,0.5)' : cur ? 'rgba(232,182,88,0.22)' : 'rgba(0,0,0,0.55)';
     ctx.fillRect(x,y,slotW,slotH);
     ctx.strokeStyle = pressed||cur ? '#e8b658' : '#4a4634';
     ctx.strokeRect(x+0.5,y+0.5,slotW,slotH);
     ctx.fillStyle = pressed||cur ? '#e8b658' : '#8a9268';
     ctx.font=(touchSlots?'700 11px':'11px')+' ui-monospace,Consolas,monospace';
-    ctx.fillText(String(i+1), x+6, y+(touchSlots?8:5));
+    ctx.fillText(String(slot.number), x+6, y+(touchSlots?8:5));
     ctx.textAlign='right';
     const SLOT_TAG={timeturner:'TIME', warpwave:'WARP', terafists:'TERA', portal:'PORTAL', solarrifle:'SOLAR'};
     const tag = SLOT_TAG[k] || (isU ? UTILITIES[k] : WEAPONS[k]).name.split(' ')[0];
     if(!touchSlots||slotW>=52) ctx.fillText(touchSlots?fitLine(tag,slotW-24):tag, x+slotW-6, y+(touchSlots?8:5));
     ctx.textAlign='left';
-    if(touchSlots) touchButtons.push({key:String(i+1),x,y,w:slotW,h:slotH});
+    if(touchSlots) touchButtons.push({key:String(slot.number),x,y,w:slotW,h:slotH});
   }
 
   // cooldown bars — laid out in fixed non-overlapping columns, right of the slot chips
@@ -923,4 +943,21 @@ function drawHUD(){
   }
 
   ctx.textAlign='left';
+}
+
+function drawUnscopedSniperKillCelebration(){
+  const fx=unscopedSniperCelebration;
+  if(!fx||now>=fx.until)return;
+  const age=Math.max(0,now-fx.startAt),left=Math.max(0,fx.until-now);
+  const enter=clamp(age/180,0,1),exit=clamp(left/420,0,1),alpha=Math.min(enter,exit);
+  const y=clamp(H*0.17,72,112),spread=72+18*Math.sin(Math.min(1,age/500)*Math.PI);
+  ctx.save();ctx.globalAlpha=alpha;ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.strokeStyle='#ffe08a';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(W/2-spread-52,y);ctx.lineTo(W/2-spread,y);ctx.lineTo(W/2-spread+13,y-9);
+  ctx.moveTo(W/2+spread+52,y);ctx.lineTo(W/2+spread,y);ctx.lineTo(W/2+spread-13,y-9);ctx.stroke();
+  ctx.fillStyle='rgba(12,14,8,.72)';ctx.fillRect(W/2-92,y-18,184,36);
+  ctx.strokeStyle='rgba(255,224,138,.65)';ctx.strokeRect(W/2-91.5,y-17.5,183,35);
+  ctx.fillStyle='#ffe08a';ctx.font='900 20px ui-monospace,Consolas,monospace';ctx.fillText('NO-SCOPE!',W/2,y-3);
+  ctx.fillStyle='#fff4cf';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText('AWM ELIMINATION',W/2,y+11);
+  ctx.restore();
 }

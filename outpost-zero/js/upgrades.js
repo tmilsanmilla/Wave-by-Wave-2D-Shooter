@@ -116,7 +116,7 @@ function menuClick(){
     if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()){ offlineCpu2v2Leave('Left Offline 2v2.',false); sfx('swap'); return; }
     if(isBotArena()){ leaveArena('Left Offline 1v1.',false); sfx('swap'); return; }
     if(practiceMode==='arena'){ leaveArena('You left the Arena.',true); sfx('swap'); return; }
-    const returnPage=tutorialOn?'howto':practiceMode?'practice':'hub';
+    const returnPage=tutorialOn?'howto':practiceMode?(soloPractice?(practiceReturnPage||'practice'):'practice'):'hub';
     menuOpen=false; state='select'; selPage=returnPage; practiceMode=null; tutorialTeardown(); restoreTryLoadout(); aiming=false; rmbAim=false; sfx('swap'); return;
   }
   if(hit(menuRects.music)){ dragSlider='music'; setSliderFromMouse(); return; }

@@ -3,6 +3,7 @@
 /* ---------------- audio (tiny synth) ---------------- */
 let AC = null, sfxGain = null, musicGain = null;
 let musicVol = 0.6, sfxVol = 0.8;
+const sfxNoiseCache=new Map();
 function initAudio(){
   if(!AC){
     try{
@@ -15,9 +16,9 @@ function initAudio(){
   }
   if(AC && AC.state === 'suspended') AC.resume();
 }
-function tone(f,d,type,v,slide){
+function tone(f,d,type,v,slide,delay=0){
   if(!AC) return;
-  const t=AC.currentTime, o=AC.createOscillator(), g=AC.createGain();
+  const t=AC.currentTime+Math.max(0,+delay||0), o=AC.createOscillator(), g=AC.createGain();
   o.type=type||'square';
   o.frequency.setValueAtTime(f,t);
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,f+slide), t+d);
@@ -26,15 +27,54 @@ function tone(f,d,type,v,slide){
   o.connect(g).connect(sfxGain);
   o.start(t); o.stop(t+d+0.02);
 }
-function noiseBurst(d,v,f){
+function noiseBuffer(d){
+  const key=Math.max(1,(AC.sampleRate*d)|0);
+  if(sfxNoiseCache.has(key)) return sfxNoiseCache.get(key);
+  const buf=AC.createBuffer(1,key,AC.sampleRate), ch=buf.getChannelData(0);
+  for(let i=0;i<key;i++) ch[i]=(Math.random()*2-1)*(1-i/key);
+  sfxNoiseCache.set(key,buf);
+  return buf;
+}
+function noiseBurst(d,v,f,delay=0,q=0.8,type='bandpass'){
   if(!AC) return;
-  const len = Math.max(1, (AC.sampleRate*d)|0);
-  const buf = AC.createBuffer(1,len,AC.sampleRate), ch = buf.getChannelData(0);
-  for(let i=0;i<len;i++) ch[i]=(Math.random()*2-1)*(1-i/len);
-  const src=AC.createBufferSource(); src.buffer=buf;
-  const bp=AC.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=f; bp.Q.value=0.8;
+  const src=AC.createBufferSource(); src.buffer=noiseBuffer(d);
+  const bp=AC.createBiquadFilter(); bp.type=type; bp.frequency.value=f; bp.Q.value=q;
   const g=AC.createGain(); g.gain.value=v;
-  src.connect(bp).connect(g).connect(sfxGain); src.start();
+  const t=AC.currentTime+Math.max(0,+delay||0);
+  src.connect(bp).connect(g).connect(sfxGain); src.start(t); src.stop(t+d+0.02);
+}
+
+// Every firearm uses an original synthesized signature. Profiles intentionally
+// stay small (one cached noise buffer plus at most two oscillators) so the MP7
+// and G18 do not create a stream of per-shot audio buffers on mobile browsers.
+const SHOT_SFX_PRESETS=Object.freeze({
+  ar:{noise:{d:.072,v:.18,f:1050,q:.8},tones:[{f:235,d:.085,type:'triangle',v:.055,slide:-130}]},
+  solarrifle:{noise:{d:.055,v:.10,f:700,q:.65},tones:[{f:310,d:.14,type:'sine',v:.055,slide:650},{delay:.025,f:820,d:.09,type:'triangle',v:.035,slide:440}]},
+  smg:{noise:{d:.032,v:.15,f:2700,q:1.2},tones:[{f:780,d:.035,type:'triangle',v:.035,slide:-260}]},
+  shotgun:{noise:{d:.17,v:.22,f:420,q:.55},tones:[{f:105,d:.18,type:'sine',v:.08,slide:-60}]},
+  sniper:{noise:{d:.22,v:.21,f:630,q:.7},tones:[{f:125,d:.22,type:'triangle',v:.075,slide:-75},{delay:.015,f:1500,d:.055,type:'sine',v:.025,slide:-800}]},
+  m9:{noise:{d:.065,v:.16,f:1650,q:.9},tones:[{f:400,d:.06,type:'triangle',v:.04,slide:-210}]},
+  revolver:{noise:{d:.125,v:.20,f:780,q:.65},tones:[{f:170,d:.14,type:'triangle',v:.07,slide:-105},{delay:.02,f:520,d:.045,type:'sine',v:.025,slide:-180}]},
+  g18:{noise:{d:.026,v:.12,f:3400,q:1.3},tones:[{f:1120,d:.025,type:'triangle',v:.025,slide:-480}]},
+  volt:{noise:{d:.04,v:.07,f:3200,q:.7,type:'highpass'},tones:[{f:1900,d:.075,type:'sine',v:.05,slide:-1450},{delay:.012,f:880,d:.065,type:'triangle',v:.035,slide:600}]},
+  dart:{noise:{d:.046,v:.10,f:820,q:1.4},tones:[{f:155,d:.055,type:'sine',v:.035,slide:-55}]},
+  fireworks:{noise:{d:.075,v:.15,f:380,q:.65,type:'lowpass'},tones:[{f:190,d:.14,type:'sine',v:.055,slide:540}]},
+  railgun:{noise:{d:.085,v:.17,f:2400,q:.85,type:'highpass'},tones:[{f:2200,d:.12,type:'sine',v:.06,slide:-1800},{f:120,d:.16,type:'triangle',v:.045,slide:-65}]},
+  warpwave:{tones:[{f:520,d:.085,type:'sine',v:.045,slide:250},{f:660,d:.085,type:'sine',v:.035,slide:-230}]},
+  timeturner:{noise:{d:.055,v:.10,f:1800,q:1.2},tones:[{f:960,d:.12,type:'triangle',v:.045,slide:-670},{delay:.035,f:1280,d:.055,type:'sine',v:.035,slide:180}]},
+});
+function weaponShotPreset(w,weaponKey=''){
+  return SHOT_SFX_PRESETS[String(weaponKey||'')]||SHOT_SFX_PRESETS[String(w&&w.shotSfx||'')]||null;
+}
+function playWeaponShot(w,weaponKey=''){
+  const preset=weaponShotPreset(w,weaponKey);
+  if(!preset){
+    const f=Math.max(40,+w?.sndF||700),d=Math.max(.02,+w?.sndD||.08);
+    noiseBurst(d,.26,f);tone(f*.45,d*.9,'square',.07,-f*.3);return;
+  }
+  const n=preset.noise;
+  if(n) noiseBurst(n.d,n.v,n.f,n.delay||0,n.q||.8,n.type||'bandpass');
+  for(const t of preset.tones||[]) tone(t.f,t.d,t.type,t.v,t.slide,t.delay||0);
 }
 /* ---------------- music: original ambient-electronic loop ---------------- */
 let arpBus=null, padBus=null, percBus=null, musicTimer=null, mStep=0, mNextT=0;
@@ -107,11 +147,11 @@ function startMusic(){
   }, 90);
 }
 
-function sfx(k,w){
+function sfx(k,w,weaponKey){
   if(!AC) return;
   try{
     switch(k){
-      case 'shoot':  noiseBurst(w.sndD, 0.26, w.sndF); tone(w.sndF*0.45, w.sndD*0.9, 'square', 0.07, -w.sndF*0.3); break;
+      case 'shoot':  playWeaponShot(w,weaponKey); break;
       case 'reload': tone(520,0.05,'square',0.1); setTimeout(()=>AC&&tone(760,0.06,'square',0.1),130); break;
       case 'loaded': tone(880,0.07,'square',0.1); break;
       case 'dry':    tone(950,0.04,'square',0.07); break;

@@ -75,6 +75,29 @@ function damageEnemy(e,amount,options={}){
   addDamageNumber(e,dealt,!!options.crit,Number.isFinite(+options.mergeMs)?+options.mergeMs:55,options.kind||'direct');
   return dealt;
 }
+const UNSCOPED_SNIPER_CELEBRATION_MS=1800, UNSCOPED_SNIPER_CONFIRM_MAX=200;
+// The caller must prove this exact shot moved a live target to zero. Capturing
+// scope state on the projectile keeps weapon swaps and late impacts honest.
+function triggerUnscopedSniperKillCelebration(beforeHp,afterHp,source={}){
+  const before=+beforeHp,after=+afterHp;
+  if(!(before>0&&after<=0)||!source||source.weapon!=='sniper'||source.unscopedShot!==true)return false;
+  if(!unscopedSniperCelebration||typeof unscopedSniperCelebration!=='object')
+    unscopedSniperCelebration={startAt:0,until:0,serial:0,seen:new Set()};
+  if(!(unscopedSniperCelebration.seen instanceof Set))unscopedSniperCelebration.seen=new Set();
+  const confirmationId=String(source.confirmationId||'').slice(0,160);
+  if(confirmationId&&unscopedSniperCelebration.seen.has(confirmationId))return false;
+  if(confirmationId){
+    unscopedSniperCelebration.seen.add(confirmationId);
+    if(unscopedSniperCelebration.seen.size>UNSCOPED_SNIPER_CONFIRM_MAX)
+      unscopedSniperCelebration.seen=new Set([...unscopedSniperCelebration.seen].slice(-100));
+  }
+  unscopedSniperCelebration.startAt=now;
+  unscopedSniperCelebration.until=now+UNSCOPED_SNIPER_CELEBRATION_MS;
+  unscopedSniperCelebration.serial=(unscopedSniperCelebration.serial||0)+1;
+  if(typeof burst==='function'&&player&&Number.isFinite(+player.x)&&Number.isFinite(+player.y))
+    burst(player.x,player.y,'#ffe08a',18,5.5);
+  return true;
+}
 // One authoritative hook for local HP loss. It reports only the HP that was
 // actually removed, so armor, lethal overkill, and repeated network state
 // packets can never inflate the red incoming-damage number.
@@ -265,14 +288,16 @@ function spawnPracticeEnemy(sp, id){
   sp.alive=true;
   burst(sp.x, sp.y, '#8d949c', 8, 3);
 }
-let tryLoadoutBackup=null;
-let practicePickOpen=false, practicePickKey=null, practicePickRects=[], soloPractice=false;
+let tryLoadoutBackup=null, tryBorrowedWeaponKey=null, tryBorrowedUtilityKey=null;
+let practicePickOpen=false, practicePickKey=null, practicePickRects=[], soloPractice=false, practiceReturnPage='practice';
 const PRACTICE_MODES=[
   {id:'range', name:'SHOOTING RANGE', d:'one of every enemy \u00b7 they stand still'},
   {id:'dps',   name:'DPS DUMMY',      d:'measure your damage per second'},
   {id:'boss',  name:'WARLORD',        d:'fight a boss one on one'},
 ];
-function openPracticePick(k){ practicePickKey=k; practicePickOpen=true; }
+function openPracticePick(k, returnPage=selPage){
+  practicePickKey=k; practiceReturnPage=String(returnPage||selPage||'practice'); practicePickOpen=true;
+}
 function drawPracticePick(){
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
   const pw=Math.min(400,W-24), ph=Math.min(300,H-24), px=W/2-pw/2, py=H/2-ph/2;
@@ -324,8 +349,9 @@ function tryWeaponOnRange(k, mode){
   const w=WEAPONS[k]||VAULT_WEAPONS[k], isUtil=UTILKEYS.includes(k)||TEMP_UTILITY.includes(k)||VAULT_UTILITIES[k];
   if(!w && !isUtil) return;
   tryLoadoutBackup={primary:loadout.primary, secondary:loadout.secondary, melee:loadout.melee, utility:loadout.utility};
-  if(!WEAPONS[k] && VAULT_WEAPONS[k]) WEAPONS[k]=VAULT_WEAPONS[k];       // borrow it for the range only
-  if(isUtil && !UTILITIES[k] && VAULT_UTILITIES[k]) UTILITIES[k]=VAULT_UTILITIES[k];
+  tryBorrowedWeaponKey=null; tryBorrowedUtilityKey=null;
+  if(!WEAPONS[k] && VAULT_WEAPONS[k]){ WEAPONS[k]=VAULT_WEAPONS[k]; tryBorrowedWeaponKey=k; } // borrow it for the range only
+  if(isUtil && !UTILITIES[k] && VAULT_UTILITIES[k]){ UTILITIES[k]=VAULT_UTILITIES[k]; tryBorrowedUtilityKey=k; }
   if(isUtil) loadout.utility=k;
   else if(PRIMARIES.includes(k)||TEMP_PRIMARY.includes(k)||VAULT_SLOTS[k]==='primary') loadout.primary=k;
   else if(SECONDARIES.includes(k)||TEMP_SECONDARY.includes(k)||VAULT_SLOTS[k]==='secondary') loadout.secondary=k;
@@ -338,15 +364,17 @@ function tryWeaponOnRange(k, mode){
   soloPractice=true;
   if(!isUtil) tryStartWeapon=k;
   sfx('swap');
-  startPractice(mode||'range');
+  if(startPractice(mode||'range')===false) restoreTryLoadout();
 }
 let tryStartWeapon=null;
 function restoreTryLoadout(){
   soloPractice=false;
-  if(!tryLoadoutBackup) return;
-  loadout={primary:tryLoadoutBackup.primary, secondary:tryLoadoutBackup.secondary,
-           melee:tryLoadoutBackup.melee, utility:tryLoadoutBackup.utility};
-  tryLoadoutBackup=null; tryStartWeapon=null;
+  if(tryLoadoutBackup)
+    loadout={primary:tryLoadoutBackup.primary, secondary:tryLoadoutBackup.secondary,
+             melee:tryLoadoutBackup.melee, utility:tryLoadoutBackup.utility};
+  if(tryBorrowedWeaponKey&&WEAPONS[tryBorrowedWeaponKey]===VAULT_WEAPONS[tryBorrowedWeaponKey]) delete WEAPONS[tryBorrowedWeaponKey];
+  if(tryBorrowedUtilityKey&&UTILITIES[tryBorrowedUtilityKey]===VAULT_UTILITIES[tryBorrowedUtilityKey]) delete UTILITIES[tryBorrowedUtilityKey];
+  tryLoadoutBackup=null; tryStartWeapon=null; tryBorrowedWeaponKey=null; tryBorrowedUtilityKey=null; practiceReturnPage='practice';
 }
 function startPractice(mode){
   // fill any empty loadout slots so practice always has working weapons,
@@ -356,12 +384,18 @@ function startPractice(mode){
     if(!loadout.secondary) loadout.secondary='m9';
     if(!loadout.melee)     loadout.melee='knife';
   }
-  startGame();
+  if(startGame()===false) return false;
   practiceMode=mode; practiceSpawns=[]; dpsLog=[]; dpsPrevHp=0; dpsTotal=0; dpsStart=0;
   // Per-card Practice deliberately clears the other loadout slots. Always
   // select the requested weapon (including melee), or keep a safe hidden gun
   // under a utility and put that utility in hand immediately.
-  if(tryStartWeapon){ player.cur=tryStartWeapon; player.equipEnd=0; }
+  if(tryStartWeapon){
+    player.cur=tryStartWeapon; player.equipEnd=0;
+    // Vault/shop previews can be borrowed after WKEYS was built, so startGame
+    // has never created their magazine or reserve entries.
+    player.mags[tryStartWeapon]=magSize(tryStartWeapon);
+    player.reserve[tryStartWeapon]=Infinity;
+  }
   else if(soloPractice && loadout.utility){ player.cur='m9'; player.equipEnd=0; utilityOut=true; }
   for(const k of WKEYS) player.reserve[k]=Infinity;       // endless ammo on the range
   const cx=WORLD.w/2, cy=WORLD.h/2;
@@ -381,4 +415,5 @@ function startPractice(mode){
     waveMsg='WARLORD PRACTICE \u2014 you respawn on death'; waveMsgT=now+3200;
   }
   for(let i=0;i<practiceSpawns.length;i++) spawnPracticeEnemy(practiceSpawns[i], i);
+  return true;
 }

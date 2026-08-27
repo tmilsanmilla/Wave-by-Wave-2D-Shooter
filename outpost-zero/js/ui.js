@@ -56,10 +56,14 @@ function drawGunIcon(x,y,key,col,sc){
 }
 function weaponDetails(k){
   const rows=[];
-  if(isLocked(k)) rows.push(['ACCESS','\u{1F512} SIGN IN TO UNLOCK']);
+  if(isLocked(k)){
+    const shop=GEM_SHOP.find(it=>it.key===k);
+    rows.push(['ACCESS',FALL_KEYS.includes(k)?'\u{1F512} ADMIN TEST MODE ONLY':shop?'\u{1F512} BUY IN SHOP \u00b7 \uD83D\uDC8E '+shop.cost:'\u{1F512} SIGN IN TO UNLOCK']);
+  }
   if(FALL_KEYS.includes(k)) rows.push(['\uD83C\uDF42 NEXT SEASON','admins \u00b7 Test Mode/editor only']);
-  if(UTILKEYS.includes(k) || TEMP_UTILITY.includes(k)){
-    const u=UTILITIES[k];
+  const slot=typeof storedLoadoutSlot==='function'?storedLoadoutSlot(k):(VAULT_SLOTS[k]||null);
+  if(slot==='utility'||UTILKEYS.includes(k)||TEMP_UTILITY.includes(k)){
+    const u=UTILITIES[k]||VAULT_UTILITIES[k];
     rows.push(['RECHARGE',k==='medkit' ? MED_KILLS_REQUIRED+' enemy kills' : (u.cd/1000)+'s']);
     if(k==='medkit') rows.push(['QUICK HEAL','G / utility RMB \u00b7 5% max HP over 1s'],['CHANNEL HEAL','equip + LMB \u00b7 20% max HP over 8s'],
       ['HEAL PENALTY','-10% move speed'],['INTERRUPTED BY','taking damage or switching'],['CHARGES','one ready at a time']);
@@ -77,7 +81,7 @@ function weaponDetails(k){
       ['SPLITS','every 1s into 2, 3 generations'],['CHILD DMG','halves each split']);
     return rows;
   }
-  const w=WEAPONS[k];
+  const w=WEAPONS[k]||VAULT_WEAPONS[k];
   if(w.solar){
     rows.push(['\uD83D\uDD25 SEASONAL','temporary'],['TYPE','bouncing solar bolt'],
       ['DAMAGE',''+w.dmg+' \u00b7 pierces '+w.pierce],['BOUNCES',''+w.bounce+' off walls'],
@@ -137,7 +141,7 @@ function weaponDetails(k){
     ['RELOAD',(w.reload/1000).toFixed(2)+'s'],
     ['RANGE', w.range>2000 ? 'no falloff' : w.range+' \u2192 '+Math.round(w.fall*100)+'% floor at '+w.range*2],
     ['SPREAD',(w.spread*57.3).toFixed(1)+'\u00b0 hip \u00b7 '+(w.aimSpread*57.3).toFixed(1)+'\u00b0 aimed'],
-    ['BULLET SPEED',Number(weaponBulletSpeed(k).toFixed(2))+'  (boosted)'],
+    ['BULLET SPEED',Number(((WEAPONS[k]?weaponBulletSpeed(k):(w.speed||0)*weaponBulletSpeedMul(k))).toFixed(2))+'  (boosted)'],
     ['FIRE MODE', w.auto ? 'full-auto' : 'semi-auto'],
     ['SCOPE ZOOM', w.zoom+'\u00d7'+(w.scoped?' (full scope)':'')],
     ['MOVE SPEED',Math.round(w.moveMod*100)+'%']);
@@ -147,21 +151,24 @@ function weaponDetails(k){
 }
 function drawDetail(){
   if(!detailKey) return;
-  const k=detailKey, isU=UTILKEYS.includes(k);
-  const def=isU?UTILITIES[k]:WEAPONS[k];
+  const k=detailKey, slot=typeof storedLoadoutSlot==='function'?storedLoadoutSlot(k):(VAULT_SLOTS[k]||null), isU=slot==='utility';
+  const def=isU?(UTILITIES[k]||VAULT_UTILITIES[k]):(WEAPONS[k]||VAULT_WEAPONS[k]);
+  if(!def){ detailKey=null; return; }
   const rows=weaponDetails(k);
   ctx.fillStyle='rgba(8,9,5,0.96)'; ctx.fillRect(0,0,W,H);
-  const pw=Math.min(470, W-24), headHt=96, ph=headHt+rows.length*19+22;
+  const pw=Math.min(470, W-24), headHt=H<430?76:96;
+  const rowH=Math.max(11,Math.min(19,Math.floor((H-24-headHt-16)/Math.max(1,rows.length))));
+  const ph=headHt+rows.length*rowH+16;
   const px=W/2-pw/2, py=Math.max(16, H/2-ph/2);
   detailRects={panel:{x:px,y:py,w:pw,h:ph}, close:{x:px+pw-32,y:py+10,w:22,h:20}};
   ctx.fillStyle='#101208'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
-  const cls = PRIMARIES.includes(k)?'PRIMARY':SECONDARIES.includes(k)?'SIDEARM':MELEES.includes(k)?'MELEE':'UTILITY';
+  const cls = slot==='primary'?'PRIMARY':slot==='secondary'?'SIDEARM':slot==='melee'?'MELEE':'UTILITY';
   ctx.textAlign='left';
-  ctx.fillStyle='#e8b658'; ctx.font='700 18px ui-monospace,Consolas,monospace';
+  ctx.fillStyle='#e8b658'; ctx.font='700 '+(H<430?15:18)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(def.name, pw-70), px+20, py+14);
   ctx.fillStyle=ROLECOL[cls]||'#8a9268'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-  ctx.fillText(cls, px+20, py+36);
+  ctx.fillText(cls, px+20, py+(H<430?32:36));
   // close X
   const hc=mouse.x>=detailRects.close.x&&mouse.x<=detailRects.close.x+22&&mouse.y>=detailRects.close.y&&mouse.y<=detailRects.close.y+20;
   ctx.fillStyle=hc?'#e8b658':'rgba(0,0,0,0.4)';
@@ -170,18 +177,18 @@ function drawDetail(){
   ctx.fillStyle=hc?'#101208':'#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
   ctx.textAlign='center'; ctx.fillText('\u2715', px+pw-21, py+15);
   // description
-  ctx.textAlign='left'; ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
-  wrapTextClamped(def.blurb, px+20, py+52, pw-40, 13, 3);   // left-aligned inside the panel
+  ctx.textAlign='left'; ctx.fillStyle='#8a9268'; ctx.font=(H<430?'8':'10')+'px ui-monospace,Consolas,monospace';
+  wrapTextClamped(def.blurb, px+20, py+(H<430?46:52), pw-40, H<430?10:13, H<430?2:3); // left-aligned inside the panel
   ctx.strokeStyle='rgba(74,70,52,0.7)';
   ctx.beginPath(); ctx.moveTo(px+16,py+headHt-8); ctx.lineTo(px+pw-16,py+headHt-8); ctx.stroke();
   // stat rows
   for(let i=0;i<rows.length;i++){
-    const ry=py+headHt+ i*19;
-    if(i%2===0){ ctx.fillStyle='rgba(255,255,255,0.025)'; ctx.fillRect(px+12,ry-3,pw-24,18); }
-    ctx.textAlign='left';  ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
+    const ry=py+headHt+ i*rowH;
+    if(i%2===0){ ctx.fillStyle='rgba(255,255,255,0.025)'; ctx.fillRect(px+12,ry-2,pw-24,rowH); }
+    ctx.textAlign='left';  ctx.fillStyle='#8a9268'; ctx.font=(rowH<15?'8':'10')+'px ui-monospace,Consolas,monospace';
     const valW=Math.max(60,(pw-44)*0.52);
     ctx.fillText(fitLine(rows[i][0], pw-44-valW), px+22, ry);
-    ctx.textAlign='right'; ctx.fillStyle='#e8d9a8'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+    ctx.textAlign='right'; ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(rowH<15?'8':'11')+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(''+rows[i][1], valW), px+pw-22, ry);
   }
   ctx.textAlign='left';
@@ -281,7 +288,7 @@ function drawBanNotice(){
 }
 function drawSelect(){
   layoutRects=[];                                         // one registry per frame
-  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; socialRects=[]; partyRects=[]; partyModeRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; offlineCpuRects=[]; backRect=null;
+  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; weaponBrowserRects=[]; socialRects=[]; partyRects=[]; partyModeRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; offlineCpuRects=[]; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
   adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
@@ -295,7 +302,7 @@ function drawSelect(){
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(firstAccountWelcomeOpen){ drawFirstAccountWelcome(); return; }
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='offlinecpu') drawOfflineCpuModes(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='social') drawSocial(); else if(selPage==='party') drawParty(); else if(selPage==='partymodes') drawPartyModes(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
+  if(selPage==='hub') drawHub(); else if(selPage==='weapons') drawWeaponsHome(); else if(selPage==='weaponbrowse') drawWeaponBrowser(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='offlinecpu') drawOfflineCpuModes(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='social') drawSocial(); else if(selPage==='party') drawParty(); else if(selPage==='partymodes') drawPartyModes(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
   drawDetail();
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
@@ -1429,6 +1436,8 @@ function launchSelectedMode(){
 }
 function navigateSelectBack(){
   if(detailKey){ detailKey=null; sfx('swap'); return; }
+  if(selPage==='weaponbrowse'){ selPage='weapons'; sfx('swap'); return; }
+  if(selPage==='weapons'){ selPage='hub'; sfx('swap'); return; }
   if(CATS.some(c=>c[0]===selPage)){ selPage=pendingGameMode?'loadout':'hub'; sfx('swap'); return; }
   if(selPage==='loadout'){
     if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
@@ -2092,6 +2101,185 @@ function drawLoadout(){
   if(now<pracNeedMsgT){ ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('PRIMARY + SIDEARM + MELEE ARE REQUIRED',W/2,dy-18); }
   ctx.textBaseline='alphabetic';
 }
+
+// Home's WEAPONS route is a catalog, not another loadout editor. Its lists are
+// assembled from the public rosters, the limited-time rosters, and public gem
+// shop offers (the unowned Railgun is intentionally visible). Dormant vault
+// equipment only enters these rosters while an admin is in Test Mode.
+function weaponBrowserKeys(cat){
+  const entry=CATS.find(c=>c[0]===cat);
+  if(!entry) return [];
+  const slot=entry[1], keys=[], add=k=>{
+    if(!k||keys.includes(k)) return;
+    const valid=slot==='utility' ? !!(UTILITIES[k]||VAULT_UTILITIES[k]) : !!(WEAPONS[k]||VAULT_WEAPONS[k]);
+    if(!valid) return;
+    const vaulted=Object.prototype.hasOwnProperty.call(VAULT_SLOTS,k);
+    const shop=GEM_SHOP.some(it=>it.key===k&&it.slot===slot);
+    const adminTest=typeof fallEligible==='function'&&fallEligible();
+    const published=typeof savedWeaponPublished==='function'&&savedWeaponPublished(k);
+    if(vaulted&&!shop&&!adminTest&&!published) return;       // no dormant/public leaks
+    if(FALL_KEYS.includes(k)&&!adminTest) return;
+    keys.push(k);
+  };
+  entry[2]().forEach(add);                                 // current released roster
+  GEM_SHOP.filter(it=>it.slot===slot).forEach(it=>add(it.key)); // include locked public offers
+  entry[3]().forEach(add);                                 // current limited-time roster
+  return keys;
+}
+function weaponBrowserAccess(k){
+  const limited=TEMP_PRIMARY.includes(k)||TEMP_SECONDARY.includes(k)||TEMP_MELEE.includes(k)||TEMP_UTILITY.includes(k);
+  const shop=GEM_SHOP.find(it=>it.key===k), locked=typeof isLocked==='function'&&isLocked(k);
+  const adminTest=typeof fallEligible==='function'&&fallEligible();
+  if(FALL_KEYS.includes(k)) return {text:'ADMIN TEST \u00b7 NEXT SEASON',col:'#d0763e',locked:false};
+  if(Object.prototype.hasOwnProperty.call(VAULT_SLOTS,k)&&!shop&&adminTest)
+    return {text:'ADMIN TEST \u00b7 DORMANT',col:'#d0763e',locked:false};
+  if(limited) return locked
+    ? {text:'LIMITED \u00b7 SIGN IN',col:'#d05548',locked:true}
+    : {text:'LIMITED \u00b7 AVAILABLE',col:'#ff8b4d',locked:false};
+  if(shop){
+    if(gemOwned[k]) return {text:'OWNED \u00b7 LIVE',col:'#a7c15e',locked:false};
+    if(locked) return {text:'LOCKED \u00b7 \uD83D\uDC8E '+shop.cost,col:'#7fd8ff',locked:true};
+    if(typeof testMode!=='undefined'&&testMode) return {text:'TEST ACCESS \u00b7 NOT OWNED',col:'#d0763e',locked:false};
+    if(typeof sb==='undefined'||!sb) return {text:'OFFLINE PREVIEW \u00b7 NOT OWNED',col:'#8fb3c9',locked:false};
+    return {text:'AVAILABLE \u00b7 NOT OWNED',col:'#7fd8ff',locked:false};
+  }
+  return {text:'LIVE \u00b7 AVAILABLE',col:'#a7c15e',locked:false};
+}
+function weaponBrowserDef(k,cat){
+  return cat==='UTILITY' ? (UTILITIES[k]||VAULT_UTILITIES[k]) : (WEAPONS[k]||VAULT_WEAPONS[k]);
+}
+function drawWeaponsHome(){
+  selBg(); weaponBrowserRects=[];
+  const tiny=H<400, margin=Math.max(10,Math.min(24,W*.045));
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillStyle='#e8b658'; ctx.font='700 '+(tiny?22:30)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('WEAPONS',W/2,Math.max(10,H*.035));
+  ctx.fillStyle='#8a9268'; ctx.font=(W<360?'8':'10')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('BROWSE THE CURRENT ARMORY \u00b7 DETAILS \u00b7 PRACTICE',W-24),W/2,Math.max(39,H*.035+(tiny?28:38)));
+
+  const backH=tiny?28:34, backW=Math.min(190,W-margin*2), backX=W/2-backW/2, backY=H-margin-backH;
+  const top=tiny?68:82, bottom=backY-(tiny?9:15), gap=tiny?6:10;
+  const gridW=Math.min(720,W-margin*2), gridX=W/2-gridW/2, cardW=(gridW-gap)/2;
+  const available=Math.max(100,bottom-top), cardH=Math.min(220,(available-gap)/2);
+  const gridY=top+Math.max(0,(available-(cardH*2+gap))/2);
+  for(let i=0;i<CATS.length;i++){
+    const cat=CATS[i][0], keys=weaponBrowserKeys(cat), col=ROLECOL[cat];
+    const x=gridX+(i%2)*(cardW+gap), y=gridY+Math.floor(i/2)*(cardH+gap);
+    const hot=mouse.x>=x&&mouse.x<=x+cardW&&mouse.y>=y&&mouse.y<=y+cardH;
+    weaponBrowserRects.push({kind:'category',cat,x,y,w:cardW,h:cardH});
+    ctx.fillStyle=hot?'rgba(232,182,88,0.16)':'rgba(0,0,0,0.42)'; ctx.fillRect(x,y,cardW,cardH);
+    ctx.strokeStyle=col; ctx.lineWidth=hot?2:1.2; ctx.strokeRect(x+0.5,y+0.5,cardW-1,cardH-1);
+    ctx.fillStyle=col; ctx.fillRect(x,y,5,cardH);
+    ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=col;
+    ctx.font='700 '+(cardH<70?10:cardW<150?12:16)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(cat,cardW-45),x+14,y+(cardH<70?9:13));
+    ctx.textAlign='right'; ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(cardH<70?9:12)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(keys.length+' ITEMS',x+cardW-12,y+(cardH<70?10:15));
+    if(cardH>=66){
+      const names=keys.map(k=>(weaponBrowserDef(k,cat)||{}).name||k).join(' \u00b7 ');
+      ctx.textAlign='left'; ctx.fillStyle='#8a9268'; ctx.font=(cardH<100?'7':'9')+'px ui-monospace,Consolas,monospace';
+      wrapTextClamped(names,x+14,y+(cardH<100?35:43),cardW-28,cardH<100?10:12,Math.max(1,Math.floor((cardH-(cardH<100?43:53))/(cardH<100?10:12))));
+    }
+    ctx.textAlign='right'; ctx.textBaseline='bottom'; ctx.fillStyle=hot?'#e8b658':'#6b7455';
+    ctx.font='700 '+(cardH<70?13:18)+'px ui-monospace,Consolas,monospace'; ctx.fillText('\u203A',x+cardW-12,y+cardH-8);
+  }
+  backRect={x:backX,y:backY,w:backW,h:backH};
+  const bh=mouse.x>=backX&&mouse.x<=backX+backW&&mouse.y>=backY&&mouse.y<=backY+backH;
+  ctx.fillStyle=bh?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(backX,backY,backW,backH);
+  ctx.strokeStyle='#8a9268'; ctx.lineWidth=1; ctx.strokeRect(backX+0.5,backY+0.5,backW-1,backH-1);
+  ctx.fillStyle=bh?'#101208':'#cdd6b0'; ctx.font='700 11px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('\u2039 HOME',W/2,backY+backH/2);
+  ctx.textBaseline='alphabetic';
+}
+function drawWeaponBrowserCard(k,cat,x,y,w,h){
+  const def=weaponBrowserDef(k,cat), access=weaponBrowserAccess(k), col=ROLECOL[cat], isUtil=cat==='UTILITY';
+  if(!def) return;
+  const hot=mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
+  weaponBrowserRects.push({kind:'detail',key:k,x,y,w,h});
+  ctx.fillStyle=hot?'rgba(255,255,255,0.055)':'rgba(0,0,0,0.42)'; ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle=hot?'#e8b658':access.locked?'#4a5a62':col; ctx.lineWidth=hot?1.8:1; ctx.strokeRect(x+0.5,y+0.5,w-1,h-1);
+  ctx.fillStyle=access.col; ctx.fillRect(x,y,w,4);
+  const compact=h<92, veryTight=h<62;
+  const practiceW=compact?Math.min(44,w*.44):Math.min(78,Math.max(58,w*.36)), practiceH=compact?30:28;
+  const practiceX=x+w-practiceW-6, practiceY=y+7;
+  weaponBrowserRects.push({kind:'practice',key:k,x:practiceX,y:practiceY,w:practiceW,h:practiceH});
+  const practiceHot=mouse.x>=practiceX&&mouse.x<=practiceX+practiceW&&mouse.y>=practiceY&&mouse.y<=practiceY+practiceH;
+  ctx.fillStyle=practiceHot?'#a7c15e':'rgba(167,193,94,0.13)'; ctx.fillRect(practiceX,practiceY,practiceW,practiceH);
+  ctx.strokeStyle='#a7c15e'; ctx.strokeRect(practiceX+0.5,practiceY+0.5,practiceW-1,practiceH-1);
+  ctx.fillStyle=practiceHot?'#101208':'#cfe0a8'; ctx.font='700 '+(compact?8:9)+'px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(compact?'\uD83C\uDFAF':'\uD83C\uDFAF PRACTICE',practiceX+practiceW/2,practiceY+practiceH/2);
+
+  if(!veryTight){
+    const iconX=x+Math.min(32,w*.17), iconY=y+(compact?33:43), scale=compact?.55:.72;
+    if(isUtil) drawUtilIcon(iconX,iconY,k,access.locked?'#53605e':col,scale);
+    else drawGunIcon(iconX,iconY,k,access.locked?'#53605e':col,scale);
+  }
+  const nameX=x+(veryTight?8:compact?53:66), nameRoom=Math.max(40,practiceX-nameX-5);
+  ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=access.locked?'#8c9992':'#e8d9a8';
+  ctx.font='700 '+(veryTight?8:compact?9:12)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine(def.name,nameRoom),nameX,y+(veryTight?9:compact?33:36));
+  if(!veryTight){
+    ctx.fillStyle=access.col; ctx.font='700 '+(compact?6:8)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(access.text,w-16),x+8,y+h-(compact?17:20));
+  }
+  if(h>=105){
+    let summary;
+    if(isUtil) summary=k==='medkit'?'RECHARGE '+MED_KILLS_REQUIRED+' KILLS':'RECHARGE '+Math.round(def.cd/1000)+'s';
+    else if(def.melee) summary=def.dmg+' DMG \u00b7 '+def.range+' RANGE \u00b7 '+def.fireRate+'ms';
+    else summary=(def.dmg*def.pellets)+' DMG \u00b7 '+def.mag+' MAG \u00b7 '+def.fireRate+'ms';
+    ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(summary,w-16),x+8,y+67);
+  }
+  if(h>=145){
+    ctx.fillStyle='#6b7455'; ctx.font='8px ui-monospace,Consolas,monospace';
+    wrapTextClamped(def.blurb,x+8,y+86,w-16,10,Math.max(1,Math.floor((h-116)/10)));
+  }
+  ctx.textAlign='right'; ctx.textBaseline='bottom'; ctx.fillStyle=hot?'#e8b658':'#8a9268';
+  ctx.font='700 '+(veryTight?9:11)+'px ui-monospace,Consolas,monospace'; ctx.fillText('DETAILS \u203A',x+w-7,y+h-6);
+  ctx.textBaseline='alphabetic';
+}
+function drawWeaponBrowser(){
+  selBg(); weaponBrowserRects=[];
+  if(!CATS.some(c=>c[0]===weaponBrowserCat)) weaponBrowserCat='PRIMARY';
+  const tiny=H<400, margin=Math.max(8,Math.min(22,W*.04));
+  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle=ROLECOL[weaponBrowserCat];
+  ctx.font='700 '+(tiny?19:27)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(weaponBrowserCat,W/2,Math.max(8,H*.025));
+  ctx.fillStyle='#8a9268'; ctx.font=(W<360?'7':'9')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('BROWSE ONLY \u00b7 LOADOUT WILL NOT CHANGE \u00b7 TAP \uD83C\uDFAF TO PRACTICE',W-20),W/2,Math.max(31,H*.025+(tiny?24:33)));
+
+  const tabY=tiny?55:65, tabH=tiny?24:30, tabGap=W<420?3:6, tabW=(Math.min(720,W-margin*2)-tabGap*3)/4;
+  let tabX=W/2-(tabW*4+tabGap*3)/2;
+  for(const entry of CATS){
+    const cat=entry[0], active=cat===weaponBrowserCat, col=ROLECOL[cat], x=tabX;
+    const hot=mouse.x>=x&&mouse.x<=x+tabW&&mouse.y>=tabY&&mouse.y<=tabY+tabH;
+    weaponBrowserRects.push({kind:'tab',cat,x,y:tabY,w:tabW,h:tabH});
+    ctx.fillStyle=hot?col:active?'rgba(232,182,88,0.16)':'rgba(0,0,0,0.4)'; ctx.fillRect(x,tabY,tabW,tabH);
+    ctx.strokeStyle=col; ctx.lineWidth=active?2:1; ctx.strokeRect(x+0.5,tabY+0.5,tabW-1,tabH-1);
+    ctx.fillStyle=hot?'#101208':active?'#e8d9a8':'#8a9268'; ctx.font='700 '+(tabW<72?'6':tabW<100?'8':'10')+'px ui-monospace,Consolas,monospace';
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(fitLine(cat+' '+weaponBrowserKeys(cat).length,tabW-6),x+tabW/2,tabY+tabH/2);
+    tabX+=tabW+tabGap;
+  }
+
+  const backH=tiny?26:32, backW=Math.min(190,W-margin*2), backX=W/2-backW/2, backY=H-margin-backH;
+  const gridTop=tabY+tabH+(tiny?7:12), gridBottom=backY-(tiny?7:12), availableH=Math.max(80,gridBottom-gridTop);
+  const keys=weaponBrowserKeys(weaponBrowserCat), cols=W>=720?4:W>=520?3:2, gap=tiny?6:9, rows=Math.max(1,Math.ceil(keys.length/cols));
+  const gridW=Math.min(920,W-margin*2), cardW=(gridW-gap*(cols-1))/cols;
+  const cardH=Math.min(190,(availableH-gap*(rows-1))/rows), usedH=cardH*rows+gap*(rows-1);
+  const gridX=W/2-gridW/2, gridY=gridTop+Math.max(0,(availableH-usedH)/2);
+  for(let i=0;i<keys.length;i++){
+    const row=Math.floor(i/cols), col=i%cols, inRow=Math.min(cols,keys.length-row*cols);
+    const rowW=inRow*cardW+(inRow-1)*gap, rowX=W/2-rowW/2;
+    drawWeaponBrowserCard(keys[i],weaponBrowserCat,rowX+col*(cardW+gap),gridY+row*(cardH+gap),cardW,cardH);
+  }
+  backRect={x:backX,y:backY,w:backW,h:backH};
+  const hot=mouse.x>=backX&&mouse.x<=backX+backW&&mouse.y>=backY&&mouse.y<=backY+backH;
+  ctx.fillStyle=hot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(backX,backY,backW,backH);
+  ctx.strokeStyle='#8a9268'; ctx.strokeRect(backX+0.5,backY+0.5,backW-1,backH-1);
+  ctx.fillStyle=hot?'#101208':'#cdd6b0'; ctx.font='700 10px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('\u2039 WEAPONS',W/2,backY+backH/2);
+  ctx.textBaseline='alphabetic';
+}
 function drawHomeLeaderboards(x,y,w,h){
   const titleH=h<90?16:20, gap=w<400?5:10;
   const panelY=y+titleH, panelH=h-titleH, panelW=(w-gap)/2;
@@ -2241,15 +2429,23 @@ function drawHub(){
   withBlockColour('banner', ()=>ctx.fillText(fitLine('\uD83D\uDD25 SUMMER FLAMING UPDATE \uD83D\uDD25', bnW-16), W/2, bnY+bnH/2));
   ctx.textBaseline='top';
 
-  // Home destinations: Play, offline Practice, and Social.
+  // Home destinations: Play, Practice, browse-only Weapons, and Social.
+  // WEAPONS is a catalog; loadout changes stay
+  // inside the Play/Practice setup flow.
   diffRects=[];
   homePlayRects=[];
   hubPostsRect=null;
+  const actions=[
+    {id:'play',title:'PLAY',sub:'ONLINE \u00b7 RANKED \u00b7 OFFLINE',col:'#e8b658',enabled:true},
+    {id:'practice',title:'PRACTICE',sub:'RANGE \u00b7 DPS \u00b7 WARLORDS',col:'#a7c15e',enabled:true},
+    {id:'weapons',title:'WEAPONS',sub:'STATS \u00b7 OWNERSHIP \u00b7 PRACTICE',col:'#8fb3c9',enabled:true},
+    {id:'social',title:'SOCIAL',sub:party.accepted?('FRIENDS \u00b7 MESSAGES \u00b7 PARTY '+party.members.length+'/'+PARTY_MAX+' OPEN'):'FRIENDS \u00b7 PRIVATE MESSAGES \u00b7 PARTY',col:'#bfa8ff',enabled:true}
+  ];
   const hbH=H<600?30:40, hbGap=W<520?5:8;
   const hbN=6;
   const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
   const hbY=H-hbH-8;
-  const actionCount=3, actionCols=W>=480?3:1, actionRows=Math.ceil(actionCount/actionCols);
+  const actionCount=actions.length, actionCols=W>=760?4:2, actionRows=Math.ceil(actionCount/actionCols);
   const actionGap=H<390?4:H<560?7:10, targetActionH=H<390?42:H<560?54:76;
   const contentTop=bnY+bnH+8, actionBottom=hbY-10;
   let cardH=targetActionH, homeBoardsH=H<390?72:H<560?88:112;
@@ -2278,11 +2474,6 @@ function drawHub(){
   const actionTop=homeBoardsY+homeBoardsH+boardActionGap;
   const groupW=Math.min(560,W-24), groupX=W/2-groupW/2;
   const cardW=(groupW-actionGap*(actionCols-1))/actionCols;
-  const actions=[
-    {id:'play',title:'PLAY',sub:'ONLINE \u00b7 RANKED \u00b7 OFFLINE',col:'#e8b658',enabled:true},
-    {id:'practice',title:'PRACTICE',sub:'RANGE \u00b7 DPS \u00b7 WARLORDS',col:'#a7c15e',enabled:true},
-    {id:'social',title:'SOCIAL',sub:party.accepted?('FRIENDS \u00b7 MESSAGES \u00b7 PARTY '+party.members.length+'/'+PARTY_MAX+' OPEN'):'FRIENDS \u00b7 PRIVATE MESSAGES \u00b7 PARTY',col:'#bfa8ff',enabled:true}
-  ];
   for(let i=0;i<actions.length;i++){
     const a=actions[i], x=groupX+(i%actionCols)*(cardW+actionGap);
     const y=actionTop+Math.floor(i/actionCols)*(cardH+actionGap);

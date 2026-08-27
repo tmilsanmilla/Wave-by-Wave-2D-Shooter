@@ -78,6 +78,7 @@ function frame(){
     if(state==='upgrade') drawUpgrade();
     if(state==='over')  drawOver();
   }
+  drawUnscopedSniperKillCelebration();
   drawGear();
   if(state==='select' && myBan && !banBlocksPlay()) drawBanNotice();   // leaderboard-only: just a notice
   if(state==='select') for(const m of MODALS) if(m.is()) m.draw();

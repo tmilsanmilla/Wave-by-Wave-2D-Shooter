@@ -2,6 +2,7 @@
 
 /* ---------------- combat ---------------- */
 function switchWeapon(k){
+  if(!k || !WEAPONS[k]) return;                       // sparse single-item Practice loadouts have empty hotkeys
   if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
   if(state!=='play') return;
   resetFireCadence();
@@ -19,6 +20,16 @@ function switchWeapon(k){
     else tutSwapped=true;
   }
   sfx('swap');
+}
+function cycleWeapon(){
+  const guns=[loadout.primary,loadout.secondary].filter(k=>k&&WEAPONS[k]);
+  if(guns.length){
+    // Preserve Q's original primary/secondary toggle. With one gun, safely
+    // select that same gun (which can still stow a visible utility).
+    switchWeapon(player.cur===guns[0]&&guns.length>1?guns[1]:guns[0]);
+    return;
+  }
+  if(loadout.melee&&WEAPONS[loadout.melee]) switchWeapon(loadout.melee);
 }
 function meleeSwing(w, mul, flurryGenerated=false){
   if(player.equipEnd>now) return;                    // still drawing the weapon
@@ -289,7 +300,7 @@ function tryFire(carryCadence=false){
     const spd=(tdist/flight)*16;                         // scale speed so it always arrives in `flight` ms
     grenades.push({x:player.x, y:player.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd,
                    t:now+flight, firework:true, tx, ty});
-    player.flash=now+55; sfx('shot',w);
+    player.flash=now+55; sfx('shoot',w,player.cur);
     return true;
   }
   player.lastShot=shotStamp;
@@ -298,7 +309,8 @@ function tryFire(carryCadence=false){
   if(w.fan && aiming && fanShots<=0 && now>=fanBurstUntil){
     fanShots=5; fanNextT=now+115; fanBurstUntil=now+900;
   }
-  const base=aimAngle(), sp=effSpread();
+  const base=aimAngle(), sp=effSpread(), shotStart=bullets.length;
+  const shotWeapon=player.cur,unscopedShot=shotWeapon==='sniper'&&!aiming;
   for(let i=0;i<w.pellets+wm(player.cur).pellets;i++){
     const a = base + (Math.random()-0.5)*2*sp;
     const tx = player.x + Math.cos(base)*6, ty = player.y + Math.sin(base)*6; // spawn at body, not muzzle: point-blank shots connect
@@ -309,12 +321,15 @@ function tryFire(carryCadence=false){
                    rng:w.range*wm(player.cur).range*perks.range, fall:1-(1-w.fall)*wm(player.cur).fall, dist:0,
                    bounce: w.bounce||0, fire: !!w.fire, poison:!!w.poison, fg:w.fg||0, wv:!!w.wave, ox:tx, oy:ty, ba:a, chrono:!!w.chrono,
                    wamp: w.wave ? 24*(1+0.5*Math.sin(now/700)) : 0, wk: w.wave ? 0.05*(1+0.4*Math.sin(now/1100+2)) : 0,
-                   col:weaponColor(player.cur, w.tracer||null) });
+                   col:weaponColor(player.cur, w.tracer||null),weapon:shotWeapon,unscopedShot });
   }
+  const spawnedShot=bullets.slice(shotStart);
+  const partyShotSent=typeof partyCpuBroadcastPlayerShot==='function'&&partyCpuBroadcastPlayerShot(player.cur,spawnedShot);
+  if(!partyShotSent&&typeof arenaBroadcastShot==='function')arenaBroadcastShot(player.cur,spawnedShot);
   if(!perks.noBloom) player.bloom = Math.min(0.24, player.bloom + w.kick*0.013);
   player.flash = now + 55;
   addShake(w.kick*0.8);
-  sfx('shoot', w);
+  sfx('shoot',w,shotWeapon);
   if(player.mags[player.cur]<1 && !w.cell) startReload();
   if(w.cell) player.mags[player.cur]=Math.floor(player.mags[player.cur]);   // keep the readout whole
   return true;
@@ -972,7 +987,7 @@ function update(dtms){
           if(b.partyHits&&b.partyHits.has(target.id))continue;
           const rr=(target.r||15)+4+(b.fg||0);
           if(dist2(b.x,b.y,target.x,target.y)<rr*rr){
-            partyCpuHitBot(target,b.dmg*dmgMul(b),'shot');(b.partyHits||(b.partyHits=new Set())).add(target.id);
+            partyCpuHitBot(target,b.dmg*dmgMul(b),b.weapon==='sniper'&&b.unscopedShot?'unscoped_sniper':'shot');(b.partyHits||(b.partyHits=new Set())).add(target.id);
             if(b.pierce>0)b.pierce--;else dead=true;
             if(dead)break;
           }
@@ -982,7 +997,7 @@ function update(dtms){
         const ar=arena.opponent.r||15, rr=ar+4+(b.fg||0);
         if(dist2(b.x,b.y,arena.opponent.x,arena.opponent.y)<rr*rr){
           const hdmg=b.dmg*dmgMul(b);
-          arenaHitOpponent(hdmg,'shot'); b.arenaHit=true;
+          arenaHitOpponent(hdmg,b.weapon==='sniper'&&b.unscopedShot?'unscoped_sniper':'shot'); b.arenaHit=true;
           burst(b.x,b.y,'#d05548',5,3); sfx('hit');
           if(b.pierce>0) b.pierce--; else dead=true;
           if(dead) break;
@@ -1003,13 +1018,17 @@ function update(dtms){
           }
           let hdmg=b.dmg*dmgMul(b), wasCrit=false;
           if(perks.crit && Math.random()<perks.crit){ hdmg*=3; wasCrit=true; burst(b.x,b.y,'#ffe08a',8,4); }
+          const beforeHp=Math.max(0,+e.hp||0);
           damageEnemy(e,hdmg*freezeHit(e),{crit:wasCrit}); e.hitT=now+70;
           if(b.fire) igniteEnemy(e, 0.4);            // solar bolts ignite on impact
           if(b.poison) applyPoison(e);               // dart: stack poison DoT
           if(b.chrono){ e.dragUntil=Math.max(e.dragUntil||0, now+1800); e.chronoStacks=Math.min(8,(e.chronoStacks||0)+1); }   // timeturner: -20% speed per hit, stacks
           burst(b.x,b.y, b.poison?'#7cdc7c':ETYPES[e.type].col,5,3);
           sfx('hit');
-          if(e.hp<=0) killEnemy(j);
+          if(e.hp<=0){
+            triggerUnscopedSniperKillCelebration(beforeHp,e.hp,b);
+            killEnemy(j);
+          }
           if(b.pierce>0){ b.pierce--; (b.hits||(b.hits=new Set())).add(e); }
           else dead=true;
           break;

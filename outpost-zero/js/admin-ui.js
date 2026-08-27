@@ -147,9 +147,11 @@ function drawReader(){
     ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=hv?'#101208':'#bfe8ff';
     ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(label,bx+cbw/2,cby+cbh/2);
   };
-  const first=W/2-cbw-gap/2;
-  button('copy','COPY TEXT',first-cbw,'#a7c15e');
-  button('close','CLOSE',first+gap,'#7fd8ff');
+  // Center the two actions as one group.  `first` is the left edge of COPY,
+  // not the midpoint between the buttons.
+  const first=W/2-(cbw*2+gap)/2;
+  button('copy','COPY TEXT',first,'#a7c15e');
+  button('close','CLOSE',first+cbw+gap,'#7fd8ff');
   ctx.textAlign='left'; ctx.textBaseline='top';
 }
 async function copyReaderText(){
@@ -437,7 +439,13 @@ async function fetchWeaponDefs(){
 }
 function applyWeaponDef(r){
   const def=weaponDefOf(r.key); if(!def) return;
-  if(r.stats) for(const f of WFIELDS) if(typeof r.stats[f.k]==='number') def[f.k]=r.stats[f.k];
+  const staleSniperPair=r.key==='sniper'&&r.stats&&r.stats.dmg===204&&r.stats.fireRate===1150;
+  if(r.stats) for(const f of WFIELDS) if(typeof r.stats[f.k]==='number'){
+    // Old untouched cloud defaults must not undo the current AWM balance;
+    // every genuinely customized value still wins over the source definition.
+    const staleSniperDefault=staleSniperPair&&(f.k==='dmg'||f.k==='fireRate');
+    if(!staleSniperDefault)def[f.k]=r.stats[f.k];
+  }
   if(FALL_KEYS.includes(r.key)){
     VAULT_ACTIVE[r.key]=false;                       // ignore stale/accidental public publish records
     unpublishVaultKey(r.key);

@@ -751,12 +751,16 @@ function arenaHitOpponent(dmg,kind){
   }
   if(!arenaCanAct()||!arena.opponent||arena.roundResolved) return;
   const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
-  const dealt=Math.min(Math.max(0,arena.opponent.hp),hit);
+  const before=Math.max(0,+arena.opponent.hp||0),dealt=Math.min(before,hit);
   if(typeof recordAiTrainingSignal==='function')recordAiTrainingSignal(arena,'bot_damage_taken',dealt);
   arena.opponent.hp=Math.max(0,arena.opponent.hp-hit);arena.opponent.hitT=now+90;
   arena.opponent.underFireUntil=now+900;arena.opponent.aiTacticUntil=now;arena.opponent.thinkAt=now;
   addDamageNumber(arena.opponent,dealt,kind==='crit'||kind==='parry');
-  if(arena.opponent.hp<=0) arenaBotResolve(LOCAL_DUEL_PLAYER);
+  if(arena.opponent.hp<=0){
+    triggerUnscopedSniperKillCelebration(before,arena.opponent.hp,
+      {weapon:'sniper',unscopedShot:kind==='unscoped_sniper'});
+    arenaBotResolve(LOCAL_DUEL_PLAYER);
+  }
 }
 function arenaBotHitPlayer(dmg){
   if(!isBotArena()||!arenaCanAct()||arena.roundResolved) return;

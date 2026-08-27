@@ -1,10 +1,11 @@
 "use strict";
 
 function freshPartyCpuMatch(){
-  return {phase:'idle',epoch:0,hostEpoch:0,hostId:'',humanIds:[],humanNames:{},loadouts:{},ready:{},humans:{},bots:[],shots:[],
+  return {phase:'idle',epoch:0,hostEpoch:0,hostId:'',humanIds:[],humanNames:{},loadouts:{},ready:{},humans:{},bots:[],shots:[],visualShots:[],
     round:0,scores:{allies:0,cpus:0},roundStartAt:0,roundEndAt:0,nextRoundAt:0,roundResolved:false,
     syncAt:0,snapshotAt:0,simAt:0,simClock:0,simAcc:0,aiSeed:0,threat:{A:{},B:{}},
-    hitSeq:0,shotSeq:0,seenHits:new Set(),seenShots:new Set(),status:'',local:false,localLoadout:null,savedLoadout:null};
+    hitSeq:0,shotSeq:0,playerShotSeq:0,seenHits:new Set(),seenShots:new Set(),seenPlayerShots:new Set(),
+    killConfirms:[],seenKillConfirms:new Set(),pendingUnscopedHits:new Set(),status:'',local:false,localLoadout:null,savedLoadout:null};
 }
 let partyCpuMatch=freshPartyCpuMatch();
 function partyCpuSessionOpen(){ return !!(partyCpuMatch&&partyCpuMatch.phase!=='idle'); }
@@ -21,9 +22,10 @@ const SHARED_LOADOUT_DEFAULTS=Object.freeze({primary:'smg',secondary:'m9',melee:
 let lastLoadout={primary:'smg',secondary:'m9',melee:'knife',utility:null};
 let lastLoadoutAccountId='';
 let loadout={primary:'smg',secondary:'m9',melee:'knife',utility:null}, cardRects=[], deployRect=null;
-let selPage='hub', pendingGameMode=null, modeBoardMode=null, modeBoardOrigin='hub', loadoutBackPage='modeboard', modeBoardActionRects=[], offlineCpuRects=[], rankedRects=[], catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], partyModeRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + modeboard | offlinecpu | ranked | loadout | social | party | partymodes | tutorial | shop
+let selPage='hub', pendingGameMode=null, modeBoardMode=null, modeBoardOrigin='hub', loadoutBackPage='modeboard', modeBoardActionRects=[], offlineCpuRects=[], rankedRects=[], catBtns=[], modeRects=[], homePlayRects=[], partyRects=[], partyModeRects=[], backRect=null, tempBtnRect=null, tutBtnRect=null, diffRects=[], shopBtnRect=null, shopRects=[], shopTab='weapons', shopTabRects=[], shopCosWeapon=null, cosPrevRect=null, cosNextRect=null, pendingCancelRect=null;   // + weapons | weaponbrowse | modeboard | offlinecpu | ranked | loadout | social | party | partymodes | tutorial | shop
 let modeBoardNotice='', modeBoardNoticeT=0;
 let detailKey=null, detailBtns=[], detailRects={};
+let weaponBrowserCat='PRIMARY', weaponBrowserRects=[];
 const CATS=[['PRIMARY','primary',()=>PRIMARIES,()=>TEMP_PRIMARY],
             ['SIDEARM','secondary',()=>SECONDARIES,()=>TEMP_SECONDARY],
             ['MELEE','melee',()=>MELEES,()=>TEMP_MELEE],

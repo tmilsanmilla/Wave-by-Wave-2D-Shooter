@@ -89,7 +89,7 @@ addEventListener('keydown', e=>{
   if(k==='1') switchWeapon(loadout.primary);
   if(k==='2') switchWeapon(loadout.secondary);
   if(k==='3') switchWeapon(loadout.melee);
-  if(k==='q') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
+  if(k==='q') cycleWeapon();
 });
 addEventListener('keyup', e=>{
   if(typingInField(e)) return;
@@ -193,7 +193,7 @@ function buttonAt(x,y){
 }
 function doButton(k){
   if(k==='rld') startReload();
-  else if(k==='swp') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
+  else if(k==='swp') cycleWeapon();
   else if(k==='1') switchWeapon(loadout.primary);
   else if(k==='2') switchWeapon(loadout.secondary);
   else if(k==='3') switchWeapon(loadout.melee);
@@ -378,11 +378,32 @@ function clickSelect(){
       if(!r.enabled){ sfx('dry'); return; }
       if(r.id==='play') openModeLeaderboard();
       else if(r.id==='practice'){ selPage='practice'; sfx('swap'); }
+      else if(r.id==='weapons'){ selPage='weapons'; sfx('swap'); }
       else if(r.id==='social'){ selPage='social'; fetchSocial(true); sfx('swap'); }
       return;
     }
     if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
     if(inR(shopBtnRect)){ selPage='shop'; sfx('swap'); return; }
+    return;
+  }
+  if(selPage==='weapons'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of weaponBrowserRects) if(r.kind==='category'&&inR(r)){
+      weaponBrowserCat=r.cat; selPage='weaponbrowse'; sfx('swap'); return;
+    }
+    return;
+  }
+  if(selPage==='weaponbrowse'){
+    if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of weaponBrowserRects) if(r.kind==='tab'&&inR(r)){
+      weaponBrowserCat=r.cat; sfx('swap'); return;
+    }
+    for(const r of weaponBrowserRects) if(r.kind==='practice'&&inR(r)){
+      openPracticePick(r.key); sfx('swap'); return;
+    }
+    for(const r of weaponBrowserRects) if(r.kind==='detail'&&inR(r)){
+      detailKey=r.key; sfx('aim'); return;
+    }
     return;
   }
   if(selPage==='modes'){
