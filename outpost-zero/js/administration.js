@@ -18,7 +18,7 @@ let unrankedRun=false;                              // next-season (early access
 let adminOpen=false, adminUsed=false, adminBtnRect={x:-99,y:-99,w:0,h:0}, adminRects=[];
 let testMode=false;                                 // test mode (all admins); storage is a viewer popout now
 let adminPanelOpen=false, adminHubBtnRect=null, adminPanelRects=[];
-let aiLearningOpen=false, aiLearningRects=[], aiLearningModelLevel=1, aiLearningNotice='';
+let aiLearningOpen=false, aiLearningRects=[], aiLearningDifficulty=0, aiLearningNotice='';
 const ROOT_ADMIN='tmilsanmilla@gmail.com';          // can never be kicked or demoted
 let adminRoles={};                                  // email -> 'main'|'co' (from the Supabase admins table)
 let banners=[], pendingBanners=[], updatesFeed={staff:[],player:[]};
@@ -37,12 +37,12 @@ function canEditLoadedPlayer(){ return canEditPlayer()&&peData&&!peData.publicOn
 function canBan(){ return isMainAdmin(); }            // main admins may ban directly now
 function openAiLearning(){
   if(!isMainAdmin()){ aiLearningOpen=false; sfx('dry'); return false; }
-  aiLearningModelLevel=typeof botTrainingLevel==='function'?botTrainingLevel():1;
-  aiLearningNotice='Refreshing the shared model...';
+  aiLearningDifficulty=typeof botLadder!=='undefined'?clamp(Math.floor(+botLadder.tier||0),0,4):0;
+  aiLearningNotice='Five fixed difficulties use the same best tactical brain.';
   adminPanelOpen=false; aiLearningOpen=true;
-  if(typeof refreshGlobalBotTraining==='function') void refreshGlobalBotTraining(true).then(()=>{
+  if(typeof refreshBotLadder==='function') void refreshBotLadder(true).then(()=>{
     if(!aiLearningOpen) return;
-    aiLearningModelLevel=botTrainingLevel(); aiLearningNotice='Shared model is up to date.';
+    aiLearningNotice='Admin tests never change your synced account ladder.';
   });
   return true;
 }

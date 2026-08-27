@@ -314,260 +314,266 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
   }else{bot.aiNavPath=[];bot.aiNavUntil=0;bot.aiUsingPortal=false;}
   bot.aiTactic=tactic;return{x:best.x,y:best.y,tactic,until:bot.aiTacticUntil,usingPortal:!!bot.aiUsingPortal};
 }
-const BOT_TRAINING_VERSION=1;
-const BOT_TRAINING_MAX_XP=45, BOT_TRAINING_XP_PER_LEVEL=5, BOT_TRAINING_WIN_XP=2, BOT_TRAINING_COMPLETE_XP=1;
-const BOT_TRAINING_MAX_RECORDED_MATCHES=Number.MAX_SAFE_INTEGER, BOT_TRAINING_REFRESH_MS=30000;
-const BOT_TRAINING_SUBMIT_RETRY_MS=Object.freeze([750,2500]), BOT_TRAINING_SUBMIT_MAX_ATTEMPTS=3;
-let botTrainingXp=0, botTrainingMatches=0, botTrainingWins=0, botTrainingUpdatedAt='';
-let botTrainingLoaded=false, botTrainingSyncState='idle', botTrainingFetchedAt=0, botTrainingFetchPromise=null;
-let botTrainingRefreshQueued=false, botTrainingQueuedFetchPromise=null;
+const BOT_LADDER_MAX_PROGRESS=10,BOT_LADDER_REFRESH_MS=30000;
+const BOT_LADDER_SUBMIT_RETRY_MS=Object.freeze([750,2500]),BOT_LADDER_SUBMIT_MAX_ATTEMPTS=3;
+const BOT_DIFFICULTIES=Object.freeze([
+  Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'LEARNING THE ARENA',detail:'Patient reactions and forgiving aim.',
+    reactionMs:950,moveSpeed:2.15,aimNoise:.130,shotJitter:.055,fireAimError:.200,leadFactor:.18,maxLeadMs:90,thinkMs:260,turnRate:.040}),
+  Object.freeze({id:1,key:'easy',name:'EASY',summary:'STEADIER EXECUTION',detail:'Faster choices and basic movement prediction.',
+    reactionMs:700,moveSpeed:2.45,aimNoise:.085,shotJitter:.035,fireAimError:.135,leadFactor:.40,maxLeadMs:150,thinkMs:205,turnRate:.055}),
+  Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'BALANCED TACTICS',detail:'Confident cover use, leading, and pressure.',
+    reactionMs:480,moveSpeed:2.80,aimNoise:.045,shotJitter:.018,fireAimError:.080,leadFactor:.64,maxLeadMs:230,thinkMs:150,turnRate:.075}),
+  Object.freeze({id:3,key:'hard',name:'HARD',summary:'FAST AND PRECISE',detail:'Quick decisions, strong leading, and sharp turns.',
+    reactionMs:300,moveSpeed:3.15,aimNoise:.020,shotJitter:.009,fireAimError:.045,leadFactor:.82,maxLeadMs:300,thinkMs:100,turnRate:.105}),
+  Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'THE COMPLETE BOT',detail:'The strongest fair execution of the shared tactical brain.',
+    reactionMs:150,moveSpeed:3.55,aimNoise:.006,shotJitter:.003,fireAimError:.022,leadFactor:.98,maxLeadMs:380,thinkMs:60,turnRate:.145}),
+]);
+let botLadder={tier:0,progress:0,winStreak:0,lossStreak:0,wins:0,losses:0,revision:0,updatedAt:''};
+let botLadderUserId='',botLadderLoaded=false,botLadderSyncState='guest',botLadderFetchedAt=0;
+let botLadderFetchPromise=null,botLadderRequestVersion=0,botLadderLaunchPending='',botLadderPendingResult=null;
 
-function botTrainingRecord(raw){
-  if(typeof raw==='number') raw={xp:raw};
+function botDifficulty(value=botLadder.tier){
+  const tier=clamp(Math.floor(+value||0),0,BOT_DIFFICULTIES.length-1);
+  return BOT_DIFFICULTIES[tier];
+}
+function botDifficultyName(value=botLadder.tier){return botDifficulty(value).name;}
+function normalizeBotLadder(raw){
   raw=raw&&typeof raw==='object'?raw:{};
-  const whole=(value,max)=>{
-    const n=Number(value); return Number.isFinite(n)?Math.min(max,Math.max(0,Math.floor(n))):0;
+  const whole=(value,max=Number.MAX_SAFE_INTEGER)=>{
+    const n=Number(value);return Number.isFinite(n)?Math.min(max,Math.max(0,Math.floor(n))):0;
   };
-  const xp=whole(raw.xp,BOT_TRAINING_MAX_XP), matches=whole(raw.matches,BOT_TRAINING_MAX_RECORDED_MATCHES),
-    wins=Math.min(matches,whole(raw.wins,BOT_TRAINING_MAX_RECORDED_MATCHES));
-  return {version:BOT_TRAINING_VERSION,xp,matches,wins,maxXp:BOT_TRAINING_MAX_XP,
-    level:xp>=BOT_TRAINING_MAX_XP?10:Math.floor(xp/BOT_TRAINING_XP_PER_LEVEL)+1,
+  return {tier:whole(raw.tier!=null?raw.tier:raw.difficulty,4),progress:whole(raw.progress,BOT_LADDER_MAX_PROGRESS),
+    winStreak:whole(raw.win_streak!=null?raw.win_streak:raw.winStreak,3),
+    lossStreak:whole(raw.loss_streak!=null?raw.loss_streak:raw.lossStreak,2),
+    wins:whole(raw.wins),losses:whole(raw.losses),revision:whole(raw.revision),
     updatedAt:typeof raw.updated_at==='string'?raw.updated_at:(typeof raw.updatedAt==='string'?raw.updatedAt:'')};
 }
-function currentGlobalBotTraining(){
-  return botTrainingRecord({xp:botTrainingXp,matches:botTrainingMatches,wins:botTrainingWins,updatedAt:botTrainingUpdatedAt});
+function currentBotLadder(){return normalizeBotLadder(botLadder);}
+function botLadderRpcRow(data){return Array.isArray(data)?data[0]||null:(data&&typeof data==='object'?data:null);}
+function botLadderSnapshotNewer(next,current){
+  if(next.revision!==current.revision)return next.revision>current.revision;
+  const a=Date.parse(next.updatedAt||''),b=Date.parse(current.updatedAt||'');
+  return Number.isFinite(a)&&(!Number.isFinite(b)||a>=b);
 }
-function botTrainingRpcRow(data){
-  if(Array.isArray(data)) return data[0]||null;
-  return data&&typeof data==='object'?data:null;
+function applyBotLadderSnapshot(raw,expectedUserId){
+  const liveId=authUser&&String(authUser.id||'');
+  if(!liveId||String(expectedUserId||liveId)!==liveId||botLadderUserId!==liveId)return currentBotLadder();
+  const next=normalizeBotLadder(raw),current=currentBotLadder();
+  // Tier and progress can legitimately decrease. The server revision, not a
+  // monotonic score comparison, decides which concurrent response is newest.
+  if(botLadderLoaded&&!botLadderSnapshotNewer(next,current))return current;
+  botLadder=next;botLadderLoaded=true;return currentBotLadder();
 }
-function applyGlobalBotTrainingSnapshot(raw){
-  const record=botTrainingRecord(raw);
-  // XP, accepted matches, and wins only increase on the server. Ignore an
-  // older response that arrived after a newer Realtime/submission snapshot.
-  if(botTrainingLoaded&&(record.xp<botTrainingXp||record.matches<botTrainingMatches||record.wins<botTrainingWins))
-    return currentGlobalBotTraining();
-  botTrainingXp=record.xp; botTrainingMatches=record.matches; botTrainingWins=record.wins;
-  botTrainingUpdatedAt=record.updatedAt; botTrainingLoaded=true;
-  return record;
+function prepareBotLadderForAccount(userId){
+  userId=String(userId||'');
+  if(userId===botLadderUserId)return currentBotLadder();
+  botLadderRequestVersion++;botLadderLaunchPending='';botLadderPendingResult=null;botLadderFetchPromise=null;
+  botLadderUserId=userId;botLadder=normalizeBotLadder({});botLadderLoaded=!userId;
+  botLadderFetchedAt=0;botLadderSyncState=userId?'idle':'guest';return currentBotLadder();
 }
-async function refreshGlobalBotTraining(force=false){
-  if(botTrainingFetchPromise){
-    if(!force) return botTrainingFetchPromise;
-    botTrainingRefreshQueued=true;
-    if(!botTrainingQueuedFetchPromise){
-      const activeRequest=botTrainingFetchPromise;
-      botTrainingQueuedFetchPromise=activeRequest.then(()=>{
-        botTrainingQueuedFetchPromise=null;
-        if(!botTrainingRefreshQueued) return currentGlobalBotTraining();
-        botTrainingRefreshQueued=false;
-        return refreshGlobalBotTraining(true);
-      });
-    }
-    return botTrainingQueuedFetchPromise;
-  }
-  if(!sb||typeof sb.rpc!=='function'){
-    botTrainingSyncState='offline';
-    return currentGlobalBotTraining();
-  }
-  const wall=Date.now();
-  if(!force&&botTrainingLoaded&&wall-botTrainingFetchedAt<BOT_TRAINING_REFRESH_MS) return currentGlobalBotTraining();
-  botTrainingSyncState='syncing';
+function botLadderReady(){
+  const liveId=authUser&&String(authUser.id||'');
+  return !!(liveId&&botLadderLoaded&&botLadderUserId===liveId);
+}
+function botLadderReadyForMatch(){return botLadderReady()&&botLadderSyncState!=='syncing';}
+async function refreshBotLadder(force=false){
+  const expectedUserId=authUser&&String(authUser.id||'');
+  if(expectedUserId!==botLadderUserId)prepareBotLadderForAccount(expectedUserId);
+  if(!expectedUserId){botLadderSyncState='guest';return currentBotLadder();}
+  // Coalesce same-account reads. A deferred match must never observe request N
+  // finish, launch read-only, and then have a newer request N+1 publish the
+  // canonical tier a moment later.
+  if(botLadderFetchPromise)return botLadderFetchPromise;
+  if(!sb||typeof sb.rpc!=='function'){botLadderSyncState='offline';return currentBotLadder();}
+  if(!force&&botLadderLoaded&&Date.now()-botLadderFetchedAt<BOT_LADDER_REFRESH_MS)return currentBotLadder();
+  const requestVersion=++botLadderRequestVersion;botLadderSyncState='syncing';
   let request;
   request=(async()=>{
     try{
-      const {data,error}=await sb.rpc('get_outpost_zero_bot_training');
-      if(error) throw error;
-      const row=botTrainingRpcRow(data);
-      if(!row) throw new Error('Global bot training returned no state.');
-      const record=applyGlobalBotTrainingSnapshot(row);
-      botTrainingFetchedAt=Date.now(); botTrainingSyncState='ready';
-      return record;
-    }catch(e){
-      // Keep the last in-memory snapshot. A missing connection or not-yet-run
-      // SQL setup must never stop the offline match from being playable.
-      botTrainingSyncState='offline';
-      return currentGlobalBotTraining();
-    }finally{
-      if(botTrainingFetchPromise===request) botTrainingFetchPromise=null;
-    }
+      const {data,error}=await sb.rpc('get_outpost_zero_bot_ladder');if(error)throw error;
+      const row=botLadderRpcRow(data);if(!row)throw new Error('AI ladder returned no account state.');
+      if(requestVersion===botLadderRequestVersion&&authUser&&String(authUser.id||'')===expectedUserId){
+        applyBotLadderSnapshot(row,expectedUserId);botLadderFetchedAt=Date.now();botLadderSyncState='ready';
+      }
+    }catch(e){if(requestVersion===botLadderRequestVersion)botLadderSyncState='offline';}
+    finally{if(botLadderFetchPromise===request)botLadderFetchPromise=null;}
+    return currentBotLadder();
   })();
-  botTrainingFetchPromise=request;
-  return request;
+  botLadderFetchPromise=request;return request;
 }
-function fetchGlobalBotTraining(force=false){ return refreshGlobalBotTraining(force); }
-function createGlobalBotTrainingMatchId(){
+function fetchBotLadder(force=false){return refreshBotLadder(force);}
+function createBotLadderMatchId(){
   const secure=typeof crypto!=='undefined'?crypto:null;
-  try{ if(secure&&typeof secure.randomUUID==='function') return secure.randomUUID(); }catch(e){}
+  try{if(secure&&typeof secure.randomUUID==='function')return secure.randomUUID();}catch(e){}
   try{
     if(secure&&typeof secure.getRandomValues==='function'){
-      const bytes=new Uint8Array(16); secure.getRandomValues(bytes);
-      bytes[6]=(bytes[6]&15)|64; bytes[8]=(bytes[8]&63)|128;
+      const bytes=new Uint8Array(16);secure.getRandomValues(bytes);bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
       const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
       return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
     }
-  }catch(e){}
-  return '';
+  }catch(e){}return '';
 }
-function globalBotTrainingSubmissionEligible(match){
-  const liveUserId=authUser&&String(authUser.id||'');
-  return !!(match&&arena===match&&sb&&typeof sb.rpc==='function'&&liveUserId&&
-    String(match.botTrainingContributorId||'')===liveUserId&&match.botTrainingMatchId);
+function botLadderProgressForTier(tier,state=botLadder){
+  state=normalizeBotLadder(state);tier=clamp(Math.floor(+tier||0),0,4);
+  return tier<state.tier?BOT_LADDER_MAX_PROGRESS:tier===state.tier?state.progress:0;
 }
-function finishGlobalBotTrainingSubmission(match,status){
-  if(!match) return;
-  if(match.botTrainingRetryTimer){ clearTimeout(match.botTrainingRetryTimer); match.botTrainingRetryTimer=null; }
-  match.botTrainingSubmitInFlight=false; match.botTrainingSubmitDone=true;
-  if(status) match.botTrainingSyncStatus=status;
+function botLadderProgressText(state=botLadder){
+  state=normalizeBotLadder(state);
+  return botDifficultyName(state.tier)+' · PROGRESS '+state.progress+'/'+BOT_LADDER_MAX_PROGRESS+' · WIN STREAK '+state.winStreak+'/3 · LOSS STREAK '+state.lossStreak+'/3';
 }
-function cancelGlobalBotTrainingSubmission(match){
-  if(!match||match.mode!=='bot'||match.botTrainingSubmitDone) return;
-  if(match.botTrainingRetryTimer){ clearTimeout(match.botTrainingRetryTimer); match.botTrainingRetryTimer=null; }
-  // An RPC already on the wire cannot be cancelled. It may still apply the
-  // canonical snapshot, but it cannot schedule another attempt after leaving.
-  if(!match.botTrainingSubmitInFlight) finishGlobalBotTrainingSubmission(match,'offline');
+function initializeBotLadderMatch(match,mode,difficulty,adminTest=false){
+  const canSubmit=!adminTest&&botLadderReadyForMatch(),accountId=canSubmit?String(authUser.id||''):'';
+  match.botLadderMode=String(mode||'ai1v1');match.botDifficulty=clamp(Math.floor(+difficulty||0),0,4);
+  match.botAdminTest=!!adminTest;match.botLadderAccountId=accountId;match.botLadderReadOnly=!canSubmit;
+  match.botLadderStartState=currentBotLadder();match.botLadderResultState=currentBotLadder();match.botLadderRecorded=false;
+  match.botLadderMatchId=canSubmit?createBotLadderMatchId():'';match.botLadderSubmitAttempts=0;
+  match.botLadderSubmitInFlight=false;match.botLadderSubmitDone=!canSubmit;match.botLadderRetryTimer=null;
+  match.botLadderSubmitWon=null;match.botLadderSyncStatus=adminTest?'admin_test':canSubmit?'ready':authUser?'offline':'guest';
+  match.botLadderDelta=0;match.botLadderPromoted=false;match.botLadderDemoted=false;return match;
 }
-async function submitGlobalBotTraining(matchId,won,match){
-  if(!match||match.botTrainingSubmitDone||match.botTrainingSubmitInFlight||match.botTrainingRetryTimer) return null;
-  if(!globalBotTrainingSubmissionEligible(match)||String(matchId||'')!==String(match.botTrainingMatchId||'')){
-    finishGlobalBotTrainingSubmission(match,match.botTrainingTest?'model_test':match.botTrainingContributorId?'offline':'main_only');
-    match.botTrainingResultXp=botTrainingXp;
-    return null;
+function botLadderSubmissionEligible(match){
+  const liveId=authUser&&String(authUser.id||'');
+  return !!(match&&sb&&typeof sb.rpc==='function'&&liveId&&botLadderReady()&&
+    String(match.botLadderAccountId||'')===liveId&&match.botLadderMatchId&&!match.botAdminTest);
+}
+function finishBotLadderSubmission(match,status){
+  if(!match)return;if(match.botLadderRetryTimer){clearTimeout(match.botLadderRetryTimer);match.botLadderRetryTimer=null;}
+  match.botLadderSubmitInFlight=false;match.botLadderSubmitDone=true;if(status)match.botLadderSyncStatus=status;
+  if(botLadderPendingResult===match)botLadderPendingResult=null;
+}
+function cancelBotLadderSubmission(match){
+  if(!match||match.botLadderSubmitDone)return;
+  if(match.botLadderRecorded)return; // a finished first-to-five result still deserves its exact-once retry
+  if(match.botLadderRetryTimer){clearTimeout(match.botLadderRetryTimer);match.botLadderRetryTimer=null;}
+  if(!match.botLadderSubmitInFlight)finishBotLadderSubmission(match,'offline');
+}
+async function submitBotLadderResult(matchId,won,difficulty,match){
+  if(!match||match.botLadderSubmitDone||match.botLadderSubmitInFlight||match.botLadderRetryTimer)return null;
+  if(!botLadderSubmissionEligible(match)||String(matchId||'')!==String(match.botLadderMatchId||'')){
+    match.botLadderResultState=currentBotLadder();finishBotLadderSubmission(match,match.botAdminTest?'admin_test':authUser?'offline':'guest');return null;
   }
-  if(match.botTrainingSubmitAttempts>0&&match.botTrainingSubmitWon!==!!won) return null;
-  match.botTrainingSubmitAttempted=true; match.botTrainingSubmitWon=!!won;
-  match.botTrainingSubmitAttempts=(match.botTrainingSubmitAttempts||0)+1;
-  match.botTrainingSubmitInFlight=true;
-  match.botTrainingSyncStatus='syncing';
+  if(match.botLadderSubmitAttempts>0&&match.botLadderSubmitWon!==!!won)return null;
+  match.botLadderSubmitWon=!!won;match.botLadderSubmitAttempts++;match.botLadderSubmitInFlight=true;match.botLadderSyncStatus='syncing';
   try{
-    const {data,error}=await sb.rpc('submit_outpost_zero_bot_training',{p_match_id:matchId,p_won:!!won});
-    if(error) throw error;
-    const row=botTrainingRpcRow(data);
-    if(!row) throw new Error('Global bot training submission returned no state.');
-    const record=applyGlobalBotTrainingSnapshot(row), reason=String(row.reason||'');
-    botTrainingFetchedAt=Date.now(); botTrainingSyncState='ready';
-    const accepted=row.accepted===true, duplicate=reason==='duplicate';
-    match.botTrainingEarned=accepted&&!duplicate?clamp(Math.floor(+row.xp_awarded||0),0,BOT_TRAINING_WIN_XP):0;
-    match.botTrainingResultXp=record.xp;
-    match.botTrainingSyncStatus=duplicate?'duplicate':accepted?(match.botTrainingEarned>0?'accepted':'max'):
-      (reason==='max'?'max':reason==='rate_limited'?'rate_limited':reason==='main_admin_only'?'main_only':'rejected');
-    finishGlobalBotTrainingSubmission(match,match.botTrainingSyncStatus);
-    return row;
+    const {data,error}=await sb.rpc('submit_outpost_zero_bot_ladder',{
+      p_match_id:matchId,p_won:!!won,p_difficulty:clamp(Math.floor(+difficulty||0),0,4)});if(error)throw error;
+    const row=botLadderRpcRow(data);if(!row)throw new Error('AI ladder submission returned no account state.');
+    const sameAccount=!!(authUser&&String(authUser.id||'')===String(match.botLadderAccountId||'')&&botLadderUserId===String(match.botLadderAccountId||'')),
+      state=applyBotLadderSnapshot(row,match.botLadderAccountId),reason=String(row.reason||'');
+    if(sameAccount){botLadderFetchedAt=Date.now();botLadderSyncState='ready';}match.botLadderResultState=state;
+    match.botLadderDelta=clamp(Math.floor(+row.delta||0),-1,1);match.botLadderPromoted=row.promoted===true;match.botLadderDemoted=row.demoted===true;
+    const status=row.accepted===true?'accepted':reason==='duplicate'?'duplicate':reason==='duplicate_conflict'?'duplicate_conflict':
+      reason==='rate_limited'?'rate_limited':reason==='difficulty_mismatch'?'difficulty_mismatch':'rejected';
+    finishBotLadderSubmission(match,status);return row;
   }catch(e){
-    match.botTrainingSubmitInFlight=false; match.botTrainingEarned=0; match.botTrainingResultXp=botTrainingXp;
-    const attempt=match.botTrainingSubmitAttempts||0;
-    if(attempt<BOT_TRAINING_SUBMIT_MAX_ATTEMPTS&&globalBotTrainingSubmissionEligible(match)){
-      match.botTrainingSyncStatus='retrying';
-      const delay=BOT_TRAINING_SUBMIT_RETRY_MS[attempt-1];
-      match.botTrainingRetryTimer=setTimeout(()=>{
-        match.botTrainingRetryTimer=null;
-        if(!globalBotTrainingSubmissionEligible(match)){
-          botTrainingSyncState='offline'; finishGlobalBotTrainingSubmission(match,'offline'); return;
+    match.botLadderSubmitInFlight=false;match.botLadderResultState=currentBotLadder();
+    if(match.botLadderSubmitAttempts<BOT_LADDER_SUBMIT_MAX_ATTEMPTS&&botLadderSubmissionEligible(match)){
+      match.botLadderSyncStatus='retrying';const delay=BOT_LADDER_SUBMIT_RETRY_MS[match.botLadderSubmitAttempts-1];
+      match.botLadderRetryTimer=setTimeout(()=>{match.botLadderRetryTimer=null;
+        if(!botLadderSubmissionEligible(match)){
+          if(authUser&&String(authUser.id||'')===String(match.botLadderAccountId||''))botLadderSyncState='offline';
+          finishBotLadderSubmission(match,'offline');return;
         }
-        void submitGlobalBotTraining(matchId,won,match);
+        void submitBotLadderResult(matchId,won,difficulty,match);
       },delay);
-    }else{
-      botTrainingSyncState='offline'; finishGlobalBotTrainingSubmission(match,'offline');
-    }
+    }else{if(authUser&&String(authUser.id||'')===String(match.botLadderAccountId||''))botLadderSyncState='offline';finishBotLadderSubmission(match,'offline');}
     return null;
   }
 }
-function submitGlobalBotTrainingMatch(match,winnerId){
-  return submitGlobalBotTraining(match&&match.botTrainingMatchId,winnerId===LOCAL_DUEL_PLAYER,match);
+function recordCompletedBotLadderMatch(won,match){
+  if(!match||match.botLadderRecorded)return false;match.botLadderRecorded=true;match.botLadderResultState=currentBotLadder();
+  if(match.botAdminTest){finishBotLadderSubmission(match,'admin_test');return true;}
+  if(!match.botLadderAccountId||!match.botLadderMatchId){finishBotLadderSubmission(match,authUser?'offline':'guest');return true;}
+  botLadderPendingResult=match;
+  void submitBotLadderResult(match.botLadderMatchId,!!won,match.botDifficulty,match);return true;
 }
-function botTrainingLevel(xp=botTrainingXp){
-  xp=clamp(Math.floor(+xp||0),0,BOT_TRAINING_MAX_XP);
-  return xp>=BOT_TRAINING_MAX_XP?10:Math.floor(xp/BOT_TRAINING_XP_PER_LEVEL)+1;
-}
-function botTrainingProgressText(xp=botTrainingXp){
-  xp=clamp(Math.floor(+xp||0),0,BOT_TRAINING_MAX_XP);
-  if(xp>=BOT_TRAINING_MAX_XP) return 'LV 10 · MAX TRAINING';
-  const level=botTrainingLevel(xp);
-  return 'LV '+level+' · '+(xp%BOT_TRAINING_XP_PER_LEVEL)+'/'+BOT_TRAINING_XP_PER_LEVEL+' XP';
-}
-function botTrainingMatchResultText(match){
-  const progress='GLOBAL BOT '+botTrainingProgressText(match&&match.botTrainingResultXp!=null?match.botTrainingResultXp:botTrainingXp);
-  if(!match) return progress;
-  if(match.botTrainingSyncStatus==='syncing') return 'SYNCING GLOBAL TRAINING / '+progress;
-  if(match.botTrainingSyncStatus==='retrying') return 'RETRYING GLOBAL TRAINING / '+progress;
-  if(match.botTrainingSyncStatus==='accepted') return 'GLOBAL BOT LEARNED +'+match.botTrainingEarned+' XP / '+progress;
-  if(match.botTrainingSyncStatus==='max') return 'GLOBAL TRAINING MAX / '+progress;
-  if(match.botTrainingSyncStatus==='rate_limited') return 'GLOBAL TRAINING RATE LIMITED / '+progress;
-  if(match.botTrainingSyncStatus==='duplicate') return 'GLOBAL MATCH ALREADY COUNTED / '+progress;
-  if(match.botTrainingSyncStatus==='offline') return 'GLOBAL TRAINING OFFLINE · LAST KNOWN / '+progress;
-  if(match.botTrainingSyncStatus==='main_only') return 'ONLY CREATOR + MAIN ADMINS TRAIN THIS BOT / '+progress;
-  if(match.botTrainingSyncStatus==='model_test') return 'LOCAL MODEL TEST · GLOBAL XP UNCHANGED / '+progress;
+function botLadderMatchSettled(match){return !!(match&&match.botLadderSubmitDone&&!match.botLadderSubmitInFlight&&!match.botLadderRetryTimer);}
+function botLadderHasPendingResult(){return !!(botLadderPendingResult&&!botLadderMatchSettled(botLadderPendingResult));}
+function botLadderMatchResultText(match){
+  const state=normalizeBotLadder(match&&match.botLadderResultState||botLadder),progress=botLadderProgressText(state),status=String(match&&match.botLadderSyncStatus||'');
+  if(status==='admin_test')return 'ADMIN TEST · ACCOUNT LADDER UNCHANGED';
+  if(status==='guest')return 'BEGINNER · SIGN IN TO SYNC YOUR LADDER';
+  if(status==='syncing')return 'SAVING RESULT TO YOUR ACCOUNT…';
+  if(status==='retrying')return 'RETRYING ACCOUNT SAVE…';
+  if(status==='offline')return 'LADDER OFFLINE · RESULT NOT RECORDED';
+  if(status==='rate_limited')return 'RESULT RATE LIMITED · '+progress;
+  if(status==='difficulty_mismatch'||status==='duplicate_conflict')return 'RESULT REJECTED SAFELY · REFRESHING LADDER';
+  if(match&&match.botLadderPromoted)return 'PROMOTED TO '+botDifficultyName(state.tier)+' · '+progress;
+  if(match&&match.botLadderDemoted)return 'RANKED DOWN TO '+botDifficultyName(state.tier)+' · '+progress;
+  if(match&&match.botLadderDelta<0)return '3-LOSS PENALTY · -1 PROGRESS · '+progress;
+  if(match&&match.botLadderDelta>0)return 'WIN +1 PROGRESS · '+progress;
   return progress;
 }
-function arenaBotTuning(xp=botTrainingXp){
-  const t=clamp((+xp||0)/BOT_TRAINING_MAX_XP,0,1), mix=(a,b)=>a+(b-a)*t;
-  // Only execution improves. The AR, damage, fire rate, range, HP, and player
-  // rules stay identical at every level so training remains fair and legible.
-  return Object.freeze(Object.assign({},BOT_AI,{
-    reactionMs:Math.round(mix(BOT_AI.reactionMs,400)),moveSpeed:mix(BOT_AI.moveSpeed,3.05),
-    aimNoise:mix(BOT_AI.aimNoise,0.022),shotJitter:mix(BOT_AI.shotJitter,0.009),
-    fireAimError:mix(BOT_AI.fireAimError,0.045),leadFactor:mix(BOT_AI.leadFactor,0.76),
-    maxLeadMs:Math.round(mix(BOT_AI.maxLeadMs,240)),thinkMs:Math.round(mix(BOT_AI.thinkMs,120)),
-    turnRate:mix(BOT_AI.turnRate,0.085)
-  }));
-}
-function recordCompletedBotTrainingMatch(winnerId,match=arena){
-  if(!match||match.mode!=='bot'||match.botTrainingRecorded||match.phase!=='fight') return false;
-  match.botTrainingRecorded=true;
-  match.botTrainingEarned=0; match.botTrainingResultXp=match.botTrainingTest?match.botTrainingXp:botTrainingXp;
-  if(match.botTrainingTest){ match.botTrainingSyncStatus='model_test'; return true; }
-  if(!match.botTrainingContributorId){ match.botTrainingSyncStatus='main_only'; return true; }
-  void submitGlobalBotTrainingMatch(match,winnerId);
-  return true;
+function arenaBotTuning(difficulty=botLadder.tier){
+  // Health, weapon damage, fire cadence, range, navigation, TNT safety, cover,
+  // portals, prediction, and stuck recovery are shared. Only execution scales.
+  return Object.freeze(Object.assign({},BOT_AI,botDifficulty(difficulty)));
 }
 function isBotArena(){ return !!(arena&&arena.mode==='bot'); }
 function isLocalArena(){ return isBotArena()||(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()); }
 function arenaMeId(){ return isBotArena()?LOCAL_DUEL_PLAYER:(authUser&&authUser.id); }
 function arenaOpponentId(){ return isBotArena()?LOCAL_DUEL_BOT:(arena&&arena.opponent&&arena.opponent.id); }
-function startAiLearningModelTest(selectedXp){
+function startAiLearningBotTest(selectedDifficulty){
   if(!isMainAdmin()){ closeAiLearning(); sfx('dry'); return false; }
-  const xp=clamp(Math.floor(+selectedXp||0),0,botTrainingXp),savedLoadout=Object.assign({},loadout),
+  const difficulty=clamp(Math.floor(+selectedDifficulty||0),0,4),savedLoadout=Object.assign({},loadout),
     usable=(key,fallback)=>key&&WEAPONS[key]&&!(typeof isLocked==='function'&&isLocked(key))?key:fallback;
   loadout={primary:usable(loadout.primary,'ar'),secondary:usable(loadout.secondary,'m9'),
     melee:usable(loadout.melee,'knife'),utility:null};
   aiLearningOpen=false; adminUsed=true;
-  startBotArena({trainingTest:true,trainingTestXp:xp,trainingTestSeed:'outpost-zero-ai-model-comparison-v1',
+  startBotArena({adminTest:true,difficulty,adminTestSeed:'outpost-zero-ai-difficulty-comparison-v2',
     returnToAiLearning:true,returnPage:selPage,savedLoadout});
   return true;
 }
-function restartAiLearningModelTest(match=arena){
-  if(!match||!match.botTrainingTest||!isMainAdmin()) return false;
-  startBotArena({trainingTest:true,trainingTestXp:match.botTrainingXp,
-    trainingTestSeed:match.botTrainingTestSeed||'outpost-zero-ai-model-comparison-v1',returnToAiLearning:true,
-    returnPage:match.botTrainingReturnPage||'hub',savedLoadout:Object.assign({},match.botTrainingSavedLoadout||loadout)});
+function restartAiLearningBotTest(match=arena){
+  if(!match||!match.botAdminTest||!isMainAdmin()) return false;
+  startBotArena({adminTest:true,difficulty:match.botDifficulty,
+    adminTestSeed:match.botAdminTestSeed||'outpost-zero-ai-difficulty-comparison-v2',returnToAiLearning:true,
+    returnPage:match.botAdminReturnPage||'hub',savedLoadout:Object.assign({},match.botAdminSavedLoadout||loadout)});
   return true;
 }
+function deferBotLadderMatchStart(mode,start){
+  const accountId=authUser&&String(authUser.id||'');
+  if(!accountId||botLadderReadyForMatch())return false;
+  if(botLadderLaunchPending)return true;
+  botLadderLaunchPending=String(mode||'ai1v1');
+  const originArena=arena,originPartyCpu=typeof partyCpuMatch!=='undefined'?partyCpuMatch:null,
+    fromBotResult=mode==='ai1v1'&&isBotArena()&&arena.phase==='match_end',
+    fromTeamResult=mode==='ai2v2'&&typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()&&partyCpuMatch.phase==='match_end';
+  if(arena)arena.status='SYNCING YOUR AI LADDER…';
+  void refreshBotLadder(true).then(()=>{
+    if(botLadderLaunchPending!==mode||!authUser||String(authUser.id||'')!==accountId)return;
+    botLadderLaunchPending='';
+    // Leaving the loadout screen while the RPC is in flight cancels launch.
+    // A late cloud response may update the account cache but cannot start play.
+    const fromLoadout=pendingGameMode===mode&&selPage==='loadout',
+      botResultStill=fromBotResult&&arena===originArena&&isBotArena()&&arena.phase==='match_end',
+      teamResultStill=fromTeamResult&&partyCpuMatch===originPartyCpu&&isLocalCpu2v2()&&partyCpuMatch.phase==='match_end';
+    if(!fromLoadout&&!botResultStill&&!teamResultStill)return;
+    start();
+  });
+  return true;
+}
+function cancelBotLadderLaunch(){botLadderLaunchPending='';}
 function startBotArena(options={}){
   options=options&&typeof options==='object'?options:{};
-  const trainingTest=options.trainingTest===true,
-    selectedXp=trainingTest?clamp(Math.floor(+options.trainingTestXp||0),0,BOT_TRAINING_MAX_XP):botTrainingXp,
-    canContribute=!trainingTest&&!!(authUser&&typeof isMainAdmin==='function'&&isMainAdmin());
-  // Combat stays local with no match channel, score, or reward writes. Every
-  // client may read global difficulty; only creator/main-admin completions
-  // submit it. Archived-model tests never read back over or write live state.
-  if(arena&&typeof cancelGlobalBotTrainingSubmission==='function') cancelGlobalBotTrainingSubmission(arena);
+  const adminTest=options.adminTest===true&&typeof isMainAdmin==='function'&&isMainAdmin();
+  if(!adminTest&&options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
+     deferBotLadderMatchStart('ai1v1',()=>startBotArena(Object.assign({},options,{ladderReady:true}))))return true;
+  const difficulty=adminTest?clamp(Math.floor(+options.difficulty||0),0,4):(botLadderReadyForMatch()?botLadder.tier:0);
+  // A normal signed-in match waits once for the canonical account row. If the
+  // service is unavailable it still starts at Beginner, read-only, and never
+  // invents local progress. Admin comparisons are explicitly non-scoring.
+  if(arena&&isBotArena()&&typeof cancelBotLadderSubmission==='function')cancelBotLadderSubmission(arena);
   if(arena&&(arena.queueChannel||arena.matchChannel)) leaveArena('',false);
   else if(arena&&arena.savedUtility!==undefined) loadout.utility=arena.savedUtility;
-  const trainingRefresh=!trainingTest&&typeof refreshGlobalBotTraining==='function'
-    ?refreshGlobalBotTraining(true):Promise.resolve({xp:botTrainingXp});
   arena=freshArena('Offline 1v1 vs AI ready.');
   arena.mode='bot'; arena.phase='lobby'; arena.active=true;
-  arena.botTrainingTest=trainingTest; arena.botTrainingTestSeed=trainingTest?String(options.trainingTestSeed||'outpost-zero-ai-model-comparison-v1'):'';
-  arena.botTrainingReturnToLearning=trainingTest&&options.returnToAiLearning===true;
-  arena.botTrainingReturnPage=String(options.returnPage||'hub');
-  arena.botTrainingSavedLoadout=trainingTest?Object.assign({},options.savedLoadout||loadout):null;
-  arena.botTrainingRecorded=false; arena.botTrainingMatchId=trainingTest?'':(typeof createGlobalBotTrainingMatchId==='function'?createGlobalBotTrainingMatchId():'');
-  arena.botTrainingContributorId=canContribute?String(authUser.id||''):''; arena.botTrainingSubmitAttempted=false;
-  arena.botTrainingSubmitAttempts=0; arena.botTrainingSubmitInFlight=false; arena.botTrainingSubmitDone=trainingTest;
-  arena.botTrainingRetryTimer=null; arena.botTrainingSubmitWon=null;
-  arena.botTrainingSyncStatus=trainingTest?'model_test':arena.botTrainingContributorId?'ready':'main_only'; arena.botTrainingEarned=0;
-  arena.botTrainingXp=selectedXp; arena.botTuning=arenaBotTuning(selectedXp);
-  arena.botTrainingResultXp=selectedXp;
+  initializeBotLadderMatch(arena,'ai1v1',difficulty,adminTest);
+  arena.botAdminTestSeed=adminTest?String(options.adminTestSeed||'outpost-zero-ai-difficulty-comparison-v2'):'';
+  arena.botAdminReturnToLearning=adminTest&&options.returnToAiLearning===true;
+  arena.botAdminReturnPage=String(options.returnPage||'hub');
+  arena.botAdminSavedLoadout=adminTest?Object.assign({},options.savedLoadout||loadout):null;
+  arena.botTuning=arenaBotTuning(difficulty);
   arena.scores={[LOCAL_DUEL_PLAYER]:0,[LOCAL_DUEL_BOT]:0};
   arena.savedUtility=loadout.utility; loadout.utility=null;
   arena.opponent={id:LOCAL_DUEL_BOT,name:'OUTPOST BOT',r:15,hp:ARENA_HP,
@@ -577,15 +583,7 @@ function startBotArena(options={}){
   practiceMode='arena'; arena.active=true;
   if(typeof arenaStartMapVote==='function') arenaStartMapVote();
   else arenaBotStartRound();
-  const thisMatch=arena;
-  void trainingRefresh.then(record=>{
-    // A fetch that finishes during the vote may tune this new match. Once its
-    // first round starts, the snapshot is frozen so latency and Realtime cannot
-    // change bot behavior mid-match or make FPS simulations diverge.
-    if(trainingTest||arena!==thisMatch||thisMatch.round!==0||!['lobby','map_vote','map_reveal'].includes(thisMatch.phase)) return;
-    thisMatch.botTrainingXp=record.xp; thisMatch.botTrainingResultXp=record.xp;
-    thisMatch.botTuning=arenaBotTuning(record.xp);
-  });
+  return true;
 }
 function arenaBotStartRound(){
   if(!isBotArena()||!arena.opponent) return;
@@ -602,13 +600,13 @@ function arenaBotStartRound(){
     player.mags[k]=magSize(k); player.reserve[k]=WEAPONS[k].melee?Infinity:magSize(k)*5;
   }
   if(typeof arenaResetMapRuntime==='function') arenaResetMapRuntime();
-  const tuning=arena.botTuning||arenaBotTuning(arena.botTrainingXp), b=arena.opponent,bw=WEAPONS[BOT_AI.weapon],
+  const tuning=arena.botTuning||arenaBotTuning(arena.botDifficulty), b=arena.opponent,bw=WEAPONS[BOT_AI.weapon],
     left=typeof duelArenaSpawn==='function'?duelArenaSpawn(0):{x:880,y:900,angle:0},
     right=typeof duelArenaSpawn==='function'?duelArenaSpawn(1):{x:1520,y:900,angle:Math.PI},
     bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:600,top:450,right:1800,bottom:1350};
   player.x=left.x; player.y=left.y; cam.x=(bounds.left+bounds.right)/2; cam.y=(bounds.top+bounds.bottom)/2;
   zoom=typeof duelArenaFitZoom==='function'?duelArenaFitZoom():1;
-  const seedIdentity=arena.botTrainingTest?(arena.botTrainingTestSeed||'outpost-zero-ai-model-comparison-v1'):
+  const seedIdentity=arena.botAdminTest?(arena.botAdminTestSeed||'outpost-zero-ai-difficulty-comparison-v2'):
     (arena.mapVoteId||arena.matchEpoch),
     aiSeed=cpuAiSeed(seedIdentity,arena.round,arena.mapId||'arena',b.id);
   Object.assign(b,{x:right.x,y:right.y,tx:right.x,ty:right.y,angle:right.angle,hp:ARENA_HP,cur:BOT_AI.weapon,
@@ -645,7 +643,7 @@ function arenaBotResolve(winnerId){
   arena.clearProjectiles=true;
   const over=winnerId&&(arena.scores[winnerId]||0)>=ARENA_TARGET;
   if(over){
-    recordCompletedBotTrainingMatch(winnerId,arena);
+    recordCompletedBotLadderMatch(winnerId===LOCAL_DUEL_PLAYER,arena);
     arena.phase='match_end'; arena.active=false; arena.nextRoundAt=0;
     if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
     practiceMode='arena'; state='select'; selPage='arena'; menuOpen=false; aiming=false; rmbAim=false;
@@ -692,7 +690,7 @@ function arenaBotFlushProjectiles(){
 }
 function updateArenaBot(dtms){
   if(!isBotArena()||!arenaCanAct()||!arena.opponent) return;
-  const tuning=arena.botTuning||arenaBotTuning(arena.botTrainingXp), b=arena.opponent, w=WEAPONS[BOT_AI.weapon],
+  const tuning=arena.botTuning||arenaBotTuning(arena.botDifficulty), b=arena.opponent, w=WEAPONS[BOT_AI.weapon],
     shotSpeed=weaponBulletSpeed(BOT_AI.weapon),dt=dtms/16.667;
   cpuAiTrackTarget(b,player,dtms);
   if(b.reloadEnd&&now>=b.reloadEnd){ b.reloadEnd=0; b.mag=w.mag; }

@@ -960,13 +960,13 @@ function leaveArena(status,toHub){
   if(!arena) return;
   if(typeof isPartyCpuMatch==='function'&&isPartyCpuMatch()){ partyCpuAbort(status||'You left the Party CPU match.',true); return; }
   if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()){ offlineCpu2v2Leave(status,toHub); return; }
-  const wasBot=isBotArena(),returnToAiLearning=wasBot&&arena.botTrainingTest&&arena.botTrainingReturnToLearning&&
+  const wasBot=isBotArena(),returnToAiLearning=wasBot&&arena.botAdminTest&&arena.botAdminReturnToLearning&&
     typeof isMainAdmin==='function'&&isMainAdmin(),
-    aiLearningReturnPage=String(arena.botTrainingReturnPage||'hub'),
-    aiLearningReturnLevel=wasBot&&arena.botTrainingTest?botTrainingLevel(arena.botTrainingXp):1,
-    aiLearningSavedLoadout=wasBot&&arena.botTrainingTest&&arena.botTrainingSavedLoadout?
-      Object.assign({},arena.botTrainingSavedLoadout):null;
-  if(wasBot&&typeof cancelGlobalBotTrainingSubmission==='function') cancelGlobalBotTrainingSubmission(arena);
+    aiLearningReturnPage=String(arena.botAdminReturnPage||'hub'),
+    aiLearningReturnDifficulty=wasBot&&arena.botAdminTest?clamp(Math.floor(+arena.botDifficulty||0),0,4):0,
+    aiLearningSavedLoadout=wasBot&&arena.botAdminTest&&arena.botAdminSavedLoadout?
+      Object.assign({},arena.botAdminSavedLoadout):null;
+  if(wasBot&&typeof cancelBotLadderSubmission==='function')cancelBotLadderSubmission(arena);
   const oldMatchChannel=arena.matchChannel,forfeitAnnounced=oldMatchChannel&&authUser?arenaNotifyDeparture('left'):false;
   if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
   if(arena.hazardArbitrations instanceof Map) for(const a of arena.hazardArbitrations.values()) if(a&&a.timer) clearTimeout(a.timer);
@@ -989,8 +989,8 @@ function leaveArena(status,toHub){
   if(wasBot){
     pendingGameMode=null; modeBoardMode=toHub?null:'endless';
     if(returnToAiLearning){
-      modeBoardMode=null; selPage=aiLearningReturnPage; aiLearningModelLevel=aiLearningReturnLevel;
-      aiLearningNotice='Returned from local LV '+aiLearningReturnLevel+' model test. Global XP was unchanged.';
+      modeBoardMode=null; selPage=aiLearningReturnPage; aiLearningDifficulty=aiLearningReturnDifficulty;
+      aiLearningNotice='Returned from '+botDifficultyName(aiLearningReturnDifficulty)+' admin test. Account ladder was unchanged.';
       aiLearningOpen=true; menuOpen=false; aiming=false; rmbAim=false;
       return;
     }

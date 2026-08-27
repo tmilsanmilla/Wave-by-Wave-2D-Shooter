@@ -79,13 +79,15 @@ async function initAuth(){
       const { data } = await sb.auth.getSession();
       authUser = data.session ? data.session.user : null;
       prepareLastLoadoutForAccount(authUser?String(authUser.id):'');
+      prepareBotLadderForAccount(authUser?String(authUser.id):'');
       if(authUser) beginUsernameClaimCheck();
-      void refreshGlobalBotTraining(true);
+      void refreshBotLadder(true);
       sb.auth.onAuthStateChange((_e, sess)=>{
         authUser = sess ? sess.user : null;
         const profileUserId=authUser ? String(authUser.id) : '';
         prepareLastLoadoutForAccount(profileUserId);
-        void refreshGlobalBotTraining(false);
+        prepareBotLadderForAccount(profileUserId);
+        void refreshBotLadder(false);
         const profileRequestVersion=++authProfileRequestVersion;
         if(profileUserId && firstAccountTutorialUserId && firstAccountTutorialUserId!==profileUserId){
           firstAccountWelcomeOpen=false;
@@ -171,7 +173,6 @@ function setupRealtime(){
       if(authUser && changed==='outpost-zero-referral:'+authUser.id) payReferralClaims();
     });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_prices'}, ()=>{ rtBump(); fetchPrices(); });
-    ch=ch.on('postgres_changes', {event:'UPDATE', schema:'public', table:'global_bot_training'}, ()=>{ rtBump(); refreshGlobalBotTraining(true); });
     // admins only: roster changes, inbox, report feed
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admins'},        ()=>{ rtBump(); fetchAdmins(); });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admin_msgs'},    ()=>{ rtBump(); if(isAdmin()) fetchMsgs(); });

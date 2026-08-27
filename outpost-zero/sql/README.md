@@ -55,26 +55,40 @@ sends the account owner to Social to choose a username; username changes are
 free. Cleanup is restricted to score games beginning with `outpost-zero`, so it
 does not rename rows belonging to another game that shares the table.
 
-## Global AI training
+## AI bot ladder
 
-The Offline 1v1 bot uses one shared, fairness-capped training level for every
-player. Everyone can read and play the live level. Only the creator and accounts
-listed as `main` in the existing `public.admins` table can contribute completed
-first-to-five matches; co-admins, ordinary players, and guests never write
-training progress. Match UUIDs, server-time rate limits, and an append-only
-ledger make submissions idempotent.
+The tactical bot brain is shared by every player, while signed-in players have
+private cloud ladder progress through five execution tiers: Beginner, Easy,
+Medium, Hard, and Impossible. Guests play Beginner without creating database
+state. Normal completed AI matches update only the signed-in account; creator
+and main-admin comparison tests never update the ladder.
 
 Run this independent feature script:
 
-1. `ai/01-global-training.sql` — global state, private contribution ledger,
-   RLS, narrow read/submit RPCs, API grants, and Realtime refresh
+1. `ai/01-global-training.sql` — private per-account ladder, exact-once match
+   receipts, RLS, narrow read/submit RPCs, and API grants
 
 If Social was the last feature you installed, do not rerun its four files for
 this change; paste and run only this AI script next.
 
-The script is rerunnable and does not delete profile data. Supabase may show a
-general warning because it creates `security definer` RPCs; those functions
-have fixed search paths, explicit role grants, authentication checks, and no
-client table-write permission. Review the SQL, then run it with RLS enabled as
-written. Legacy per-profile bot training is intentionally ignored rather than
-being added to the shared total.
+The historical filename is intentionally retained so there is still only one
+AI script to paste. The script is rerunnable and does not delete profile data.
+If an older copy of AI 01 created the abandoned shared-XP tables, it revokes the
+old browser API but leaves those tables intact. Supabase may show a general
+warning because it creates `security definer` RPCs; those functions have fixed
+search paths, explicit role grants, authentication checks, and no direct client
+table permissions.
+
+The read RPC derives the player from `auth.uid()` and returns Beginner defaults
+for guests. The submit RPC accepts a match UUID, win/loss result, and difficulty
+but never accepts a user ID. It validates the match difficulty against the
+server-side current tier, admits each UUID once, rate-limits using server time,
+and calculates wins, losses, streaks, promotions, demotions, and a monotonic
+revision inside the transaction. Ladder state is not stored in browser local
+storage or the general profile JSON.
+
+Because matches run locally, the database cannot independently prove a reported
+win. UUID receipts plus the 30-second, 20-per-hour, and 100-per-day server-time
+limits prevent accidental duplicates and simple request spam; fully cheat-proof
+results would require a future authoritative match server or server-issued
+begin-match ticket.

@@ -993,7 +993,7 @@ function drawPractice(){
 }
 function drawArena(){
   selBg(); arenaRects=[];
-  const botMode=isBotArena(),botModelTest=botMode&&!!arena.botTrainingTest,cpuTeamMode=typeof isLocalCpu2v2==='function'&&isLocalCpu2v2(),localMode=botMode||cpuTeamMode;
+  const botMode=isBotArena(),botAdminTest=botMode&&!!arena.botAdminTest,cpuTeamMode=typeof isLocalCpu2v2==='function'&&isLocalCpu2v2(),localMode=botMode||cpuTeamMode;
   const tiny=H<430, dense=H<620;
   const mapVoting=arena.phase==='map_vote'&&arena.mapVotePhase==='voting';
   const mapReveal=arena.phase==='map_reveal'&&arena.mapVotePhase==='reveal';
@@ -1011,25 +1011,26 @@ function drawArena(){
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillStyle=cpuTeamMode?'#bfa8ff':botMode?'#7fd8ff':'#d05548'; ctx.font='700 '+(tiny?20:(W<440?25:34))+'px ui-monospace,Consolas,monospace';
   const arenaTitle=mapVoting?('MAP VOTE \u00b7 '+mapSeconds+'s'):mapReveal?'MAP SELECTED':
-                   cpuTeamMode?'\u2694 OFFLINE 2v2 VS CPUs':botModelTest?('\uD83E\uDDE0 AI MODEL TEST \u00b7 LV '+botTrainingLevel(arena.botTrainingXp)):
-                   botMode?'\u2694 OFFLINE 1v1 VS AI':'\u2694 ONLINE MULTIPLAYER';
+                   cpuTeamMode?('\u2694 OFFLINE 2v2 \u00b7 '+botDifficultyName(partyCpuMatch.botDifficulty)):
+                   botAdminTest?('\uD83E\uDDE0 AI TEST \u00b7 '+botDifficultyName(arena.botDifficulty)):
+                   botMode?('\u2694 1v1 VS '+botDifficultyName(arena.botDifficulty)+' CPU'):'\u2694 ONLINE MULTIPLAYER';
   ctx.fillText(fitLine(arenaTitle,W-18),W/2,titleY);
   ctx.fillStyle=queueNoticeActive?'#ff6b5d':'#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
   const arenaSub=queueNoticeActive?modeBoardNotice:mapVoting?('CHANGE YOUR VOTE UNTIL TIMER ENDS \u00b7 '+voteSummary):
                    mapReveal?('SELECTED MAP: '+arenaMapName(arena.mapId)+' \u00b7 WON THE WEIGHTED VOTE \u00b7 '+voteSummary):
-                   botModelTest?'DETERMINISTIC LOCAL COMPARISON \u00b7 GLOBAL MODEL WILL NOT CHANGE':
+                   botAdminTest?'ADMIN COMPARISON \u00b7 ACCOUNT LADDER WILL NOT CHANGE':
                    localMode?'ONE DEVICE ONLY \u00b7 FIRST TO 5 \u00b7 NO UPGRADES, UTILITIES, OR REWARDS':
                    (tiny?'DIFFERENT DEVICES \u00b7 SIGN-IN ONLY \u00b7 FIRST TO 5':'ONLINE \u00b7 MULTIPLAYER ON DIFFERENT DEVICES \u00b7 FIRST TO 5 \u00b7 NO REWARDS');
   ctx.fillText(fitLine(arenaSub,W-16),W/2,subY);
   const pw=Math.min(mapVoting||mapReveal?820:560,W-20), px=W/2-pw/2, gap=tiny?4:(dense?7:10);
-  const button=(id,label,y,col,sub)=>{
-    const h=tiny?32:(dense?(sub?44:36):(sub?58:42)), r={id,x:px,y,w:pw,h}; arenaRects.push(r);
-    const hv=mouse.x>=px&&mouse.x<=px+pw&&mouse.y>=y&&mouse.y<=y+h;
-    ctx.fillStyle=hv?col:'rgba(0,0,0,0.42)'; ctx.fillRect(px,y,pw,h);
-    ctx.strokeStyle=col; ctx.lineWidth=1.3; ctx.strokeRect(px+0.5,y+0.5,pw,h);
-    ctx.fillStyle=hv?'#101208':'#e8d9a8'; ctx.font='700 '+(tiny?11:14)+'px ui-monospace,Consolas,monospace';
+  const button=(id,label,y,col,sub,enabled=true)=>{
+    const h=tiny?32:(dense?(sub?44:36):(sub?58:42)), r={id,x:px,y,w:pw,h,enabled}; arenaRects.push(r);
+    const hv=enabled&&mouse.x>=px&&mouse.x<=px+pw&&mouse.y>=y&&mouse.y<=y+h;
+    ctx.fillStyle=!enabled?'rgba(255,255,255,.025)':hv?col:'rgba(0,0,0,0.42)'; ctx.fillRect(px,y,pw,h);
+    ctx.strokeStyle=enabled?col:'#3a3f38'; ctx.lineWidth=1.3; ctx.strokeRect(px+0.5,y+0.5,pw,h);
+    ctx.fillStyle=hv?'#101208':enabled?'#e8d9a8':'#697064'; ctx.font='700 '+(tiny?11:14)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(label,pw-12),W/2,y+(sub&&!tiny?(dense?15:20):h/2));
-    if(sub&&!tiny){ ctx.fillStyle=hv?'#202818':'#8a9268'; ctx.font=(dense?'8':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(sub,pw-24),W/2,y+(dense?32:42)); }
+    if(sub&&!tiny){ ctx.fillStyle=hv?'#202818':enabled?'#8a9268':'#555d53'; ctx.font=(dense?'8':'9')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(sub,pw-24),W/2,y+(dense?32:42)); }
     return y+h+gap;
   };
   // current account + loadout
@@ -1098,26 +1099,26 @@ function drawArena(){
     ctx.fillText(me>them?'YOUR TEAM WINS':'CPUs WIN',W/2,bodyY+12);
     ctx.fillStyle='#e8d9a8';ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace';ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268';ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
-    let y=bodyY+(tiny?72:116);
-    y=button('teamrematch','PLAY AGAIN',y,'#a7c15e','New first-to-5 team match.');
+    ctx.fillStyle='#8a9268';ctx.fillText(fitLine(botLadderMatchResultText(partyCpuMatch),pw-20),W/2,bodyY+(tiny?72:108));
+    let y=bodyY+(tiny?84:126),settled=botLadderMatchSettled(partyCpuMatch);
+    y=button(settled?'teamrematch':'teamwait',settled?'PLAY AGAIN':'SAVING RESULT\u2026',y,'#a7c15e',settled?'New first-to-5 team match at your synced difficulty.':'Play Again unlocks after the cloud result settles.',settled);
     y=button('teamloadout','CHANGE WEAPONS',y,'#7fd8ff');
     button('teamleave','BACK TO OFFLINE VS CPU',y,'#8a9268');
   } else if(botMode&&arena.phase==='match_end'){
     const me=arena.scores[LOCAL_DUEL_PLAYER]||0, them=arena.scores[LOCAL_DUEL_BOT]||0;
-    const trainingResult=botModelTest
-      ?'LOCAL MODEL TEST \u00b7 LIVE GLOBAL XP UNCHANGED'
-      :botTrainingMatchResultText(arena);
+    const ladderResult=botLadderMatchResultText(arena);
     ctx.fillStyle=me>them?'#a7c15e':'#d05548'; ctx.font='700 '+(tiny?18:24)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(me>them?'YOU BEAT THE BOT':'BOT WINS',W/2,bodyY+12);
     ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace'; ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
-    ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(trainingResult,pw-20),W/2,bodyY+(tiny?72:108));
+    ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(ladderResult,pw-20),W/2,bodyY+(tiny?72:108));
     let y=bodyY+(tiny?84:126);
-    if(botModelTest){
-      y=button('bottestagain','TEST THIS MODEL AGAIN',y,'#a7c15e','Same archived tuning and deterministic AI seed.');
-      button('botlearningback','BACK TO AI BOT LEARNING',y,'#7fd8ff');
+    if(botAdminTest){
+      y=button('bottestagain','TEST '+botDifficultyName(arena.botDifficulty)+' AGAIN',y,'#a7c15e','Same difficulty and deterministic AI seed.');
+      button('botlearningback','BACK TO AI BOT DIFFICULTIES',y,'#7fd8ff');
     }else{
-      y=button('botrematch','PLAY AGAIN',y,'#a7c15e','New first-to-5 match against the AI.');
+      const settled=botLadderMatchSettled(arena);
+      y=button(settled?'botrematch':'botwait',settled?'PLAY AGAIN':'SAVING RESULT\u2026',y,'#a7c15e',settled?'New first-to-5 match at your synced difficulty.':'Play Again unlocks after the cloud result settles.',settled);
       y=button('botloadout','CHANGE WEAPONS',y,'#7fd8ff');
       button('botleave','BACK TO OFFLINE \u00b7 ONE DEVICE ONLY',y,'#8a9268');
     }
@@ -1172,7 +1173,7 @@ function drawArena(){
 }
 function arenaClick(){
   const hit=r=>mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
-  for(const r of arenaRects) if(hit(r)){
+  for(const r of arenaRects) if(r.enabled!==false&&hit(r)){
     if(r.mapId){ arenaCastMapVote(r.mapId); return; }
     else if(r.id==='map_leave') leaveArena('Left the map vote.',false);
     else if(r.id==='teamrematch') offlineCpu2v2Rematch();
@@ -1180,7 +1181,7 @@ function arenaClick(){
       offlineCpu2v2Leave('',false);pendingGameMode='ai2v2';modeBoardMode='endless';loadoutBackPage='offlinecpu';restoreLastLoadoutForMode('ai2v2');selPage='loadout';
     }
     else if(r.id==='teamleave') offlineCpu2v2Leave('',false);
-    else if(r.id==='bottestagain') restartAiLearningModelTest(arena);
+    else if(r.id==='bottestagain') restartAiLearningBotTest(arena);
     else if(r.id==='botlearningback') leaveArena('',false);
     else if(r.id==='botrematch') startBotArena();
     else if(r.id==='botloadout'){
@@ -1228,6 +1229,9 @@ function chooseGameMode(mode,returnPage='modeboard'){
   // Size is checked before locked/auth states so a party always gets the
   // useful queue-capacity explanation for the button it just chose.
   if(!partyAllowsQueue(mode)) return false;
+  if((mode==='ai1v1'||mode==='ai2v2')&&typeof botLadderHasPendingResult==='function'&&botLadderHasPendingResult()){
+    modeBoardNotice='WAITING FOR YOUR PREVIOUS AI RESULT TO SAVE';modeBoardNoticeT=performance.now()+2800;sfx('dry');return false;
+  }
   if(mode==='arena2v2'){
     arena.status='2v2 is locked and coming soon.'; sfx('dry'); return false;
   }
@@ -1271,6 +1275,7 @@ function navigateSelectBack(){
   if(detailKey){ detailKey=null; sfx('swap'); return; }
   if(CATS.some(c=>c[0]===selPage)){ selPage=pendingGameMode?'loadout':'hub'; sfx('swap'); return; }
   if(selPage==='loadout'){
+    if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
     if(pendingGameMode==='partycpu2v2'){ partyCpuAbort('Party CPU match setup was cancelled.',true); selPage='party'; sfx('swap'); return; }
     const returnTo=pendingGameMode==='practice'?'practice':(loadoutBackPage||'modeboard');
     pendingGameMode=null; pendingPractice=null; selPage=returnTo; sfx('swap'); return;
@@ -1279,7 +1284,7 @@ function navigateSelectBack(){
     const destination=modeBoardOrigin==='party'&&party.accepted?'party':'hub';
     pendingGameMode=null; modeBoardMode=null; modeBoardOrigin='hub'; selPage=destination; sfx('swap'); return;
   }
-  if(selPage==='offlinecpu'){ pendingGameMode=null; modeBoardMode='endless'; selPage='modeboard'; sfx('swap'); return; }
+  if(selPage==='offlinecpu'){ if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch(); pendingGameMode=null; modeBoardMode='endless'; selPage='modeboard'; sfx('swap'); return; }
   if(selPage==='ranked'){ selPage='modeboard'; sfx('swap'); return; }
   if(selPage==='social'){ selPage='hub'; sfx('swap'); return; }
   if(selPage==='partymodes'){ selPage=party.accepted?'party':'social'; sfx('swap'); return; }
@@ -1391,16 +1396,30 @@ function drawOfflineCpuModes(){
   ctx.fillStyle='#7fd8ff'; ctx.font='700 '+(tiny?22:short?27:36)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine('PLAY AGAINST CPU',W-24),W/2,tiny?8:16);
   ctx.fillStyle='#a7c15e'; ctx.font='700 '+(tiny?8:10)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('GAMEPLAY LOCAL · GLOBAL MODEL SYNCS ONLINE',W-24),W/2,tiny?39:short?52:64);
+  ctx.fillText(fitLine(authUser?(botLadderSyncState==='syncing'?'ACCOUNT LADDER · SYNCING':botLadderReady()?'SYNCED ACCOUNT LADDER':'ACCOUNT LADDER · '+String(botLadderSyncState).toUpperCase()):'GUEST · BEGINNER READ-ONLY',W-24),W/2,tiny?39:short?52:64);
   ctx.fillStyle='#8a9268'; ctx.font=(tiny?7:9)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('FIRST TO 5 · ONLY CREATOR + MAIN ADMINS TRAIN THE BOT · MAX LV 10',W-24),W/2,tiny?54:short?68:82);
+  const ladderState=currentBotLadder();
+  ctx.fillText(fitLine('WIN STREAK '+ladderState.winStreak+'/3 · LOSS STREAK '+ladderState.lossStreak+'/3 · THIRD LOSS: -1 PROGRESS',W-24),W/2,tiny?54:short?68:82);
 
-  const totalW=Math.min(720,W-margin*2), cardW=(totalW-gap)/2, x0=W/2-totalW/2;
-  const top=tiny?(H<350?70:82):short?94:116, backH=tiny?32:40, backY=H-backH-(tiny?8:14);
-  const cardH=Math.max(92,Math.min(short?178:240,backY-top-(tiny?12:22)));
+  const totalW=Math.min(720,W-margin*2),x0=W/2-totalW/2,ladderTop=tiny?(H<350?68:78):short?90:106,
+    ladderH=tiny?(H<350?66:76):short?92:112,rowH=ladderH/5,labelW=tiny?68:102,valueW=tiny?28:42;
+  ctx.fillStyle='rgba(0,0,0,.38)';ctx.fillRect(x0,ladderTop,totalW,ladderH);ctx.strokeStyle='#315568';ctx.strokeRect(x0+.5,ladderTop+.5,totalW,ladderH);
+  BOT_DIFFICULTIES.forEach((bot,i)=>{
+    const y=ladderTop+i*rowH,progress=botLadderProgressForTier(i,ladderState),active=i===ladderState.tier,
+      bx=x0+labelW,bw=Math.max(20,totalW-labelW-valueW-8),bh=Math.max(4,tiny?5:7),by=y+(rowH-bh)/2;
+    if(active){ctx.fillStyle='rgba(127,216,255,.08)';ctx.fillRect(x0+1,y+1,totalW-2,rowH-2);}
+    ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=active?'#bfe8ff':i<ladderState.tier?'#a7c15e':'#65725d';ctx.font='700 '+(tiny?6:8)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(bot.name,x0+(tiny?5:8),y+rowH/2);
+    ctx.fillStyle='#18201c';ctx.fillRect(bx,by,bw,bh);ctx.strokeStyle=active?'#7fd8ff':'#3d463c';ctx.strokeRect(bx+.5,by+.5,bw,bh);
+    ctx.fillStyle=active?'#7fd8ff':i<ladderState.tier?'#a7c15e':'#596253';ctx.fillRect(bx,by,bw*progress/BOT_LADDER_MAX_PROGRESS,bh);
+    ctx.textAlign='right';ctx.fillStyle=active?'#d7efff':'#7f876e';ctx.fillText(progress+'/'+BOT_LADDER_MAX_PROGRESS,x0+totalW-5,y+rowH/2);
+  });
+
+  const cardW=(totalW-gap)/2,top=ladderTop+ladderH+gap,backH=tiny?32:40,backY=H-backH-(tiny?8:14);
+  const cardH=Math.max(tiny?54:70,backY-top-gap);
   const cards=[
-    {mode:'ai1v1',title:'1v1',sub:'YOU VS CPU',detail:'GLOBAL BOT '+botTrainingProgressText(),col:'#7fd8ff'},
-    {mode:'ai2v2',title:'2v2',sub:'YOU + ALLY CPU',detail:'VS TWO CPUs',col:'#bfa8ff'}
+    {mode:'ai1v1',title:'1v1',sub:'YOU VS '+botDifficultyName(ladderState.tier),detail:'WIN OR LOSS UPDATES LADDER',col:'#7fd8ff'},
+    {mode:'ai2v2',title:'2v2',sub:'YOU + ALLY CPU',detail:'VS TWO '+botDifficultyName(ladderState.tier)+' CPUs',col:'#bfa8ff'}
   ];
   for(let i=0;i<cards.length;i++){
     const item=cards[i],x=x0+i*(cardW+gap),r={mode:item.mode,x,y:top,w:cardW,h:cardH,enabled:true};offlineCpuRects.push(r);
