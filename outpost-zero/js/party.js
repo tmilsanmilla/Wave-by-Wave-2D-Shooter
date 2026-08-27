@@ -5,6 +5,35 @@
    the elected host owns the four-seat roster and versioned assignment plan. */
 function partyServiceAvailable(){ return !!(sb&&navigator.onLine!==false&&typeof sb.channel==='function'); }
 function partyCleanName(v){ return String(v||'').replace(/[\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,32); }
+function partyCpuDirectInviteToken(){
+  const bytes=new Uint8Array(18);
+  if(!(globalThis.crypto&&crypto.getRandomValues))return '';
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes,n=>n.toString(16).padStart(2,'0')).join('');
+}
+function partyDirectCpuNotice(message,duration=3200){
+  const text=String(message||'').slice(0,120);party.status=text;modeBoardNotice=text;modeBoardNoticeT=performance.now()+duration;return text;
+}
+function partyDirectCpuClose(message,delay=0){
+  if(!party||!party.directCpu)return false;
+  // Result/abort retries deliberately keep the hidden transport alive for a
+  // moment. A second Cancel or Back action must not cut that retry window off.
+  if(delay<=0&&party.phase==='closing')return false;
+  const expected=party,finish=()=>{
+    if(party!==expected||!party.directCpu||(delay<=0&&partyCpuSessionOpen()))return false;
+    // A delayed result/abort close must not pull someone back into the 2v2
+    // screen after they already pressed Back, navigated, or began another game.
+    const ownsDestination=state==='select'&&selPage==='offlinecpu'&&offlineCpuView==='2v2',
+      preserveDestination=delay>0&&!ownsDestination;
+    const old=party;if(old.channel){try{partySend('leave',{});}catch(e){}partyDropChannel(old.channel);}
+    party=freshParty(message||'Invite closed.');partyAuthOwnerId=authUser?String(authUser.id||''):'';partyInviteSendBusy=false;
+    if(!preserveDestination){pendingGameMode=null;state='select';selPage='offlinecpu';offlineCpuView='2v2';menuOpen=false;}
+    if(selPage==='offlinecpu')offlineCpuInfoKey='';
+    if(message)partyDirectCpuNotice(message);return true;
+  };
+  if(delay>0){expected.phase='closing';expected.directInviteExpiresAt=Date.now()+delay;setTimeout(finish,delay);return true;}
+  return finish();
+}
 function partyRotateSessionIdentity(){
   try{sessionStorage.removeItem('oz_party_session_v1');sessionStorage.removeItem('oz_party_name_v1');}catch(e){}
 }
@@ -37,7 +66,7 @@ function partyPrepareForAuthChange(nextUserId){
   if(!changed)return false;
   const hadParty=!!(party&&(party.channel||party.accepted||party.self)),cpuOrigin=!!(party&&party.cpuIntent)||
     !!(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen());
-  if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())partyCpuAbort('Party CPU match ended because the account changed.',true);
+  if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())partyCpuAbort(party&&party.directCpu?'2v2 CPU game ended because the account changed.':'Party CPU match ended because the account changed.',true);
   const old=party;
   if(old&&old.chatComposing&&typeof formOpen!=='undefined'&&formOpen)closeForm();
   if(old&&old.channel){try{partySend('leave',{});}catch(e){}partyDropChannel(old.channel);}
@@ -79,7 +108,7 @@ function partyIsHost(){ return !!(party.accepted&&party.self&&party.hostId===par
 function partyMember(id){ return party.members.find(m=>m.id===id); }
 function partyRequirePlayers(min=PARTY_MIN_PLAYERS){
   if(!party||!party.accepted||party.members.length>=min) return true;
-  const message='YOU NEED AT LEAST '+min+' PLAYERS IN THE PARTY TO DO THAT';
+  const message=party&&party.directCpu?'WAITING FOR YOUR FRIEND TO ACCEPT THE CPU GAME INVITE':'YOU NEED AT LEAST '+min+' PLAYERS IN THE PARTY TO DO THAT';
   party.status=message; modeBoardNotice=message; modeBoardNoticeT=performance.now()+3000;
   arena.status=message; sfx('dry'); return false;
 }
@@ -211,7 +240,7 @@ function partyBuildPlan(){
 }
 function partySnapshot(){
   return {from:party.self.id,code:party.code,hostId:party.hostId,hostEpoch:party.hostEpoch,revision:party.revision,
-          mode:party.mode,locked:false,cpuIntent:!!party.cpuIntent,chatEnabled:!!party.chatEnabled,
+          mode:party.mode,locked:false,cpuIntent:!!party.cpuIntent,directCpu:!!party.directCpu,chatEnabled:!!party.chatEnabled,
           kickedIds:Array.from(party.kickedIds),members:party.members.map(partyMemberCopy),plan:party.plan};
 }
 function partyHostCommit(message){
@@ -230,6 +259,8 @@ function partyHostCommit(message){
 }
 function partyApplyState(p,force){
   if(!p||p.code!==party.code||!Array.isArray(p.members)||p.members.length>PARTY_MAX||!party.self) return false;
+  const expectedDirect=party.directCpu===true,packetDirect=p.cpuIntent===true&&p.directCpu===true;
+  if(expectedDirect!==packetDirect)return false;
   const hostId=String(p.hostId||''), epoch=Math.max(0,Math.floor(+p.hostEpoch||0)), rev=Math.max(0,Math.floor(+p.revision||0));
   if(!force){
     if(epoch<party.hostEpoch) return false;
@@ -246,11 +277,11 @@ function partyApplyState(p,force){
   }
   party.hostId=hostId; party.hostEpoch=epoch; party.revision=rev; party.members=members;
   const validMode=['endless','1v1','1v1v1','2v2'].includes(p.mode);
-  party.mode=validMode?p.mode:'endless'; party.locked=false;party.cpuIntent=p.cpuIntent===true;party.chatEnabled=p.chatEnabled!==false;
+  party.mode=validMode?p.mode:'endless'; party.locked=false;party.cpuIntent=p.cpuIntent===true;party.directCpu=party.cpuIntent&&p.directCpu===true;party.chatEnabled=p.chatEnabled!==false;
   party.kickedIds=new Set((Array.isArray(p.kickedIds)?p.kickedIds:[]).map(id=>String(id||'').slice(0,80)).filter(Boolean));
   if(!validMode) partySetDefaultPairings();
   party.plan=validMode&&Array.isArray(p.plan)?p.plan.slice(0,6).map(r=>({title:String(r.title||'').slice(0,42),body:String(r.body||'').slice(0,110),ready:!!r.ready})):partyBuildPlan();
-  party.accepted=true; party.phase='lobby'; party.status='Party connected. '+party.members.length+'/'+PARTY_MAX+' players.';
+  party.accepted=true; party.phase='lobby'; party.status=party.directCpu?'FRIEND CONNECTED · STARTING 2v2 VS CPUs':'Party connected. '+party.members.length+'/'+PARTY_MAX+' players.';
   return true;
 }
 function partyReceive(event,p){
@@ -260,10 +291,17 @@ function partyReceive(event,p){
   if(event==='join_request'){
     if(!partyIsHost()||!from||from===party.self.id) return;
     if(party.kickedIds.has(from)){ partySend('join_reject',{to:from,reason:'REMOVED BY PARTY HOST'}); return; }
-    if(partyCpuSessionOpen()){ partySend('join_reject',{to:from,reason:'PARTY MATCH IN PROGRESS'}); return; }
+    if(partyCpuSessionOpen()){ partySend('join_reject',{to:from,reason:'GAME ALREADY IN PROGRESS'}); return; }
     const existing=partyMember(from);
     if(existing){ partySend('join_accept',{to:from,state:partySnapshot()}); return; }
-    if(party.cpuIntent&&party.members.length>=2){partySend('join_reject',{to:from,reason:'CPU 2V2 PARTY FULL · EXACTLY 2 PLAYERS'});return;}
+    if(party.directCpu){
+      const token=String(p.inviteToken||'');
+      if(party.phase==='closing'||party.directPeerId||!party.cpuInviteToken||token!==party.cpuInviteToken||Date.now()>=party.directInviteExpiresAt){
+        partySend('join_reject',{to:from,reason:'THIS CPU 2V2 INVITE IS NO LONGER AVAILABLE'});return;
+      }
+      party.directPeerId=from;party.cpuInviteToken='';party.directInviteExpiresAt=0;
+    }
+    if(party.cpuIntent&&party.members.length>=2){partySend('join_reject',{to:from,reason:'CPU 2V2 GAME FULL · EXACTLY 2 PLAYERS'});return;}
     if(party.members.length>=PARTY_MAX){ partySend('join_reject',{to:from,reason:'PARTY FULL \u00b7 MAX 4'}); return; }
     const nextOrder=party.members.reduce((n,m)=>Math.max(n,m.order||0),0)+1;
     party.members.push({id:from,name:partyCleanName(p.name)||'OPERATOR',joined:+p.joined||Date.now(),order:nextOrder,ready:false,team:''});
@@ -280,8 +318,15 @@ function partyReceive(event,p){
   if(event==='join_accept'&&String(p.to||'')===party.self.id&&!party.accepted){
     if(p.state&&from===String(p.state.hostId||'')&&partyApplyState(p.state,true)) partySend('state_request',{to:party.hostId}); return;
   }
-  if(event==='join_reject'&&String(p.to||'')===party.self.id&&!party.accepted){ leaveParty(String(p.reason||'Could not join party.'),false); return; }
-  if(event==='state_request'&&partyIsHost()&&(!p.to||String(p.to)===party.self.id)){ partySend('party_state',partySnapshot()); return; }
+  if(event==='join_reject'&&String(p.to||'')===party.self.id&&!party.accepted){
+    if(party.directCpu)partyDirectCpuClose(String(p.reason||'Could not join that CPU game.'));else leaveParty(String(p.reason||'Could not join party.'),false);
+    return;
+  }
+  if(event==='state_request'&&partyIsHost()&&(!p.to||String(p.to)===party.self.id)){
+    partySend('party_state',partySnapshot());
+    if(party.directCpu&&party.members.length===2&&from===party.directPeerId&&!!partyMember(from))partyDirectCpuMaybePrepare();
+    return;
+  }
   if(event==='party_state'){
     if(p.from!==String(p.hostId||'')) return;
     partyApplyState(p,false); return;
@@ -309,6 +354,11 @@ function partyReceive(event,p){
     }
     return;
   }
+  if(event==='leave'&&party.directCpu&&from!==party.self.id&&partyMember(from)){
+    if(partyCpuSessionOpen())partyCpuAbort('YOUR FRIEND LEFT THE CPU GAME.',true);
+    else partyDirectCpuClose('YOUR FRIEND LEFT · SEND A NEW INVITE');
+    return;
+  }
   if(event==='leave'&&partyIsHost()&&partyMember(from)){
     party.members=party.members.filter(m=>m.id!==from); delete party.chatRate[from]; partySetDefaultPairings(); partyHostCommit('An operator left the party.');
   }
@@ -329,13 +379,29 @@ function partyConnect(code,creating,name){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     party.status='CHOOSE YOUR USERNAME BEFORE JOINING A PARTY.'; sfx('dry'); return false;
   }
-  if(!partyServiceAvailable()){ party=freshParty('PARTIES NEED AN INTERNET CONNECTION.'); selPage='party'; sfx('dry'); return false; }
+  if(options.directCpu){
+    const inviteToken=String(options.cpuInviteToken||''),expiresAt=Math.floor(+options.directInviteExpiresAt||0);
+    if(!/^[A-Za-z0-9_-]{20,64}$/.test(inviteToken)||expiresAt<=Date.now()){
+      partyDirectCpuNotice('THAT CPU 2v2 INVITE IS INVALID OR EXPIRED.');selPage='offlinecpu';offlineCpuView='2v2';sfx('dry');return false;
+    }
+  }
+  if(!partyServiceAvailable()){
+    if(options.directCpu){partyDirectCpuNotice('INVITE A FRIEND NEEDS AN INTERNET CONNECTION.');selPage='offlinecpu';offlineCpuView='2v2';}
+    else{party=freshParty('PARTIES NEED AN INTERNET CONNECTION.');selPage='party';}
+    sfx('dry');return false;
+  }
   leaveParty('',false);
   const self=partySessionIdentity(name), clean=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
-  if(clean.length!==6){ party=freshParty('Enter a full 6-character party code.'); selPage='party'; sfx('dry'); return false; }
+  if(clean.length!==6){
+    party=freshParty(options.directCpu?'THAT CPU 2v2 INVITE IS INVALID.':'Enter a full 6-character party code.');
+    selPage=options.directCpu?'offlinecpu':'party';if(options.directCpu)offlineCpuView='2v2';sfx('dry');return false;
+  }
   party=freshParty(creating?'Opening party...':'Looking for that party...');
   party.phase='joining';party.code=clean;party.self=self;party.creating=!!creating;party.joinDeadline=Date.now()+PARTY_JOIN_MS;
-  party.cpuIntent=!!(options&&options.cpuIntent);partyAuthOwnerId=authUser?String(authUser.id||''):'';
+  party.cpuIntent=!!options.cpuIntent;party.directCpu=!!(options.directCpu&&options.cpuIntent);
+  party.cpuInviteToken=party.directCpu?String(options.cpuInviteToken||''):'';
+  party.directInviteExpiresAt=party.directCpu?Math.floor(+options.directInviteExpiresAt||0):0;
+  partyAuthOwnerId=authUser?String(authUser.id||''):'';
   if(creating){ party.accepted=true; party.hostId=self.id; party.hostEpoch=1; party.members=[self]; partySetDefaultPairings(); }
   const ch=sb.channel('oz-party-v1-'+clean,{config:{presence:{key:self.id}}}); party.channel=ch;
   ch.on('presence',{event:'sync'},()=>partyPresenceSync(ch));
@@ -346,16 +412,22 @@ function partyConnect(code,creating,name){
     if(ch!==party.channel) return;
     if(st==='SUBSCRIBED'){
       try{ await ch.track({id:self.id,name:self.name,joined:self.joined}); }catch(e){}
-      if(creating){ party.phase='lobby'; partyHostCommit('Party created. Share code '+clean+'.'); }
+      if(creating){
+        party.phase='lobby';partyHostCommit(party.directCpu?'PRIVATE CPU GAME READY · SENDING INVITE':'Party created. Share code '+clean+'.');
+        if(party.directCpu&&typeof options.onSubscribed==='function')
+          Promise.resolve(options.onSubscribed({code:clean,token:party.cpuInviteToken,expiresAt:party.directInviteExpiresAt})).catch(()=>{});
+      }
       else { party.nextJoinRequest=0; partyTick(Date.now()); }
     } else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'||st==='CLOSED'){
       if(party.channel===ch){
-        if(partyCpuSessionOpen()) partyCpuReturnToLobby('Party CPU match ended because the connection was lost.');
-        party.status='Party connection lost. Leave and reconnect.';
+        if(partyCpuSessionOpen()) partyCpuReturnToLobby('The 2v2 CPU game ended because the connection was lost.');
+        else if(party.directCpu)partyDirectCpuClose('FRIEND CONNECTION LOST · TRY ANOTHER INVITE');
+        else party.status='Party connection lost. Leave and reconnect.';
       }
     }
   });
-  selPage='party'; return true;
+  selPage=party.directCpu?'offlinecpu':'party';if(party.directCpu){offlineCpuView='2v2';offlineCpuInfoKey='';}
+  return true;
 }
 function partyPromptCreate(){
   const options=arguments[0]||{};
@@ -408,54 +480,57 @@ function partyOpenCpuFriendFlow(){
   if(!partyServiceAvailable()){
     party.status='INVITE A FRIEND NEEDS AN INTERNET CONNECTION.';modeBoardNotice=party.status;modeBoardNoticeT=performance.now()+3000;sfx('dry');return false;
   }
-  offlineCpuInfoKey='';
-  if(party.accepted){
-    selPage='party';
-    if(partyIsHost())partySetCpuIntent(true,'2v2 vs CPUs lobby ready. Invite exactly one friend.');
-    else{partySend('action_request',{action:'cpu_intent'});party.status='Asked the party host to open 2v2 vs CPUs.';}
-    if(party.members.length>2){party.status='2v2 VS CPUs NEEDS EXACTLY 2 PARTY PLAYERS. REMOVE EXTRA PLAYERS FIRST.';sfx('dry');}
-    else sfx('swap');
-    return true;
-  }
-  const username=partyDefaultName();
-  if(authUser&&username){
-    const opened=partyConnect(randomArenaCode(),true,username,{cpuIntent:true});
-    if(opened)party.status='CPU co-op party opening. Invite exactly one friend.';
-    return opened;
-  }
-  partyPromptCreate({cpuIntent:true});return true;
+  if(!authUser){partyDirectCpuNotice('SIGN IN TO SEND A PRIVATE FRIEND INVITE');if(typeof toggleAuth==='function')toggleAuth();sfx('dry');return false;}
+  offlineCpuInfoKey='';selPage='offlinecpu';offlineCpuView='2v2';
+  if(party.directCpu){partyDirectCpuClose('PREVIOUS INVITE CANCELLED');}
+  return partyPromptCpuFriendInvite();
 }
-function partyJoinCpuInvite(code){
-  const clean=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
-  if(clean.length!==6){socialStatus='THAT CPU 2v2 INVITE IS INVALID';sfx('dry');return false;}
-  return partyPromptJoin(clean,{cpuIntent:true});
+function partyJoinCpuInvite(invite){
+  const clean=String(invite&&invite.code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6),token=String(invite&&invite.token||''),
+    expiresAt=Math.floor(+(invite&&invite.expiresAt)||0),senderId=String(invite&&invite.senderId||'');
+  if(!authUser||clean.length!==6||!/^[A-Za-z0-9_-]{20,64}$/.test(token)||expiresAt<=Date.now()||!socialAcceptedFriend(senderId)){
+    socialStatus='THAT CPU 2v2 GAME INVITE IS INVALID OR EXPIRED';sfx('dry');return false;
+  }
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay())return false;
+  if(!partyServiceAvailable()){socialStatus='RECONNECT TO ACCEPT THAT CPU 2v2 INVITE';sfx('dry');return false;}
+  if(party.directCpu&&party.cpuInviteToken===token){partyDirectCpuNotice('ALREADY CONNECTING TO THAT FRIEND');return false;}
+  const username=partyDefaultName();if(!username){socialStatus='YOUR USERNAME IS STILL LOADING';void fetchSocial(true);sfx('dry');return false;}
+  const joined=partyConnect(clean,false,username,{cpuIntent:true,directCpu:true,cpuInviteToken:token,directInviteExpiresAt:expiresAt});
+  if(joined)partyDirectCpuNotice('CONNECTING TO FRIEND · GAME STARTS AUTOMATICALLY',8000);
+  return joined;
 }
 function partyPromptCpuFriendInvite(){
-  if(!party.accepted||!party.code||!party.cpuIntent){party.status='OPEN A CPU 2v2 PARTY FIRST.';sfx('dry');return false;}
-  if(!partyIsHost()){party.status='ONLY THE PARTY HOST CAN INVITE FROM THIS LOBBY.';sfx('dry');return false;}
-  if(!authUser){partyCopyCode();party.status='CODE COPIED. SEND IT TO YOUR FRIEND.';return true;}
+  if(!authUser||!partyServiceAvailable()){partyDirectCpuNotice('SIGN IN AND CONNECT TO INVITE A FRIEND');sfx('dry');return false;}
   if(partyInviteSendBusy)return false;
   if(!socialBackend||socialBackend.friends!==true){
-    const code=party.code,owner=String(authUser.id||'');party.status='Loading your accepted friends...';sfx('swap');
+    const owner=String(authUser.id||'');partyDirectCpuNotice('LOADING YOUR FRIENDS...');sfx('swap');
     void Promise.resolve(fetchSocial(true)).then(()=>{
-      if(authUser&&String(authUser.id||'')===owner&&party&&party.code===code&&party.cpuIntent){
+      if(authUser&&String(authUser.id||'')===owner){
         if(socialBackend&&socialBackend.friends===true)partyPromptCpuFriendInvite();
-        else party.status='Friends could not load. Copy the party code instead.';
+        else partyDirectCpuNotice('FRIENDS COULD NOT LOAD · TRY AGAIN');
       }
     });return false;
   }
   const accepted=(Array.isArray(socialFriends)?socialFriends:[]).filter(row=>row&&row.status==='accepted');
-  if(!accepted.length){partyCopyCode();party.status='NO ACCEPTED FRIENDS YET · CODE COPIED FOR MANUAL INVITE.';return true;}
-  openForm({title:'INVITE A FRIEND',hint:'Send this CPU 2v2 party code privately to an accepted friend.',saveLabel:'SEND INVITE',
+  if(!accepted.length){partyDirectCpuNotice('ADD A FRIEND FIRST, THEN SEND A CPU GAME INVITE');sfx('dry');return false;}
+  openForm({title:'INVITE A FRIEND',hint:'Choose an accepted friend. They can accept and the 2v2 CPU game starts automatically.',saveLabel:'INVITE',
     fields:[{id:'handle',label:'FRIEND USERNAME',type:'text',placeholder:'operator_7'}],onSave:v=>{
       const key=typeof socialHandleKey==='function'?socialHandleKey(v.handle):String(v.handle||'').toLowerCase(),
         person=Object.values(socialProfiles||{}).find(profile=>socialHandleKey(profile.handle_key||profile.handle)===key);
       if(!person||!socialAcceptedFriend(person.user_id)){formError('Choose an accepted friend.');return;}
-      const code=party.code,recipient=String(person.user_id||''),owner=String(authUser.id||'');closeForm();partyInviteSendBusy=true;party.status='Sending private CPU 2v2 invite...';
-      Promise.resolve(socialSendCpuPartyInvite(recipient,code)).then(ok=>{
-        if(!authUser||String(authUser.id||'')!==owner||!party||party.code!==code)return;
-        party.status=ok?('Invite sent privately to @'+partyCleanName(person.handle)+'.'):'Could not send that invite. Copy the party code instead.';
-      }).finally(()=>{if(!authUser||String(authUser.id||'')===owner)partyInviteSendBusy=false;});
+      const recipient=String(person.user_id||''),owner=String(authUser.id||''),username=partyDefaultName(),token=partyCpuDirectInviteToken(),
+        expiresAt=Date.now()+2*60*1000,code=randomArenaCode();
+      if(!username){formError('Your username is still loading.');return;}
+      if(!token){formError('Secure private invites are unavailable in this browser.');return;}
+      closeForm();partyInviteSendBusy=true;partyDirectCpuNotice('OPENING A PRIVATE CPU GAME...');
+      const opened=partyConnect(code,true,username,{cpuIntent:true,directCpu:true,cpuInviteToken:token,directInviteExpiresAt:expiresAt,onSubscribed:async invite=>{
+        const ok=await socialSendCpuGameInvite(recipient,invite);
+        if(!authUser||String(authUser.id||'')!==owner||!party.directCpu||party.code!==code)return false;
+        partyInviteSendBusy=false;
+        if(!ok){partyDirectCpuClose('COULD NOT SEND THAT INVITE · TRY AGAIN');return false;}
+        partyDirectCpuNotice('INVITE SENT TO @'+partyCleanName(person.handle)+' · WAITING FOR ACCEPT',120000);return true;
+      }});
+      if(!opened){partyInviteSendBusy=false;partyDirectCpuNotice('COULD NOT OPEN THAT CPU GAME · TRY AGAIN');}
     }});
   return true;
 }
@@ -521,19 +596,25 @@ function partyCpuKit(raw){
      !SECONDARIES.concat(TEMP_SECONDARY).includes(secondary)||!MELEES.concat(TEMP_MELEE).includes(melee)) return null;
   return {primary,secondary,melee,utility:null};
 }
+function partyDirectCpuMaybePrepare(){
+  if(!party.directCpu||!partyIsHost()||party.members.length!==2||party.directStartIssued||partyCpuSessionOpen())return false;
+  if(state!=='select'||selPage!=='offlinecpu'||offlineCpuView!=='2v2')return false;
+  party.directStartIssued=true;partyDirectCpuNotice('FRIEND ACCEPTED · STARTING 2v2 VS CPUs',8000);
+  const started=partyCpuHostPrepare();if(!started)party.directStartIssued=false;return started;
+}
 function partyCpuEnvelope(p,hostOnly){
   if(!partyCpuSessionOpen()||!p||Math.floor(+p.matchEpoch||0)!==partyCpuMatch.epoch||Math.floor(+p.hostEpoch||0)!==partyCpuMatch.hostEpoch) return false;
   if(hostOnly&&String(p.from||'')!==partyCpuMatch.hostId) return false;
   return true;
 }
 function partyCpuHostPrepare(){
-  if(!partyIsHost()||!party.channel){ party.status='Only the party host can start 2v2 vs CPUs.'; sfx('dry'); return false; }
+  if(!partyIsHost()||!party.channel){ party.status=party.directCpu?'COULD NOT START THE FRIEND GAME.':'Only the party host can start 2v2 vs CPUs.'; sfx('dry'); return false; }
   if(!partyRequirePlayers()) return false;
   if(party.members.length!==2){
     const message='THE PARTY IS TOO BIG FOR THIS QUEUE';
     party.status=message; modeBoardNotice=message; modeBoardNoticeT=performance.now()+2800; sfx('dry'); return false;
   }
-  if(partyCpuSessionOpen()){ party.status='A Party CPU match is already being prepared.'; sfx('dry'); return false; }
+  if(partyCpuSessionOpen()){ party.status=party.directCpu?'THE CPU GAME IS ALREADY STARTING.':'A Party CPU match is already being prepared.'; sfx('dry'); return false; }
   const members=party.members.slice().sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
   const p={from:party.self.id,hostId:party.self.id,hostEpoch:party.hostEpoch,matchEpoch:Math.max(Date.now(),partyCpuMatch.epoch+1),
     humanIds:members.map(m=>m.id),humanNames:Object.fromEntries(members.map(m=>[m.id,m.name]))};
@@ -552,10 +633,12 @@ function partyCpuApplyPrepare(p){
   const epoch=Math.floor(+p.matchEpoch||0); if(!epoch) return false;
   if(partyCpuSessionOpen()&&epoch<partyCpuMatch.epoch) return false;
   if(partyCpuSessionOpen()&&epoch===partyCpuMatch.epoch) return true;
-  const available=state==='select'&&!arena.active&&!arena.queueChannel&&!arena.matchChannel&&!formOpen&&['party','modeboard','hub'].includes(selPage);
+  const direct=party.directCpu===true,
+    available=state==='select'&&!arena.active&&!arena.queueChannel&&!arena.matchChannel&&!formOpen&&
+      (direct?(selPage==='offlinecpu'&&offlineCpuView==='2v2'):['party','modeboard','hub'].includes(selPage));
   if(!available){
     if(party.self.id!==String(p.hostId||'')){
-      const unavailable={matchEpoch:epoch,hostEpoch:party.hostEpoch,reason:'A party member is busy in another game or menu.'};
+      const unavailable={matchEpoch:epoch,hostEpoch:party.hostEpoch,reason:direct?'Your friend is busy in another game or menu.':'A party member is busy in another game or menu.'};
       partySend('cpu_cancel',unavailable);for(const wait of [350,950])setTimeout(()=>{if(party.channel)partySend('cpu_cancel',unavailable);},wait);
     }
     return false;
@@ -566,9 +649,15 @@ function partyCpuApplyPrepare(p){
   partyCpuMatch.phase='loadout'; partyCpuMatch.epoch=epoch; partyCpuMatch.hostEpoch=party.hostEpoch;
   partyCpuMatch.hostId=party.hostId; partyCpuMatch.humanIds=ids;
   for(const id of ids){ const member=partyMember(id); partyCpuMatch.humanNames[id]=partyCleanName(p.humanNames&&p.humanNames[id])||(member&&member.name)||'OPERATOR'; }
-  pendingGameMode=PARTY_CPU_MODE; loadoutBackPage='party'; modeBoardMode=null;
-  restoreLastLoadoutForMode(PARTY_CPU_MODE); selPage='loadout';
-  party.status='Choose three weapons for 2v2 vs CPUs. Utilities and rewards are disabled.'; sfx('swap');
+  pendingGameMode=PARTY_CPU_MODE; loadoutBackPage=direct?'offlinecpu':'party'; modeBoardMode=null;
+  restoreLastLoadoutForMode(PARTY_CPU_MODE);
+  if(direct){
+    loadout.utility=null;
+    if(!partyCpuKit(loadout))loadout={primary:SHARED_LOADOUT_DEFAULTS.primary,secondary:SHARED_LOADOUT_DEFAULTS.secondary,melee:SHARED_LOADOUT_DEFAULTS.melee,utility:null};
+    if(!partyCpuKit(loadout)){partyCpuAbort('NO PLAYABLE LOADOUT WAS AVAILABLE.',true);return false;}
+    party.status='LOADOUT READY · STARTING 2v2 VS CPUs';return partyCpuSubmitLoadout();
+  }
+  selPage='loadout';party.status='Choose three weapons for 2v2 vs CPUs. Utilities and rewards are disabled.';sfx('swap');
   return true;
 }
 function partyCpuSubmitLoadout(){
@@ -577,19 +666,20 @@ function partyCpuSubmitLoadout(){
   if(party.members.length!==2){ partyCpuAbort('THE PARTY IS TOO BIG FOR THIS QUEUE',true); sfx('dry'); return false; }
   const kit=partyCpuKit(loadout); if(!kit){ pracNeedMsgT=now+1600; sfx('dry'); return false; }
   partyCpuMatch.localLoadout=kit; partyCpuMatch.loadouts[party.self.id]=kit; partyCpuMatch.ready[party.self.id]=true;
-  partyCpuMatch.phase='waiting'; party.status='Loadout ready. Waiting for the rest of the party...';
+  partyCpuMatch.phase='waiting'; party.status=party.directCpu?'LOADOUT READY · CONNECTING BOTH PLAYERS':'Loadout ready. Waiting for the rest of the party...';
   const readyPacket={matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,loadout:kit};
   partySend('cpu_ready',readyPacket);
   for(const wait of [350,950]) setTimeout(()=>{
     if(partyCpuSessionOpen()&&partyCpuMatch.epoch===readyPacket.matchEpoch&&partyCpuMatch.ready[party.self.id]) partySend('cpu_ready',readyPacket);
   },wait);
-  selPage='party'; pendingGameMode=PARTY_CPU_MODE; sfx('swap');
+  selPage=party.directCpu?'offlinecpu':'party';if(party.directCpu)offlineCpuView='2v2';pendingGameMode=PARTY_CPU_MODE;sfx('swap');
   partyCpuMaybeStart(); return true;
 }
 function partyCpuMaybeStart(){
   if(!partyCpuIsHost()||partyCpuMatch.humanIds.length!==2||!partyRequirePlayers()||!partyCpuMatch.humanIds.every(id=>partyCpuMatch.ready[id]&&partyCpuKit(partyCpuMatch.loadouts[id]))) return false;
   if(partyCpuMatch.round>0||partyCpuMatch.phase==='countdown'||partyCpuMatch.phase==='fight') return false;
-  if(state!=='select'||selPage!=='party'){ partyCpuAbort('Party CPU match setup was cancelled because the host left the Party menu.',true); return false; }
+  const waitingPage=party.directCpu?'offlinecpu':'party';
+  if(state!=='select'||selPage!==waitingPage){ partyCpuAbort(party.directCpu?'CPU game setup was cancelled.':'Party CPU match setup was cancelled because the host left the Party menu.',true); return false; }
   partyCpuHostStartRound(); return true;
 }
 function partyCpuMakeBot(id,team,x,y,startAt){
@@ -694,15 +784,16 @@ function partyCpuApplyRoundStart(p){
   if(!partyCpuEnvelope(p,true)) return false;
   const round=Math.max(0,Math.floor(+p.round||0)); if(round<=partyCpuMatch.round) return false;
   const continuing=isPartyCpuMatch()&&state==='play'&&partyCpuMatch.phase==='round_end';
-  if(!continuing&&(state!=='select'||selPage!=='party')){
-    if(!partyCpuIsHost())partySend('cpu_cancel',{matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,reason:'A party member left the Party menu.'});
+  const expectedPage=party.directCpu?'offlinecpu':'party';
+  if(!continuing&&(state!=='select'||selPage!==expectedPage)){
+    if(!partyCpuIsHost())partySend('cpu_cancel',{matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,reason:party.directCpu?'A friend left the CPU game setup.':'A party member left the Party menu.'});
     return false;
   }
   const kits={};
   for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(p.loadouts&&p.loadouts[id]); if(!kit) return false; kits[id]=kit; }
   const mine=kits[party.self.id]; if(!mine) return false;
   if(party.chatComposing&&formOpen)closeForm();party.chatComposing=false;party.chatOpen=false;
-  return cpuTeamBeginRound({round,startDelay:p.startDelay,scores:p.scores,kits,clock:Date.now(),mode:'partycpu',status:'Party 2v2 vs CPUs',pendingMode:PARTY_CPU_MODE});
+  return cpuTeamBeginRound({round,startDelay:p.startDelay,scores:p.scores,kits,clock:Date.now(),mode:'partycpu',status:party.directCpu?'FRIEND 2v2 VS CPUs':'Party 2v2 vs CPUs',pendingMode:PARTY_CPU_MODE});
 }
 // Fully local one-human team match. It intentionally reuses only the neutral
 // CPU simulation; Party presence, envelopes, retries, and Supabase channels
@@ -1031,9 +1122,9 @@ function partyCpuWallTick(clock){
   if(!partyCpuSessionOpen()) return;
   if(partyCpuMatch.local)return; // Offline 2v2 is stepped exactly once by the pausable 60 Hz game clock.
   const hostMissing=!partyMember(partyCpuMatch.hostId)||(!party.liveIds.has(partyCpuMatch.hostId)&&party.missingSince[partyCpuMatch.hostId]&&clock-party.missingSince[partyCpuMatch.hostId]>=PARTY_MISSING_MS);
-  if(hostMissing||party.hostId!==partyCpuMatch.hostId){ partyCpuReturnToLobby('Party CPU match ended because the host disconnected.'); return; }
+  if(hostMissing||party.hostId!==partyCpuMatch.hostId){ partyCpuReturnToLobby(party.directCpu?'2v2 CPU game ended because your friend disconnected.':'Party CPU match ended because the host disconnected.'); return; }
   if(partyCpuIsHost()) for(const id of partyCpuMatch.humanIds){
-    if(!partyMember(id)){ partyCpuAbort('Party CPU match ended because a player left.',true); return; }
+    if(!partyMember(id)){ partyCpuAbort(party.directCpu?'2v2 CPU game ended because your friend left.':'Party CPU match ended because a player left.',true); return; }
   }
   if(!isPartyCpuMatch()) return;
   if(partyCpuMatch.phase==='countdown'&&clock>=partyCpuMatch.roundStartAt){ partyCpuMatch.phase='fight';arena.phase='fight';waveMsg='FIGHT';waveMsgT=now+800; }
@@ -1244,10 +1335,10 @@ function partyCpuReceive(event,p){
     party.status=(partyCpuMatch.humanNames[p.from]||'An operator')+' is ready for 2v2 vs CPUs.';partyCpuMaybeStart();return;
   }
   if(event==='cpu_cancel'){
-    if(partyCpuIsHost()&&partyCpuEnvelope(p,false)&&partyCpuMatch.humanIds.includes(String(p.from||'')))partyCpuAbort('Party CPU match setup was cancelled.',true);return;
+    if(partyCpuIsHost()&&partyCpuEnvelope(p,false)&&partyCpuMatch.humanIds.includes(String(p.from||'')))partyCpuAbort(party.directCpu?'FRIEND CPU GAME SETUP CANCELLED.':'Party CPU match setup was cancelled.',true);return;
   }
   if(event==='cpu_abort'){
-    if(partyCpuEnvelope(p,true))partyCpuReturnToLobby(String(p.reason||'Party CPU match ended.').slice(0,100));return;
+    if(partyCpuEnvelope(p,true))partyCpuReturnToLobby(String(p.reason||(party.directCpu?'CPU game ended.':'Party CPU match ended.')).slice(0,100));return;
   }
   if(event==='cpu_round_start'){partyCpuApplyRoundStart(p);return;}
   if(event==='cpu_player_state'){partyCpuApplyPlayerState(p);return;}
@@ -1260,21 +1351,24 @@ function partyCpuReceive(event,p){
   if(event==='cpu_round_result')partyCpuApplyRoundResult(p);
 }
 function partyCpuReturnToLobby(message){
-  const was=partyCpuSessionOpen()||isPartyCpuMatch();
+  const was=partyCpuSessionOpen()||isPartyCpuMatch(),direct=!!(party&&party.directCpu);
   const saved=partyCpuMatch&&partyCpuMatch.savedLoadout,
     trainingNotice=typeof aiTrainingMatchStatusText==='function'?aiTrainingMatchStatusText(partyCpuMatch,true):'';
   if(isPartyCpuMatch()||practiceMode==='arena'){
     practiceMode=null;enemies=[];bullets=[];ebullets=[];pickups=[];damageNumbers=[];grenades=[];pearls=[];balls=[];flames=[];freezeFx=[];splitBalls=[];
     daggersOut=null;comboStep=0;comboNextT=0;parryUntil=0;parrySeq=0;fistFlurryUntil=0;sawChargeUntil=0;
   }
-  partyCpuMatch=freshPartyCpuMatch();arena=freshArena('Party 2v2 vs CPUs ready.');pendingGameMode=null;modeBoardMode=null;
+  partyCpuMatch=freshPartyCpuMatch();arena=freshArena(direct?'2v2 vs CPUs ready.':'Party 2v2 vs CPUs ready.');pendingGameMode=null;modeBoardMode=null;
   if(saved)loadout={primary:saved.primary||null,secondary:saved.secondary||null,melee:saved.melee||null,utility:saved.utility||null};
-  if(was){state='select';selPage='party';menuOpen=false;aiming=false;rmbAim=false;resetHeldGameplayInput();}
-  if(message)party.status=(trainingNotice?trainingNotice+' · ':'')+message;
+  if(was){state='select';selPage=direct?'offlinecpu':'party';if(direct){offlineCpuView='2v2';offlineCpuInfoKey='';}menuOpen=false;aiming=false;rmbAim=false;resetHeldGameplayInput();}
+  const result=(trainingNotice?trainingNotice+' · ':'')+String(message||'');if(message)party.status=result;
+  // Keep the private transport alive through the host's 350/950ms result or
+  // abort retries, then tear it down. The direct flow never returns to Party UI.
+  if(direct)partyDirectCpuClose(result||'CPU GAME CLOSED',1250);
 }
 function partyCpuAbort(reason,broadcast){
   if(!partyCpuSessionOpen())return;
-  const payload={matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,reason:String(reason||'Party CPU match ended.').slice(0,100)};
+  const payload={matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,reason:String(reason||(party.directCpu?'2v2 CPU game ended.':'Party CPU match ended.')).slice(0,100)};
   if(broadcast&&party.channel){
     const event=partyCpuIsHost()?'cpu_abort':'cpu_cancel';partySend(event,payload);
     for(const wait of [350,950])setTimeout(()=>{if(party.channel&&party.code)partySend(event,payload);},wait);
@@ -1282,19 +1376,31 @@ function partyCpuAbort(reason,broadcast){
   partyCpuReturnToLobby(payload.reason);
 }
 function leaveParty(status,toHub){
-  const old=party;
-  if(partyCpuSessionOpen()) partyCpuAbort('Party CPU match ended because a player left.',true);
+  const old=party,direct=!!(old&&old.directCpu);
+  if(partyCpuSessionOpen()){
+    partyCpuAbort(direct?'2v2 CPU game ended because a friend left.':'Party CPU match ended because a player left.',true);
+    if(direct)return;
+  }
   if(old&&old.chatComposing&&formOpen) closeForm();
   if(old&&old.channel){ try{ partySend('leave',{}); }catch(e){} partyDropChannel(old.channel); }
   party=freshParty(status||'Create a party or join with a 6-character code.');
-  selPage=toHub?'hub':'party';
+  selPage=direct?'offlinecpu':toHub?'hub':'party';if(direct){offlineCpuView='2v2';offlineCpuInfoKey='';}
 }
 function partyTick(clock){
   if(!party||!party.channel||!party.self) return;
+  if(party.directCpu&&party.phase==='closing')return;
   if(!party.accepted){
-    if(clock>=party.joinDeadline){ leaveParty('PARTY NOT FOUND OR NO LONGER OPEN.',false); sfx('dry'); return; }
-    if(clock>=party.nextJoinRequest){ party.nextJoinRequest=clock+850; partySend('join_request',{name:party.self.name,joined:party.self.joined}); }
+    if(clock>=party.joinDeadline){
+      if(party.directCpu)partyDirectCpuClose('FRIEND GAME COULD NOT CONNECT · TRY AGAIN');else leaveParty('PARTY NOT FOUND OR NO LONGER OPEN.',false);
+      sfx('dry');return;
+    }
+    if(clock>=party.nextJoinRequest){
+      party.nextJoinRequest=clock+850;partySend('join_request',{name:party.self.name,joined:party.self.joined,inviteToken:party.directCpu?party.cpuInviteToken:''});
+    }
     return;
+  }
+  if(party.directCpu&&party.members.length<2&&party.directInviteExpiresAt&&clock>=party.directInviteExpiresAt){
+    partyDirectCpuClose('FRIEND INVITE EXPIRED · SEND A NEW ONE');sfx('dry');return;
   }
   const currentHost=partyMember(party.hostId), hostGone=!currentHost||(!party.liveIds.has(party.hostId)&&clock-(party.missingSince[party.hostId]||clock)>=PARTY_MISSING_MS);
   if(hostGone){
@@ -1303,8 +1409,14 @@ function partyTick(clock){
   }
   if(partyIsHost()){
     const gone=party.members.filter(m=>m.id!==party.self.id&&!party.liveIds.has(m.id)&&clock-(party.missingSince[m.id]||clock)>=PARTY_MISSING_MS);
+    if(gone.length&&party.directCpu){
+      if(partyCpuSessionOpen())partyCpuAbort('FRIEND DISCONNECTED FROM THE CPU GAME.',true);else partyDirectCpuClose('FRIEND DISCONNECTED · SEND A NEW INVITE');
+      return;
+    }
     if(gone.length){ party.members=party.members.filter(m=>!gone.includes(m)); partySetDefaultPairings(); partyHostCommit('Disconnected players were removed.'); }
     else if(clock>=party.nextStateSend){ partySend('party_state',partySnapshot()); party.nextStateSend=clock+1000; }
+  }else if(party.directCpu&&!partyCpuSessionOpen()&&clock>=party.nextStateSend){
+    partySend('state_request',{to:party.hostId});party.nextStateSend=clock+850;
   }
 }
 function flushLayoutDraftOnExit(){ if(layoutDirty) persistLayoutDraft(); }

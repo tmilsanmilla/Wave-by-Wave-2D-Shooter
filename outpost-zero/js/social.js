@@ -484,21 +484,34 @@ async function socialUpdateHandle(value,requiredClaim=false){
 function socialPartyCodeClean(value){
   return String(value||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
 }
-function socialCpuPartyInviteCode(value){
-  const match=/^OUTPOST ZERO · CPU 2V2 INVITE · PARTY CODE ([A-Z0-9]{6})$/.exec(String(value||'').trim().toUpperCase());
-  return match?match[1]:'';
+function socialCpuGameInviteEnvelope(value){
+  const match=/^OUTPOST ZERO · CPU 2V2 GAME INVITE · CODE ([A-Z0-9]{6}) · TOKEN ([A-Za-z0-9_-]{20,64}) · EXPIRES ([0-9]{13})$/.exec(String(value||'').trim());
+  if(!match)return null;
+  return {code:match[1],token:match[2],expiresAt:Math.floor(+match[3]||0)};
 }
-async function socialSendCpuPartyInvite(recipientId,code){
-  const recipient=String(recipientId||''),clean=socialPartyCodeClean(code),owner=authUser?String(authUser.id||''):'';
-  if(!sb||!owner||clean.length!==6||!socialAcceptedFriend(recipient)){socialStatus='CPU 2v2 INVITES REQUIRE AN ACCEPTED FRIEND';sfx('dry');return false;}
+function socialCpuGameInvite(value,clock=Date.now()){
+  const invite=socialCpuGameInviteEnvelope(value);if(!invite)return null;
+  const expiresAt=invite.expiresAt,now=Math.floor(+clock||Date.now());
+  if(expiresAt<=now||expiresAt>now+10*60*1000)return null;
+  return invite;
+}
+function socialCpuPartyInviteCode(value){
+  const invite=socialCpuGameInvite(value);return invite?invite.code:'';
+}
+async function socialSendCpuGameInvite(recipientId,invite){
+  const recipient=String(recipientId||''),clean=socialPartyCodeClean(invite&&invite.code),token=String(invite&&invite.token||''),
+    expiresAt=Math.floor(+(invite&&invite.expiresAt)||0),owner=authUser?String(authUser.id||''):'',clock=Date.now();
+  if(!sb||!owner||clean.length!==6||!/^[A-Za-z0-9_-]{20,64}$/.test(token)||expiresAt<=clock||expiresAt>clock+10*60*1000||!socialAcceptedFriend(recipient)){
+    socialStatus='CPU 2v2 INVITES REQUIRE AN ACCEPTED FRIEND';sfx('dry');return false;
+  }
   try{
-    const body='OUTPOST ZERO · CPU 2V2 INVITE · PARTY CODE '+clean;
+    const body='OUTPOST ZERO · CPU 2V2 GAME INVITE · CODE '+clean+' · TOKEN '+token+' · EXPIRES '+expiresAt;
     const result=await sb.from(SOCIAL_MESSAGE_TABLE).insert({sender_id:owner,recipient_id:recipient,body});
     if(result&&result.error)throw result.error;
     if(!authUser||String(authUser.id||'')!==owner)return false;
-    socialStatus='CPU 2v2 INVITE SENT PRIVATELY';void fetchSocial(true);sfx('pickup');return true;
+    socialStatus='CPU 2v2 GAME INVITE SENT';void fetchSocial(true);sfx('pickup');return true;
   }catch(error){
-    if(authUser&&String(authUser.id||'')===owner){socialStatus=socialSetupMissing(error)?socialSetupStatus():'COULD NOT SEND THAT CPU 2v2 INVITE';sfx('dry');}
+    if(authUser&&String(authUser.id||'')===owner){socialStatus=socialSetupMissing(error)?socialSetupStatus():'COULD NOT SEND THAT CPU 2v2 GAME INVITE';sfx('dry');}
     return false;
   }
 }

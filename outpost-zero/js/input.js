@@ -16,6 +16,11 @@ function activateOfflineCpuAction(rect){
   else if(id==='cpu_start_1v1')chooseGameMode('ai1v1','offlinecpu');
   else if(id==='cpu_local_2v2')chooseGameMode('ai2v2','offlinecpu');
   else if(id==='cpu_friend_2v2'&&typeof partyOpenCpuFriendFlow==='function')partyOpenCpuFriendFlow();
+  else if(id==='cpu_cancel_friend_invite'){
+    if(typeof party!=='undefined'&&party&&party.directCpu&&party.phase==='closing')return false;
+    if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())partyCpuAbort('FRIEND CPU GAME SETUP CANCELLED.',true);
+    else if(typeof partyDirectCpuClose==='function')partyDirectCpuClose('FRIEND INVITE CANCELLED');
+  }
   else if(/^cpu_info_/.test(id)){const key=id.slice(9);offlineCpuInfoKey=offlineCpuInfoKey===key?'':key;sfx('swap');}
   else return false;
   return true;
@@ -552,7 +557,8 @@ function clickSelect(){
       else if(r.id==='friend_prev'){ socialFriendPage=Math.max(0,socialFriendPage-1); sfx('swap'); }
       else if(r.id==='friend_next'){ socialFriendPage++; sfx('swap'); }
       else if(r.id==='friend_message'||r.id==='dm_reply') openSocialMessageCompose(r.userId,r.handle);
-      else if(r.id==='cpu_invite_join'&&typeof partyJoinCpuInvite==='function') partyJoinCpuInvite(r.code);
+      else if(r.id==='cpu_invite_play'&&typeof partyJoinCpuInvite==='function') partyJoinCpuInvite(r.invite);
+      else if(r.id==='cpu_direct_return'){selPage='offlinecpu';offlineCpuView='2v2';offlineCpuInfoKey='';sfx('swap');}
       else if(r.id==='dm_new') socialPromptMessage();
       else if(r.id==='dm_prev'){ socialMessagePage=Math.max(0,socialMessagePage-1); sfx('swap'); }
       else if(r.id==='dm_next'){ socialMessagePage++; sfx('swap'); }
