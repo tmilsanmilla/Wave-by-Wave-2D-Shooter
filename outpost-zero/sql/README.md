@@ -6,9 +6,10 @@ Each feature has its own numbered scripts and may be installed independently.
 ## Social
 
 The Social feature provides unique public usernames, friendships, private messages, row
-level security, API privileges, Realtime refresh hints, and account-setting rules. Profiles,
-friendships, and messages share one core data script because they form the same
-Social model. Security, privileges, and Realtime remain separate.
+level security, API privileges, Realtime refresh hints, account-setting rules,
+and server-authorized Party invitations. Profiles, friendships, and messages
+share one core data script because they form the same Social model. Security,
+privileges, Realtime, and the optional online-invite upgrade remain separate.
 
 In the Supabase Dashboard, open **SQL Editor**, paste each file below, and run
 them one at a time in this exact order:
@@ -18,8 +19,9 @@ them one at a time in this exact order:
 3. `social/03-privileges.sql` — narrow API permissions, including signup username availability
 4. `social/04-realtime.sql` — friendship and message refresh events
 5. `social/05-account-settings.sql` — authenticated username-setting RPC and the server-enforced 21-day change clock
+6. `social/06-party-online-invites.sql` — private-safe online presence and Party invites to accepted friends or currently-online players
 
-All five scripts are rerunnable. Run the complete sequence again after changing
+All six scripts are rerunnable. Run the complete sequence again after changing
 the Social schema so tables are preserved while functions, triggers, policies,
 privileges, and realtime membership are refreshed.
 
@@ -45,6 +47,27 @@ What each Social file does, concretely:
   historical username-change dates, each already-chosen account receives one
   immediate migration-grace change; the 21-day clock starts when that change is
   saved. It does not read, store, or publish account emails.
+- Run Social `06` after `05`. It adds a 90-second server-time online heartbeat,
+  viewer-bound opaque picker tokens, and short-lived Party invitations. A
+  normal Party invite may go to an accepted friend (online or offline) or a
+  player whose heartbeat is currently fresh. CPU 2v2 invites remain
+  accepted-friend-only. The database rechecks that rule when sending, gives
+  normal Party invites a five-minute lifetime and CPU invites two minutes,
+  makes retries exact-once, and applies per-sender/per-recipient abuse limits.
+  Incoming lists expose only the sender username and invite metadata; only the
+  intended recipient can claim the hidden party code/join token. Claims are
+  safely repeatable by that recipient until expiry so reloads and failed
+  connections can retry. Raw presence, target, and invite tables use forced
+  RLS with no browser grants. No email or Auth account UUID is returned.
+
+If Social `05` is the last Social file you already ran, your only new SQL paste
+is the entire `social/06-party-online-invites.sql` file. Add and run it. Do not
+rerun Social `01` through `05`, do not replace `05`, do not paste `06` onto the
+end of an older SQL file, and do not rerun Leaderboards `01`. Deploy the
+matching game JavaScript at the same time,
+then hard-refresh or sign out/in. If `06` has not been installed yet, the game
+keeps the existing accepted-friend invite flow and simply hides online-player
+discovery; it never weakens private-message permissions as a fallback.
 
 Future database features should get a sibling folder under `sql/` with their
 own numbered scripts and a dependency order documented here.

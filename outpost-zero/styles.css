@@ -184,7 +184,7 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   #formextra{margin:12px 0 0}
   #formextra button{width:100%;padding:10px;margin-top:6px}
   #formbtns{display:flex;gap:8px;margin-top:14px}
-  #formbtns .btn{flex:1;padding:10px}
+  #formbtns .btn{flex:1;min-height:44px;padding:10px}
   #formstatus{color:#e0a8a0;font-size:11px;min-height:15px;margin-top:8px}
   #promowrap{inset:0;background:rgba(8,9,5,.92);display:none;align-items:center;justify-content:center;z-index:61}
   #promobox{background:#101208;border:1px solid #a7c15e;padding:26px;width:340px;text-align:center}

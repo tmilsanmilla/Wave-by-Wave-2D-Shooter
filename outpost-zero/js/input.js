@@ -551,7 +551,7 @@ function clickSelect(){
       else if(r.id==='social_view_friends'){ socialView='friends'; sfx('swap'); }
       else if(r.id==='social_view_inbox'){ socialView='inbox'; sfx('swap'); }
       else if(r.id==='social_retry') fetchSocial(true);
-      else if(r.id==='inbox_refresh'){ if(typeof fetchBanners==='function')fetchBanners(); if(authUser)fetchSocial(true); sfx('swap'); }
+      else if(r.id==='inbox_refresh'){ if(typeof fetchBanners==='function')fetchBanners(); if(authUser){fetchSocial(true);if(typeof socialPollPartyInvites==='function')void socialPollPartyInvites(true);} sfx('swap'); }
       else if(r.id==='friend_add') socialPromptAddFriend();
       else if(r.id==='friend_accept') socialAcceptFriend(r.rowId);
       else if(r.id==='friend_block') socialBlockFriend(r.rowId);
@@ -564,6 +564,7 @@ function clickSelect(){
       else if(r.id==='friend_message'||r.id==='dm_reply') openSocialMessageCompose(r.userId,r.handle);
       else if(r.id==='cpu_invite_play'&&typeof partyJoinCpuInvite==='function') partyJoinCpuInvite(r.invite);
       else if(r.id==='party_invite_join'&&typeof partyJoinFriendInvite==='function') partyJoinFriendInvite(r.invite);
+      else if(r.id==='cloud_party_invite_accept'&&typeof socialClaimAndJoinPartyInvite==='function') void socialClaimAndJoinPartyInvite(r.inviteKey);
       else if(r.id==='cpu_direct_return'){selPage='offlinecpu';offlineCpuView='2v2';offlineCpuInfoKey='';sfx('swap');}
       else if(r.id==='dm_new') socialPromptMessage();
       else if(r.id==='dm_prev'){ socialMessagePage=Math.max(0,socialMessagePage-1); sfx('swap'); }

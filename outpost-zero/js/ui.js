@@ -1970,7 +1970,9 @@ function drawSocial(){
     const official=(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.message||'').trim())
       .map(row=>({kind:'official',id:row.id,body:String(row.message||''),created_at:row.created_at||'',meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)}));
     const direct=(authUser&&Array.isArray(socialMessages)?socialMessages:[]).map(row=>({kind:'direct',row,created_at:row&&row.created_at||'',sortAt:Date.parse(row&&row.created_at||'')||(+row.id||0)}));
-    const inboxRows=official.concat(direct).sort((a,b)=>b.sortAt-a.sortAt);
+    const cloudInvites=(authUser&&typeof socialPartyInvites!=='undefined'&&Array.isArray(socialPartyInvites)?socialPartyInvites:[]).map(invite=>({kind:'cloud_party_invite',invite,
+      created_at:new Date(invite.createdAt||0).toISOString(),sortAt:+invite.createdAt||0}));
+    const inboxRows=official.concat(cloudInvites,direct).sort((a,b)=>b.sortAt-a.sortAt);
     const dmReady=!!(authUser&&socialBackend.profiles===true&&socialBackend.messages===true&&socialBackend.friends===true);
     const dmMissing=!!(authUser&&(socialBackend.profiles===false||socialBackend.messages===false||socialBackend.friends===false));
     const dmLoading=!!(authUser&&socialLoading&&socialBackend.profiles===null);
@@ -1990,6 +1992,17 @@ function drawSocial(){
         ctx.textAlign='right';ctx.fillStyle='#a7c15e';ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(tiny?'OPEN ›':'OPEN TO READ ›',p.x+p.w-9,y+3);
         ctx.textAlign='left';ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(item.body,p.w-18),p.x+9,y+(tiny?13:compact?17:22));
         socialRects.push({id:'official_update_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,body:item.body,meta:item.meta,updateId:item.id});continue;
+      }
+      if(item.kind==='cloud_party_invite'){
+        const invite=item.invite,cpu=invite&&invite.kind==='cpu2v2',stillLive=invite&&invite.expiresAt>(typeof socialPartyInviteServerNow==='function'?socialPartyInviteServerNow():Date.now()),
+          joinW=stillLive?Math.min(compact?70:92,Math.max(48,p.w*.25)):0,bodyW=p.w-18-(joinW?joinW+6:0);
+        ctx.fillStyle=i%2?'rgba(191,168,255,0.08)':'rgba(191,168,255,0.13)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+        ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine('FROM @'+String(invite&&invite.senderUsername||'PLAYER'),bodyW),p.x+9,y+3);
+        const label=stillLive?(cpu?'NEW · BETA · CPU 2v2 INVITE · PRESS START':'PARTY INVITE · PRESS JOIN'):(cpu?'CPU 2v2 INVITE · EXPIRED':'PARTY INVITE · EXPIRED');
+        ctx.fillStyle='#cdd6b0';ctx.font=(stillLive&&W<430?6:tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(label,bodyW),p.x+9,y+(tiny?13:compact?17:22));
+        if(stillLive)drawSocialButton('cloud_party_invite_accept',cpu?'START':'JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{inviteKey:String(invite.uiKey||'')});
+        continue;
       }
       const m=item.row,incoming=String(m.recipient_id)===String(authUser.id),other=incoming?m.sender_id:m.recipient_id,person=socialPerson(other),canReply=socialAcceptedFriend(other);
       const cpuEnvelope=typeof socialCpuGameInviteEnvelope==='function'?socialCpuGameInviteEnvelope(m.body):null;
@@ -2031,7 +2044,7 @@ function drawSocial(){
     const partyFull=Array.isArray(party.members)&&party.members.length>=PARTY_MAX;
     const cpuParty=directCpu||!!party.cpuIntent;
     const inviteReady=!!(online&&authUser&&party.accepted&&party.channel&&party.self&&party.phase==='lobby'&&!cpuParty&&!partyFull);
-    const inviteLabel=partyFull?'PARTY FULL · INVITES CLOSED':cpuParty?'PARTY INVITES UNAVAILABLE DURING CPU SETUP':!authUser?'SIGN IN TO SEND PARTY INVITES':party.accepted&&party.phase==='lobby'?'INVITE A FRIEND':party.accepted?'PARTY INVITES ARE NOT AVAILABLE RIGHT NOW':'CREATE OR JOIN A PARTY TO INVITE A FRIEND';
+    const inviteLabel=partyFull?'PARTY FULL · INVITES CLOSED':cpuParty?'PARTY INVITES UNAVAILABLE DURING CPU SETUP':!authUser?'SIGN IN TO SEND PARTY INVITES':party.accepted&&party.phase==='lobby'?'INVITE A PLAYER':party.accepted?'PARTY INVITES ARE NOT AVAILABLE RIGHT NOW':'CREATE OR JOIN A PARTY TO INVITE A PLAYER';
     drawSocialButton('party_invite_friend',inviteLabel,p.x+6,row1Y,p.w-12,actionH,'#e8b658',inviteReady);
     if(directCpu)drawSocialButton('cpu_direct_return',party.phase==='closing'?'FINISHING...':'RETURN TO CPU',leftX,row2Y,bw,actionH,col,party.phase!=='closing');
     else if(party.channel||party.accepted)drawSocialButton('party_open','OPEN PARTY',leftX,row2Y,bw,actionH,col,true);
