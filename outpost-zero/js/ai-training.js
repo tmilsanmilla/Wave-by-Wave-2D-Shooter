@@ -118,10 +118,10 @@ function aiTrainingSetEventStatus(eventId,status){
 function aiTrainingMatchStatusText(match,compact=false){
   if(!match||!match.aiTrainingEligible||!match.aiTrainingRecorded||match.botAdminTest)return '';
   const status=String(match.aiTrainingSyncStatus||'queued');
-  if(status==='synced')return 'AI TRAINING · SYNCED';
-  if(status==='rejected')return compact?'AI TRAINING · EVENT DROPPED':'AI TRAINING · INVALID EVENT DROPPED SAFELY';
-  if(compact)return 'AI TRAINING · QUEUED FOR SYNC';
-  return 'AI TRAINING · QUEUED ON THIS DEVICE · WILL SYNC ONLINE';
+  if(status==='synced')return 'AI MATCH DATA · SYNCED';
+  if(status==='rejected')return 'INVALID MATCH DATA DROPPED SAFELY';
+  if(compact)return 'AI MATCH DATA · QUEUED FOR SYNC';
+  return 'AI MATCH DATA · QUEUED ON THIS DEVICE · WILL SYNC ONLINE';
 }
 function recordAiTrainingSignal(match,key,amount=1){
   if(!match||!match.aiTrainingEligible||!AI_TRAINING_SIGNAL_KEYS.includes(String(key)))return false;
@@ -205,7 +205,7 @@ async function flushAiTrainingQueue(){
         if(reason==='duplicate_conflict'||reason.startsWith('invalid_')){
           aiTrainingSetEventStatus(entry.eventId,'rejected');
           saveAiTrainingQueue(aiTrainingQueue.filter(item=>item.eventId!==entry.eventId));aiTrainingRejectedCount++;
-          aiTrainingLastStatus='DROPPED INVALID TRAINING EVENT';continue;
+          aiTrainingLastStatus='DROPPED INVALID MATCH DATA';continue;
         }
         aiTrainingSetEventStatus(entry.eventId,'queued');aiTrainingLastStatus='QUEUED · SERVER RETRY';retryScheduled=scheduleAiTrainingRetry();break;
       }catch(e){aiTrainingSetEventStatus(entry.eventId,'queued');aiTrainingLastStatus='QUEUED · NETWORK RETRY';retryScheduled=scheduleAiTrainingRetry();break;}
@@ -244,6 +244,6 @@ function aiTrainingCompactNumber(value){
 }
 function aiTrainingAdminStatusText(){
   const cloud=aiTrainingSummaryRows.reduce((sum,row)=>sum+Math.max(0,Math.floor(+row.matches||0)),0),queued=aiTrainingQueueCount();
-  return 'TRAINING GAMES · CLOUD '+(aiTrainingSummaryState==='ready'?aiTrainingCompactNumber(cloud):String(aiTrainingSummaryState).toUpperCase())+
+  return 'MATCH EVIDENCE · CLOUD '+(aiTrainingSummaryState==='ready'?aiTrainingCompactNumber(cloud):String(aiTrainingSummaryState).toUpperCase())+
     ' · THIS DEVICE QUEUED '+queued+(aiTrainingLastSyncAt?' · LAST SYNC OK':'');
 }

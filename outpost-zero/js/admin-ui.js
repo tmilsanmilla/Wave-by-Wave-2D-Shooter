@@ -1790,7 +1790,7 @@ function drawAiLearning(){
     ctx.fillText(fitLine(model.name,modelW-(tiny?7:12)),cardX+(tiny?4:7),y+rowH*.38);
     ctx.fillStyle=live?'#a7c15e':'#65725d';ctx.font='700 '+(tiny?6:7)+'px ui-monospace,Consolas,monospace';
     const cloudGames=training&&typeof aiTrainingCompactNumber==='function'?aiTrainingCompactNumber(training.matches):'';
-    ctx.fillText(fitLine((live?'LIVE NOW':'ARCHIVED')+(cloudGames?' · '+cloudGames+' GAMES':''),modelW-(tiny?7:12)),cardX+(tiny?4:7),y+rowH*.70);
+    ctx.fillText(fitLine((live?'LIVE NOW':'ARCHIVED')+(cloudGames?' · MATCH DATA '+cloudGames:''),modelW-(tiny?7:12)),cardX+(tiny?4:7),y+rowH*.70);
     ctx.fillStyle=selected?'#d7efff':'#9ca58b';ctx.font=(tiny?'7':'8')+'px ui-monospace,Consolas,monospace';ctx.textBaseline='top';
     wrapTextClamped(model.improved,colX[1]+(tiny?4:7),y+rowH/2-(tiny?7:8),noteW-(tiny?8:14),tiny?8:10,2);ctx.textBaseline='middle';
 
@@ -1812,7 +1812,7 @@ function drawAiLearning(){
   ctx.textAlign='center';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:8)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(aiLearningNotice||'Tests never deploy a model.',cardW-12),W/2,noticeY+noticeH*.32);
   ctx.fillStyle='#7f876e';ctx.font=(tiny?'6':'7')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(typeof aiTrainingAdminStatusText==='function'?aiTrainingAdminStatusText():'TRAINING GAMES · CLOUD UNAVAILABLE',cardW-12),W/2,noticeY+noticeH*.55);
+  ctx.fillText(fitLine(typeof aiTrainingAdminStatusText==='function'?aiTrainingAdminStatusText():'MATCH EVIDENCE · CLOUD UNAVAILABLE',cardW-12),W/2,noticeY+noticeH*.55);
   ctx.fillText(fitLine('BRING BACK REQUIRES CONFIRMATION · CHANGES FUTURE MATCHES ONLY · PLAYER RANKS NEVER CHANGE',cardW-12),W/2,noticeY+noticeH*.79);
 
   const closeW=Math.min(220,cardW),closeX=W/2-closeW/2,close={id:'model_close',x:closeX,y:btnY,w:closeW,h:btnH,enabled:!aiLearningRestoreBusyId};aiLearningRects.push(close);
