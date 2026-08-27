@@ -19,28 +19,26 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
     font-size:9px;white-space:nowrap}
   #socialidentity .btn:hover{background:#bfa8ff;color:#101208}
   #socialidentity .btn:disabled{cursor:default;opacity:.45;background:transparent;color:#77727f}
-  #socialpartyjoinwrap{display:none;z-index:6;box-sizing:border-box;align-items:stretch;gap:5px}
-  #socialpartycode{min-width:0;flex:1;box-sizing:border-box;background:rgba(0,0,0,.72);border:1px solid #7fd8ff;
-    color:#dff5ff;font:700 14px ui-monospace,Consolas,monospace;padding:0 9px;text-transform:uppercase;
-    letter-spacing:2px;text-align:center;user-select:text;-webkit-user-select:text;border-radius:0}
-  #socialpartycode::placeholder{color:#718895;opacity:1;letter-spacing:.7px}
-  #socialpartycode:focus{outline:2px solid rgba(127,216,255,.34);outline-offset:1px;border-color:#bfefff}
-  #socialpartycode:disabled{cursor:not-allowed;opacity:.42}
-  #socialpartyjoin{flex:0 0 clamp(48px,18%,72px);height:100%;padding:3px 7px;border-color:#7fd8ff;color:#bfefff;
-    font-size:10px}
-  #socialpartyjoin:hover{background:#7fd8ff;color:#101208}
-  #socialpartyjoin:disabled{cursor:not-allowed;opacity:.42;background:rgba(0,0,0,.44);color:#60605d}
   #socialidentity.narrow{flex-wrap:wrap;align-content:center;padding:3px 5px;gap:3px 5px}
   #socialidentity.narrow #socialidentitytext{flex-basis:100%;text-align:center;font-size:8px}
   #socialidentity.narrow .btn{flex:1 1 calc(50% - 3px);height:19px;min-height:19px;padding:1px 4px;font-size:7px}
   #authwrap{inset:0;background:rgba(8,9,5,.86);display:none;align-items:center;justify-content:center;z-index:10}
   #authbox{background:#101208;border:1px solid #4a4634;padding:clamp(18px,5vw,28px) clamp(16px,5vw,26px);
-    width:min(320px,94vw);max-height:92vh;overflow:auto;box-sizing:border-box;text-align:center}
+    width:min(380px,94vw);max-height:92vh;overflow:auto;box-sizing:border-box;text-align:center}
   #authbox h2{color:#e8b658;font-size:20px;margin:0 0 6px}
-  #authbox p{color:#8a9268;font-size:11px;margin:0 0 18px;line-height:1.5}
+  #authbox p{color:#8a9268;font-size:11px;margin:0 0 14px;line-height:1.5}
+  #authsignin{margin:14px 0 12px;padding:16px;border:1px solid #4a4634;background:rgba(0,0,0,.18);text-align:left}
+  #authsignin h3{color:#e8b658;font-size:16px;margin:0 0 5px;text-align:center}
+  #authsignin .auth-private-note{text-align:center;margin-bottom:15px}
+  #authsignin .auth-account-note{color:#aab38a;font-size:10px;margin:2px 0 0;text-align:center}
+  .auth-label{display:block;color:#c4d48d;font:700 10px ui-monospace,Consolas,monospace;
+    letter-spacing:.08em;margin:0 0 5px}
   #authbox input{width:100%;box-sizing:border-box;background:rgba(0,0,0,.5);border:1px solid #4a4634;
     color:#cdd6b0;font:12px ui-monospace,Consolas,monospace;padding:9px;margin-bottom:10px}
+  #authbox input:focus{outline:2px solid rgba(232,182,88,.22);outline-offset:1px;border-color:#e8b658}
   #authbox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
+  #authsignin .btn{min-height:42px}
+  #authsignin.busy input,#authsignin.busy .btn{opacity:.55;cursor:wait}
   #authmsg{color:#a7c15e;font-size:11px;min-height:15px;margin-top:4px}
   #usernameclaimwrap{inset:0;background:rgba(5,6,4,.96);display:none;align-items:center;justify-content:center;z-index:100}
   #usernameclaimbox{background:#101208;border:1px solid #e8b658;padding:clamp(20px,6vw,30px);
@@ -95,6 +93,15 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
     box-shadow:0 0 46px rgba(232,182,88,.13)}
   #settingsbox h2{color:#e8b658;font-size:clamp(18px,4vw,22px);margin:0 0 5px}
   #settingsaccount{color:#aab38a;font-size:10px;margin:0 0 14px;line-height:1.45;overflow-wrap:anywhere}
+  #settingsintro{color:#8a9268;font-size:10px;line-height:1.5;margin:0 0 10px}
+  #settingshome{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 14px}
+  #settingshome[hidden],.settings-section[hidden],#settingsintro[hidden]{display:none!important}
+  .settings-choice{display:flex;min-height:82px;padding:13px 14px;flex-direction:column;align-items:flex-start;
+    justify-content:center;gap:6px;text-align:left;border-color:#6f684b;background:rgba(0,0,0,.24)}
+  .settings-choice span{color:#f0ddb0;font:700 14px ui-monospace,Consolas,monospace}
+  .settings-choice small{color:#8a9268;font:700 9px ui-monospace,Consolas,monospace;line-height:1.45}
+  .settings-choice:hover,.settings-choice:focus-visible{border-color:#e8b658;background:rgba(232,182,88,.12)}
+  .settings-choice:hover span,.settings-choice:focus-visible span{color:#ffe6ab}
   .settings-section{border:1px solid #4a4634;background:rgba(0,0,0,.24);padding:14px;margin:0 0 12px;text-align:left}
   .settings-section h3{color:#e8d9a8;font-size:13px;margin:0 0 5px}
   .settings-section p{color:#8a9268;font-size:10px;line-height:1.5;margin:0 0 10px}
@@ -103,15 +110,17 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
     user-select:text;-webkit-user-select:text;border-radius:0}
   .settings-section input:focus{outline:2px solid rgba(232,182,88,.24);outline-offset:1px;border-color:#e8b658}
   .settings-section input:disabled{opacity:.48;cursor:not-allowed}
-  .settings-section .btn{display:block;width:100%;min-height:38px}
-  .settings-section .btn:disabled{opacity:.46;cursor:not-allowed;background:rgba(255,255,255,.03);color:#77727f;border-color:#555}
+  .settings-section .btn{display:block;width:100%;min-height:44px}
+  .settings-section .btn:disabled,#settingshome .btn:disabled,#settingsactions .btn:disabled{
+    opacity:.46;cursor:not-allowed;background:rgba(255,255,255,.03);color:#77727f;border-color:#555}
   .settings-status{color:#a7c15e;font-size:10px;min-height:15px;margin-top:7px;line-height:1.45}
   .settings-status.error{color:#e0a8a0}
+  .settings-section-back{display:block;width:100%;min-height:44px;margin-top:9px;border-color:#6f684b;color:#b5b18f}
   #settingsactions{display:flex;gap:9px}
-  #settingsactions .btn{flex:1;min-height:40px}
+  #settingsactions .btn{flex:1;min-height:44px}
   #settingssignout{border-color:#d05548;color:#e0a8a0;background:rgba(208,85,72,.12)}
   #settingssignout:hover{background:#d05548;color:#101208}
-  #settingswrap.required #settingsclose{display:none}
+  #settingswrap.required #settingsclose,#settingswrap.required .settings-section-back{display:none}
   @media (max-width:480px),(max-height:600px){
     #accountmenuwrap{padding:max(58px,calc(50px + env(safe-area-inset-top))) 6px 6px}
     #accountmenuwrap.confirming{padding:6px}
@@ -124,10 +133,14 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
     #settingsbox{width:98vw;max-height:98vh;padding:12px}
     #settingsbox h2{font-size:17px}
     #settingsaccount{margin-bottom:8px;font-size:9px}
+    #settingsintro{font-size:9px;margin-bottom:7px}
+    #settingshome{grid-template-columns:1fr;gap:7px;margin-bottom:9px}
+    .settings-choice{min-height:52px;padding:8px 10px;gap:3px}
+    .settings-choice span{font-size:12px}.settings-choice small{font-size:8px}
     .settings-section{padding:10px;margin-bottom:8px}
     .settings-section p{font-size:9px;margin-bottom:7px}
-    .settings-section input{padding:8px;font-size:13px;margin-bottom:6px}
-    .settings-section .btn,#settingsactions .btn{min-height:34px;padding:7px}
+    .settings-section input{min-height:44px;padding:8px;font-size:13px;margin-bottom:6px}
+    .settings-section .btn,#settingsactions .btn{min-height:44px;padding:8px}
   }
   #repwrap{inset:0;background:rgba(8,9,5,.86);display:none;align-items:center;justify-content:center;z-index:60}
   #repbox{background:#101208;border:1px solid #4a4634;padding:26px;width:340px;text-align:center}
@@ -221,7 +234,7 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   .llr:hover .col{color:#ffe08a}
   @keyframes llrfall{ from{transform:translateY(-52%)} to{transform:translateY(0)} }
 
-.auth-help{margin-top:10px}
+.auth-help{margin-top:10px;text-align:center}
 #aforgot{color:#8a9268;font-size:11px;text-decoration:underline;cursor:pointer}
 #resetbox{display:none;margin-top:14px;border-top:1px solid #4a4634;padding-top:14px}
 #resetbox p{margin:0 0 10px}

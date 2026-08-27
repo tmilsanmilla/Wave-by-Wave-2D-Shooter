@@ -1,0 +1,2 @@
+[functions.outpost-zero-sign-in]
+verify_jwt = false

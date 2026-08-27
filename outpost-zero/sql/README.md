@@ -91,7 +91,12 @@ the new password; Supabase hashes and stores it in Auth. Do not create a
 password column, function, or trigger in `public`, and never paste a password
 into the SQL Editor.
 
-## Administration: temporary gifts and the private LOG
+## Administration
+
+Administration has two independent migrations. Run the file for the feature
+you are deploying; Administration `02` does **not** require Administration `01`.
+
+### Temporary gifts and the private LOG
 
 Run this after the project's existing administration tables/RPCs are installed:
 
@@ -104,7 +109,7 @@ creator/main LOG. It requires the already-live `admins`, `profiles`, `scores`,
 does not alter permanent ownership, and is safe to run again. A rerun preserves
 all temporary grants, request/appeal rows, and append-only audit history.
 
-What the Administration file does, concretely:
+What Administration `01` does, concretely:
 
 - Creates a server-owned temporary-grant table for the nine `GEM_SHOP` weapon
   keys. Creator/main admins choose 5 minutes through 365 days. Expiry is based
@@ -140,6 +145,58 @@ Deploy the matching game JavaScript at the same time as this SQL. The migration
 intentionally revokes the old direct edit/request/appeal paths so an old tab
 cannot bypass the audit. After running it, sign out/in or hard-refresh before
 testing creator/main controls.
+
+### Secure Home + Inbox updates
+
+For creator/main updates to appear on both Home and in every player's Inbox,
+paste and run this entire file in the Supabase SQL Editor:
+
+1. `administration/02-secure-updates.sql`
+
+For this update, add/run Administration `02`; do not replace a previous SQL
+file and do not rerun Social `01` through `05`. Administration `02` needs only
+the already-live `banners` and `admins` tables plus Supabase Auth. It is safe to
+run even if Administration `01` has never been run. If Supabase reports that
+`banners` or `admins` is missing, install the game's original administration
+schema first, then rerun this whole file.
+
+What Administration `02` does, concretely:
+
+- Keeps one approved `banners` row as the canonical update. The same row is
+  shown on Home and in Inbox, so it does not copy one message into every user
+  account and cannot partially fan out.
+- Makes creator/main posts live immediately. Co-admin posts remain pending and
+  invisible to players until a creator or main admin approves them.
+- Derives the actor and role on the database server from the signed-in Auth
+  account and `admins`; the browser cannot claim a role, author email, approval
+  state, or timestamp. Stored authors are non-email labels such as `CREATOR` or
+  `MAIN ADMIN`, and legacy email authors are replaced with safe labels.
+- Hardens the existing `admins` table that supplies those roles: it removes old
+  policies and direct writes, hides the roster from ordinary players, lets a
+  co-admin see only their own row, and exposes server-authorized list/add,
+  promote, demote, and remove RPCs. The fixed creator can manage main/co admins;
+  a main admin can add/manage co-admins but cannot alter the creator or another
+  main admin. The current UI intentionally has no Demote button; the
+  creator-only demotion RPC keeps that future action inside the same boundary.
+  Raw admin rows are not published through Realtime; the client refreshes the
+  narrow roster RPC after authentication, when opening Admin tools, and on a
+  three-minute safety poll. A stale tab may briefly show an obsolete button,
+  but every action rereads the server role and fails immediately after removal.
+- Removes old banner policies and direct browser writes, then exposes narrow
+  post, approve, reject, delete, and bounded-list RPCs. Approved rows remain
+  RLS-readable for the public Home feed and Realtime; pending rows are visible
+  only to creator/main reviewers.
+- Lists approved and pending updates independently. Even if there are ten or
+  more newer drafts, they cannot consume the public feed limit and hide a live
+  update.
+
+Deploy the matching JavaScript and run Administration `02` together because the
+migration intentionally closes the old direct `admins` and `banners` write
+paths. Then hard-refresh the game. Test once as a normal player (no admin roster
+and only approved updates), once as a co-admin (only their own role row and a
+new post says it is awaiting approval), and once as creator/main (the permitted
+roster actions work; approve the draft and confirm the same update appears on
+Home and in Inbox).
 
 ## AI bot ladder
 

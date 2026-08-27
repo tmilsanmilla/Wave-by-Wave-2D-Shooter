@@ -1819,155 +1819,229 @@ function drawModes(){
 }
 function drawSocialButton(id,label,x,y,w,h,col,enabled=true,extra={}){
   const hot=enabled&&mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
-  const r=Object.assign({id,x,y,w,h,enabled},extra); socialRects.push(r);
-  ctx.fillStyle=enabled?(hot?col:'rgba(0,0,0,0.44)'):'rgba(34,34,36,0.72)'; ctx.fillRect(x,y,w,h);
+  const active=!!extra.active, r=Object.assign({id,x,y,w,h,enabled},extra); socialRects.push(r);
+  ctx.fillStyle=enabled?(hot||active?col:'rgba(0,0,0,0.44)'):'rgba(34,34,36,0.72)'; ctx.fillRect(x,y,w,h);
   ctx.strokeStyle=enabled?col:'#454548'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,w,h);
-  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=enabled?(hot?'#101208':'#e8d9a8'):'#60605d';
+  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=enabled?(hot||active?'#101208':'#e8d9a8'):'#60605d';
   ctx.font='700 '+(h<27?7:w<100?8:h<38?9:11)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(label,w-7),x+w/2,y+h/2); return r;
 }
 function drawSocial(){
   selBg(); socialRects=[];
-  const tiny=H<390, compact=H<600;
-  const margin=tiny?7:compact?10:16, titleY=tiny?3:compact?7:12, titleFs=tiny?20:compact?25:34;
-  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle='#bfa8ff'; ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
+  const tiny=H<390, short=H<430, compact=H<600;
+  const activeSocialView=typeof socialView==='string'?socialView:'friends';
+  const friendPageState=typeof socialFriendPages==='object'&&socialFriendPages?socialFriendPages:{incoming:0,outgoing:0,current:0};
+  const margin=tiny?7:compact?10:16, gap=tiny?4:compact?8:14;
+  const titleY=tiny?2:compact?7:12, titleFs=tiny?18:compact?25:34;
+  ctx.textAlign='center';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
   ctx.fillText('SOCIAL',W/2,titleY);
   const subY=titleY+titleFs+(tiny?0:3);
-  ctx.fillStyle='#8a9268'; ctx.font='700 '+(tiny?6:compact?8:10)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(W<430?'PARTIES · NEW · BETA · TESTING':'FRIENDS + MESSAGES NEED SIGN-IN · PARTIES: NEW · BETA · BEING TESTED',W-20),W/2,subY);
-  const statusY=subY+(tiny?9:compact?13:17);
+  if(!tiny){
+    ctx.fillStyle='#8a9268';ctx.font='700 '+(compact?8:10)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(W<430?'FRIENDS · PRIVATE INBOX · PARTY':'FRIENDS + PRIVATE INBOX NEED SIGN-IN · PARTIES: NEW · BETA',W-20),W/2,subY);
+  }
+  const statusY=subY+(tiny?7:compact?13:17);
   ctx.fillStyle=/NOT ENABLED|COULD NOT|OFFLINE/.test(socialStatus)?'#d05548':'#7f876e';
   ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(socialStatus||(authUser?'OPEN SOCIAL TO REFRESH':'SIGN IN FOR FRIENDS + PRIVATE MESSAGES'),W-20),W/2,statusY);
+  ctx.fillText(fitLine(socialStatus||(authUser?'OPEN SOCIAL TO REFRESH':'SIGN IN FOR FRIENDS + PRIVATE INBOX'),W-20),W/2,statusY);
 
-  const backH=tiny?27:compact?31:38, backY=H-backH-margin;
-  const gap=tiny?4:compact?7:11, contentBottom=backY-(tiny?5:compact?8:12);
-  const contentW=Math.min(1120,W-margin*2), contentX=(W-contentW)/2;
-  const identityY=statusY+(tiny?9:compact?12:15), identityH=authUser?(W<500?(tiny?42:48):(tiny?23:compact?27:32)):0;
-  if(typeof socialLayoutIdentity==='function') socialLayoutIdentity({x:contentX,y:identityY,w:contentW,h:identityH});
+  // On very short landscape screens HOME lives in the unused title corner;
+  // reclaiming the old bottom footer gives every friend bucket an actionable
+  // row without shrinking the enlarged Party controls.
+  const backH=tiny?28:short?32:44,backY=short?2:H-backH-margin;
+  const contentBottom=short?H-margin:backY-(compact?8:12);
+  const contentW=Math.min(1120,W-margin*2),contentX=(W-contentW)/2;
+  const identityY=statusY+(tiny?8:compact?12:15);
+  const identityH=authUser&&!short?(W<500?(compact?32:48):(compact?27:32)):0;
+  if(typeof socialLayoutIdentity==='function')socialLayoutIdentity(identityH?{x:contentX,y:identityY,w:contentW,h:identityH}:null);
   const contentTop=(identityH?identityY+identityH:statusY)+(tiny?5:compact?8:12);
-  const partyH=tiny?55:compact?64:78, partyY=contentBottom-partyH;
-  const panelGap=gap, panelW=(contentW-panelGap)/2, panelH=Math.max(56,partyY-panelGap-contentTop);
-  const panels=['friends','messages'].map((id,i)=>({id,x:contentX+i*(panelW+panelGap),y:contentTop,w:panelW,h:panelH}));
+  const availableH=Math.max(150,contentBottom-contentTop),navH=tiny?36:compact?44:48;
+  const desiredPartyH=tiny?102:short?116:compact?(H<520?122:144):176;
+  const minPartyH=tiny?96:short?108:compact?116:150;
+  const minViewBody=tiny?62:short?66:compact?104:166;
+  const maxPartyH=availableH-navH-gap*2-minViewBody;
+  const partyH=Math.max(minPartyH,Math.min(desiredPartyH,maxPartyH));
+  const partyY=contentBottom-partyH,pageBottom=partyY-gap;
+
+  const navGap=tiny?5:compact?8:12,navW=(contentW-navGap)/2;
+  drawSocialButton('social_view_friends','FRIENDS',contentX,contentTop,navW,navH,'#7fd8ff',true,{active:activeSocialView!=='inbox'});
+  drawSocialButton('social_view_inbox','PRIVATE INBOX',contentX+navW+navGap,contentTop,navW,navH,'#a7c15e',true,{active:activeSocialView==='inbox'});
+  const viewY=contentTop+navH+gap,view={x:contentX,y:viewY,w:contentW,h:Math.max(24,pageBottom-viewY)};
+
   const panelFrame=(p,title,col,sub)=>{
-    ctx.fillStyle='rgba(10,10,12,0.76)'; ctx.fillRect(p.x,p.y,p.w,p.h); ctx.strokeStyle=col; ctx.lineWidth=1.3; ctx.strokeRect(p.x+0.5,p.y+0.5,p.w,p.h);
-    ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=col; ctx.font='700 '+(tiny?9:compact?11:14)+'px ui-monospace,Consolas,monospace';
-    ctx.fillText(title,p.x+8,p.y+(tiny?5:8));
-    const subNeeds=title==='PRIVATE MESSAGES'?285:210;
-    if(sub&&p.w>=subNeeds){ ctx.textAlign='right'; ctx.fillStyle='#686b61'; ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(sub,p.w*0.46),p.x+p.w-8,p.y+(tiny?7:10)); }
+    ctx.fillStyle='rgba(10,10,12,0.76)';ctx.fillRect(p.x,p.y,p.w,p.h);ctx.strokeStyle=col;ctx.lineWidth=1.3;ctx.strokeRect(p.x+0.5,p.y+0.5,p.w,p.h);
+    ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=col;ctx.font='700 '+(tiny?9:compact?11:14)+'px ui-monospace,Consolas,monospace';ctx.fillText(title,p.x+8,p.y+(tiny?5:8));
+    if(sub&&p.w>=250){ctx.textAlign='right';ctx.fillStyle='#686b61';ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(sub,p.w*.46),p.x+p.w-8,p.y+(tiny?7:10));}
   };
   const panelMessage=(p,text,y,col='#777f68')=>{
-    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=col; ctx.font='700 '+(tiny?6:compact?8:9)+'px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(text,p.w-16),p.x+p.w/2,y);
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=col;ctx.font='700 '+(tiny?6:compact?8:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(text,p.w-16),p.x+p.w/2,y);
   };
 
-  // FRIENDS
-  {
-    const p=panels[0], col='#7fd8ff', footerH=tiny?25:compact?29:34, footerY=p.y+p.h-footerH-5, headY=p.y+(tiny?20:compact?25:32);
-    panelFrame(p,'FRIENDS',col,authUser&&socialProfile?'@'+socialProfile.handle:'SIGNED-IN ONLY');
-    if(!authUser){
-      panelMessage(p,'SIGN IN TO ADD FRIENDS',headY+(footerY-headY)/2,'#8a9268');
-      drawSocialButton('signin','SIGN IN',p.x+6,footerY,p.w-12,footerH,col,true);
-    } else if(socialLoading&&socialBackend.profiles===null){
-      panelMessage(p,'LOADING FRIENDS...',headY+(footerY-headY)/2,'#8a9268');
-      drawSocialButton('social_retry','REFRESH',p.x+6,footerY,p.w-12,footerH,col,false);
-    } else if(socialBackend.profiles===false||socialBackend.friends===false){
-      panelMessage(p,'RUN SOCIAL SQL SETUP FILES',headY+(footerY-headY)/2,'#d05548');
-      drawSocialButton('social_retry','RETRY SETUP CHECK',p.x+6,footerY,p.w-12,footerH,col,true);
-    } else {
-      const visible=socialFriends.filter(r=>r.status!=='blocked'||String(r.blocked_by)===String(authUser.id));
-      const rowH=tiny?24:compact?30:37, maxRows=Math.max(1,Math.floor((footerY-headY-2)/rowH));
-      const pages=Math.max(1,Math.ceil(visible.length/maxRows)); socialFriendPage=clamp(socialFriendPage,0,pages-1);
-      const pageRows=visible.slice(socialFriendPage*maxRows,(socialFriendPage+1)*maxRows);
-      if(!visible.length) panelMessage(p,'NO FRIENDS YET · ADD BY USERNAME',headY+(footerY-headY)/2);
-      for(let i=0;i<pageRows.length;i++){
-        const f=pageRows[i], other=socialFriendOther(f), person=socialPerson(other), y=headY+i*rowH;
-        ctx.fillStyle=i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)'; ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
-        ctx.textAlign='left'; ctx.textBaseline='middle'; ctx.fillStyle=f.status==='accepted'?'#cfe8ff':f.status==='blocked'?'#d05548':'#e8b658';
-        ctx.font='700 '+(tiny?6:compact?8:9)+'px ui-monospace,Consolas,monospace';
-        const status=f.status==='accepted'?'FRIEND':f.status==='blocked'?'BLOCKED':String(f.addressee_id)===String(authUser.id)?'WANTS TO ADD YOU':'REQUEST SENT';
-        const actions=f.status==='accepted'?2:(f.status==='pending'&&String(f.addressee_id)===String(authUser.id)?2:1);
-        const aw=Math.max(34,Math.min(compact?58:68,(p.w*0.46-(actions-1)*3)/actions)), total=aw*actions+3*(actions-1), ax=p.x+p.w-total-7;
-        ctx.fillText(fitLine('@'+person.handle+'  ·  '+status,Math.max(28,ax-p.x-13)),p.x+9,y+(rowH-2)/2);
-        if(f.status==='accepted'){
-          drawSocialButton('friend_message','MSG',ax,y+3,aw,rowH-8,col,true,{userId:other,handle:person.handle});
-          drawSocialButton('friend_remove','REMOVE',ax+aw+3,y+3,aw,rowH-8,'#d05548',true,{rowId:f.id});
-        } else if(f.status==='pending'&&String(f.addressee_id)===String(authUser.id)){
-          drawSocialButton('friend_accept','ACCEPT',ax,y+3,aw,rowH-8,'#a7c15e',true,{rowId:f.id});
-          drawSocialButton('friend_block','BLOCK',ax+aw+3,y+3,aw,rowH-8,'#d05548',true,{rowId:f.id});
-        } else drawSocialButton('friend_remove',f.status==='blocked'?'UNBLOCK':'CANCEL',ax,y+3,aw,rowH-8,'#d05548',true,{rowId:f.id});
+  if(activeSocialView!=='inbox'){
+    const owner=String(authUser&&authUser.id||'');
+    const buckets={
+      incoming:authUser?socialFriends.filter(r=>r.status==='pending'&&String(r.addressee_id)===owner):[],
+      outgoing:authUser?socialFriends.filter(r=>r.status==='pending'&&String(r.requester_id)===owner):[],
+      current:authUser?socialFriends.filter(r=>r.status==='accepted'||(r.status==='blocked'&&String(r.blocked_by)===owner)):[]
+    };
+    const topGap=gap,topW=(view.w-topGap)/2,topH=Math.max(20,Math.floor((view.h-gap)*(compact?.40:.48)));
+    const panels={
+      incoming:{x:view.x,y:view.y,w:topW,h:topH},
+      outgoing:{x:view.x+topW+topGap,y:view.y,w:topW,h:topH},
+      current:{x:view.x,y:view.y+topH+gap,w:view.w,h:Math.max(20,view.h-topH-gap)}
+    };
+    const labels={incoming:'INCOMING',outgoing:'OUTGOING',current:'CURRENT'};
+    const drawBucket=(key,col)=>{
+      const p=panels[key],rows=buckets[key],headerH=compact?18:26;
+      ctx.fillStyle='rgba(10,10,12,0.76)';ctx.fillRect(p.x,p.y,p.w,p.h);ctx.strokeStyle=col;ctx.lineWidth=1.2;ctx.strokeRect(p.x+0.5,p.y+0.5,p.w,p.h);
+      ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=col;ctx.font='700 '+(tiny?7:compact?9:12)+'px ui-monospace,Consolas,monospace';ctx.fillText(labels[key],p.x+7,p.y+(tiny?3:6));
+      ctx.textAlign='right';ctx.fillStyle='#8a9268';ctx.font='700 '+(tiny?6:compact?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText(String(rows.length),p.x+p.w-7,p.y+(tiny?3:6));
+      const room=p.h-headerH-4,ready=!!(authUser&&socialBackend.profiles===true&&socialBackend.friends===true);
+      if(!authUser){panelMessage(p,key==='current'?'SIGN IN TO USE FRIENDS':'NONE',p.y+headerH+Math.max(0,room)/2,'#8a9268');return;}
+      if(socialBackend.profiles===false||socialBackend.friends===false){
+        const retryH=key==='current'&&room>=22?Math.min(compact?36:44,room-2):0;
+        panelMessage(p,'SETUP REQUIRED',p.y+headerH+Math.max(0,room-retryH)/2,'#d05548');
+        if(retryH>=16)drawSocialButton('social_retry','RETRY SETUP CHECK',p.x+6,p.y+p.h-retryH-4,p.w-12,retryH,'#d05548',true,{section:key});
+        return;
       }
-      const bg=4, count=pages>1?4:3, bw=(p.w-12-bg*(count-1))/count;
-      drawSocialButton('friend_add','ADD',p.x+6,footerY,bw,footerH,col,true);
-      drawSocialButton('friend_handle','USERNAME',p.x+6+bw+bg,footerY,bw,footerH,'#bfa8ff',true);
-      if(pages>1){
-        drawSocialButton('friend_prev','‹ '+(socialFriendPage+1)+'/'+pages,p.x+6+(bw+bg)*2,footerY,bw,footerH,'#8a9268',socialFriendPage>0);
-        drawSocialButton('friend_next',(socialFriendPage+1)+'/'+pages+' ›',p.x+6+(bw+bg)*3,footerY,bw,footerH,'#8a9268',socialFriendPage<pages-1);
-      } else drawSocialButton('social_retry','REFRESH',p.x+6+(bw+bg)*2,footerY,bw,footerH,'#8a9268',true);
-    }
+      if(socialLoading&&socialBackend.profiles===null){panelMessage(p,'LOADING...',p.y+headerH+Math.max(0,room)/2,'#8a9268');return;}
+      if(room<18)return;
+      const footerH=room>=96?(compact?36:44):0,listH=room-footerH-(footerH?4:0);
+      const minimumRowH=compact?27:44,maxRows=listH>=minimumRowH?Math.max(1,Math.floor(listH/minimumRowH)):0;
+      const rowH=maxRows?Math.min(compact?36:52,listH/maxRows):0;
+      const pages=Math.max(1,Math.ceil(rows.length/Math.max(1,maxRows)));
+      const page=clamp(Number(friendPageState[key])||0,0,pages-1);friendPageState[key]=page;
+      const pageRows=maxRows?rows.slice(page*maxRows,(page+1)*maxRows):[];
+      if(!rows.length)panelMessage(p,key==='incoming'?'NO REQUESTS':key==='outgoing'?'NONE SENT':'NO CURRENT FRIENDS',p.y+headerH+Math.max(8,listH)/2);
+      for(let i=0;i<pageRows.length;i++){
+        const f=pageRows[i],other=socialFriendOther(f),person=socialPerson(other),y=p.y+headerH+i*rowH,blocked=f.status==='blocked';
+        ctx.fillStyle=i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+        const status=blocked?'BLOCKED':key==='incoming'?'WANTS TO ADD YOU':key==='outgoing'?'REQUEST SENT':'FRIEND';
+        const two=key==='incoming'||(key==='current'&&!blocked),actionGap=tiny?2:4,actionH=Math.max(16,rowH-3);
+        const actionArea=Math.min(p.w*(key==='current'?.46:.56),compact?130:170),aw=two?(actionArea-actionGap)/2:actionArea;
+        const total=two?aw*2+actionGap:aw,ax=p.x+p.w-total-7;
+        ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=blocked?'#d05548':key==='current'?'#cfe8ff':'#e8b658';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine('@'+person.handle+' · '+status,Math.max(24,ax-p.x-13)),p.x+9,y+(rowH-2)/2);
+        if(key==='incoming'){
+          drawSocialButton('friend_accept','ACCEPT',ax,y+1,aw,actionH,'#a7c15e',ready,{rowId:f.id});
+          drawSocialButton('friend_block','BLOCK',ax+aw+actionGap,y+1,aw,actionH,'#d05548',ready,{rowId:f.id});
+        }else if(key==='outgoing'||blocked){
+          drawSocialButton('friend_remove',blocked?'UNBLOCK':'CANCEL',ax,y+1,aw,actionH,'#d05548',ready,{rowId:f.id});
+        }else{
+          drawSocialButton('friend_message','MESSAGE',ax,y+1,aw,actionH,col,ready,{userId:other,handle:person.handle});
+          drawSocialButton('friend_remove','REMOVE',ax+aw+actionGap,y+1,aw,actionH,'#d05548',ready,{rowId:f.id});
+        }
+      }
+      if(!footerH&&(pages>1||key==='current')){
+        const ph=Math.max(16,headerH-2),pw=Math.max(22,Math.min(38,p.w*.13)),py=p.y+1;
+        let right=p.x+p.w-2;
+        if(pages>1){
+          drawSocialButton('friend_bucket_next','›',right-pw,py,pw,ph,'#8a9268',page<pages-1,{section:key});right-=pw+2;
+          drawSocialButton('friend_bucket_prev','‹',right-pw,py,pw,ph,'#8a9268',page>0,{section:key});right-=pw+4;
+        }
+        if(key==='current'){
+          const addW=Math.max(72,Math.min(108,p.w*.32));
+          drawSocialButton('friend_add','ADD FRIEND',right-addW,py,addW,ph,'#7fd8ff',ready,{section:key});
+        }
+      }
+      if(footerH){
+        const fy=p.y+p.h-footerH-4,controls=[];
+        if(key==='current')controls.push({id:'friend_add',label:'ADD FRIEND',enabled:ready,col:'#7fd8ff'});
+        if(pages>1){
+          controls.push({id:'friend_bucket_prev',label:'‹ '+(page+1)+'/'+pages,enabled:page>0,col:'#8a9268'});
+          controls.push({id:'friend_bucket_next',label:(page+1)+'/'+pages+' ›',enabled:page<pages-1,col:'#8a9268'});
+        }else if(key==='current')controls.push({id:'social_retry',label:'REFRESH',enabled:true,col:'#8a9268'});
+        if(controls.length){
+          const cg=compact?4:7,cw=(p.w-12-cg*(controls.length-1))/controls.length;
+          controls.forEach((item,i)=>drawSocialButton(item.id,item.label,p.x+6+i*(cw+cg),fy,cw,footerH,item.col,item.enabled,{section:key}));
+        }
+      }
+    };
+    drawBucket('incoming','#e8b658');drawBucket('outgoing','#bfa8ff');drawBucket('current','#7fd8ff');
   }
 
-  // PRIVATE MESSAGES
-  {
-    const p=panels[1], col='#a7c15e', footerH=tiny?25:compact?29:34, footerY=p.y+p.h-footerH-5, headY=p.y+(tiny?20:compact?25:32);
-    panelFrame(p,'PRIVATE MESSAGES',col,'FRIENDS ONLY · MAX 500');
-    if(!authUser){
-      panelMessage(p,'SIGN IN TO READ PRIVATE MESSAGES',headY+(footerY-headY)/2,'#8a9268');
-      drawSocialButton('signin','SIGN IN',p.x+6,footerY,p.w-12,footerH,col,true);
-    } else if(socialLoading&&socialBackend.profiles===null){
-      panelMessage(p,'LOADING PRIVATE MESSAGES...',headY+(footerY-headY)/2,'#8a9268');
-      drawSocialButton('social_retry','REFRESH',p.x+6,footerY,p.w-12,footerH,col,false);
-    } else if(socialBackend.profiles===false||socialBackend.messages===false||socialBackend.friends===false){
-      panelMessage(p,'SECURE MESSAGE STORAGE NEEDS SETUP',headY+(footerY-headY)/2,'#d05548');
-      drawSocialButton('social_retry','RETRY SETUP CHECK',p.x+6,footerY,p.w-12,footerH,col,true);
-    } else {
-      const rowH=tiny?24:compact?30:38, maxRows=Math.max(1,Math.floor((footerY-headY-2)/rowH));
-      const pages=Math.max(1,Math.ceil(socialMessages.length/maxRows)); socialMessagePage=clamp(socialMessagePage,0,pages-1);
-      const pageRows=socialMessages.slice(socialMessagePage*maxRows,(socialMessagePage+1)*maxRows);
-      if(!socialMessages.length) panelMessage(p,'NO PRIVATE MESSAGES YET',headY+(footerY-headY)/2);
-      for(let i=0;i<pageRows.length;i++){
-        const m=pageRows[i], incoming=String(m.recipient_id)===String(authUser.id), other=incoming?m.sender_id:m.recipient_id, person=socialPerson(other), y=headY+i*rowH;
-        const canReply=socialAcceptedFriend(other),inviteEnvelope=typeof socialCpuGameInviteEnvelope==='function'?socialCpuGameInviteEnvelope(m.body):null,
-          gameInvite=incoming&&canReply&&typeof socialCpuGameInvite==='function'?socialCpuGameInvite(m.body):null,
-          joinW=gameInvite?Math.min(compact?58:74,Math.max(42,p.w*.25)):0,bodyW=p.w-18-(joinW?joinW+6:0);
-        ctx.fillStyle=incoming&&!m.read_at?'rgba(167,193,94,0.14)':i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)'; ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
-        ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=incoming?'#a7c15e':'#7fd8ff'; ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
-        ctx.fillText(fitLine((incoming?'FROM ':'TO ')+'@'+person.handle,bodyW),p.x+9,y+3);
-        const inviteLabel=inviteEnvelope?(incoming?(gameInvite?(W<430?'NEW/BETA · STARTS':'NEW · BETA · CPU 2v2 GAME INVITE · STARTS WHEN ACCEPTED'):'NEW · BETA · CPU 2v2 INVITE · EXPIRED'):'NEW · BETA · CPU 2v2 INVITE SENT'):m.body;
-        ctx.fillStyle='#cdd6b0'; ctx.font=(gameInvite&&W<430?6:tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(inviteLabel,bodyW),p.x+9,y+(tiny?13:compact?16:20));
-        if(gameInvite)drawSocialButton('cpu_invite_play','START',p.x+p.w-joinW-7,y+3,joinW,rowH-8,'#bfa8ff',true,{invite:{...gameInvite,senderId:String(other)}});
-        else if(canReply&&!inviteEnvelope)socialRects.push({id:'dm_reply',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,userId:String(other),handle:person.handle});
+  if(activeSocialView==='inbox'){
+    const p=view,col='#a7c15e',footerH=tiny?30:compact?40:44,footerY=p.y+p.h-footerH-6,headY=p.y+(tiny?21:compact?28:34);
+    panelFrame(p,'PRIVATE INBOX',col,'DIRECT + OFFICIAL');
+    const officialMeta=value=>{
+      const stamp=Date.parse(value||'');if(!Number.isFinite(stamp))return 'OUTPOST ZERO · OFFICIAL';
+      const date=new Date(stamp);try{return 'POSTED '+date.toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(error){return 'POSTED '+date.toISOString().slice(0,16).replace('T',' ')+' UTC';}
+    };
+    const official=(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.message||'').trim())
+      .map(row=>({kind:'official',id:row.id,body:String(row.message||''),created_at:row.created_at||'',meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)}));
+    const direct=(authUser&&Array.isArray(socialMessages)?socialMessages:[]).map(row=>({kind:'direct',row,created_at:row&&row.created_at||'',sortAt:Date.parse(row&&row.created_at||'')||(+row.id||0)}));
+    const inboxRows=official.concat(direct).sort((a,b)=>b.sortAt-a.sortAt);
+    const dmReady=!!(authUser&&socialBackend.profiles===true&&socialBackend.messages===true&&socialBackend.friends===true);
+    const dmMissing=!!(authUser&&(socialBackend.profiles===false||socialBackend.messages===false||socialBackend.friends===false));
+    const dmLoading=!!(authUser&&socialLoading&&socialBackend.profiles===null);
+    const desiredRowH=tiny?24:compact?34:44,listSpace=Math.max(0,footerY-headY-2);
+    const maxRows=listSpace>=12?Math.max(1,Math.floor(listSpace/desiredRowH)):0;
+    const rowH=maxRows?Math.min(desiredRowH,listSpace/maxRows):0;
+    const pages=Math.max(1,Math.ceil(inboxRows.length/Math.max(1,maxRows)));socialMessagePage=clamp(socialMessagePage,0,pages-1);
+    const pageRows=maxRows?inboxRows.slice(socialMessagePage*maxRows,(socialMessagePage+1)*maxRows):[];
+    if(!inboxRows.length){
+      const empty=!authUser?'SIGN IN FOR DIRECT MESSAGES · NO OFFICIAL UPDATES':dmMissing?'SECURE MESSAGE STORAGE NEEDS SETUP':dmLoading?'LOADING PRIVATE INBOX...':'YOUR PRIVATE INBOX IS EMPTY';
+      panelMessage(p,empty,headY+(footerY-headY)/2,dmMissing?'#d05548':'#8a9268');
+    }else for(let i=0;i<pageRows.length;i++){
+      const item=pageRows[i],y=headY+i*rowH;
+      if(item.kind==='official'){
+        ctx.fillStyle=i%2?'rgba(232,182,88,0.08)':'rgba(232,182,88,0.13)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+        ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText('OFFICIAL UPDATE',p.x+9,y+3);
+        ctx.textAlign='right';ctx.fillStyle='#a7c15e';ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(tiny?'OPEN ›':'OPEN TO READ ›',p.x+p.w-9,y+3);
+        ctx.textAlign='left';ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(item.body,p.w-18),p.x+9,y+(tiny?13:compact?17:22));
+        socialRects.push({id:'official_update_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,body:item.body,meta:item.meta,updateId:item.id});continue;
       }
-      const bg=5, count=pages>1?3:2, bw=(p.w-12-bg*(count-1))/count;
-      drawSocialButton('dm_new','NEW MESSAGE',p.x+6,footerY,bw,footerH,col,true);
-      if(pages>1){
-        drawSocialButton('dm_prev','‹ '+(socialMessagePage+1)+'/'+pages,p.x+6+bw+bg,footerY,bw,footerH,'#8a9268',socialMessagePage>0);
-        drawSocialButton('dm_next',(socialMessagePage+1)+'/'+pages+' ›',p.x+6+(bw+bg)*2,footerY,bw,footerH,'#8a9268',socialMessagePage<pages-1);
-      } else drawSocialButton('social_retry','REFRESH',p.x+6+bw+bg,footerY,bw,footerH,'#8a9268',true);
+      const m=item.row,incoming=String(m.recipient_id)===String(authUser.id),other=incoming?m.sender_id:m.recipient_id,person=socialPerson(other),canReply=socialAcceptedFriend(other);
+      const cpuEnvelope=typeof socialCpuGameInviteEnvelope==='function'?socialCpuGameInviteEnvelope(m.body):null;
+      const cpuInvite=incoming&&canReply&&typeof socialCpuGameInvite==='function'?socialCpuGameInvite(m.body):null;
+      const partyEnvelope=typeof socialPartyInviteEnvelope==='function'?socialPartyInviteEnvelope(m.body):null;
+      const friendInvite=incoming&&canReply&&typeof socialPartyInvite==='function'?socialPartyInvite(m.body):null;
+      const actionable=cpuInvite||friendInvite,joinW=actionable?Math.min(compact?70:92,Math.max(48,p.w*.25)):0,bodyW=p.w-18-(joinW?joinW+6:0);
+      ctx.fillStyle=incoming&&!m.read_at?'rgba(167,193,94,0.14)':i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+      ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=incoming?'#a7c15e':'#7fd8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((incoming?'FROM ':'TO ')+'@'+person.handle,bodyW),p.x+9,y+3);
+      const label=partyEnvelope?(incoming?(friendInvite?'NEW · BETA · PARTY INVITE · PRESS JOIN':'NEW · BETA · PARTY INVITE · EXPIRED'):'NEW · BETA · PARTY INVITE SENT'):
+        cpuEnvelope?(incoming?(cpuInvite?(W<430?'NEW/BETA · STARTS':'NEW · BETA · CPU 2v2 GAME INVITE · STARTS WHEN ACCEPTED'):'NEW · BETA · CPU 2v2 INVITE · EXPIRED'):'NEW · BETA · CPU 2v2 INVITE SENT'):m.body;
+      ctx.fillStyle='#cdd6b0';ctx.font=(actionable&&W<430?6:tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(label,bodyW),p.x+9,y+(tiny?13:compact?17:22));
+      if(cpuInvite)drawSocialButton('cpu_invite_play','START',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{invite:{...cpuInvite,senderId:String(other)}});
+      else if(friendInvite)drawSocialButton('party_invite_join','JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{invite:{...friendInvite,senderId:String(other)}});
+      else if(canReply&&!cpuEnvelope&&!partyEnvelope)socialRects.push({id:'dm_reply',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,userId:String(other),handle:person.handle});
     }
+    const footerGap=compact?5:8,count=pages>1?3:2,bw=(p.w-12-footerGap*(count-1))/count;
+    if(!authUser)drawSocialButton('signin','SIGN IN',p.x+6,footerY,bw,footerH,col,true);
+    else if(dmReady)drawSocialButton('dm_new','NEW MESSAGE',p.x+6,footerY,bw,footerH,col,true);
+    else drawSocialButton('social_retry',dmMissing?'RETRY MESSAGES':'LOADING MESSAGES',p.x+6,footerY,bw,footerH,col,dmMissing);
+    if(pages>1){
+      drawSocialButton('dm_prev','‹ '+(socialMessagePage+1)+'/'+pages,p.x+6+bw+footerGap,footerY,bw,footerH,'#8a9268',socialMessagePage>0);
+      drawSocialButton('dm_next',(socialMessagePage+1)+'/'+pages+' ›',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',socialMessagePage<pages-1);
+    }else drawSocialButton('inbox_refresh','REFRESH',p.x+6+bw+footerGap,footerY,bw,footerH,'#8a9268',true);
   }
 
-  // PARTY is a compact bottom action row. The real DOM field keeps keyboard,
-  // paste, accessibility, and the mobile software keyboard working correctly.
   {
-    const p={x:contentX,y:partyY,w:contentW,h:partyH}, col='#bfa8ff', footerH=tiny?25:compact?29:34, footerY=p.y+p.h-footerH-5, online=partyServiceAvailable(),directCpu=!!party.directCpu;
+    const p={x:contentX,y:partyY,w:contentW,h:partyH},col='#bfa8ff',online=partyServiceAvailable(),directCpu=!!party.directCpu;
     panelFrame(p,directCpu?'CPU 2v2 · NEW · BETA':'PARTY · NEW · BETA',col,directCpu?'DIRECT · UNRANKED':'GUESTS OK · MAX '+PARTY_MAX);
     const summary=directCpu?(party.phase==='closing'?'FINISHING THE CPU FRIEND CONNECTION':'CPU FRIEND GAME IS OPEN'):
-      !online?'PARTIES NEED AN INTERNET CONNECTION':party.accepted?
-      (party.members.length+'/'+PARTY_MAX+' PLAYERS · JOINING ANOTHER CODE LEAVES THIS PARTY'):
-      party.channel?('CONNECTING TO '+party.code):'CREATE A PARTY OR ENTER A 6-CHARACTER JOIN CODE';
-    panelMessage(p,summary,p.y+(tiny?18:compact?22:27),!online?'#d05548':directCpu||party.accepted?'#d8c8ff':'#8a9268');
-    const bg=5, bw=(p.w-12-bg)/2, leftX=p.x+6, joinX=leftX+bw+bg;
-    if(directCpu) drawSocialButton('cpu_direct_return',party.phase==='closing'?'FINISHING...':'RETURN TO CPU',leftX,footerY,bw,footerH,col,party.phase!=='closing');
-    else if(party.channel||party.accepted) drawSocialButton('party_open','OPEN PARTY',leftX,footerY,bw,footerH,col,true);
-    else drawSocialButton('party_create','CREATE PARTY',leftX,footerY,bw,footerH,'#a7c15e',online);
-    if(typeof socialLayoutPartyJoin==='function') socialLayoutPartyJoin(directCpu?null:{x:joinX,y:footerY,w:bw,h:footerH},online&&!directCpu);
-    else if(directCpu)drawSocialButton('cpu_direct_status','DIRECT GAME',joinX,footerY,bw,footerH,'#8a9268',false);
-    else drawSocialButton('party_join','JOIN CODE',joinX,footerY,bw,footerH,'#7fd8ff',online);
+      !online?'PARTIES NEED AN INTERNET CONNECTION':party.accepted?(party.members.length+'/'+PARTY_MAX+' PLAYERS · JOINING ANOTHER CODE LEAVES THIS PARTY'):
+      party.channel?('CONNECTING TO '+party.code):'CREATE A PARTY, OR PRESS JOIN PARTY TO ENTER A CODE';
+    const actionH=tiny?30:short?32:compact?44:46,actionGap=tiny?4:compact?8:10;
+    const bottomPad=tiny?5:compact?(H<520?0:8):10;
+    const row1Y=p.y+p.h-actionH*2-actionGap-bottomPad,row2Y=row1Y+actionH+actionGap;
+    const summaryY=Math.min(row1Y-(tiny?7:10),Math.max(p.y+(tiny?20:23),p.y+(compact?36:42)));
+    panelMessage(p,summary,summaryY,!online?'#d05548':directCpu||party.accepted?'#d8c8ff':'#8a9268');
+    const sideGap=tiny?5:compact?8:10,bw=(p.w-12-sideGap)/2,leftX=p.x+6,joinX=leftX+bw+sideGap;
+    const partyFull=Array.isArray(party.members)&&party.members.length>=PARTY_MAX;
+    const cpuParty=directCpu||!!party.cpuIntent;
+    const inviteReady=!!(online&&authUser&&party.accepted&&party.channel&&party.self&&party.phase==='lobby'&&!cpuParty&&!partyFull);
+    const inviteLabel=partyFull?'PARTY FULL · INVITES CLOSED':cpuParty?'PARTY INVITES UNAVAILABLE DURING CPU SETUP':!authUser?'SIGN IN TO SEND PARTY INVITES':party.accepted&&party.phase==='lobby'?'INVITE A FRIEND':party.accepted?'PARTY INVITES ARE NOT AVAILABLE RIGHT NOW':'CREATE OR JOIN A PARTY TO INVITE A FRIEND';
+    drawSocialButton('party_invite_friend',inviteLabel,p.x+6,row1Y,p.w-12,actionH,'#e8b658',inviteReady);
+    if(directCpu)drawSocialButton('cpu_direct_return',party.phase==='closing'?'FINISHING...':'RETURN TO CPU',leftX,row2Y,bw,actionH,col,party.phase!=='closing');
+    else if(party.channel||party.accepted)drawSocialButton('party_open','OPEN PARTY',leftX,row2Y,bw,actionH,col,true);
+    else drawSocialButton('party_create','CREATE PARTY',leftX,row2Y,bw,actionH,'#a7c15e',online);
+    if(directCpu)drawSocialButton('cpu_direct_status','DIRECT GAME',joinX,row2Y,bw,actionH,'#8a9268',false);
+    else drawSocialButton('party_join','JOIN PARTY',joinX,row2Y,bw,actionH,'#7fd8ff',online);
   }
 
   backRect=drawSocialButton('back','‹ HOME',margin,backY,Math.min(170,W-margin*2),backH,'#8a9268',true);
-  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  ctx.textAlign='left';ctx.textBaseline='alphabetic';
 }
 function drawPartyButton(id,label,x,y,w,h,col,enabled=true,extra={}){
   const hot=enabled&&mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
@@ -3227,32 +3301,35 @@ function drawSlider(id,label,val,x,y,w){
 function drawMenu(){
   const inRun = state!=='select';
   ctx.fillStyle='rgba(8,9,5,0.78)'; ctx.fillRect(0,0,W,H);
-  const pw=340, ph=inRun?354:304, px=W/2-pw/2, py=H/2-ph/2;
+  const compact=H<430,pw=Math.min(340,W-16),buttonH=compact?34:44,buttonGap=compact?5:8,
+    buttonCount=inRun?4:3,titleZone=compact?42:58,sliderZone=compact?74:102,bottomZone=compact?18:28,
+    ph=titleZone+buttonCount*buttonH+(buttonCount-1)*buttonGap+(compact?7:12)+sliderZone+bottomZone,
+    px=W/2-pw/2,py=Math.max(6,(H-ph)/2);
   ctx.fillStyle='rgba(16,18,8,0.96)'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='middle';       // deterministic baseline regardless of prior draws
   ctx.fillStyle='#e8b658'; ctx.font='700 24px ui-monospace,Consolas,monospace';
-  ctx.fillText('GAME MENU', W/2, py+26);
+  ctx.fillText('GAME MENU', W/2, py+(compact?20:26));
   ctx.textBaseline='alphabetic';
 
   menuRects={};
-  const bw=pw-60;
-  drawMenuBtn('resume','CLOSE', px+30, py+62, bw, 36);
-  let sy;
+  const sidePad=pw<320?18:30,bw=pw-sidePad*2;
+  let by=py+titleZone;
+  drawMenuBtn('resume','CLOSE',px+sidePad,by,bw,buttonH);by+=buttonH+buttonGap;
+  drawMenuBtn('account',authUser?'ACCOUNT SETTINGS':'SIGN IN / ACCOUNT',px+sidePad,by,bw,buttonH);by+=buttonH+buttonGap;
   if(inRun){
-    drawMenuBtn('exit','EXIT TO MENU', px+30, py+110, bw, 36);
-    drawMenuBtn('report','\u26A0 REPORT PROBLEM', px+30, py+158, bw, 36);
-    sy=py+240;
+    drawMenuBtn('exit','EXIT TO MENU',px+sidePad,by,bw,buttonH);by+=buttonH+buttonGap;
+    drawMenuBtn('report','\u26A0 REPORT PROBLEM',px+sidePad,by,bw,buttonH);by+=buttonH;
   } else {
-    drawMenuBtn('report','\u26A0 REPORT PROBLEM', px+30, py+110, bw, 36);
-    sy=py+192;
+    drawMenuBtn('report','\u26A0 REPORT PROBLEM',px+sidePad,by,bw,buttonH);by+=buttonH;
   }
-  drawSlider('music','MUSIC', musicVol, px+30, sy,    bw);
-  drawSlider('sfx','SOUND',  sfxVol,   px+30, sy+52, bw);
+  const sy=by+(compact?17:26),sliderStep=compact?38:52;
+  drawSlider('music','MUSIC',musicVol,px+sidePad,sy,bw);
+  drawSlider('sfx','SOUND',sfxVol,px+sidePad,sy+sliderStep,bw);
 
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillStyle='#6b7455'; ctx.font='11px ui-monospace,Consolas,monospace';
-  ctx.fillText('P / ESC closes', W/2, py+ph-18);
+  ctx.fillText('P / ESC closes',W/2,py+ph-(compact?9:14));
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 }

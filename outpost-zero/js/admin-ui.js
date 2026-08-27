@@ -4,7 +4,11 @@ let feedXRects=[];
 async function deleteBanner(id){                     // mains: pull a post off everyone's feed (no archive)
   if(!isMainAdmin()) return;
   if(!sb){ const i=banners.findIndex(b=>b.id===id); if(i>=0) banners.splice(i,1); return; }
-  try{ await sb.from('banners').delete().eq('id',id); }catch(e){}
+  try{
+    const {data,error}=await sb.rpc('delete_outpost_zero_update',{p_banner_id:id});
+    if(error)throw error;
+    if(data!==true)return;
+  }catch(e){return;}
   fetchBanners();
 }
 function drawHubPosts(topY, maxBottom){
@@ -87,14 +91,35 @@ function openReader(title, meta, body, access='public'){
   readerBody=String(body||''); readerScroll=0;readerAccess=['admin','main'].includes(access)?access:'public';
 }
 function readerLines(maxW){
-  const out=[];
+  const out=[],width=Math.max(1,Number(maxW)||1);
+  const wordParts=word=>{
+    if(ctx.measureText(word).width<=width)return [word];
+    // URLs, invite tokens, and other unbroken strings must remain readable.
+    // Split by Unicode code point so a surrogate pair is never cut in half.
+    const parts=[],chars=Array.from(word);let part='';
+    for(const char of chars){
+      const next=part+char;
+      if(part&&ctx.measureText(next).width>width){parts.push(part);part=char;}
+      else part=next;
+    }
+    if(part)parts.push(part);
+    return parts;
+  };
   for(const para of readerBody.split(/\n/)){
     if(!para.trim()){ out.push(''); continue; }
     let line='';
     for(const word of para.split(' ')){
-      const test=line?line+' '+word:word;
-      if(ctx.measureText(test).width>maxW && line){ out.push(line); line=word; }
-      else line=test;
+      if(!word){
+        if(line){const spaced=line+' ';if(ctx.measureText(spaced).width>width){out.push(line);line='';}else line=spaced;}
+        continue;
+      }
+      const parts=wordParts(word);
+      for(let i=0;i<parts.length;i++){
+        const part=parts[i],test=line?line+(i===0?' ':'')+part:part;
+        if(ctx.measureText(test).width>width&&line){out.push(line);line=part;}
+        else line=test;
+        if(i<parts.length-1&&line){out.push(line);line='';}
+      }
     }
     if(line) out.push(line);
   }
@@ -1879,7 +1904,7 @@ function drawAdminPanel(){
   // co-admins: their own report channel, right at the top
   if(isCoAdmin() && !isMainAdmin()) actionBtn('staffreport','\u26A0 STAFF REPORT \u2014 flag a problem to the mains');
   // everyone with admin: broadcast a banner
-  actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 banner for all players'+(isMainAdmin()?'':' (needs approval)'));
+  actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 Home + every Inbox'+(isMainAdmin()?'':' (needs approval)'));
   actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up \u00b7 edit \u00b7 ban');
   if(isMainAdmin()) actionBtn('ailearning','\uD83E\uDDE0 AI BOT MODELS \u2014 model history \u00b7 test \u00b7 bring back');
   if(isMainAdmin()) actionBtn('layout','\u2194 LAYOUT EDITOR \u2014 move home page sections');

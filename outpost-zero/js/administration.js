@@ -21,13 +21,13 @@ let adminPanelOpen=false, adminHubBtnRect=null, adminPanelRects=[];
 let aiLearningOpen=false, aiLearningRects=[], aiLearningDifficulty=4, aiLearningNotice='',aiLearningSelectedModelId='',aiLearningRestoreBusyId='';
 const ROOT_ADMIN='tmilsanmilla@gmail.com';          // can never be kicked or demoted
 let adminRoles={};                                  // email -> 'main'|'co' (from the Supabase admins table)
-let banners=[], pendingBanners=[], updatesFeed={staff:[],player:[]};
+let banners=[], pendingBanners=[], bannerFetchSeq=0, bannerDraftEpoch=0, updatesFeed={staff:[],player:[]};
 let inboxTab='msgs';
-let postOpen=false, updatesOpen=false, updatesHubBtnRect=null, updatesRects=[], staffReport=false;
+let postOpen=false, postBusy=false, postRequestSeq=0, updatesOpen=false, updatesHubBtnRect=null, updatesRects=[], staffReport=false;
 let adminsOpen=false, msgsOpen=false, adminsHubBtnRect=null, msgsHubBtnRect=null, adminsRects=[], msgsRects=[];
 let auditOpen=false, auditRects=[], auditScroll=0, auditScrollMax=0, auditScrollViewport=null;
 let adminAuditPages=[], adminAuditPageMore=[], adminAuditPage=0, adminAuditLoading=false, adminAuditError='', adminAuditHasMore=false;
-let adminPrivacyEpoch=0;
+let adminPrivacyEpoch=0,adminRosterFetchSeq=0;
 const ADMIN_AUDIT_PAGE_SIZE=25;
 let scoresOpen=false, scoresRects=[], scoreEditOpen=false, scoreEditBusy=false, scoreEditOperationReceipt=null, scoreReqs=[];
 const scoreRequestDecisionBusy=new Set();
@@ -85,10 +85,19 @@ function clearPrivatePlayerEditor(){
     if(wrap)wrap.style.display='none';if(send)send.disabled=false;if(cancel)cancel.disabled=false;
   }
 }
+function clearPostComposerPrivateState(){
+  postRequestSeq++;setPostBusy(false);postOpen=false;
+  if(typeof document!=='undefined'){
+    const message=document.getElementById('postmsg'),status=document.getElementById('poststatus');
+    if(message)message.value='';
+    if(status)status.textContent='';
+  }
+}
 function clearMainOnlyAdminState(){
   const closeStaffReport=!!staffReport;
+  bannerDraftEpoch++;pendingBanners=[];
   clearAdminAuditCache();scoreReqs=[];updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];
-  aiLearningOpen=false;adminsOpen=false;storageOpen=false;postOpen=false;staffReport=false;
+  aiLearningOpen=false;adminsOpen=false;storageOpen=false;clearPostComposerPrivateState();staffReport=false;
   composePickOpen=false;
   if(msgOpen&&typeof msgKind!=='undefined'&&msgKind==='admin'){msgOpen=false;msgTo='';}
   if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
@@ -99,7 +108,7 @@ function clearMainOnlyAdminState(){
   if(typeof enforceReaderAccess==='function')enforceReaderAccess();
 }
 function scrubPrivilegedUiForAccountChange(){
-  adminPrivacyEpoch++;adminRoles={};
+  adminPrivacyEpoch++;adminRosterFetchSeq++;bannerFetchSeq++;bannerDraftEpoch++;pendingBanners=[];adminRoles={};
   adminOpen=adminPanelOpen=aiLearningOpen=adminsOpen=msgsOpen=updatesOpen=archOpen=storageOpen=scoresOpen=false;
   if(typeof playersOpen!=='undefined')playersOpen=false;
   if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
@@ -111,7 +120,7 @@ function scrubPrivilegedUiForAccountChange(){
   if(typeof appealDecisionBusy!=='undefined')appealDecisionBusy.clear();if(typeof playerBanActionBusy!=='undefined')playerBanActionBusy.clear();
   if(typeof appealOperationReceipt!=='undefined')appealOperationReceipt=null;if(typeof appealSubmitBusy!=='undefined')appealSubmitBusy=false;
   if(typeof clearReaderState==='function')clearReaderState();
-  msgOpen=false;msgTo='';postOpen=false;staffReport=false;if(typeof appealOpen!=='undefined')appealOpen=false;
+  msgOpen=false;msgTo='';clearPostComposerPrivateState();staffReport=false;if(typeof appealOpen!=='undefined')appealOpen=false;
   if(typeof document!=='undefined')for(const id of ['scorewrap','msgwrap','appealwrap','postwrap','repwrap']){const el=document.getElementById(id);if(el)el.style.display='none';}
 }
 function enforceAdminRolePrivacy(previousRank=''){
@@ -818,14 +827,17 @@ async function sendMsg(){
 let bannerXRect=null, hubPostsRect=null, bannerDismissed=+((typeof localStorage!=='undefined'&&localStorage.getItem('oz_banner_dismiss'))||0);
 async function fetchAdmins(){
   if(!sb || !authUser) return;
-  const epoch=adminPrivacyEpoch,userId=currentAuthUserId(),previousRank=myRank();
+  const request=++adminRosterFetchSeq,epoch=adminPrivacyEpoch,userId=currentAuthUserId(),previousRank=myRank();
   try{
-    const { data,error } = await sb.from('admins').select('email,role');
+    const {data,error}=await sb.rpc('list_outpost_zero_admin_roster');
     if(error)throw error;
-    if(!adminPrivacyRequestCurrent(epoch,userId))return;
+    if(request!==adminRosterFetchSeq||!adminPrivacyRequestCurrent(epoch,userId))return;
     adminRoles={}; (data||[]).forEach(r=>{ adminRoles[String(r.email||'').toLowerCase()]=r.role; });
-  }catch(e){}
-  if(!adminPrivacyRequestCurrent(epoch,userId))return;
+  }catch(e){
+    if(request!==adminRosterFetchSeq||!adminPrivacyRequestCurrent(epoch,userId))return;
+    adminRoles={};                                  // role refresh failures fail closed
+  }
+  if(request!==adminRosterFetchSeq||!adminPrivacyRequestCurrent(epoch,userId))return;
   const nextRank=myRank();
   if(nextRank!==previousRank)adminPrivacyEpoch++;
   enforceAdminRolePrivacy(previousRank);
@@ -837,13 +849,37 @@ async function fetchAdmins(){
 }
 async function fetchBanners(){
   if(!sb) return;
-  try{
-    const { data } = await sb.from('banners').select('id,author,message,approved,created_at')
-      .order('id',{ascending:false}).limit(10);
-    const all=data||[];
-    banners=all.filter(b=>b.approved);
-    pendingBanners=all.filter(b=>!b.approved);
-  }catch(e){}
+  const request=++bannerFetchSeq,reviewer=isMainAdmin();
+  if(!reviewer){bannerDraftEpoch++;pendingBanners=[];}
+  const draftEpoch=bannerDraftEpoch;
+  const read=async(approved,limit)=>{
+    const rpc=await sb.rpc('list_outpost_zero_updates',{
+      p_approved:approved,p_before_id:null,p_limit:limit
+    });
+    if(!rpc.error)return rpc.data||[];
+    // Rollout fallback: keep the public Home/Inbox feed visible before Admin
+    // 02 is pasted, but never fall back to a direct mutation. Approval is
+    // filtered before the limit so a draft backlog cannot hide live updates.
+    // Pending text fails closed: client-side isMainAdmin() is not authority.
+    if(!approved)throw rpc.error;
+    // Legacy author may be an email before Admin 02 sanitizes it. It is unused,
+    // so never request it into an ordinary player's browser memory.
+    const legacy=await sb.from('banners').select('id,message,approved,created_at')
+      .eq('approved',approved).order('id',{ascending:false}).limit(limit);
+    if(legacy.error)throw legacy.error;
+    return legacy.data||[];
+  };
+  const publicRowsPromise=read(true,10);
+  // Only creator/main reviewers need draft contents. Fetch independently so
+  // ten newer drafts can never consume the public feed's ten-row limit.
+  const draftRowsPromise=reviewer?read(false,20):Promise.resolve([]);
+  const rows=await Promise.allSettled([publicRowsPromise,draftRowsPromise]);
+  // A slower earlier refresh must never overwrite a newer post/approval/delete.
+  if(request!==bannerFetchSeq)return;
+  if(rows[0].status==='fulfilled')banners=rows[0].value.filter(b=>b&&b.approved===true);
+  // A draft error must never replace or suppress a successful public result.
+  pendingBanners=reviewer&&isMainAdmin()&&draftEpoch===bannerDraftEpoch&&rows[1].status==='fulfilled'
+    ?rows[1].value.filter(b=>b&&b.approved===false):[];
 }
 async function fetchUpdatesFeed(){
   if(!sb||!isMainAdmin()){ updatesFeed={staff:[],player:[]}; updatesResolved=[]; return; }
@@ -871,58 +907,98 @@ async function resolveReport(id){                    // mains: mark handled; it 
   try{ await sb.from('reports').update({resolved:true}).eq('id',id); }catch(e){}
   fetchUpdatesFeed();
 }
-function openPost(){ postOpen=true; adminPanelOpen=false; $('postwrap').style.display='flex'; $('poststatus').textContent=''; try{$('postmsg').focus();}catch(e){} }
-function closePost(){ postOpen=false; $('postwrap').style.display='none'; }
+function setPostBusy(busy){
+  postBusy=!!busy;
+  const send=$('postsend'),cancel=$('postcancel');
+  if(send){send.disabled=postBusy;send.textContent=postBusy?'POSTING...':'POST';}
+  if(cancel)cancel.disabled=postBusy;
+}
+function openPost(){
+  postRequestSeq++;setPostBusy(false);postOpen=true;adminPanelOpen=false;
+  $('postwrap').style.display='flex';$('poststatus').textContent='';
+  try{$('postmsg').focus();}catch(e){}
+}
+function closePost(force=false){
+  if(postBusy&&!force)return;
+  postRequestSeq++;setPostBusy(false);postOpen=false;$('postwrap').style.display='none';
+}
 async function sendPost(){
+  if(postBusy)return;
   const msg=($('postmsg').value||'').trim();
   if(!msg){ $('poststatus').textContent='write something first'; return; }
+  const token=++postRequestSeq,owner=currentAuthUserId();
+  const current=()=>postBusy&&token===postRequestSeq&&owner===currentAuthUserId();
+  setPostBusy(true);
   if(!sb){                                          // preview: banner goes up locally, instantly
     banners.unshift({id:Date.now(), author:'preview', message:msg.slice(0,300), approved:true});
     $('poststatus').textContent='posted (preview only)'; $('postmsg').value='';
-    setTimeout(closePost, 900); return;
+    setTimeout(()=>{if(current())closePost(true);},900); return;
   }
   $('poststatus').textContent='posting...';
   try{
-    const live=isMainAdmin();                       // mains go live now; co-admins await approval
-    const { error } = await sb.from('banners').insert({ author: adminEmail()||'admin', message: msg.slice(0,300), approved: live });
+    const {data,error}=await sb.rpc('post_outpost_zero_update',{p_message:msg.slice(0,300)});
     if(error) throw error;
+    if(!current())return;
+    const row=Array.isArray(data)?data[0]:data;
+    const live=!!(row&&row.approved);                // server role decides live vs pending
     $('poststatus').textContent= live ? 'posted — live for everyone!' : 'submitted — awaiting main-admin approval';
     $('postmsg').value='';
-    fetchBanners();
-    setTimeout(closePost, 1100);
-  }catch(err){ $('poststatus').textContent='could not post — try again'; }
+    await fetchBanners();
+    if(current())setTimeout(()=>{if(current())closePost(true);},1100);
+  }catch(err){
+    if(current()){
+      $('poststatus').textContent='could not post — run Administration 02, then retry';
+      setPostBusy(false);
+    }
+  }
 }
 async function approveBanner(id){
   if(!sb){ const i=pendingBanners.findIndex(b=>b.id===id); if(i>=0){ pendingBanners[i].approved=true; banners.unshift(pendingBanners[i]); pendingBanners.splice(i,1);} return; }
-  try{ await sb.from('banners').update({approved:true}).eq('id',id); }catch(e){}
-  fetchBanners();
+  try{
+    const {error}=await sb.rpc('approve_outpost_zero_update',{p_banner_id:id});
+    if(error)throw error;
+  }catch(e){return;}
+  await fetchBanners();
 }
 async function rejectBanner(id){
   if(!sb){ const i=pendingBanners.findIndex(b=>b.id===id); if(i>=0) pendingBanners.splice(i,1); return; }
-  try{ await sb.from('banners').delete().eq('id',id); }catch(e){}
-  fetchBanners();
+  try{
+    const {data,error}=await sb.rpc('reject_outpost_zero_update',{p_banner_id:id});
+    if(error)throw error;
+    if(data!==true)return;
+  }catch(e){return;}
+  await fetchBanners();
 }
 async function kickAdmin(email){
   if(!isMainAdmin()) return;                         // co-admins cannot manage the roster
   email=String(email||'').toLowerCase(); if(email===ROOT_ADMIN) return;
   if(!sb){ delete adminRoles[email]; return; }
-  try{ await sb.from('admins').delete().eq('email',email); }catch(e){}
-  fetchAdmins();
+  try{
+    const {data,error}=await sb.rpc('remove_outpost_zero_admin',{p_email:email});
+    if(error)throw error;if(data!==true)return;
+  }catch(e){return;}
+  await fetchAdmins();
 }
 async function promoteAdmin(email){
   if(!isMainAdmin()) return;                         // co-admins cannot manage the roster
   email=String(email||'').toLowerCase(); if(email===ROOT_ADMIN) return;
   if(!sb){ adminRoles[email]='main'; return; }
-  try{ await sb.from('admins').update({role:'main'}).eq('email',email); }catch(e){}
-  fetchAdmins();
+  try{
+    const {data,error}=await sb.rpc('promote_outpost_zero_admin',{p_email:email});
+    if(error)throw error;if(data!==true)return;
+  }catch(e){return;}
+  await fetchAdmins();
 }
 async function addCoAdmin(){
   if(!isMainAdmin()) return;                         // co-admins cannot manage the roster
   let em; try{ em=window.prompt('co-admin email:'); }catch(e){ em=null; }
   em=String(em||'').trim().toLowerCase(); if(!em || em.indexOf('@')<0) return;
   if(!sb){ adminRoles[em]='co'; return; }
-  try{ await sb.from('admins').insert({email:em, role:'co'}); }catch(e){}
-  fetchAdmins();
+  try{
+    const {data,error}=await sb.rpc('add_outpost_zero_co_admin',{p_email:em});
+    if(error)throw error;if(!data||(Array.isArray(data)&&!data.length))return;
+  }catch(e){return;}
+  await fetchAdmins();
 }
 const LLR_URL   = 'https://www.youtube.com/@AsrtsbLLR';
 const MOVES_URL = 'https://movesforamission.org/donate-now/#1740457740469-d24153b1-38c1';

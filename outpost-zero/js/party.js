@@ -11,6 +11,66 @@ function partyCpuDirectInviteToken(){
   crypto.getRandomValues(bytes);
   return Array.from(bytes,n=>n.toString(16).padStart(2,'0')).join('');
 }
+function partyFriendInviteToken(){ return partyCpuDirectInviteToken(); }
+function partyClearFriendInviteWork(target=party){
+  if(!target)return;
+  const pending=target.friendInvitePending instanceof Map?[...target.friendInvitePending.values()]:[];
+  if(target.friendInvitePending instanceof Map)target.friendInvitePending.clear();
+  if(target.friendInviteTokens instanceof Map)target.friendInviteTokens.clear();
+  if(target.friendInviteConsumed instanceof Set)target.friendInviteConsumed.clear();
+  if(Array.isArray(target.friendInviteConsumedOrder))target.friendInviteConsumedOrder.length=0;
+  for(const item of pending){
+    for(const timer of Array.isArray(item&&item.timers)?item.timers:[])try{clearTimeout(timer);}catch(e){}
+    try{if(item&&typeof item.resolve==='function')item.resolve(false);}catch(e){}
+  }
+}
+function partyPurgeFriendInvites(clock=Date.now()){
+  if(!party)return;
+  if(!(party.friendInviteTokens instanceof Map))party.friendInviteTokens=new Map();
+  if(!(party.friendInviteConsumed instanceof Set))party.friendInviteConsumed=new Set();
+  if(!Array.isArray(party.friendInviteConsumedOrder))party.friendInviteConsumedOrder=[];
+  for(const [token,item] of party.friendInviteTokens){
+    if(!item||Math.floor(+item.expiresAt||0)<=clock||!partyMember(String(item.from||'')))party.friendInviteTokens.delete(token);
+  }
+}
+function partyResolveFriendInviteRegistration(token,accepted){
+  if(!party||!(party.friendInvitePending instanceof Map))return false;
+  const item=party.friendInvitePending.get(String(token||''));if(!item)return false;
+  party.friendInvitePending.delete(String(token));
+  for(const timer of item.timers||[])try{clearTimeout(timer);}catch(e){}
+  try{item.resolve(accepted===true);}catch(e){}
+  return true;
+}
+function partyRegisterFriendInvite(token,expiresAt){
+  const clean=String(token||''),expiry=Math.floor(+expiresAt||0),clock=Date.now(),current=party;
+  if(!current||!current.accepted||!current.channel||!current.self||current.directCpu||current.phase!=='lobby'||
+     current.members.length>=PARTY_MAX||!/^[A-Za-z0-9_-]{20,64}$/.test(clean)||expiry<=clock||expiry>clock+PARTY_FRIEND_INVITE_MAX_MS)
+    return Promise.resolve(false);
+  partyPurgeFriendInvites(clock);
+  if(partyIsHost()){
+    if(current.friendInviteConsumed.has(clean))return Promise.resolve(false);
+    const mine=[...current.friendInviteTokens].filter(([,item])=>item&&item.from===current.self.id);
+    while(mine.length>=6)current.friendInviteTokens.delete(mine.shift()[0]);
+    while(current.friendInviteTokens.size>=24)current.friendInviteTokens.delete(current.friendInviteTokens.keys().next().value);
+    current.friendInviteTokens.set(clean,{from:current.self.id,expiresAt:expiry,registeredAt:clock});return Promise.resolve(true);
+  }
+  if(!(current.friendInvitePending instanceof Map))current.friendInvitePending=new Map();
+  if(current.friendInvitePending.has(clean))return Promise.resolve(false);
+  const hostId=String(current.hostId||''),hostEpoch=current.hostEpoch;
+  return new Promise(resolve=>{
+    if(party!==current||!hostId){resolve(false);return;}
+    const item={resolve,timers:[],hostId,hostEpoch,expiresAt:expiry};current.friendInvitePending.set(clean,item);
+    const send=()=>{
+      if(current.friendInvitePending.get(clean)!==item)return;
+      if(party!==current||!current.accepted||current.hostId!==hostId||current.hostEpoch!==hostEpoch||Date.now()>=expiry){
+        partyResolveFriendInviteRegistration(clean,false);return;
+      }
+      partySend('friend_invite_register',{to:hostId,token:clean,expiresAt:expiry,hostEpoch});
+    };
+    send();if(current.friendInvitePending.get(clean)!==item)return;
+    item.timers.push(setTimeout(send,350),setTimeout(send,900),setTimeout(()=>partyResolveFriendInviteRegistration(clean,false),2200));
+  });
+}
 function partyDirectCpuNotice(message,duration=3200){
   const text=String(message||'').slice(0,120);party.status=text;modeBoardNotice=text;modeBoardNoticeT=performance.now()+duration;return text;
 }
@@ -25,8 +85,9 @@ function partyDirectCpuClose(message,delay=0){
     // screen after they already pressed Back, navigated, or began another game.
     const ownsDestination=state==='select'&&selPage==='offlinecpu'&&offlineCpuView==='2v2',
       preserveDestination=delay>0&&!ownsDestination;
-    const old=party;if(old.channel){try{partySend('leave',{});}catch(e){}partyDropChannel(old.channel);}
+    const old=party;if(typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(old);if(old.channel){try{partySend('leave',{});}catch(e){}partyDropChannel(old.channel);}
     party=freshParty(message||'Invite closed.');partyAuthOwnerId=authUser?String(authUser.id||''):'';partyInviteSendBusy=false;
+    partyFriendInviteSendOp=null;partyFriendInviteJoinBusy=false;partyFriendInviteFormOwnerId='';
     if(!preserveDestination){pendingGameMode=null;state='select';selPage='offlinecpu';offlineCpuView='2v2';menuOpen=false;}
     if(selPage==='offlinecpu')offlineCpuInfoKey='';
     if(message)partyDirectCpuNotice(message);return true;
@@ -67,11 +128,13 @@ function partyPrepareForAuthChange(nextUserId){
   const hadParty=!!(party&&(party.channel||party.accepted||party.self)),cpuOrigin=!!(party&&party.cpuIntent)||
     !!(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen());
   if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())partyCpuAbort(party&&party.directCpu?'2v2 CPU game ended because the account changed.':'Party CPU match ended because the account changed.',true);
-  const old=party;
+  const old=party;if(typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(old);
+  if(typeof partyFriendInviteFormOwnerId!=='undefined'&&partyFriendInviteFormOwnerId&&typeof formOpen!=='undefined'&&formOpen&&typeof closeForm==='function')closeForm();
+  if(typeof partyFriendInviteFormOwnerId!=='undefined')partyFriendInviteFormOwnerId='';
   if(old&&old.chatComposing&&typeof formOpen!=='undefined'&&formOpen)closeForm();
   if(old&&old.channel){try{partySend('leave',{});}catch(e){}partyDropChannel(old.channel);}
   party=freshParty(hadParty?'Account changed. Create or join a new party.':'Create a party or join with a 6-character code.');
-  partyAuthOwnerId=next;partyInviteSendBusy=false;partyRotateSessionIdentity();
+  partyAuthOwnerId=next;partyInviteSendBusy=false;partyFriendInviteSendOp=null;partyFriendInviteJoinBusy=false;partyRotateSessionIdentity();
   if(typeof pendingGameMode!=='undefined'&&pendingGameMode===PARTY_CPU_MODE)pendingGameMode=null;
   if(typeof selPage!=='undefined'&&(selPage==='party'||selPage==='partymodes')){
     state='select';selPage=cpuOrigin?'offlinecpu':'social';offlineCpuView=cpuOrigin?'2v2':'modes';offlineCpuInfoKey='';menuOpen=false;
@@ -275,19 +338,40 @@ function partyApplyState(p,force){
     if(party.accepted&&!force) leaveParty('YOU WERE REMOVED FROM THE PARTY.',false);
     return false;
   }
+  if(party.hostId&&party.hostId!==hostId&&typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(party);
   party.hostId=hostId; party.hostEpoch=epoch; party.revision=rev; party.members=members;
   const validMode=['endless','1v1','1v1v1','2v2'].includes(p.mode);
   party.mode=validMode?p.mode:'endless'; party.locked=false;party.cpuIntent=p.cpuIntent===true;party.directCpu=party.cpuIntent&&p.directCpu===true;party.chatEnabled=p.chatEnabled!==false;
   party.kickedIds=new Set((Array.isArray(p.kickedIds)?p.kickedIds:[]).map(id=>String(id||'').slice(0,80)).filter(Boolean));
   if(!validMode) partySetDefaultPairings();
   party.plan=validMode&&Array.isArray(p.plan)?p.plan.slice(0,6).map(r=>({title:String(r.title||'').slice(0,42),body:String(r.body||'').slice(0,110),ready:!!r.ready})):partyBuildPlan();
-  party.accepted=true; party.phase='lobby'; party.status=party.directCpu?'FRIEND CONNECTED · STARTING 2v2 VS CPUs':'Party connected. '+party.members.length+'/'+PARTY_MAX+' players.';
+  party.accepted=true; party.phase='lobby';party.friendInviteToken='';party.friendInviteExpiresAt=0;partyFriendInviteJoinBusy=false;
+  party.status=party.directCpu?'FRIEND CONNECTED · STARTING 2v2 VS CPUs':'Party connected. '+party.members.length+'/'+PARTY_MAX+' players.';
   return true;
 }
 function partyReceive(event,p){
   if(!p||p.code!==party.code||!party.self) return;
   const from=String(p.from||'');
   if(String(event||'').startsWith('cpu_')){ partyCpuReceive(event,p); return; }
+  if(event==='friend_invite_register'){
+    if(!partyIsHost()||party.directCpu||partyCpuSessionOpen()||String(p.to||'')!==party.self.id||!partyMember(from)||from===party.self.id||
+       Math.floor(+p.hostEpoch||0)!==party.hostEpoch)return;
+    const token=String(p.token||''),expiresAt=Math.floor(+p.expiresAt||0),clock=Date.now();
+    if(!/^[A-Za-z0-9_-]{20,64}$/.test(token)||expiresAt<=clock||expiresAt>clock+PARTY_FRIEND_INVITE_MAX_MS||party.members.length>=PARTY_MAX)return;
+    partyPurgeFriendInvites(clock);
+    if(party.friendInviteConsumed.has(token))return;
+    const mine=[...party.friendInviteTokens].filter(([,item])=>item&&item.from===from);
+    while(mine.length>=6){party.friendInviteTokens.delete(mine.shift()[0]);}
+    while(party.friendInviteTokens.size>=24)party.friendInviteTokens.delete(party.friendInviteTokens.keys().next().value);
+    party.friendInviteTokens.set(token,{from,expiresAt,registeredAt:clock});
+    partySend('friend_invite_register_ack',{to:from,token,expiresAt,hostEpoch:party.hostEpoch});return;
+  }
+  if(event==='friend_invite_register_ack'){
+    const token=String(p.token||''),item=party.friendInvitePending instanceof Map&&party.friendInvitePending.get(token);
+    if(!item||String(p.to||'')!==party.self.id||from!==item.hostId||Math.floor(+p.hostEpoch||0)!==item.hostEpoch||
+       Math.floor(+p.expiresAt||0)!==item.expiresAt)return;
+    partyResolveFriendInviteRegistration(token,true);return;
+  }
   if(event==='join_request'){
     if(!partyIsHost()||!from||from===party.self.id) return;
     if(party.kickedIds.has(from)){ partySend('join_reject',{to:from,reason:'REMOVED BY PARTY HOST'}); return; }
@@ -301,8 +385,20 @@ function partyReceive(event,p){
       }
       party.directPeerId=from;party.cpuInviteToken='';party.directInviteExpiresAt=0;
     }
+    const friendToken=String(p.friendInviteToken||'');
+    if(!party.directCpu&&friendToken){
+      partyPurgeFriendInvites(Date.now());
+      const invite=party.friendInviteTokens.get(friendToken);
+      if(!invite||!partyMember(String(invite.from||''))){
+        partySend('join_reject',{to:from,reason:'THIS PARTY INVITE EXPIRED OR IS NO LONGER AVAILABLE'});return;
+      }
+    }
     if(party.cpuIntent&&party.members.length>=2){partySend('join_reject',{to:from,reason:'CPU 2V2 GAME FULL · EXACTLY 2 PLAYERS'});return;}
     if(party.members.length>=PARTY_MAX){ partySend('join_reject',{to:from,reason:'PARTY FULL \u00b7 MAX 4'}); return; }
+    if(friendToken){
+      party.friendInviteTokens.delete(friendToken);party.friendInviteConsumed.add(friendToken);party.friendInviteConsumedOrder.push(friendToken);
+      while(party.friendInviteConsumedOrder.length>64)party.friendInviteConsumed.delete(party.friendInviteConsumedOrder.shift());
+    }
     const nextOrder=party.members.reduce((n,m)=>Math.max(n,m.order||0),0)+1;
     party.members.push({id:from,name:partyCleanName(p.name)||'OPERATOR',joined:+p.joined||Date.now(),order:nextOrder,ready:false,team:''});
     partySetDefaultPairings(); partyHostCommit('A new operator joined.');
@@ -349,6 +445,7 @@ function partyReceive(event,p){
       partyMember(from).ready=!!p.value; partyHostCommit(partyMember(from).name+(p.value?' is ready.':' is not ready.'));
     }
     if(p.action==='cpu_intent'){
+      if(typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(party);
       party.cpuIntent=true;party.mode='endless';partySetDefaultPairings();
       partyHostCommit(partyMember(from).name+' wants to play 2v2 vs CPUs.');
     }
@@ -385,6 +482,12 @@ function partyConnect(code,creating,name){
       partyDirectCpuNotice('THAT CPU 2v2 INVITE IS INVALID OR EXPIRED.');selPage='offlinecpu';offlineCpuView='2v2';sfx('dry');return false;
     }
   }
+  if(options.friendInviteToken){
+    const inviteToken=String(options.friendInviteToken||''),expiresAt=Math.floor(+options.friendInviteExpiresAt||0),clock=Date.now();
+    if(options.directCpu||!/^[A-Za-z0-9_-]{20,64}$/.test(inviteToken)||expiresAt<=clock||expiresAt>clock+PARTY_FRIEND_INVITE_MAX_MS){
+      party.status='THAT PARTY INVITE IS INVALID OR EXPIRED.';socialStatus=party.status;sfx('dry');return false;
+    }
+  }
   if(!partyServiceAvailable()){
     if(options.directCpu){partyDirectCpuNotice('INVITE A FRIEND NEEDS AN INTERNET CONNECTION.');selPage='offlinecpu';offlineCpuView='2v2';}
     else{party=freshParty('PARTIES NEED AN INTERNET CONNECTION.');selPage='party';}
@@ -401,11 +504,13 @@ function partyConnect(code,creating,name){
   party.cpuIntent=!!options.cpuIntent;party.directCpu=!!(options.directCpu&&options.cpuIntent);
   party.cpuInviteToken=party.directCpu?String(options.cpuInviteToken||''):'';
   party.directInviteExpiresAt=party.directCpu?Math.floor(+options.directInviteExpiresAt||0):0;
+  party.friendInviteToken=!party.directCpu?String(options.friendInviteToken||''):'';
+  party.friendInviteExpiresAt=party.friendInviteToken?Math.floor(+options.friendInviteExpiresAt||0):0;
   partyAuthOwnerId=authUser?String(authUser.id||''):'';
   if(creating){ party.accepted=true; party.hostId=self.id; party.hostEpoch=1; party.members=[self]; partySetDefaultPairings(); }
   const ch=sb.channel('oz-party-v1-'+clean,{config:{presence:{key:self.id}}}); party.channel=ch;
   ch.on('presence',{event:'sync'},()=>partyPresenceSync(ch));
-  for(const event of ['join_request','join_accept','join_reject','state_request','party_state','identity_update','action_request','kick','chat_request','chat_message','leave',
+  for(const event of ['join_request','join_accept','join_reject','state_request','party_state','identity_update','action_request','kick','chat_request','chat_message','friend_invite_register','friend_invite_register_ack','leave',
                        'cpu_prepare','cpu_ready','cpu_cancel','cpu_abort','cpu_round_start','cpu_player_state','cpu_player_shot','cpu_bot_snapshot','cpu_bot_shot','cpu_damage','cpu_hit','cpu_kill_confirm','cpu_round_result'])
     ch.on('broadcast',{event},msg=>{if(ch===party.channel)partyReceive(event,msg&&msg.payload);});
   ch.subscribe(async st=>{
@@ -469,8 +574,98 @@ function partyPromptJoin(prefill=''){
       closeForm(); partyConnect(code,false,name,options); return true; }});
   return true;
 }
+function partyPromptFriendInvite(){
+  if(!authUser){party.status='SIGN IN TO INVITE A FRIEND TO YOUR PARTY';if(typeof toggleAuth==='function')toggleAuth();sfx('dry');return false;}
+  if(partyInviteSendBusy)return false;
+  if(!partyServiceAvailable()||!party||!party.accepted||!party.channel||!party.self||party.phase!=='lobby'){
+    party.status='OPEN AND CONNECT TO A PARTY BEFORE INVITING A FRIEND';sfx('dry');return false;
+  }
+  if(party.directCpu||party.cpuIntent||partyCpuSessionOpen()){
+    party.status='PARTY INVITES ARE NOT AVAILABLE DURING THIS GAME';sfx('dry');return false;
+  }
+  if(party.members.length>=PARTY_MAX){party.status='PARTY FULL \u00b7 MAX '+PARTY_MAX;sfx('dry');return false;}
+  if(!socialBackend||socialBackend.friends!==true){
+    const owner=String(authUser.id||''),current=party;party.status='LOADING YOUR FRIENDS...';sfx('swap');
+    void Promise.resolve(fetchSocial(true)).then(()=>{
+      if(authUser&&String(authUser.id||'')===owner&&party===current&&party.accepted){
+        if(socialBackend&&socialBackend.friends===true)partyPromptFriendInvite();
+        else{party.status='FRIENDS COULD NOT LOAD \u00b7 TRY AGAIN';sfx('dry');}
+      }
+    });return false;
+  }
+  const choices=[],seen=new Set();
+  for(const friendship of (Array.isArray(socialFriends)?socialFriends:[])){
+    if(!friendship||friendship.status!=='accepted')continue;
+    const userId=String(socialFriendOther(friendship)||''),profile=socialProfiles&&socialProfiles[userId],handle=String(profile&&profile.handle||'');
+    if(!userId||seen.has(userId)||!usernameIsChosenForUser(handle,userId))continue;
+    seen.add(userId);choices.push({userId,handle});
+  }
+  choices.sort((a,b)=>a.handle.localeCompare(b.handle,undefined,{sensitivity:'base'}));
+  choices.forEach((friend,index)=>friend.optionKey='friend_'+index);
+  if(!choices.length){party.status='ADD A FRIEND FIRST, THEN INVITE THEM TO YOUR PARTY';sfx('dry');return false;}
+  const formOwner=String(authUser.id||'');partyFriendInviteFormOwnerId=formOwner;
+  openForm({title:'INVITE TO PARTY',hint:'Choose an accepted friend. They can join from Inbox with one press; no code is shown or typed.',saveLabel:'SEND INVITE',
+    fields:[{id:'recipient',label:'ACCEPTED FRIEND',type:'select',value:choices[0].optionKey,
+      options:choices.map(friend=>({value:friend.optionKey,label:'@'+friend.handle}))}],
+    onCancel:()=>{if(partyFriendInviteFormOwnerId===formOwner)partyFriendInviteFormOwnerId='';},
+    onSave:async v=>{
+      const choice=choices.find(friend=>friend.optionKey===String(v.recipient||'')),recipient=String(choice&&choice.userId||''),person=socialProfiles&&socialProfiles[recipient];
+      if(!choice||!person||!usernameIsChosenForUser(person.handle,recipient)||!socialAcceptedFriend(recipient)){formError('Choose a current accepted friend.');return;}
+      if(!authUser||String(authUser.id||'')!==formOwner||!party.accepted||!party.channel||party.directCpu||party.members.length>=PARTY_MAX){formError('That Party is no longer available for invitations.');return;}
+      const current=party,code=String(party.code||''),inviteHostId=String(party.hostId||''),inviteHostEpoch=party.hostEpoch,
+        token=partyFriendInviteToken(),expiresAt=Date.now()+PARTY_FRIEND_INVITE_MS;
+      if(code.length!==6||!token){formError('Secure Party invitations are unavailable in this browser.');return;}
+      const op={owner:formOwner,party:current,code,recipient,token};partyInviteSendBusy=true;partyFriendInviteSendOp=op;partyFriendInviteFormOwnerId='';
+      closeForm();party.status='SECURING PARTY INVITE FOR @'+partyCleanName(person.handle)+'...';
+      try{
+        const registered=await partyRegisterFriendInvite(token,expiresAt);
+        if(partyFriendInviteSendOp!==op)return false;
+        const stillCurrent=registered&&authUser&&String(authUser.id||'')===formOwner&&party===current&&party.accepted&&party.channel&&
+          party.code===code&&party.hostId===inviteHostId&&party.hostEpoch===inviteHostEpoch&&!party.directCpu&&!party.cpuIntent&&party.phase==='lobby'&&
+          party.members.length<PARTY_MAX&&socialAcceptedFriend(recipient);
+        if(!stillCurrent){party.status='PARTY CHANGED BEFORE THE INVITE COULD SEND \u00b7 TRY AGAIN';socialStatus=party.status;sfx('dry');return false;}
+        const sent=await socialSendPartyInvite(recipient,{code,token,expiresAt});
+        if(partyFriendInviteSendOp!==op)return false;
+        if(!sent){party.status=socialStatus||'COULD NOT SEND THAT PARTY INVITE';return false;}
+        if(party!==current||!party.accepted||party.code!==code||party.hostId!==inviteHostId||party.hostEpoch!==inviteHostEpoch){
+          party.status='PARTY HOST CHANGED WHILE THE INVITE SENT \u00b7 SEND A NEW INVITE';socialStatus=party.status;sfx('dry');return false;
+        }
+        party.status='PARTY INVITE SENT TO @'+partyCleanName(person.handle)+' \u00b7 EXPIRES IN 5 MINUTES';
+        socialStatus=party.status;return true;
+      }finally{
+        if(partyFriendInviteSendOp===op){partyFriendInviteSendOp=null;partyInviteSendBusy=false;}
+      }
+    }});
+  return true;
+}
+function partyJoinFriendInvite(invite){
+  const clean=String(invite&&invite.code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6),token=String(invite&&invite.token||''),
+    expiresAt=Math.floor(+(invite&&invite.expiresAt)||0),senderId=String(invite&&invite.senderId||''),clock=Date.now();
+  if(!authUser||clean.length!==6||!/^[A-Za-z0-9_-]{20,64}$/.test(token)||expiresAt<=clock||expiresAt>clock+PARTY_FRIEND_INVITE_MAX_MS||!socialAcceptedFriend(senderId)){
+    socialStatus='THAT PARTY INVITE IS INVALID, EXPIRED, OR NO LONGER FROM A FRIEND';sfx('dry');return false;
+  }
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay())return false;
+  if(!partyServiceAvailable()){socialStatus='RECONNECT TO ACCEPT THAT PARTY INVITE';sfx('dry');return false;}
+  if(typeof state!=='undefined'&&state!=='select'||typeof arena!=='undefined'&&arena&&(arena.active||arena.queueChannel||arena.matchChannel)||partyCpuSessionOpen()){
+    socialStatus='FINISH YOUR CURRENT GAME BEFORE JOINING THAT PARTY';sfx('dry');return false;
+  }
+  if(party&&party.accepted&&!party.directCpu&&party.code===clean){selPage='party';socialStatus='YOU ARE ALREADY IN THAT PARTY';sfx('swap');return true;}
+  if(partyFriendInviteJoinBusy||party&&party.phase==='joining'&&party.friendInviteToken===token){socialStatus='ALREADY CONNECTING TO THAT PARTY';return false;}
+  if(party&&party.directCpu){socialStatus='FINISH OR CANCEL THE CPU FRIEND GAME BEFORE JOINING A PARTY';sfx('dry');return false;}
+  if(party&&party.accepted&&party.code!==clean){
+    let confirmed=false;try{confirmed=window.confirm('Joining this invitation will leave your current party. Continue?');}
+    catch(error){try{confirmed=confirm('Joining this invitation will leave your current party. Continue?');}catch(ignore){}}
+    if(!confirmed)return false;
+  }
+  const username=partyDefaultName();if(!username){socialStatus='YOUR USERNAME IS STILL LOADING';void fetchSocial(true);sfx('dry');return false;}
+  const joined=partyConnect(clean,false,username,{friendInviteToken:token,friendInviteExpiresAt:expiresAt});
+  partyFriendInviteJoinBusy=!!joined;
+  if(joined){party.status='CONNECTING TO YOUR FRIEND\'S PARTY...';socialStatus=party.status;}
+  return joined;
+}
 function partySetCpuIntent(enabled,message){
   if(!partyIsHost())return false;
+  if(enabled&&typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(party);
   party.cpuIntent=!!enabled;party.mode='endless';partySetDefaultPairings();
   partyHostCommit(message||(party.cpuIntent?'2v2 vs CPUs lobby ready.':'Normal Party modes restored.'));
   return true;
@@ -625,6 +820,7 @@ function partyCpuHostPrepare(){
     party.status=message; modeBoardNotice=message; modeBoardNoticeT=performance.now()+2800; sfx('dry'); return false;
   }
   if(partyCpuSessionOpen()){ party.status=party.directCpu?'THE CPU GAME IS ALREADY STARTING.':'A Party CPU match is already being prepared.'; sfx('dry'); return false; }
+  if(typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(party);
   const members=party.members.slice().sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
   const p={from:party.self.id,hostId:party.self.id,hostEpoch:party.hostEpoch,matchEpoch:Math.max(Date.now(),partyCpuMatch.epoch+1),
     humanIds:members.map(m=>m.id),humanNames:Object.fromEntries(members.map(m=>[m.id,m.name]))};
@@ -1400,20 +1596,27 @@ function leaveParty(status,toHub){
     if(direct)return;
   }
   if(old&&old.chatComposing&&formOpen) closeForm();
+  if(typeof partyFriendInviteFormOwnerId!=='undefined'&&partyFriendInviteFormOwnerId&&typeof formOpen!=='undefined'&&formOpen&&typeof closeForm==='function')closeForm();
+  if(typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(old);
   if(old&&old.channel){ try{ partySend('leave',{}); }catch(e){} partyDropChannel(old.channel); }
   party=freshParty(status||'Create a party or join with a 6-character code.');
+  partyInviteSendBusy=false;partyFriendInviteSendOp=null;partyFriendInviteJoinBusy=false;partyFriendInviteFormOwnerId='';
   selPage=direct?'offlinecpu':toHub?'hub':'party';if(direct){offlineCpuView='2v2';offlineCpuInfoKey='';}
 }
 function partyTick(clock){
   if(!party||!party.channel||!party.self) return;
   if(party.directCpu&&party.phase==='closing')return;
   if(!party.accepted){
+    if(!party.directCpu&&party.friendInviteToken&&party.friendInviteExpiresAt&&clock>=party.friendInviteExpiresAt){
+      leaveParty('THAT PARTY INVITE EXPIRED BEFORE THE PARTY COULD CONNECT.',false);sfx('dry');return;
+    }
     if(clock>=party.joinDeadline){
       if(party.directCpu)partyDirectCpuClose('FRIEND GAME COULD NOT CONNECT · TRY AGAIN');else leaveParty('PARTY NOT FOUND OR NO LONGER OPEN.',false);
       sfx('dry');return;
     }
     if(clock>=party.nextJoinRequest){
-      party.nextJoinRequest=clock+850;partySend('join_request',{name:party.self.name,joined:party.self.joined,inviteToken:party.directCpu?party.cpuInviteToken:''});
+      party.nextJoinRequest=clock+850;partySend('join_request',{name:party.self.name,joined:party.self.joined,
+        inviteToken:party.directCpu?party.cpuInviteToken:'',friendInviteToken:party.directCpu?'':party.friendInviteToken});
     }
     return;
   }
@@ -1423,9 +1626,12 @@ function partyTick(clock){
   const currentHost=partyMember(party.hostId), hostGone=!currentHost||(!party.liveIds.has(party.hostId)&&clock-(party.missingSince[party.hostId]||clock)>=PARTY_MISSING_MS);
   if(hostGone){
     const live=party.members.filter(m=>party.liveIds.has(m.id)).sort((a,b)=>(a.order-b.order)||a.id.localeCompare(b.id));
-    if(live.length&&live[0].id===party.self.id){ party.hostId=party.self.id; party.hostEpoch++; party.status='You are the new party host.'; partyHostCommit(); }
+    if(live.length&&live[0].id===party.self.id){
+      if(typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(party);party.hostId=party.self.id; party.hostEpoch++; party.status='You are the new party host.'; partyHostCommit();
+    }
   }
   if(partyIsHost()){
+    if(typeof partyPurgeFriendInvites==='function')partyPurgeFriendInvites(clock);
     const gone=party.members.filter(m=>m.id!==party.self.id&&!party.liveIds.has(m.id)&&clock-(party.missingSince[m.id]||clock)>=PARTY_MISSING_MS);
     if(gone.length&&party.directCpu){
       if(partyCpuSessionOpen())partyCpuAbort('FRIEND DISCONNECTED FROM THE CPU GAME.',true);else partyDirectCpuClose('FRIEND DISCONNECTED · SEND A NEW INVITE');

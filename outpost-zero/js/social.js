@@ -4,7 +4,11 @@ const SOCIAL_PROFILE_TABLE='social_profiles', SOCIAL_FRIEND_TABLE='friendships',
 let socialRects=[], socialProfile=null, socialProfiles={}, socialFriends=[], socialMessages=[];
 let socialLoading=false, socialStatus='', socialLastFetch=0, socialChannel=null;
 let socialBackend={profiles:null,friends:null,messages:null};
-let socialFriendPage=0, socialMessagePage=0;
+// Social is one page at a time: the Friends directory or the private Inbox.
+// Each friend bucket owns its own page so a busy Incoming list can never hide
+// Outgoing requests or current friends.
+let socialView='friends', socialFriendPage=0, socialMessagePage=0;
+let socialFriendPages={incoming:0,outgoing:0,current:0};
 let socialMessageTo=null, msgKind='admin';
 let socialDomPageActive=false;
 let socialFetchVersion=0, socialAccountId='', socialFetchUserId='', socialFetchPromise=null, socialFetchQueued=false;
@@ -220,9 +224,10 @@ function prepareSocialForAccount(userId){
   socialDropRealtime(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialAccountSettingsSqlReady=null;
-  socialFriendPage=0; socialMessagePage=0;
+  socialView='friends'; socialFriendPage=0; socialMessagePage=0;
+  socialFriendPages={incoming:0,outgoing:0,current:0};
   socialCpuInvitePollAt=0; socialCpuInvitePolling=false; socialCpuInvitePromptedIds=new Set();
-  socialStatus=id?'CHECKING YOUR USERNAME...':'SIGN IN FOR FRIENDS + PRIVATE MESSAGES';
+  socialStatus=id?'CHECKING YOUR USERNAME...':'SIGN IN FOR FRIENDS + DIRECT MESSAGES';
   return true;
 }
 function resetSocialState(message){
@@ -233,9 +238,10 @@ function resetSocialState(message){
   socialDropRealtime(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialAccountSettingsSqlReady=null;
-  socialFriendPage=0; socialMessagePage=0;
+  socialView='friends'; socialFriendPage=0; socialMessagePage=0;
+  socialFriendPages={incoming:0,outgoing:0,current:0};
   socialCpuInvitePollAt=0; socialCpuInvitePolling=false; socialCpuInvitePromptedIds=new Set();
-  socialStatus=message||'SIGN IN FOR FRIENDS + PRIVATE MESSAGES';
+  socialStatus=message||'SIGN IN FOR FRIENDS + DIRECT MESSAGES';
   closeUsernameClaim();
 }
 function setupSocialRealtime(){
@@ -309,25 +315,31 @@ function socialMaybePromptCpuGameInvite(){
     .sort((a,b)=>Date.parse(b&&b.created_at||0)-Date.parse(a&&a.created_at||0));
   for(const row of rows){
     if(!row||String(row.recipient_id||'')!==owner)continue;
-    const senderId=String(row.sender_id||''),invite=socialCpuGameInvite(row.body);
+    const senderId=String(row.sender_id||''),cpuInvite=socialCpuGameInvite(row.body),
+      partyInvite=typeof socialPartyInvite==='function'?socialPartyInvite(row.body):null,invite=cpuInvite||partyInvite;
     if(!invite||!socialAcceptedFriend(senderId))continue;
     const promptId=String(row.id==null?(senderId+'|'+row.body):row.id);
     if(socialCpuInvitePromptedIds.has(promptId))continue;
     socialCpuInvitePromptedIds.add(promptId);
     const handle=String(socialPerson(senderId).handle||'FRIEND').slice(0,32);
-    socialStatus='CPU 2v2 INVITE FROM @'+handle+' · START OR DISMISS';
+    const normal=!!partyInvite&&!cpuInvite;
+    socialStatus=(normal?'PARTY INVITE':'CPU 2v2 INVITE')+' FROM @'+handle+' · '+(normal?'JOIN':'START')+' OR DISMISS';
     socialCpuInvitePromptUserId=owner;
-    openForm({title:'CPU 2v2 INVITE',hint:'@'+handle+' invited you to play together against two CPUs. Start joins the private game immediately.',
-      saveLabel:'START GAME',fields:[],
-      onCancel:()=>{socialCpuInvitePromptUserId='';socialStatus='CPU 2v2 INVITE DISMISSED · IT REMAINS IN PRIVATE MESSAGES UNTIL IT EXPIRES';},
+    openForm({title:normal?'PARTY INVITE':'CPU 2v2 INVITE',hint:normal
+        ?('@'+handle+' invited you to their Party. Join connects immediately without showing or typing a code.')
+        :('@'+handle+' invited you to play together against two CPUs. Start joins the private game immediately.'),
+      saveLabel:normal?'JOIN PARTY':'START GAME',fields:[],
+      onCancel:()=>{socialCpuInvitePromptUserId='';socialStatus=(normal?'PARTY':'CPU 2v2')+' INVITE DISMISSED · IT REMAINS IN YOUR INBOX UNTIL IT EXPIRES';},
       onSave:()=>{
         if(!authUser||String(authUser.id||'')!==owner){socialCpuInvitePromptUserId='';closeForm();return;}
-        const fresh=socialCpuGameInvite(row.body);
-        if(!fresh||!socialAcceptedFriend(senderId)){formError('That CPU 2v2 invite expired or is no longer from a friend.');return;}
+        const fresh=normal?(typeof socialPartyInvite==='function'&&socialPartyInvite(row.body)):socialCpuGameInvite(row.body);
+        if(!fresh||!socialAcceptedFriend(senderId)){formError('That '+(normal?'Party':'CPU 2v2')+' invite expired or is no longer from a friend.');return;}
         socialCpuInvitePromptUserId='';
         closeForm();
-        if(typeof partyJoinCpuInvite!=='function'||!partyJoinCpuInvite({...fresh,senderId}))
-          socialStatus=socialStatus||'COULD NOT START THAT CPU 2v2 INVITE';
+        const joined=normal
+          ?(typeof partyJoinFriendInvite==='function'&&partyJoinFriendInvite({...fresh,senderId}))
+          :(typeof partyJoinCpuInvite==='function'&&partyJoinCpuInvite({...fresh,senderId}));
+        if(!joined)socialStatus=socialStatus||('COULD NOT '+(normal?'JOIN THAT PARTY':'START THAT CPU 2v2 INVITE'));
       }});
     return true;
   }
@@ -339,11 +351,17 @@ async function socialPollCpuGameInvites(force=false){
   if(!force&&clock<socialCpuInvitePollAt)return false;
   socialCpuInvitePollAt=clock+SOCIAL_CPU_INVITE_POLL_MS; socialCpuInvitePolling=true;
   try{
-    const result=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at')
-      .eq('recipient_id',owner).like('body','OUTPOST ZERO · CPU 2V2 GAME INVITE · %').order('created_at',{ascending:false}).limit(8);
+    // Query each machine envelope directly. A busy private conversation must
+    // never bury a still-live invitation below an arbitrary latest-message cap.
+    const inviteRows=marker=>sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at')
+      .eq('recipient_id',owner).like('body',marker+'%').order('created_at',{ascending:false}).limit(8);
+    const [cpuResult,partyResult]=await Promise.all([
+      inviteRows('OUTPOST ZERO · CPU 2V2 GAME INVITE · '),inviteRows('OUTPOST ZERO · PARTY INVITE · ')
+    ]);
     if(!authUser||String(authUser.id||'')!==owner)return false;
-    if(result&&result.error)throw result.error;
-    socialMessages=socialMergeRows(socialMessages,result&&result.data).sort((a,b)=>Date.parse(b.created_at||0)-Date.parse(a.created_at||0)).slice(0,60);
+    if(cpuResult&&cpuResult.error)throw cpuResult.error;if(partyResult&&partyResult.error)throw partyResult.error;
+    socialMessages=socialMergeRows(socialMessages,[...(cpuResult&&cpuResult.data||[]),...(partyResult&&partyResult.data||[])])
+      .sort((a,b)=>Date.parse(b.created_at||0)-Date.parse(a.created_at||0)).slice(0,60);
     socialMaybePromptCpuGameInvite();return true;
   }catch(e){
     if(authUser&&String(authUser.id||'')===owner)socialCpuInvitePollAt=Date.now()+SOCIAL_CPU_INVITE_POLL_MS;
@@ -455,7 +473,7 @@ async function fetchSocialOnce(userId){
       ? 'SOCIAL READY · RUN SOCIAL 05 FOR USERNAME SETTINGS'
       : usernameNeedsClaim(socialProfile,authUser)
         ? 'CHOOSE YOUR USERNAME · THIS REPLACES THE TEMPORARY ACCOUNT NAME EVERYWHERE'
-        : 'SOCIAL READY · PRIVATE MESSAGES ARE FRIENDS-ONLY';
+        : 'INBOX READY · DIRECT MESSAGES ARE FRIENDS-ONLY';
     socialLastFetch=Date.now();
     setupSocialRealtime();
     const unread=socialMessages.some(m=>String(m.recipient_id)===userId&&!m.read_at);
@@ -498,28 +516,37 @@ async function socialSendFriendRequest(value){
     closeForm(); socialStatus='FRIEND REQUEST SENT TO @'+found.data.handle; await fetchSocial(true); sfx('swap'); return true;
   }catch(error){ formError(socialSetupMissing(error)?socialSetupStatus():'could not send — the request may already exist'); return false; }
 }
-function socialPromptEditHandle(){
-  socialPromptEditProfile();
-}
 function socialPromptEditProfile(){
-  if(!authUser){ toggleAuth(); return; }
+  if(!authUser){ toggleAuth(); return false; }
   const firstChoice=usernameNeedsClaim(socialProfile,authUser);
-  if(typeof openAccountSettings==='function'){
-    openAccountSettings({focus:'username',requiredUsername:firstChoice}); return;
+  // Social only displays/copies the canonical username. Account changes live
+  // in Settings; the sole exception here is mandatory first-time onboarding.
+  if(!firstChoice){
+    socialStatus='CHANGE YOUR USERNAME IN SETTINGS'; sfx('dry'); return false;
   }
-  openForm({title:firstChoice?'CHOOSE USERNAME':'EDIT USERNAME',hint:(firstChoice
-      ? 'Your account has a temporary private-safe label. Choose the public username shown on leaderboards, parties, friends, and messages.'
-      : 'This unique username is shown everywhere and is how friends find you. Username changes are limited to once every 21 days. Email stays private.'),saveLabel:firstChoice?'CHOOSE USERNAME':'SAVE USERNAME',
-    fields:[{id:'handle',label:'USERNAME',type:'text',value:firstChoice?'':socialProfile&&socialProfile.handle||'',placeholder:'operator_7'}],
-    onSave:v=>socialUpdateHandle(v.handle)});
+  if(typeof openAccountSettings==='function'){
+    openAccountSettings({focus:'username',requiredUsername:true}); return true;
+  }
+  openForm({title:'CHOOSE USERNAME',
+    hint:'Your account has a temporary private-safe label. Choose the public username shown on leaderboards, parties, friends, and messages.',
+    saveLabel:'CHOOSE USERNAME',fields:[{id:'handle',label:'USERNAME',type:'text',value:'',placeholder:'operator_7'}],
+    onSave:v=>socialUpdateHandle(v.handle,true)}); return true;
 }
 async function socialUpdateHandle(value,requiredClaim=false){
   const username=String(value||'').trim().replace(/^@/,'');
-  const settingsOpen=typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen;
+  const userId=String(authUser&&authUser.id||''),settingsOpen=typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen,
+    settingsUserId=typeof accountSettingsUserId==='string'?accountSettingsUserId:userId,
+    settingsEpoch=typeof accountSettingsEpoch==='number'?accountSettingsEpoch:null;
+  const settingsContextCurrent=()=>settingsOpen&&typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen&&
+    (typeof accountSettingsUserId!=='string'||accountSettingsUserId===settingsUserId)&&
+    (settingsEpoch===null||typeof accountSettingsEpoch!=='number'||accountSettingsEpoch===settingsEpoch)&&
+    !!authUser&&String(authUser.id||'')===userId;
   const showError=message=>{
-    if(requiredClaim) usernameClaimBusy(false);
-    if(settingsOpen&&typeof accountSettingsSetStatus==='function') accountSettingsSetStatus('username',message,true);
-    else if(requiredClaim){ const el=usernameClaimElements(); if(el.status) el.status.textContent=usernameClaimPrivateStatus(message); }
+    if(settingsOpen){
+      if(settingsContextCurrent()&&typeof accountSettingsSetStatus==='function')accountSettingsSetStatus('username',message,true);
+      return;
+    }
+    if(requiredClaim){ usernameClaimBusy(false); const el=usernameClaimElements(); if(el.status) el.status.textContent=usernameClaimPrivateStatus(message); }
     else formError(message);
   };
   if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){ showError('Use 3–32 letters, numbers, or _.'); return false; }
@@ -527,8 +554,7 @@ async function socialUpdateHandle(value,requiredClaim=false){
   if(usernameIsGeneratedForUser(username,authUser&&authUser.id)){ showError('Choose a real username, not the temporary account label.'); return false; }
   if(!sb||!authUser){ showError('Sign in and reconnect first.'); return false; }
   if(socialAccountSettingsSqlReady===false){ showError('Install Social 05 in Supabase before choosing or changing a username.'); return false; }
-  const userId=String(authUser.id||'');
-  if(requiredClaim) usernameClaimBusy(true,'Saving your unique username...');
+  if(requiredClaim&&(!settingsOpen||settingsContextCurrent())) usernameClaimBusy(true,'Saving your unique username...');
   let markerFailure=false;
   try{
     const result=await sb.rpc('outpost_zero_set_username',{p_username:username});
@@ -561,7 +587,7 @@ async function socialUpdateHandle(value,requiredClaim=false){
     await fetchSocial(true);
     if(!authUser||String(authUser.id||'')!==userId) return false;
     paintUserbar(); fetchBoard(); socialStatus='USERNAME UPDATED · @'+saved;
-    if(settingsOpen&&typeof accountSettingsSync==='function') accountSettingsSync(true);
+    if(settingsContextCurrent()&&typeof accountSettingsSync==='function') accountSettingsSync(true);
     sfx('swap'); return true;
   }catch(error){
     if(!authUser||String(authUser.id||'')!==userId) return false;
@@ -595,6 +621,34 @@ function socialCpuGameInvite(value,clock=Date.now()){
 function socialCpuPartyInviteCode(value){
   const invite=socialCpuGameInvite(value);return invite?invite.code:'';
 }
+function socialPartyInviteEnvelope(value){
+  const match=/^OUTPOST ZERO · PARTY INVITE · CODE ([A-Z0-9]{6}) · TOKEN ([A-Za-z0-9_-]{20,64}) · EXPIRES ([0-9]{13})$/.exec(String(value||'').trim());
+  if(!match)return null;
+  return {code:match[1],token:match[2],expiresAt:Math.floor(+match[3]||0)};
+}
+function socialPartyInvite(value,clock=Date.now()){
+  const invite=socialPartyInviteEnvelope(value);if(!invite)return null;
+  const now=Math.floor(+clock||Date.now());
+  if(invite.expiresAt<=now||invite.expiresAt>now+10*60*1000)return null;
+  return invite;
+}
+async function socialSendPartyInvite(recipientId,invite){
+  const recipient=String(recipientId||''),clean=socialPartyCodeClean(invite&&invite.code),token=String(invite&&invite.token||''),
+    expiresAt=Math.floor(+(invite&&invite.expiresAt)||0),owner=authUser?String(authUser.id||''):'',clock=Date.now();
+  if(!sb||!owner||clean.length!==6||!/^[A-Za-z0-9_-]{20,64}$/.test(token)||expiresAt<=clock||expiresAt>clock+10*60*1000||!socialAcceptedFriend(recipient)){
+    socialStatus='PARTY INVITES REQUIRE A CURRENT ACCEPTED FRIEND';sfx('dry');return false;
+  }
+  try{
+    const body='OUTPOST ZERO · PARTY INVITE · CODE '+clean+' · TOKEN '+token+' · EXPIRES '+expiresAt;
+    const result=await sb.from(SOCIAL_MESSAGE_TABLE).insert({sender_id:owner,recipient_id:recipient,body});
+    if(result&&result.error)throw result.error;
+    if(!authUser||String(authUser.id||'')!==owner||!socialAcceptedFriend(recipient))return false;
+    socialStatus='PARTY INVITE SENT';void fetchSocial(true);sfx('pickup');return true;
+  }catch(error){
+    if(authUser&&String(authUser.id||'')===owner){socialStatus=socialSetupMissing(error)?socialSetupStatus():'COULD NOT SEND THAT PARTY INVITE · FRIENDSHIP MAY HAVE CHANGED';sfx('dry');}
+    return false;
+  }
+}
 async function socialSendCpuGameInvite(recipientId,invite){
   const recipient=String(recipientId||''),clean=socialPartyCodeClean(invite&&invite.code),token=String(invite&&invite.token||''),
     expiresAt=Math.floor(+(invite&&invite.expiresAt)||0),owner=authUser?String(authUser.id||''):'',clock=Date.now();
@@ -614,7 +668,7 @@ async function socialSendCpuGameInvite(recipientId,invite){
 }
 function socialSetDomPageActive(active){
   socialDomPageActive=!!active;
-  for(const id of ['socialidentity','socialpartyjoinwrap']){
+  for(const id of ['socialidentity']){
     const el=document.getElementById(id); if(el&&!socialDomPageActive) el.style.display='none';
   }
 }
@@ -626,29 +680,14 @@ function socialPlaceDomElement(el,rect,display='flex'){
 }
 function socialLayoutIdentity(rect){
   const box=document.getElementById('socialidentity'), text=document.getElementById('socialidentitytext');
-  const copy=document.getElementById('socialhandlecopy'), edit=document.getElementById('socialprofileedit');
-  if(!box||!authUser){ if(box) box.style.display='none'; return; }
+  const copy=document.getElementById('socialhandlecopy');
+  if(!box||!authUser||!rect){ if(box) box.style.display='none'; return; }
   const ready=!!socialProfile;
   box.classList.toggle('narrow',rect.w<500);
   const firstChoice=ready&&usernameNeedsClaim(socialProfile,authUser);
   if(text) text.textContent=ready?(firstChoice?'USERNAME REQUIRED · CHOOSE ONE NOW':'USERNAME  @'+socialProfile.handle):'LOADING YOUR USERNAME...';
   if(copy) copy.disabled=!ready||firstChoice;
-  if(edit){ edit.disabled=!ready; edit.textContent=ready&&usernameNeedsClaim(socialProfile,authUser)?'CHOOSE USERNAME':'EDIT USERNAME'; }
   socialPlaceDomElement(box,rect);
-}
-function socialLayoutPartyJoin(rect,enabled){
-  const box=document.getElementById('socialpartyjoinwrap'), field=document.getElementById('socialpartycode'), join=document.getElementById('socialpartyjoin');
-  if(!box) return;
-  if(field) field.disabled=!enabled; if(join) join.disabled=!enabled;
-  socialPlaceDomElement(box,rect);
-}
-function socialPartyJoinFromInline(){
-  const field=document.getElementById('socialpartycode'), code=socialPartyCodeClean(field&&field.value);
-  if(field) field.value=code;
-  if(typeof partyPromptJoin!=='function'){ socialStatus='PARTY JOIN IS NOT READY'; sfx('dry'); return false; }
-  // The shared join form remains the final validator. Forward partial input as
-  // a prefill so a player can finish typing there instead of losing their work.
-  return partyPromptJoin(code);
 }
 async function socialCopyOwnHandle(){
   if(!socialProfile||!socialProfile.handle){ socialStatus='YOUR SOCIAL PROFILE IS STILL LOADING'; sfx('dry'); return false; }
@@ -670,15 +709,8 @@ async function socialCopyOwnHandle(){
   socialStatus='USERNAME COPIED · '+value; sfx('pickup'); return true;
 }
 function bindSocialDomControls(){
-  const field=document.getElementById('socialpartycode'), join=document.getElementById('socialpartyjoin');
-  const copy=document.getElementById('socialhandlecopy'), edit=document.getElementById('socialprofileedit');
-  if(field){
-    field.addEventListener('input',()=>{ const clean=socialPartyCodeClean(field.value); if(field.value!==clean) field.value=clean; });
-    field.addEventListener('keydown',event=>{ if(event.key==='Enter'){ event.preventDefault(); socialPartyJoinFromInline(); } });
-  }
-  if(join) join.addEventListener('click',socialPartyJoinFromInline);
+  const copy=document.getElementById('socialhandlecopy');
   if(copy) copy.addEventListener('click',socialCopyOwnHandle);
-  if(edit) edit.addEventListener('click',socialPromptEditProfile);
   const claim=usernameClaimElements();
   if(claim.save) claim.save.addEventListener('click',usernameClaimSubmit);
   if(claim.retry) claim.retry.addEventListener('click',usernameClaimRetry);
@@ -698,7 +730,7 @@ async function socialBlockFriend(rowId){
   if(!sb||!authUser) return;
   try{
     const r=await sb.from(SOCIAL_FRIEND_TABLE).update({status:'blocked',blocked_by:authUser.id}).eq('id',rowId);
-    if(r&&r.error) throw r.error; socialStatus='PLAYER BLOCKED · PRIVATE MESSAGES STOPPED'; await fetchSocial(true); sfx('swap');
+    if(r&&r.error) throw r.error; socialStatus='PLAYER BLOCKED · DIRECT MESSAGES STOPPED'; await fetchSocial(true); sfx('swap');
   }catch(error){ socialStatus=socialSetupMissing(error)?socialSetupStatus():'COULD NOT BLOCK THAT PLAYER'; sfx('dry'); }
 }
 async function socialRemoveFriend(rowId){
@@ -718,7 +750,7 @@ function socialPromptMessage(){
     }});
 }
 function openSocialMessageCompose(userId,handle){
-  if(!socialAcceptedFriend(userId)){ socialStatus='PRIVATE MESSAGES ARE ONLY FOR ACCEPTED FRIENDS'; sfx('dry'); return; }
+  if(!socialAcceptedFriend(userId)){ socialStatus='DIRECT MESSAGES ARE ONLY FOR ACCEPTED FRIENDS'; sfx('dry'); return; }
   msgKind='social'; socialMessageTo=String(userId); msgTo=String(handle||'friend'); msgOpen=true; adminsOpen=false;
   $('msgwrap').style.display='flex'; $('msgstatus').textContent=''; $('msgmsg').value=''; $('msgto').textContent='private to: @'+msgTo;
   const title=$('msgbox').querySelector('h2'); if(title) title.textContent='✉ PRIVATE MESSAGE';

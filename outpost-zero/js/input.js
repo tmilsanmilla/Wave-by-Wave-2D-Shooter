@@ -548,22 +548,29 @@ function clickSelect(){
       if(!r.enabled){ sfx('dry'); return; }
       if(r.id==='back'){ selPage='hub'; sfx('swap'); }
       else if(r.id==='signin') toggleAuth();
+      else if(r.id==='social_view_friends'){ socialView='friends'; sfx('swap'); }
+      else if(r.id==='social_view_inbox'){ socialView='inbox'; sfx('swap'); }
       else if(r.id==='social_retry') fetchSocial(true);
+      else if(r.id==='inbox_refresh'){ if(typeof fetchBanners==='function')fetchBanners(); if(authUser)fetchSocial(true); sfx('swap'); }
       else if(r.id==='friend_add') socialPromptAddFriend();
-      else if(r.id==='friend_handle') socialPromptEditHandle();
       else if(r.id==='friend_accept') socialAcceptFriend(r.rowId);
       else if(r.id==='friend_block') socialBlockFriend(r.rowId);
       else if(r.id==='friend_remove') socialRemoveFriend(r.rowId);
       else if(r.id==='friend_prev'){ socialFriendPage=Math.max(0,socialFriendPage-1); sfx('swap'); }
       else if(r.id==='friend_next'){ socialFriendPage++; sfx('swap'); }
+      else if(r.id==='friend_bucket_prev'&&socialFriendPages[r.section]!==undefined){ socialFriendPages[r.section]=Math.max(0,socialFriendPages[r.section]-1); sfx('swap'); }
+      else if(r.id==='friend_bucket_next'&&socialFriendPages[r.section]!==undefined){ socialFriendPages[r.section]++; sfx('swap'); }
+      else if(r.id==='official_update_open'&&typeof openReader==='function'){ openReader('OFFICIAL UPDATE',String(r.meta||'OUTPOST ZERO · OFFICIAL'),String(r.body||''),'public'); sfx('swap'); }
       else if(r.id==='friend_message'||r.id==='dm_reply') openSocialMessageCompose(r.userId,r.handle);
       else if(r.id==='cpu_invite_play'&&typeof partyJoinCpuInvite==='function') partyJoinCpuInvite(r.invite);
+      else if(r.id==='party_invite_join'&&typeof partyJoinFriendInvite==='function') partyJoinFriendInvite(r.invite);
       else if(r.id==='cpu_direct_return'){selPage='offlinecpu';offlineCpuView='2v2';offlineCpuInfoKey='';sfx('swap');}
       else if(r.id==='dm_new') socialPromptMessage();
       else if(r.id==='dm_prev'){ socialMessagePage=Math.max(0,socialMessagePage-1); sfx('swap'); }
       else if(r.id==='dm_next'){ socialMessagePage++; sfx('swap'); }
       else if(r.id==='party_create') partyPromptCreate();
       else if(r.id==='party_join') partyPromptJoin();
+      else if(r.id==='party_invite_friend'&&typeof partyPromptFriendInvite==='function') partyPromptFriendInvite();
       else if(r.id==='party_open'){ selPage='party'; sfx('swap'); }
       else if(r.id==='party_copy') partyCopyCode();
       return;

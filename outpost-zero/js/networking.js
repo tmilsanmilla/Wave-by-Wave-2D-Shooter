@@ -25,7 +25,12 @@ let onboardingVersion=ONBOARDING_VERSION;
 let firstAccountTutorialUserId='', firstAccountWelcomeOpen=false, firstAccountWelcomeRects=[];
 let authProfileRequestVersion=0;
 let postUsernameGateUserId='';
-let accountSettingsOpen=false, accountSettingsRequiredUsername=false, accountSettingsBusy=false, accountSettingsUserId='';
+const AUTH_IDENTIFIER_FUNCTION='outpost-zero-sign-in';
+const AUTH_INVALID_CREDENTIALS='Email/username or password is incorrect. If you just signed up, verify your email first.';
+const AUTH_TRY_LATER='Too many sign-in attempts. Wait a moment and try again.';
+const AUTH_SIGNIN_SETUP='Username sign-in needs the secure Outpost Zero Edge Function deployed. Email sign-in is still available.';
+let authActionBusy=false,authActionEpoch=0;
+let accountSettingsOpen=false, accountSettingsRequiredUsername=false, accountSettingsBusy=false, accountSettingsUserId='', accountSettingsSection='menu', accountSettingsReturnFocus=null, accountSettingsEpoch=0;
 let accountMenuOpen=false, accountMenuConfirming=false, accountMenuBusy=false, accountMenuUserId='', accountMenuReturnView='';
 const $ = id => document.getElementById(id);
 
@@ -131,6 +136,10 @@ async function initAuth(){
       void refreshBotLadder(true);
       if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true);
       sb.auth.onAuthStateChange((_e, sess)=>{
+        // A login/logout/recovery event supersedes every in-flight form
+        // request. In particular, a late username resolver may never install
+        // a session after the account has changed in another tab.
+        if(typeof authActionCancel==='function')authActionCancel(false);
         if(_e==='PASSWORD_RECOVERY'){
           recovering=true;
           if(typeof closeAccountMenu==='function')closeAccountMenu(true);
@@ -247,7 +256,6 @@ function setupRealtime(){
     });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_prices'}, ()=>{ rtBump(); fetchPrices(); });
     // admins only: roster changes, inbox, report feed
-    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admins'},        ()=>{ rtBump(); fetchAdmins(); });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admin_msgs'},    ()=>{ rtBump(); if(isAdmin()) fetchMsgs(); });
     ch=ch.on('postgres_changes', {event:'INSERT', schema:'public', table:'reports'},  ()=>{ rtBump(); if(isMainAdmin()) fetchUpdatesFeed(); });
     ch.subscribe((st)=>{
@@ -437,15 +445,26 @@ function syncAccountMenu(){
   if(el.status)el.status.textContent=accountMenuBusy?'SIGNING OUT\u2026':'';
   return true;
 }
+function restoreAccountMenuFocus(){
+  if(typeof restoreAccountTriggerFocus==='function'&&restoreAccountTriggerFocus())return true;
+  const canvas=$('c');
+  if(canvas&&typeof canvas.focus==='function')try{
+    canvas.focus({preventScroll:true});
+    return typeof document==='undefined'||document.activeElement===canvas;
+  }catch(error){try{canvas.focus();return typeof document==='undefined'||document.activeElement===canvas;}catch(focusError){}}
+  return false;
+}
 function closeAccountMenu(force=false){
   if(accountMenuBusy&&!force)return false;
-  const el=accountMenuElements(),hadFocus=!!(el.wrap&&typeof el.wrap.contains==='function'&&el.wrap.contains(document.activeElement));
+  const el=accountMenuElements(),hadFocus=!!(typeof document!=='undefined'&&el.wrap&&typeof el.wrap.contains==='function'&&el.wrap.contains(document.activeElement));
   accountMenuOpen=false;accountMenuConfirming=false;accountMenuBusy=false;accountMenuUserId='';accountMenuReturnView='';
   if(el.wrap){el.wrap.style.display='none';el.wrap.setAttribute('aria-hidden','true');el.wrap.classList.remove('confirming','busy');}
   if(el.actions)el.actions.hidden=false;if(el.confirm)el.confirm.hidden=true;
   if(el.identity)el.identity.textContent='';if(el.email)el.email.textContent='';if(el.status)el.status.textContent='';
   for(const button of [el.settings,el.signout,el.cancel,el.confirmCancel,el.confirmSignout])if(button)button.disabled=false;
-  if(hadFocus&&!force&&typeof restoreAccountTriggerFocus==='function')restoreAccountTriggerFocus();
+  // Forced closes happen after sign-out/account replacement too. Do not leave
+  // keyboard focus inside the now-hidden account or confirmation dialog.
+  if(hadFocus)restoreAccountMenuFocus();
   return true;
 }
 function openAccountMenu(){
@@ -537,29 +556,233 @@ async function toggleAuth(options){
     else if(typeof closeUsernameClaim==='function')closeUsernameClaim(true);
     paintUserbar();return true;
   }
-  closeAccountMenu(true);arenaAuthPending=false;$('aguest').style.display='block';$('authwrap').style.display='flex';
+  closeAccountMenu(true);authActionCancel(false);arenaAuthPending=false;$('aguest').style.display='block';$('authwrap').style.display='flex';
+  try{setTimeout(()=>$('aidentifier').focus(),0);}catch(error){}
   return true;
 }
-function creds(){
-  return { email: $('aemail').value.trim(), password: $('apass').value };
+function authElements(){
+  if(typeof document==='undefined')return {};
+  return {wrap:$('authwrap'),section:$('authsignin'),identifier:$('aidentifier'),password:$('apass'),
+    signIn:$('ain'),signUp:$('aup'),forgot:$('aforgot'),message:$('authmsg')};
 }
-function signupUsername(){
-  return String($('ausername')&&$('ausername').value||'').trim().replace(/^@/,'');
+function authIdentifierValue(){
+  const el=authElements();return String(el.identifier&&el.identifier.value||'').trim();
+}
+function authIdentifierKind(raw){
+  const value=String(raw||'').trim();
+  if(!value||value.length>254||/\s/.test(value))return '';
+  if(value[0]!=='@'&&/^[^@]+@[^@]+$/.test(value))return 'email';
+  return /^[A-Za-z0-9_]{3,32}$/.test(value.replace(/^@/,''))?'username':'';
+}
+function authActionSync(){
+  const el=authElements(),busy=!!authActionBusy;
+  if(el.section&&el.section.classList)el.section.classList.toggle('busy',busy);
+  for(const control of [el.identifier,el.password,el.signIn,el.signUp])if(control)control.disabled=busy;
+  if(el.forgot){el.forgot.setAttribute('aria-disabled',busy?'true':'false');el.forgot.tabIndex=busy?-1:0;}
+  return busy;
+}
+function authActionCurrent(epoch){return !!epoch&&authActionBusy&&epoch===authActionEpoch;}
+function authActionStart(message){
+  if(authActionBusy)return 0;
+  authActionBusy=true;const epoch=++authActionEpoch;
+  const el=authElements();if(el.message)el.message.textContent=String(message||'');
+  authActionSync();return epoch;
+}
+function authActionFinish(epoch){
+  if(!authActionCurrent(epoch))return false;
+  authActionBusy=false;authActionSync();return true;
+}
+function authActionCancel(clearPassword=false){
+  ++authActionEpoch;authActionBusy=false;
+  const el=authElements();if(clearPassword&&el.password)el.password.value='';
+  authActionSync();return true;
+}
+function authFunctionStatus(error){
+  const context=error&&error.context;
+  return Number(context&&context.status||error&&error.status||0)||0;
+}
+function authSignInFailure(error,edge=false){
+  const status=authFunctionStatus(error),code=String(error&&error.code||'').toLowerCase(),name=String(error&&error.name||'');
+  if(status===429||code.includes('rate_limit'))return {ok:false,message:AUTH_TRY_LATER,reason:'rate'};
+  if(edge&&(status===404||/FunctionsFetchError|FunctionsRelayError/.test(name)))
+    return {ok:false,message:AUTH_SIGNIN_SETUP,reason:'setup'};
+  if(status===400||status===401||status===403||code==='invalid_credentials'||code==='email_not_confirmed')
+    return {ok:false,message:AUTH_INVALID_CREDENTIALS,reason:'credentials'};
+  return {ok:false,message:'Could not reach sign-in. Check your connection and try again.',reason:'unavailable'};
+}
+async function authSignInWithIdentifier(rawIdentifier,password,epoch=authActionEpoch){
+  const kind=authIdentifierKind(rawIdentifier),identifier=String(rawIdentifier||'').trim();
+  if(!kind||!password)return {ok:false,message:'Email or username and password are required.',reason:'invalid'};
+  if(!sb)return {ok:false,message:'Sign-in unavailable here \u2014 works once deployed.',reason:'unavailable'};
+  if(kind==='email')try{
+    // Never let signInWithPassword mutate the shared client directly. This
+    // isolated client holds the returned session in memory only; the active
+    // epoch is checked before the shared client can install its tokens.
+    const detached=authDetachedClient('signin',epoch);
+    if(!detached)return {ok:false,message:'Email sign-in is temporarily unavailable. Reload and try again.',reason:'unavailable'};
+    const result=await detached.auth.signInWithPassword({email:identifier,password});
+    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+    if(result&&result.error)return authSignInFailure(result.error);
+    const session=result&&result.data&&result.data.session,
+      accessToken=String(session&&session.access_token||''),refreshToken=String(session&&session.refresh_token||'');
+    if(!accessToken||!refreshToken)return {ok:false,message:'Email sign-in is temporarily unavailable. Try again.',reason:'unavailable'};
+    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+    const installed=await sb.auth.setSession({access_token:accessToken,refresh_token:refreshToken});
+    return installed&&installed.error?authSignInFailure(installed.error):{ok:true};
+  }catch(error){return authSignInFailure(error);}
+  const normalized=kind==='username'?identifier.replace(/^@/,''):identifier;
+  try{
+    if(!sb.functions||typeof sb.functions.invoke!=='function')
+      return {ok:false,message:AUTH_SIGNIN_SETUP,reason:'setup'};
+    // Username resolution stays server-side so a public handle can never
+    // expose its account email. The shared client receives tokens only after
+    // this operation is still the active form epoch.
+    const result=await sb.functions.invoke(AUTH_IDENTIFIER_FUNCTION,{body:{identifier:normalized,password}});
+    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+    if(result&&result.error)return authSignInFailure(result.error,true);
+    const session=result&&result.data,keys=session&&typeof session==='object'?Object.keys(session).sort():[];
+    if(keys.length!==2||keys[0]!=='access_token'||keys[1]!=='refresh_token'||
+       typeof session.access_token!=='string'||!session.access_token||
+       typeof session.refresh_token!=='string'||!session.refresh_token)
+      return {ok:false,message:'Username sign-in is temporarily unavailable. Try email sign-in instead.',reason:'unavailable'};
+    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+    const installed=await sb.auth.setSession({access_token:session.access_token,refresh_token:session.refresh_token});
+    return installed&&installed.error?authSignInFailure(installed.error):{ok:true};
+  }catch(error){return authSignInFailure(error,true);}
+}
+function authDetachedClient(purpose,epoch){
+  const factory=typeof window!=='undefined'&&window.supabase;
+  if(!factory||typeof factory.createClient!=='function')return null;
+  return factory.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false,
+    detectSessionInUrl:false,storageKey:'oz-detached-'+String(purpose||'auth')+'-'+String(epoch||Date.now())}});
+}
+async function authCreateAccount(rawIdentifier,password,epoch=authActionEpoch){
+  const identifier=String(rawIdentifier||'').trim();
+  if(authIdentifierKind(identifier)!=='email')
+    return {ok:false,message:'Creating an account needs your private email address. You choose a username after signing in.'};
+  if(password.length<6)return {ok:false,message:'Password must be at least 6 characters.'};
+  if(!sb)return {ok:false,message:'Account creation works once deployed.'};
+  try{
+    // Deliberately omit username metadata. Social creates a temporary private-
+    // email-free handle, then the existing post-auth gate requires the player
+    // to make one durable public choice from Settings.
+    const detached=authDetachedClient('signup',epoch);
+    if(!detached)return {ok:false,message:'Account creation is temporarily unavailable. Reload and try again.'};
+    const result=await detached.auth.signUp({email:identifier,password});
+    if(!authActionCurrent(epoch))return {ok:false,stale:true};
+    if(result&&result.error){
+      const status=authFunctionStatus(result.error),code=String(result.error.code||'').toLowerCase();
+      if(status===429||code.includes('rate_limit'))return {ok:false,message:AUTH_TRY_LATER};
+      if(code.includes('weak_password'))return {ok:false,message:'Use a stronger password with at least 6 characters.'};
+      return {ok:false,message:'Could not create that account. Try signing in, resetting your password, or using a different email.'};
+    }
+    const session=result&&result.data&&result.data.session;
+    if(session){
+      const accessToken=String(session.access_token||''),refreshToken=String(session.refresh_token||'');
+      if(!accessToken||!refreshToken)return {ok:false,message:'Account created, but automatic sign-in failed. Sign in again here.'};
+      if(!authActionCurrent(epoch))return {ok:false,stale:true};
+      const installed=await sb.auth.setSession({access_token:accessToken,refresh_token:refreshToken});
+      if(installed&&installed.error)return {ok:false,message:'Account created, but automatic sign-in failed. Sign in again here.'};
+    }
+    return {ok:true,authenticated:!!(result&&result.data&&result.data.session),
+      message:'Account created. Check your email to verify it, then sign in here. You will choose your username after sign-in.'};
+  }catch(error){return {ok:false,message:'Could not create the account. Check your connection and try again.'};}
+}
+async function authRequestPasswordReset(rawIdentifier){
+  const email=String(rawIdentifier||'').trim();
+  if(authIdentifierKind(email)!=='email')
+    return {ok:false,message:'Enter your private email above for password recovery. Usernames never reveal account emails.'};
+  if(!sb)return {ok:false,message:'Password reset works once deployed.'};
+  try{
+    const result=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.href});
+    if(result&&result.error){
+      const status=authFunctionStatus(result.error),code=String(result.error.code||'').toLowerCase();
+      if(status===429||code.includes('rate_limit'))return {ok:false,message:AUTH_TRY_LATER};
+      return {ok:false,message:'Could not send a reset link. Check your connection and try again.'};
+    }
+    return {ok:true,message:'If that email has an account, a reset link is on the way.'};
+  }catch(error){return {ok:false,message:'Could not send a reset link. Check your connection and try again.'};}
 }
 function accountSettingsElements(){
   if(typeof document==='undefined') return {};
   return {
-    wrap:$('settingswrap'),box:$('settingsbox'),account:$('settingsaccount'),
+    wrap:$('settingswrap'),box:$('settingsbox'),title:$('settingstitle'),account:$('settingsaccount'),intro:$('settingsintro'),
+    home:$('settingshome'),usernameOpen:$('settingsusernameopen'),usernameSummary:$('settingsusernamesummary'),
+    passwordOpen:$('settingspasswordopen'),passwordSummary:$('settingspasswordsummary'),
+    usernamePanel:$('settingsusernamepanel'),passwordPanel:$('settingspasswordpanel'),
     username:$('settingsusername'),usernameHint:$('settingsusernamehint'),
-    usernameSave:$('settingsusernamesave'),usernameStatus:$('settingsusernamestatus'),
+    usernameSave:$('settingsusernamesave'),usernameStatus:$('settingsusernamestatus'),usernameBack:$('settingsusernameback'),
     pass1:$('settingspass1'),pass2:$('settingspass2'),passwordSave:$('settingspasswordsave'),
-    passwordStatus:$('settingspasswordstatus'),signout:$('settingssignout'),close:$('settingsclose')
+    passwordStatus:$('settingspasswordstatus'),passwordBack:$('settingspasswordback'),signout:$('settingssignout'),close:$('settingsclose')
   };
 }
 function accountSettingsSetStatus(kind,message,error=false){
   const el=accountSettingsElements(), target=kind==='password'?el.passwordStatus:el.usernameStatus;
   if(!target) return;
   target.textContent=String(message||''); target.className='settings-status'+(error?' error':'');
+}
+function accountSettingsCaptureFocus(){
+  if(typeof document==='undefined') return null;
+  const active=document.activeElement,menu=$('accountmenuwrap'),gate=$('usernameclaimwrap');
+  if(active&&menu&&typeof menu.contains==='function'&&menu.contains(active)) return $('accountmenutrigger')||$('c');
+  if(active&&gate&&typeof gate.contains==='function'&&gate.contains(active)) return $('c');
+  if(!active||active===document.body||active===document.documentElement||typeof active.focus!=='function')return $('c');
+  return active;
+}
+function accountSettingsRestoreFocus(){
+  const target=accountSettingsReturnFocus;accountSettingsReturnFocus=null;
+  const trigger=$('accountmenutrigger');
+  if(target===trigger&&typeof restoreAccountTriggerFocus==='function'&&restoreAccountTriggerFocus()) return true;
+  const fallback=$('c'),next=target&&target.isConnected!==false&&!target.disabled?target:fallback;
+  if(next&&typeof next.focus==='function')try{
+    next.focus({preventScroll:true});
+    if(typeof document==='undefined'||document.activeElement===next)return true;
+  }catch(error){try{next.focus();if(typeof document==='undefined'||document.activeElement===next)return true;}catch(focusError){}}
+  if(fallback&&typeof fallback.focus==='function')try{fallback.focus();return true;}catch(error){}
+  return false;
+}
+function accountSettingsFocusable(){
+  const el=accountSettingsElements();
+  const choices=accountSettingsSection==='username'
+    ?[el.username,el.usernameSave,accountSettingsRequiredUsername?null:el.usernameBack,el.signout,accountSettingsRequiredUsername?null:el.close]
+    :accountSettingsSection==='password'
+      ?[el.pass1,el.pass2,el.passwordSave,el.passwordBack,el.signout,el.close]
+      :[el.usernameOpen,el.passwordOpen,el.signout,el.close];
+  return choices.filter(node=>node&&!node.disabled&&typeof node.focus==='function');
+}
+function accountSettingsTrapTab(event){
+  const controls=accountSettingsFocusable();
+  if(!controls.length){event.preventDefault();return false;}
+  const first=controls[0],last=controls[controls.length-1],active=document.activeElement;
+  if(event.shiftKey&&(active===first||!controls.includes(active))){event.preventDefault();last.focus();}
+  else if(!event.shiftKey&&(active===last||!controls.includes(active))){event.preventDefault();first.focus();}
+  return true;
+}
+function accountSettingsSetSection(section='menu',focus=false){
+  const el=accountSettingsElements();
+  let next=section==='username'||section==='password'?section:'menu';
+  if(accountSettingsRequiredUsername) next='username';
+  if(accountSettingsBusy&&next!==accountSettingsSection)return accountSettingsSection;
+  const previous=accountSettingsSection;
+  accountSettingsSection=next;
+  if(previous==='password'&&next!=='password'){
+    if(el.pass1) el.pass1.value='';
+    if(el.pass2) el.pass2.value='';
+    accountSettingsSetStatus('password','');
+  }
+  if(el.title) el.title.textContent=next==='username'?'USERNAME SETTINGS':next==='password'?'PASSWORD SETTINGS':'ACCOUNT SETTINGS';
+  if(el.intro) el.intro.hidden=next!=='menu';
+  if(el.home) el.home.hidden=next!=='menu';
+  if(el.usernamePanel) el.usernamePanel.hidden=next!=='username';
+  if(el.passwordPanel) el.passwordPanel.hidden=next!=='password';
+  if(el.close) el.close.textContent='CLOSE';
+  if(focus){
+    const target=next==='username'
+      ?(!el.username||el.username.disabled?(accountSettingsRequiredUsername?el.signout:el.usernameBack):el.username)
+      :next==='password'?el.pass1:el.usernameOpen;
+    try{setTimeout(()=>target&&target.focus(),0);}catch(error){}
+  }
+  return next;
 }
 function accountSettingsUsernameReadyAt(){
   if(typeof socialProfile==='undefined'||!socialProfile) return 0;
@@ -592,6 +815,10 @@ function accountSettingsSync(resetInput=false){
       : locked
         ? 'Your username is @'+current+'. It can be changed again on '+accountSettingsDate(readyAt)+'.'
         : 'Your username is @'+current+'. After saving a different one, you must wait 21 days before changing it again.';
+  if(el.usernameSummary) el.usernameSummary.textContent=!chosen
+    ? 'Choose your public username'
+    : locked?('@'+current+' · locked until '+accountSettingsDate(readyAt)):('@'+current+' · change available');
+  if(el.passwordSummary) el.passwordSummary.textContent='Private · update your sign-in password';
   if(el.usernameSave){
     el.usernameSave.textContent=chosen?'CHANGE USERNAME':'CHOOSE USERNAME';
     el.usernameSave.disabled=accountSettingsBusy||!profileReady||locked;
@@ -601,19 +828,26 @@ function accountSettingsSync(resetInput=false){
   if(el.pass1) el.pass1.disabled=accountSettingsBusy||!signedIn;
   if(el.pass2) el.pass2.disabled=accountSettingsBusy||!signedIn;
   if(el.signout) el.signout.disabled=accountSettingsBusy||!signedIn;
+  for(const control of [el.usernameOpen,el.passwordOpen,el.usernameBack,el.passwordBack,el.close])
+    if(control)control.disabled=accountSettingsBusy;
   accountSettingsRequiredUsername=!!(signedIn&&accountSettingsRequiredUsername&&!chosen);
   el.wrap.classList.toggle('required',accountSettingsRequiredUsername);
+  accountSettingsSetSection(accountSettingsSection);
   return true;
 }
 function openAccountSettings(options={}){
   if(!authUser){ toggleAuth(); return false; }
+  if(!accountSettingsOpen){accountSettingsReturnFocus=accountSettingsCaptureFocus();accountSettingsEpoch++;}
   if(accountMenuOpen)closeAccountMenu(true);
   const opts=options&&typeof options==='object'?options:{};
   accountSettingsOpen=true;
   accountSettingsUserId=String(authUser.id||'');
+  const settingsEpoch=accountSettingsEpoch,settingsUserId=accountSettingsUserId;
   if(typeof resetHeldGameplayInput==='function') resetHeldGameplayInput();
   accountSettingsRequiredUsername=!!(opts.requiredUsername||
     (typeof usernameClaimRequired==='function'&&usernameClaimRequired()));
+  accountSettingsSection=accountSettingsRequiredUsername?'username':
+    opts.focus==='username'?'username':opts.focus==='password'?'password':'menu';
   const el=accountSettingsElements();
   if(el.wrap) el.wrap.style.display='flex';
   const gate=typeof document!=='undefined'&&document.getElementById('usernameclaimwrap');
@@ -621,24 +855,33 @@ function openAccountSettings(options={}){
   accountSettingsSetStatus('username',''); accountSettingsSetStatus('password','');
   accountSettingsSync(true);
   if((!socialProfile||String(socialProfile.user_id||'')!==String(authUser.id||''))&&typeof fetchSocial==='function'){
-    void Promise.resolve(fetchSocial(true)).then(()=>{ if(accountSettingsOpen) accountSettingsSync(true); });
+    void Promise.resolve(fetchSocial(true)).then(()=>{
+      if(accountSettingsOpen&&accountSettingsEpoch===settingsEpoch&&accountSettingsUserId===settingsUserId&&
+         authUser&&String(authUser.id||'')===settingsUserId)accountSettingsSync(true);
+    });
   }
-  const focus=opts.focus==='password'?el.pass1:el.username;
-  try{ setTimeout(()=>focus&&focus.focus(),0); }catch(error){}
+  accountSettingsSetSection(accountSettingsSection,true);
   return true;
 }
 function closeAccountSettings(force=false){
   if(!accountSettingsOpen) return true;
+  if(accountSettingsBusy&&!force){
+    accountSettingsSetStatus(accountSettingsSection==='password'?'password':'username','Wait for this account change to finish.');
+    return false;
+  }
   if(!force&&accountSettingsRequiredUsername&&
      typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()){
     accountSettingsSetStatus('username','Choose a username before leaving account setup.',true); return false;
   }
   const el=accountSettingsElements();
-  accountSettingsOpen=false; accountSettingsRequiredUsername=false; accountSettingsBusy=false; accountSettingsUserId='';
+  const hadFocus=!!(typeof document!=='undefined'&&el.wrap&&typeof el.wrap.contains==='function'&&el.wrap.contains(document.activeElement));
+  accountSettingsEpoch++;
+  accountSettingsOpen=false; accountSettingsRequiredUsername=false; accountSettingsBusy=false; accountSettingsUserId=''; accountSettingsSection='menu';
   if(el.wrap){ el.wrap.style.display='none'; el.wrap.classList.remove('required'); }
   if(el.pass1) el.pass1.value=''; if(el.pass2) el.pass2.value='';
   if(!force&&typeof usernameClaimRequired==='function'&&usernameClaimRequired()&&typeof openUsernameClaim==='function')
     openUsernameClaim('required','Open Settings to choose your public username.');
+  if(hadFocus)accountSettingsRestoreFocus();else accountSettingsReturnFocus=null;
   return true;
 }
 async function saveAccountSettingsUsername(){
@@ -647,16 +890,18 @@ async function saveAccountSettingsUsername(){
   if(typeof socialUpdateHandle!=='function'){
     accountSettingsSetStatus('username','Username settings are still loading. Try again.',true); return false;
   }
-  const userId=String(authUser&&authUser.id||'');
+  const userId=String(authUser&&authUser.id||''),settingsEpoch=typeof accountSettingsEpoch==='number'?accountSettingsEpoch:0;
   accountSettingsBusy=true; accountSettingsSetStatus('username','Saving username…'); accountSettingsSync();
   let ok=false;
   try{ ok=await socialUpdateHandle(value,accountSettingsRequiredUsername); }
   finally{
-    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId){
+    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId&&
+       (typeof accountSettingsEpoch!=='number'||accountSettingsEpoch===settingsEpoch)){
       accountSettingsBusy=false; accountSettingsSync(!!ok);
     }
   }
-  if(!accountSettingsOpen||accountSettingsUserId!==userId||!authUser||String(authUser.id||'')!==userId) return false;
+  if(!accountSettingsOpen||accountSettingsUserId!==userId||!authUser||String(authUser.id||'')!==userId||
+     (typeof accountSettingsEpoch==='number'&&accountSettingsEpoch!==settingsEpoch)) return false;
   if(ok){
     accountSettingsRequiredUsername=false; accountSettingsSync(true);
     accountSettingsSetStatus('username','Username saved. Your public name is now @'+String(socialProfile&&socialProfile.handle||value)+'.');
@@ -669,21 +914,24 @@ async function saveAccountSettingsPassword(){
   if(!sb||!authUser){ accountSettingsSetStatus('password','Sign in and reconnect first.',true); return false; }
   if(first.length<6){ accountSettingsSetStatus('password','Password must be at least 6 characters.',true); return false; }
   if(first!==second){ accountSettingsSetStatus('password','Passwords do not match.',true); return false; }
-  const userId=String(authUser.id||'');
+  const userId=String(authUser.id||''),settingsEpoch=typeof accountSettingsEpoch==='number'?accountSettingsEpoch:0;
   accountSettingsBusy=true; accountSettingsSetStatus('password','Changing password…'); accountSettingsSync();
   try{
     const result=await sb.auth.updateUser({password:first});
     if(result&&result.error) throw result.error;
-    if(!accountSettingsOpen||accountSettingsUserId!==userId||!authUser||String(authUser.id||'')!==userId) return false;
+    if(!accountSettingsOpen||accountSettingsUserId!==userId||!authUser||String(authUser.id||'')!==userId||
+       (typeof accountSettingsEpoch==='number'&&accountSettingsEpoch!==settingsEpoch)) return false;
     if(el.pass1) el.pass1.value=''; if(el.pass2) el.pass2.value='';
     accountSettingsSetStatus('password','Password changed successfully. Use it the next time you sign in.');
     return true;
   }catch(error){
-    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId)
+    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId&&
+       (typeof accountSettingsEpoch!=='number'||accountSettingsEpoch===settingsEpoch))
       accountSettingsSetStatus('password',String(error&&error.message||'Could not change password. Try again.'),true);
     return false;
   }finally{
-    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId){
+    if(accountSettingsOpen&&accountSettingsUserId===userId&&authUser&&String(authUser.id||'')===userId&&
+       (typeof accountSettingsEpoch!=='number'||accountSettingsEpoch===settingsEpoch)){
       accountSettingsBusy=false; accountSettingsSync();
     }
   }
@@ -709,7 +957,7 @@ function bindDomEvents(){
   if(accountMenu.settings)accountMenu.settings.onclick=()=>{
     if(accountMenuBusy)return;
     const required=typeof usernameClaimRequired==='function'&&usernameClaimRequired();
-    closeAccountMenu(true);openAccountSettings({focus:'username',requiredUsername:required});
+    closeAccountMenu(true);openAccountSettings(required?{focus:'username',requiredUsername:true}:{});
   };
   if(accountMenu.signout)accountMenu.signout.onclick=()=>requestSignOut('menu');
   if(accountMenu.cancel)accountMenu.cancel.onclick=()=>closeAccountMenu();
@@ -724,14 +972,21 @@ function bindDomEvents(){
   }
   if(typeof saveAccountSettingsUsername==='function') $('settingsusernamesave').onclick=saveAccountSettingsUsername;
   if(typeof saveAccountSettingsPassword==='function') $('settingspasswordsave').onclick=saveAccountSettingsPassword;
+  if(typeof accountSettingsSetSection==='function'){
+    $('settingsusernameopen').onclick=()=>accountSettingsSetSection('username',true);
+    $('settingspasswordopen').onclick=()=>accountSettingsSetSection('password',true);
+    $('settingsusernameback').onclick=()=>accountSettingsSetSection('menu',true);
+    $('settingspasswordback').onclick=()=>accountSettingsSetSection('menu',true);
+  }
   if(typeof closeAccountSettings==='function'){
     $('settingsclose').onclick=()=>closeAccountSettings();
     $('settingssignout').onclick=()=>requestSignOut('settings');
     $('settingswrap').addEventListener('keydown',event=>{
-      // Keep every Settings key inside the DOM modal. Do not prevent normal
-      // Enter/Space button activation; only Escape needs custom handling.
+      // Keep every Settings key inside the DOM modal. Enter/Space retain their
+      // native button behavior; Escape closes and Tab stays within the dialog.
       event.stopPropagation();
       if(event.key==='Escape'){ event.preventDefault(); closeAccountSettings(); }
+      else if(event.key==='Tab'&&typeof accountSettingsTrapTab==='function')accountSettingsTrapTab(event);
     });
   }
   if(typeof saveAccountSettingsUsername==='function')
@@ -747,8 +1002,11 @@ function bindDomEvents(){
   addEventListener('online',refreshTemporaryGifts);
   addEventListener('focus',refreshTemporaryGifts);
   if(typeof document!=='undefined')document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTemporaryGifts();});
-  $('aguest').onclick = ()=>{ if(!recovering && !arenaAuthPending) $('authwrap').style.display='none'; };
+  $('aguest').onclick = ()=>{
+    if(!recovering&&!arenaAuthPending){authActionCancel(true);$('authmsg').textContent='';$('authwrap').style.display='none';}
+  };
   $('acancel').onclick = async ()=>{
+  authActionCancel(true);
   if(await cancelPasswordRecoverySession())return;   // keep the panel open so they see the recovery message
   recovering=false;
   arenaAuthPending=false; $('aguest').style.display='block';
@@ -757,45 +1015,37 @@ function bindDomEvents(){
   $('authmsg').textContent='';
   $('authwrap').style.display='none';
   };
-  for(const id of ['aemail','apass'])
-    $(id).addEventListener('keydown', e=>{ if(e.key==='Enter') $('ain').click(); });
+  for(const id of ['aidentifier','apass'])
+    $(id).addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventDefault();$('ain').click();} });
   $('ain').onclick = async ()=>{
-  if(!sb){ $('authmsg').textContent='Sign-in unavailable here \u2014 works once deployed.'; return; }
-  const c=creds();
-  if(!c.email||!c.password){ $('authmsg').textContent='Email and password required.'; return; }
-  const { error } = await sb.auth.signInWithPassword(c);
-  if(error) $('authmsg').textContent=error.message;
+  const identifier=authIdentifierValue(),password=$('apass').value;
+  if(!authIdentifierKind(identifier)||!password){$('authmsg').textContent='Email or username and password are required.';return;}
+  const epoch=authActionStart('SIGNING IN\u2026');if(!epoch)return;
+  const result=await authSignInWithIdentifier(identifier,password,epoch);
+  if(!authActionFinish(epoch)||result.stale)return;
+  $('authmsg').textContent=result.ok?'SIGNED IN\u2026':result.message;
   };
   $('aup').onclick = async ()=>{
-  if(!sb){ $('authmsg').textContent='Sign-in unavailable here \u2014 works once deployed.'; return; }
-  const c=creds(), username=signupUsername();
-  if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){
-    $('authmsg').textContent='Choose a username: 3\u201332 letters, numbers, or underscores.'; return;
+  const identifier=authIdentifierValue(),password=$('apass').value;
+  if(authIdentifierKind(identifier)!=='email'){
+    $('authmsg').textContent='Creating an account needs your private email address. You choose a username after signing in.';return;
   }
-  if(!c.email||!c.password){ $('authmsg').textContent='Email and password required.'; return; }
-  let available=null, availabilityWarning='';
-  try{
-    const checked=await sb.rpc('outpost_zero_username_available',{p_username:username});
-    if(checked.error) throw checked.error;
-    available=checked.data===true;
-  }catch(error){ availabilityWarning=' Username availability could not be checked; open Social after sign-in to confirm it.'; }
-  if(available===false){ $('authmsg').textContent='That username is already taken.'; return; }
-  const { error } = await sb.auth.signUp({email:c.email,password:c.password,options:{data:{username}}});
-  if(error){ $('authmsg').textContent=error.message; return; }
-  // with email confirmation off, signUp signs the user in immediately
-  const { error: e2 } = await sb.auth.signInWithPassword(c);
-  $('authmsg').textContent = (e2
-    ? 'Account created. Now press SIGN IN with the same email and password.'
-    : 'Account created \u2014 you are signed in.')+availabilityWarning;
+  const epoch=authActionStart('CREATING ACCOUNT\u2026');if(!epoch)return;
+  const result=await authCreateAccount(identifier,password,epoch);
+  if(!authActionFinish(epoch))return;
+  $('authmsg').textContent=result.message;
   };
   $('aforgot').onclick = async (ev)=>{
   ev.preventDefault();
-  if(!sb){ $('authmsg').textContent='Password reset works once deployed.'; return; }
-  const email=$('aemail').value.trim();
-  if(!email){ $('authmsg').textContent='Enter your email above, then tap Forgot password.'; return; }
-  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: location.href });
-  $('authmsg').textContent = error ? error.message
-    : 'Reset link sent. Open it, then you\'ll be asked for a new password here.';
+  if(authActionBusy)return;
+  const identifier=authIdentifierValue();
+  if(authIdentifierKind(identifier)!=='email'){
+    $('authmsg').textContent='Enter your private email above for password recovery. Usernames never reveal account emails.';return;
+  }
+  const epoch=authActionStart('SENDING RESET LINK\u2026');if(!epoch)return;
+  const result=await authRequestPasswordReset(identifier);
+  if(!authActionFinish(epoch))return;
+  $('authmsg').textContent=result.message;
   };
   // (password recovery is handled in the main onAuthStateChange listener above)
   $('rsave').onclick = async ()=>{

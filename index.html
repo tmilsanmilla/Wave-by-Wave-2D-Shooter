@@ -4,41 +4,37 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OUTPOST ZERO — Tactical 2D Shooter</title>
-<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260827-cpu-results-invites">
+<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260827-unified-auth">
 </head>
 <body>
-<canvas id="c"></canvas>
+<canvas id="c" tabindex="-1"></canvas>
 <div id="socialidentity" class="ui" aria-live="polite">
   <div id="socialidentitytext"></div>
   <button id="socialhandlecopy" class="btn" type="button">COPY USERNAME</button>
-  <button id="socialprofileedit" class="btn" type="button">EDIT USERNAME</button>
-</div>
-<div id="socialpartyjoinwrap" class="ui">
-  <label class="sr-only" for="socialpartycode">Join party code</label>
-  <input id="socialpartycode" type="text" maxlength="6" inputmode="text" autocomplete="off"
-    autocapitalize="characters" spellcheck="false" placeholder="JOIN CODE" aria-label="Join party code">
-  <button id="socialpartyjoin" class="btn" type="button">JOIN</button>
 </div>
 <div class="llr" id="llrL"></div><div class="llr" id="llrR"></div>
 <div id="userbar" class="ui"><span id="uname">not signed in</span><span id="uemail"></span><button id="ubtn" class="btn">SIGN IN</button></div>
-<div id="authwrap" class="ui">
+<div id="authwrap" class="ui" role="dialog" aria-modal="true" aria-labelledby="authsignintitle">
   <div id="authbox">
     <h2>OUTPOST ZERO</h2>
-    <p>Your username is public. Your email stays private and is used to sign in or recover your account.<br><br>
-    If you sign up and get a verification email, the link may not load the site.
-    Just come back here and sign in normally.</p>
-    <input id="ausername" type="text" placeholder="username (required for sign up)" autocomplete="off"
-      minlength="3" maxlength="32" autocapitalize="none" spellcheck="false">
-    <input id="aemail" type="email" placeholder="you@example.com" autocomplete="email">
-    <input id="apass" type="password" placeholder="password" autocomplete="current-password">
-    <button id="ain" class="btn">SIGN IN</button>
-    <button id="aup" class="btn">SIGN UP</button>
-    <button id="aguest" class="btn">PLAY AS GUEST</button>
-    <button id="acancel" class="btn">CANCEL</button>
-    <div id="authmsg"></div>
-    <div class="auth-help">
-      <a id="aforgot" href="#">Forgot password?</a>
-    </div>
+    <section id="authsignin" aria-labelledby="authsignintitle">
+      <h3 id="authsignintitle">SIGN IN</h3>
+      <p class="auth-private-note">Use the private email on your account or your public username.</p>
+      <label class="auth-label" for="aidentifier">EMAIL OR USERNAME</label>
+      <input id="aidentifier" type="text" placeholder="you@example.com or username" autocomplete="username"
+        maxlength="254" autocapitalize="none" spellcheck="false">
+      <label class="auth-label" for="apass">PASSWORD</label>
+      <input id="apass" type="password" placeholder="password" autocomplete="current-password">
+      <button id="ain" class="btn" type="button">SIGN IN</button>
+      <button id="aup" class="btn" type="button">CREATE ACCOUNT</button>
+      <p class="auth-account-note">New accounts use an email and password first. You choose your unique public username after your first sign-in.</p>
+      <div class="auth-help">
+        <a id="aforgot" href="#">Forgot password?</a>
+      </div>
+    </section>
+    <button id="aguest" class="btn" type="button">PLAY AS GUEST</button>
+    <button id="acancel" class="btn" type="button">CANCEL</button>
+    <div id="authmsg" role="status" aria-live="polite"></div>
     <div id="resetbox">
       <p>Set a new password for your account.</p>
       <input id="rpass1" type="password" placeholder="new password (min 6)" autocomplete="new-password">
@@ -89,7 +85,18 @@
   <div id="settingsbox">
     <h2 id="settingstitle">ACCOUNT SETTINGS</h2>
     <p id="settingsaccount"></p>
-    <section class="settings-section" aria-labelledby="settingsusernametitle">
+    <p id="settingsintro">Choose the account detail you want to manage.</p>
+    <nav id="settingshome" aria-label="Account setting sections">
+      <button id="settingsusernameopen" class="btn settings-choice" type="button">
+        <span>USERNAME</span>
+        <small id="settingsusernamesummary">Public identity and 21-day change status</small>
+      </button>
+      <button id="settingspasswordopen" class="btn settings-choice" type="button">
+        <span>PASSWORD</span>
+        <small id="settingspasswordsummary">Set a new private sign-in password</small>
+      </button>
+    </nav>
+    <section id="settingsusernamepanel" class="settings-section" aria-labelledby="settingsusernametitle" hidden>
       <h3 id="settingsusernametitle">PUBLIC USERNAME</h3>
       <p id="settingsusernamehint">Your username is shown in matches, parties, friends, messages, and leaderboards. After choosing one, you can change it once every 21 days.</p>
       <label class="sr-only" for="settingsusername">Public username</label>
@@ -97,8 +104,9 @@
         minlength="3" maxlength="32" autocapitalize="none" spellcheck="false">
       <button id="settingsusernamesave" class="btn" type="button">SAVE USERNAME</button>
       <div id="settingsusernamestatus" class="settings-status" aria-live="polite"></div>
+      <button id="settingsusernameback" class="btn settings-section-back" type="button">BACK TO SETTINGS</button>
     </section>
-    <section class="settings-section" aria-labelledby="settingspasswordtitle">
+    <section id="settingspasswordpanel" class="settings-section" aria-labelledby="settingspasswordtitle" hidden>
       <h3 id="settingspasswordtitle">CHANGE PASSWORD</h3>
       <p>Use at least 6 characters. This changes the password for your current signed-in account.</p>
       <label class="sr-only" for="settingspass1">New password</label>
@@ -107,6 +115,7 @@
       <input id="settingspass2" type="password" placeholder="confirm new password" autocomplete="new-password">
       <button id="settingspasswordsave" class="btn" type="button">CHANGE PASSWORD</button>
       <div id="settingspasswordstatus" class="settings-status" aria-live="polite"></div>
+      <button id="settingspasswordback" class="btn settings-section-back" type="button">BACK TO SETTINGS</button>
     </section>
     <div id="settingsactions">
       <button id="settingssignout" class="btn" type="button">SIGN OUT</button>
@@ -127,7 +136,7 @@
 <div id="postwrap" class="ui">
   <div id="postbox">
     <h2>⚠ POST UPDATE</h2>
-    <p>Broadcast a banner to every player — update times, plans, news. Keep it short.</p>
+    <p>Publish to Home Updates and every Inbox — update times, plans, and news. Keep it short.</p>
     <textarea id="postmsg" maxlength="300" placeholder="what should players know?"></textarea>
     <button id="postsend" class="btn">POST</button>
     <button id="postcancel" class="btn">CANCEL</button>
@@ -208,34 +217,34 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./outpost-zero/js/networking.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/core.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/audio.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/weapons.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/economy-state.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/layout.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/progression.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/administration.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/persistence.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/world.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/enemies.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/state.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/party-state.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/social.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/cpu-state.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/upgrades.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/admin-ui.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/abilities.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/input.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/gameplay.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/ai.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/ai-training.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/online.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/party.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/combat.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/rendering.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/ui.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/loop.js?v=20260827-cpu-results-invites"></script>
-<script src="./outpost-zero/js/bootstrap.js?v=20260827-cpu-results-invites"></script>
+<script src="./outpost-zero/js/networking.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/core.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/audio.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/weapons.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/economy-state.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/layout.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/progression.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/administration.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/persistence.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/world.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/enemies.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/state.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/party-state.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/social.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/cpu-state.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/upgrades.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/admin-ui.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/abilities.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/input.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/gameplay.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/ai.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/ai-training.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/online.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/party.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/combat.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/rendering.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/ui.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/loop.js?v=20260827-unified-auth"></script>
+<script src="./outpost-zero/js/bootstrap.js?v=20260827-unified-auth"></script>
 </body>
 </html>

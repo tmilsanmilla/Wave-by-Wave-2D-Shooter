@@ -110,6 +110,11 @@ function doDash(){
 function menuClick(){
   const hit=o=>o && mouse.x>=o.x && mouse.x<=o.x+o.w && mouse.y>=o.y && mouse.y<=o.y+o.h;
   if(hit(menuRects.resume)){ menuOpen=false; sfx('swap'); return; }
+  if(hit(menuRects.account)){
+    if(authUser&&typeof openAccountSettings==='function')openAccountSettings(); // keep GAME MENU paused behind Settings
+    else if(typeof toggleAuth==='function')void toggleAuth(); // keep GAME MENU paused behind sign-in
+    sfx('swap');return;
+  }
   if(hit(menuRects.report)){ openReport(); sfx('swap'); return; }
   if(hit(menuRects.exit)){
     if(typeof isPartyCpuMatch==='function'&&isPartyCpuMatch()){ partyCpuAbort('You left the Party CPU match.',true); sfx('swap'); return; }
