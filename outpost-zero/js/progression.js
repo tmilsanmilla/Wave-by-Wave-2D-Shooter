@@ -149,17 +149,28 @@ function openForm(opts){
     const lab=document.createElement('label');
     const span=document.createElement('span');
     span.textContent=f.label + (f.min!==undefined? ('  ('+f.min+'-'+f.max+')') : '');
-    const inp=document.createElement('input');
+    const isSelect=f.type==='select',inp=document.createElement(isSelect?'select':'input');
     inp.id='ff_'+f.id;
-    inp.type=(f.type==='text')?'text':'number';
-    inp.value=(f.value===null||f.value===undefined)?'':String(f.value);
-    if(f.placeholder) inp.placeholder=f.placeholder;
-    if(f.upper){                                     // codes are always stored upper case
-      inp.style.textTransform='uppercase';
-      inp.oninput=()=>{ const p=inp.selectionStart; inp.value=String(inp.value||'').toUpperCase();
-                        try{ inp.setSelectionRange(p,p); }catch(e){} };
+    if(isSelect){
+      const options=Array.isArray(f.options)?f.options:[];
+      for(const item of options){
+        const option=document.createElement('option'),value=String(item&&item.value!=null?item.value:'');
+        option.value=value;option.textContent=String(item&&item.label!=null?item.label:value).slice(0,80);option.disabled=!!(item&&item.disabled);
+        inp.appendChild(option);
+      }
+      const wanted=(f.value===null||f.value===undefined)?'':String(f.value);
+      if(options.some(item=>String(item&&item.value!=null?item.value:'')===wanted))inp.value=wanted;
+    }else{
+      inp.type=(f.type==='text')?'text':'number';
+      inp.value=(f.value===null||f.value===undefined)?'':String(f.value);
+      if(f.placeholder) inp.placeholder=f.placeholder;
+      if(f.upper){                                     // codes are always stored upper case
+        inp.style.textTransform='uppercase';
+        inp.oninput=()=>{ const p=inp.selectionStart; inp.value=String(inp.value||'').toUpperCase();
+                          try{ inp.setSelectionRange(p,p); }catch(e){} };
+      }
+      if(f.type!=='text'){ if(f.min!==undefined) inp.min=f.min; if(f.max!==undefined) inp.max=f.max; }
     }
-    if(f.type!=='text'){ if(f.min!==undefined) inp.min=f.min; if(f.max!==undefined) inp.max=f.max; }
     lab.appendChild(span); lab.appendChild(inp);
     if(f.was!==undefined && f.was!==null){
       const w=document.createElement('span'); w.className='was'; w.textContent='currently '+f.was;
@@ -185,7 +196,7 @@ function formValues(){
   for(const f of formFields){
     const el=$('ff_'+f.id); if(!el) continue;
     const raw=String(el.value||'').trim();
-    if(f.type==='text'){ out[f.id]= f.upper ? raw.toUpperCase() : raw; continue; }
+    if(f.type==='text'||f.type==='select'){ out[f.id]= f.upper ? raw.toUpperCase() : raw; continue; }
     if(raw===''){ out[f.id]=null; continue; }
     let v=Math.round(+raw||0);
     if(f.min!==undefined) v=Math.max(f.min,v);

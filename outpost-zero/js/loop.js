@@ -10,6 +10,7 @@ function frame(){
   wheelTick(Math.min(Math.max(raw,0),60000));       // total site time; tolerate background tabs without clock jumps
   arenaWallTick(wall);                              // online clocks + snapshots never pause with the campaign clock
   partyTick(Date.now());                            // party admission, liveness, and host snapshots keep running on menus
+  if(typeof socialTick==='function')socialTick(Date.now()); // private CPU invites surface even away from Social; Realtime has a poll fallback
   partyCpuWallTick(Date.now());                     // host-run Party CPUs and round clocks never depend on render FPS
   if(typeof temporaryWeaponGrantTick==='function')temporaryWeaponGrantTick(Date.now());
   if(typeof myBanTick==='function')myBanTick();

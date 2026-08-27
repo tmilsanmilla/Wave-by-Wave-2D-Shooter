@@ -9,6 +9,7 @@ loadMeta();
 bindDomEvents();
 bindCoreEvents();
 bindSocialDomControls();
+if(typeof bindBotLadderSyncEvents==='function')bindBotLadderSyncEvents();
 if(typeof bindAiTrainingSyncEvents==='function')bindAiTrainingSyncEvents();
 
 initAuth().finally(()=>{

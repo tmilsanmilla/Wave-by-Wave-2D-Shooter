@@ -325,7 +325,11 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
   bot.aiTactic=tactic;return{x:best.x,y:best.y,tactic,until:bot.aiTacticUntil,usingPortal:!!bot.aiUsingPortal};
 }
 const BOT_LADDER_MAX_PROGRESS=10,BOT_LADDER_REFRESH_MS=30000;
-const BOT_LADDER_SUBMIT_RETRY_MS=Object.freeze([750,2500]),BOT_LADDER_SUBMIT_MAX_ATTEMPTS=3;
+const BOT_LADDER_RESULT_STORAGE_KEY='oz_bot_ladder_results_v1',BOT_LADDER_RESULT_ITEM_PREFIX='oz_bot_ladder_result_v1:';
+const BOT_LADDER_CANONICAL_STORAGE_KEY='oz_bot_ladder_canonical_v1',BOT_LADDER_CANONICAL_ITEM_PREFIX='oz_bot_ladder_canonical_v1:';
+const BOT_LADDER_TOMBSTONE_STORAGE_KEY='oz_bot_ladder_result_tombstones_v1',BOT_LADDER_TRAINING_STORAGE_KEY='oz_ai_training_queue_v1';
+const BOT_LADDER_RESULT_QUEUE_MAX=128,BOT_LADDER_TOMBSTONE_MAX=512;
+const BOT_LADDER_QUEUE_RETRY_MS=Object.freeze([2000,10000,30000,120000]),BOT_LADDER_RATE_LIMIT_RETRY_MS=31000;
 const BOT_DIFFICULTIES=Object.freeze([
   Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'STRONG FOUNDATIONS',detail:'Competent from the first match, with readable mistakes.',
     reactionMs:650,moveSpeed:2.55,aimNoise:.070,shotJitter:.026,fireAimError:.105,leadFactor:.40,maxLeadMs:170,thinkMs:190,turnRate:.065}),
@@ -356,8 +360,16 @@ const LATEST_BOT_MODEL_ID='apex-v5',BOT_MODEL_REFRESH_MS=30000;
 let activeBotModelId=LATEST_BOT_MODEL_ID,activeBotModelRevision=0,activeBotModelUpdatedAt='';
 let botModelSyncState='default',botModelFetchedAt=0,botModelFetchPromise=null,botModelAdminRows=[];
 let botLadder={tier:0,progress:0,winStreak:0,lossStreak:0,wins:0,losses:0,revision:0,updatedAt:''};
+let botLadderCanonical={tier:0,progress:0,winStreak:0,lossStreak:0,wins:0,losses:0,revision:0,updatedAt:''};
 let botLadderUserId='',botLadderLoaded=false,botLadderSyncState='guest',botLadderFetchedAt=0;
+let botLadderServerLoaded=false,botLadderCanonicalCached=false,botLadderRpcMissing=false;
 let botLadderFetchPromise=null,botLadderRequestVersion=0,botLadderLaunchPending='',botLadderPendingResult=null;
+let botLadderResultQueue=[],botLadderResultQueueLoaded=false,botLadderQueueStorageReady=null;
+let botLadderCanonicalStorageReady=null;
+let botLadderQueueFlushPromise=null,botLadderQueueFlushRequested=false,botLadderQueueRetryTimer=null,botLadderQueueRetryLevel=0;
+let botLadderTombstones=[],botLadderTombstonesLoaded=false,botLadderSyncEventsBound=false;
+const botLadderTrainingRecoverySnapshots=new Map();
+const botLadderRuntimeMatches=new Map();
 
 function botDifficulty(value=botLadder.tier){
   const tier=clamp(Math.floor(+value||0),0,BOT_DIFFICULTIES.length-1);
@@ -425,6 +437,251 @@ function normalizeBotLadder(raw){
     wins:whole(raw.wins),losses:whole(raw.losses),revision:whole(raw.revision),
     updatedAt:typeof raw.updated_at==='string'?raw.updated_at:(typeof raw.updatedAt==='string'?raw.updatedAt:'')};
 }
+function botLadderOwnerId(value){
+  value=String(value||'').trim();
+  return value&&value.length<=128&&!/[^A-Za-z0-9_-]/.test(value)?value:'';
+}
+function botLadderResultUuid(value){
+  value=String(value||'').trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)?value:'';
+}
+function normalizeBotLadderQueueEntry(raw){
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)||raw.v!==1)return null;
+  const owner=botLadderOwnerId(raw.owner),matchId=botLadderResultUuid(raw.matchId),difficulty=Number(raw.difficulty),queuedAt=Number(raw.queuedAt);
+  if(!owner||!matchId||typeof raw.won!=='boolean'||!Number.isInteger(difficulty)||difficulty<0||difficulty>4||
+     !Number.isSafeInteger(queuedAt)||queuedAt<=0)return null;
+  const status=raw.status==='conflict'?'conflict':raw.status==='recovery'?'recovery':'pending',conflictReason=status==='conflict'&&
+    ['difficulty_mismatch','duplicate_conflict'].includes(String(raw.conflictReason||''))?String(raw.conflictReason):'';
+  if(status==='conflict'&&!conflictReason)return null;
+  return {v:1,owner,matchId,won:raw.won,difficulty,queuedAt,status,conflictReason};
+}
+function cleanBotLadderResultQueue(entries){
+  const clean=[],seen=new Set();
+  for(const raw of Array.isArray(entries)?entries:[]){
+    const entry=normalizeBotLadderQueueEntry(raw);if(!entry)continue;
+    const key=entry.owner+'|'+entry.matchId;if(seen.has(key))continue;seen.add(key);clean.push(entry);
+  }
+  clean.sort((a,b)=>a.queuedAt-b.queuedAt||a.matchId.localeCompare(b.matchId));
+  // Never truncate already-durable receipts. The per-owner cap is enforced
+  // before a new match is admitted, so normalization cannot erase another
+  // account's later result.
+  return clean;
+}
+function botLadderResultItemKey(owner,matchId){return BOT_LADDER_RESULT_ITEM_PREFIX+botLadderOwnerId(owner)+':'+botLadderResultUuid(matchId);}
+function botLadderResultItemStatus(owner,matchId){
+  try{const raw=JSON.parse(localStorage.getItem(botLadderResultItemKey(owner,matchId))||'null');return raw&&raw.v===1?String(raw.status||''):'';}catch(e){return '';}
+}
+function readStoredBotLadderResults(){
+  const rows=new Map();let legacy=[];
+  try{const parsed=JSON.parse(localStorage.getItem(BOT_LADDER_RESULT_STORAGE_KEY)||'[]');if(Array.isArray(parsed))legacy=parsed;}catch(e){}
+  for(const raw of legacy){const entry=normalizeBotLadderQueueEntry(raw);if(entry)rows.set(botLadderQueueKey(entry.owner,entry.matchId),entry);}
+  try{
+    const keys=[];for(let i=0;i<localStorage.length;i++){const key=localStorage.key(i);if(key&&key.startsWith(BOT_LADDER_RESULT_ITEM_PREFIX))keys.push(key);}
+    for(const key of keys){
+      let raw=null;try{raw=JSON.parse(localStorage.getItem(key)||'null');}catch(e){}
+      const owner=botLadderOwnerId(raw&&raw.owner),matchId=botLadderResultUuid(raw&&raw.matchId),receiptKey=botLadderQueueKey(owner,matchId);
+      if(raw&&raw.v===1&&owner&&matchId&&raw.status==='acked'){rows.delete(receiptKey);continue;}
+      const entry=normalizeBotLadderQueueEntry(raw);if(entry)rows.set(receiptKey,entry);
+    }
+  }catch(e){}
+  return cleanBotLadderResultQueue([...rows.values()]);
+}
+function writeBotLadderResultItem(entry){
+  entry=normalizeBotLadderQueueEntry(entry);if(!entry)return false;const key=botLadderResultItemKey(entry.owner,entry.matchId),serialized=JSON.stringify(entry);
+  try{
+    const prior=JSON.parse(localStorage.getItem(key)||'null');
+    // An acknowledged UUID is terminal. A stale tab may never turn its old
+    // in-memory pending copy back into a live projected receipt.
+    if(prior&&prior.v===1&&prior.status==='acked')return false;
+    localStorage.setItem(key,serialized);return localStorage.getItem(key)===serialized;
+  }catch(e){return false;}
+}
+function writeBotLadderQueueIndex(entries){
+  const serialized=JSON.stringify(cleanBotLadderResultQueue(entries));
+  try{localStorage.setItem(BOT_LADDER_RESULT_STORAGE_KEY,serialized);return localStorage.getItem(BOT_LADDER_RESULT_STORAGE_KEY)===serialized;}catch(e){return false;}
+}
+function persistBotLadderResultQueue(entries){
+  const clean=cleanBotLadderResultQueue(entries);
+  // Each immutable receipt has its own key, so two tabs cannot overwrite each
+  // other's read/append/write array. The compact array is only a legacy index.
+  for(const entry of clean)if(!writeBotLadderResultItem(entry)){botLadderQueueStorageReady=false;return false;}
+  const merged=cleanBotLadderResultQueue([...readStoredBotLadderResults(),...clean]);
+  if(!writeBotLadderQueueIndex(merged)&&!merged.length){botLadderQueueStorageReady=false;return false;}
+  botLadderResultQueue=merged;botLadderResultQueueLoaded=true;botLadderQueueStorageReady=true;return true;
+}
+function loadBotLadderResultQueue(force=false){
+  if(botLadderResultQueueLoaded&&!force)return botLadderResultQueue.slice();
+  const stored=readStoredBotLadderResults();botLadderResultQueue=stored;botLadderResultQueueLoaded=true;
+  // Migrate a legacy array to one immutable key per receipt. Writing an empty
+  // index also serves as the storage availability probe before ranked play.
+  persistBotLadderResultQueue(stored);return botLadderResultQueue.slice();
+}
+function botLadderQueueEntries(owner=botLadderUserId){
+  owner=botLadderOwnerId(owner);return loadBotLadderResultQueue().filter(entry=>entry.owner===owner);
+}
+function botLadderQueueCount(owner=botLadderUserId){return botLadderQueueEntries(owner).length;}
+function botLadderQueueHasConflict(owner=botLadderUserId){return botLadderQueueEntries(owner).some(entry=>entry.status==='conflict');}
+function botLadderQueueHasRecovery(owner=botLadderUserId){return botLadderQueueEntries(owner).some(entry=>entry.status==='recovery');}
+function botLadderQueueBlocksPlay(owner=botLadderUserId){return botLadderQueueEntries(owner).some(entry=>entry.status==='conflict'||entry.status==='recovery');}
+function botLadderQueueKey(owner,matchId){return botLadderOwnerId(owner)+'|'+botLadderResultUuid(matchId);}
+function enqueueBotLadderResult(entry){
+  entry=normalizeBotLadderQueueEntry(entry);if(!entry)return false;
+  const queue=loadBotLadderResultQueue(true),key=botLadderQueueKey(entry.owner,entry.matchId),existing=queue.find(item=>botLadderQueueKey(item.owner,item.matchId)===key);
+  if(existing){if(existing.won!==entry.won||existing.difficulty!==entry.difficulty)return false;markBotLadderTombstone(entry.owner,entry.matchId);return true;}
+  if(botLadderResultItemStatus(entry.owner,entry.matchId)==='acked')return false;
+  if(queue.filter(item=>item.owner===entry.owner).length>=BOT_LADDER_RESULT_QUEUE_MAX)return false;
+  if(!persistBotLadderResultQueue([...queue,entry]))return false;
+  markBotLadderTombstone(entry.owner,entry.matchId);return true;
+}
+function removeBotLadderQueuedResult(owner,matchId){
+  owner=botLadderOwnerId(owner);matchId=botLadderResultUuid(matchId);const key=botLadderQueueKey(owner,matchId),queue=loadBotLadderResultQueue(true);
+  if(!queue.some(entry=>botLadderQueueKey(entry.owner,entry.matchId)===key))return true;
+  // Keep this tiny terminal marker instead of pruning it: a tab suspended for
+  // months could otherwise wake with an old legacy index and resurrect an
+  // already-credited result. If storage ever fills, new ranked play fails
+  // closed; an acknowledged win is never traded for silent cleanup.
+  const ack={v:1,owner,matchId,status:'acked',acknowledgedAt:Date.now()},itemKey=botLadderResultItemKey(owner,matchId),serialized=JSON.stringify(ack);
+  try{localStorage.setItem(itemKey,serialized);if(localStorage.getItem(itemKey)!==serialized)throw new Error('AI ladder acknowledgement verification failed.');}
+  catch(e){botLadderQueueStorageReady=false;return false;}
+  const next=queue.filter(entry=>botLadderQueueKey(entry.owner,entry.matchId)!==key);writeBotLadderQueueIndex(next);
+  botLadderResultQueue=readStoredBotLadderResults();botLadderResultQueueLoaded=true;botLadderQueueStorageReady=true;return !botLadderResultQueue.some(entry=>botLadderQueueKey(entry.owner,entry.matchId)===key);
+}
+function quarantineBotLadderQueuedResult(owner,matchId,reason){
+  const key=botLadderQueueKey(owner,matchId),queue=loadBotLadderResultQueue(true),at=queue.findIndex(entry=>botLadderQueueKey(entry.owner,entry.matchId)===key);
+  if(at<0||!['difficulty_mismatch','duplicate_conflict'].includes(String(reason||'')))return false;
+  const next=queue.slice();next[at]=Object.assign({},next[at],{status:'conflict',conflictReason:String(reason)});
+  if(!writeBotLadderResultItem(next[at])){botLadderQueueStorageReady=false;return false;}writeBotLadderQueueIndex(next);
+  botLadderResultQueue=readStoredBotLadderResults();botLadderResultQueueLoaded=true;return botLadderResultQueue.some(entry=>botLadderQueueKey(entry.owner,entry.matchId)===key&&entry.status==='conflict');
+}
+function markBotLadderQueueReconciling(owner){
+  owner=botLadderOwnerId(owner);if(!owner)return false;const queue=loadBotLadderResultQueue(true),next=[];let changed=false;
+  for(const entry of queue){
+    const replacement=entry.owner===owner&&entry.status==='pending'?Object.assign({},entry,{status:'recovery'}):entry;
+    if(replacement!==entry){changed=true;if(!writeBotLadderResultItem(replacement)){botLadderQueueStorageReady=false;return false;}}
+    next.push(replacement);
+  }
+  if(changed)writeBotLadderQueueIndex(next);botLadderResultQueue=readStoredBotLadderResults();botLadderResultQueueLoaded=true;
+  return !botLadderQueueEntries(owner).some(entry=>entry.status==='pending');
+}
+function markBotLadderResultReconciling(owner,matchId){
+  const key=botLadderQueueKey(owner,matchId),queue=loadBotLadderResultQueue(true),at=queue.findIndex(entry=>botLadderQueueKey(entry.owner,entry.matchId)===key);
+  if(at<0)return botLadderResultItemStatus(owner,matchId)==='acked';if(queue[at].status==='recovery')return true;if(queue[at].status!=='pending')return false;
+  const replacement=Object.assign({},queue[at],{status:'recovery'});if(!writeBotLadderResultItem(replacement)){botLadderQueueStorageReady=false;return false;}
+  const next=queue.slice();next[at]=replacement;writeBotLadderQueueIndex(next);botLadderResultQueue=readStoredBotLadderResults();botLadderResultQueueLoaded=true;
+  return botLadderResultQueue.some(entry=>botLadderQueueKey(entry.owner,entry.matchId)===key&&entry.status==='recovery');
+}
+function restoreBotLadderResultPending(owner,matchId){
+  const key=botLadderQueueKey(owner,matchId),queue=loadBotLadderResultQueue(true),at=queue.findIndex(entry=>botLadderQueueKey(entry.owner,entry.matchId)===key);
+  if(at<0)return false;if(queue[at].status==='pending')return true;if(queue[at].status!=='recovery')return false;
+  const replacement=Object.assign({},queue[at],{status:'pending'});if(!writeBotLadderResultItem(replacement)){botLadderQueueStorageReady=false;return false;}
+  const next=queue.slice();next[at]=replacement;writeBotLadderQueueIndex(next);botLadderResultQueue=readStoredBotLadderResults();botLadderResultQueueLoaded=true;
+  return botLadderResultQueue.some(entry=>botLadderQueueKey(entry.owner,entry.matchId)===key&&entry.status==='pending');
+}
+function cleanBotLadderTombstones(raw){
+  const out=[],seen=new Set();
+  for(const item of Array.isArray(raw)?raw:[]){
+    const owner=botLadderOwnerId(item&&item.owner),matchId=botLadderResultUuid(item&&item.matchId),key=owner+'|'+matchId;
+    if(!owner||!matchId||seen.has(key))continue;seen.add(key);out.push({owner,matchId});
+  }
+  return out.slice(-BOT_LADDER_TOMBSTONE_MAX);
+}
+function loadBotLadderTombstones(force=false){
+  if(botLadderTombstonesLoaded&&!force)return botLadderTombstones.slice();let raw=[];
+  try{const parsed=JSON.parse(localStorage.getItem(BOT_LADDER_TOMBSTONE_STORAGE_KEY)||'[]');if(Array.isArray(parsed))raw=parsed;}catch(e){}
+  botLadderTombstones=cleanBotLadderTombstones(raw);botLadderTombstonesLoaded=true;return botLadderTombstones.slice();
+}
+function saveBotLadderTombstones(entries){
+  const clean=cleanBotLadderTombstones(entries);
+  try{localStorage.setItem(BOT_LADDER_TOMBSTONE_STORAGE_KEY,JSON.stringify(clean));botLadderTombstones=clean;botLadderTombstonesLoaded=true;return true;}catch(e){return false;}
+}
+function markBotLadderTombstone(owner,matchId){
+  owner=botLadderOwnerId(owner);matchId=botLadderResultUuid(matchId);if(!owner||!matchId)return false;
+  const rows=loadBotLadderTombstones(),key=owner+'|'+matchId;if(rows.some(row=>row.owner+'|'+row.matchId===key))return true;
+  return saveBotLadderTombstones([...rows,{owner,matchId}]);
+}
+function botLadderTrainingRecoveryEntries(owner){
+  owner=botLadderOwnerId(owner);if(!owner)return [];let raw=[];
+  try{const parsed=JSON.parse(localStorage.getItem(BOT_LADDER_TRAINING_STORAGE_KEY)||'[]');if(Array.isArray(parsed))raw=parsed;}catch(e){}
+  const tombstones=new Set(loadBotLadderTombstones().filter(row=>row.owner===owner).map(row=>row.matchId)),out=[];
+  for(const item of raw){
+    if(!item||item.v!==1||item.owner!==owner||!['ai1v1','ai2v2'].includes(item.mode)||item.owner==='guest')continue;
+    const matchId=botLadderResultUuid(item.eventId),difficulty=Number(item.difficulty),queuedAt=Number(item.queuedAt);
+    if(!matchId||tombstones.has(matchId)||botLadderResultItemStatus(owner,matchId)==='acked'||typeof item.won!=='boolean'||!Number.isInteger(difficulty)||difficulty<0||difficulty>4||!Number.isInteger(queuedAt)||queuedAt<=0)continue;
+    out.push({v:1,owner,matchId,won:item.won,difficulty,queuedAt});
+  }
+  return cleanBotLadderResultQueue(out);
+}
+function snapshotBotLadderTrainingRecovery(owner){
+  owner=botLadderOwnerId(owner);if(!owner)return [];
+  const snapshot=botLadderTrainingRecoveryEntries(owner);botLadderTrainingRecoverySnapshots.set(owner,snapshot);return snapshot.slice();
+}
+function admitBotLadderTrainingRecovery(owner,status='recovery'){
+  owner=botLadderOwnerId(owner);
+  if(!owner||!['pending','recovery'].includes(status))return 0;
+  const candidates=botLadderTrainingRecoverySnapshots.get(owner)||[];if(!candidates.length)return 0;
+  const old=loadBotLadderResultQueue(true),keys=new Set(old.map(entry=>botLadderQueueKey(entry.owner,entry.matchId))),added=[];
+  for(const entry of candidates){
+    if(keys.has(botLadderQueueKey(entry.owner,entry.matchId))||botLadderResultItemStatus(owner,entry.matchId)==='acked')continue;
+    if(old.filter(item=>item.owner===owner).length+added.length>=BOT_LADDER_RESULT_QUEUE_MAX)break;
+    added.push(Object.assign({},entry,{status}));
+  }
+  if(added.length&&!persistBotLadderResultQueue([...old,...added]))return 0;
+  for(const entry of candidates){
+    if(added.some(item=>item.matchId===entry.matchId)||keys.has(botLadderQueueKey(entry.owner,entry.matchId)))markBotLadderTombstone(owner,entry.matchId);
+  }
+  return added.length;
+}
+function loadBotLadderCanonicalCache(owner){
+  owner=botLadderOwnerId(owner);if(!owner)return null;let row=null,rows=[];
+  try{row=JSON.parse(localStorage.getItem(BOT_LADDER_CANONICAL_ITEM_PREFIX+owner)||'null');}catch(e){}
+  if(!(row&&row.v===1&&botLadderOwnerId(row.owner)===owner)){
+    try{const parsed=JSON.parse(localStorage.getItem(BOT_LADDER_CANONICAL_STORAGE_KEY)||'[]');if(Array.isArray(parsed))rows=parsed;}catch(e){}
+    row=rows.find(item=>item&&item.v===1&&botLadderOwnerId(item.owner)===owner)||null;
+  }
+  return row?normalizeBotLadder(row.state):null;
+}
+function saveBotLadderCanonicalCache(owner,state){
+  owner=botLadderOwnerId(owner);if(!owner)return false;let rows=[];const next=normalizeBotLadder(state),existing=loadBotLadderCanonicalCache(owner);
+  // AI 01 revisions are monotonic even across demotions. A delayed tab may not
+  // overwrite a newer durable canonical row with an older server response.
+  const chosen=existing&&!botLadderSnapshotNewer(next,existing)?existing:next,
+    row={v:1,owner,state:chosen,savedAt:Date.now()},serialized=JSON.stringify(row);
+  try{
+    localStorage.setItem(BOT_LADDER_CANONICAL_ITEM_PREFIX+owner,serialized);
+    if(localStorage.getItem(BOT_LADDER_CANONICAL_ITEM_PREFIX+owner)!==serialized)throw new Error('AI ladder canonical verification failed.');
+  }catch(e){botLadderCanonicalStorageReady=false;return false;}
+  try{const parsed=JSON.parse(localStorage.getItem(BOT_LADDER_CANONICAL_STORAGE_KEY)||'[]');if(Array.isArray(parsed))rows=parsed;}catch(e){}
+  rows=rows.filter(item=>item&&item.v===1&&botLadderOwnerId(item.owner)&&botLadderOwnerId(item.owner)!==owner).slice(-7);
+  rows.push(row);try{localStorage.setItem(BOT_LADDER_CANONICAL_STORAGE_KEY,JSON.stringify(rows));}catch(e){}
+  botLadderCanonicalStorageReady=true;return true;
+}
+function advanceBotLadderState(raw,won){
+  const state=normalizeBotLadder(raw),next=Object.assign({},state);let delta=0,promoted=false,demoted=false;
+  if(won){
+    next.wins++;next.winStreak=Math.min(next.winStreak+1,3);next.lossStreak=0;
+    if(next.progress<BOT_LADDER_MAX_PROGRESS){next.progress++;delta=1;}
+    if(next.tier<4&&(next.winStreak>=3||next.progress>=BOT_LADDER_MAX_PROGRESS)){
+      next.tier++;next.progress=0;next.winStreak=0;next.lossStreak=0;promoted=true;
+    }
+  }else{
+    next.losses++;next.winStreak=0;next.lossStreak=Math.min(next.lossStreak+1,3);
+    if(next.lossStreak>=3){
+      next.lossStreak=0;
+      if(next.progress>0){next.progress--;delta=-1;}
+      else if(next.tier>0){next.tier--;next.progress=9;delta=-1;demoted=true;}
+    }
+  }
+  return {state:normalizeBotLadder(next),delta,promoted,demoted};
+}
+function rebuildProjectedBotLadder(){
+  const owner=botLadderOwnerId(botLadderUserId);let projected=normalizeBotLadder(botLadderCanonical);
+  for(const entry of botLadderQueueEntries(owner)){
+    // A frozen match can only count at its starting tier. Stop projection at a
+    // conflict and let the server return the canonical mismatch decision.
+    if(entry.status==='conflict'||entry.status==='recovery'||entry.difficulty!==projected.tier)break;projected=advanceBotLadderState(projected,entry.won).state;
+  }
+  botLadder=projected;return normalizeBotLadder(botLadder);
+}
 function currentBotLadder(){return normalizeBotLadder(botLadder);}
 function botLadderRpcRow(data){return Array.isArray(data)?data[0]||null:(data&&typeof data==='object'?data:null);}
 function botLadderSnapshotNewer(next,current){
@@ -432,27 +689,40 @@ function botLadderSnapshotNewer(next,current){
   const a=Date.parse(next.updatedAt||''),b=Date.parse(current.updatedAt||'');
   return Number.isFinite(a)&&(!Number.isFinite(b)||a>=b);
 }
-function applyBotLadderSnapshot(raw,expectedUserId){
+function applyBotLadderSnapshot(raw,expectedUserId,cachePersisted=false){
   const liveId=authUser&&String(authUser.id||'');
   if(!liveId||String(expectedUserId||liveId)!==liveId||botLadderUserId!==liveId)return currentBotLadder();
-  const next=normalizeBotLadder(raw),current=currentBotLadder();
+  const next=normalizeBotLadder(raw),current=normalizeBotLadder(botLadderCanonical);
   // Tier and progress can legitimately decrease. The server revision, not a
   // monotonic score comparison, decides which concurrent response is newest.
-  if(botLadderLoaded&&!botLadderSnapshotNewer(next,current))return current;
-  botLadder=next;botLadderLoaded=true;return currentBotLadder();
+  // AI 01 revisions are monotonic, so even the first fresh read must not let a
+  // delayed lower-revision response downgrade the durable owner cache.
+  if((botLadderServerLoaded||botLadderCanonicalCached)&&!botLadderSnapshotNewer(next,current)){
+    botLadderLoaded=true;botLadderServerLoaded=true;botLadderCanonicalCached=false;botLadderCanonicalStorageReady=true;return rebuildProjectedBotLadder();
+  }
+  botLadderCanonical=next;botLadderLoaded=true;botLadderServerLoaded=true;botLadderCanonicalCached=false;
+  if(!cachePersisted)saveBotLadderCanonicalCache(liveId,next);return rebuildProjectedBotLadder();
 }
 function prepareBotLadderForAccount(userId){
   userId=String(userId||'');
   if(userId===botLadderUserId)return currentBotLadder();
   botLadderRequestVersion++;botLadderLaunchPending='';botLadderPendingResult=null;botLadderFetchPromise=null;
-  botLadderUserId=userId;botLadder=normalizeBotLadder({});botLadderLoaded=!userId;
-  botLadderFetchedAt=0;botLadderSyncState=userId?'idle':'guest';return currentBotLadder();
+  loadBotLadderResultQueue();loadBotLadderTombstones();botLadderUserId=userId;
+  if(userId)snapshotBotLadderTrainingRecovery(userId);
+  const cached=userId?loadBotLadderCanonicalCache(userId):null;
+  botLadderCanonical=normalizeBotLadder(cached||{});botLadderServerLoaded=false;botLadderCanonicalCached=!!cached;botLadderRpcMissing=false;
+  botLadderCanonicalStorageReady=null;
+  botLadderLoaded=!userId||!!cached||botLadderQueueCount(userId)>0;rebuildProjectedBotLadder();
+  botLadderFetchedAt=0;botLadderSyncState=userId?(botLadderQueueHasConflict(userId)?'conflict':botLadderQueueHasRecovery(userId)?'reconciling':'idle'):'guest';return currentBotLadder();
 }
 function botLadderReady(){
   const liveId=authUser&&String(authUser.id||'');
   return !!(liveId&&botLadderLoaded&&botLadderUserId===liveId);
 }
-function botLadderReadyForMatch(){return botLadderReady()&&botLadderSyncState!=='syncing';}
+function botLadderReadyForMatch(){
+  return botLadderReady()&&botLadderSyncState!=='syncing'&&botLadderQueueStorageReady!==false&&
+    botLadderCanonicalStorageReady!==false&&!botLadderQueueBlocksPlay(botLadderUserId)&&botLadderQueueCount(botLadderUserId)<BOT_LADDER_RESULT_QUEUE_MAX;
+}
 async function refreshBotLadder(force=false){
   const expectedUserId=authUser&&String(authUser.id||'');
   if(expectedUserId!==botLadderUserId)prepareBotLadderForAccount(expectedUserId);
@@ -461,7 +731,10 @@ async function refreshBotLadder(force=false){
   // finish, launch read-only, and then have a newer request N+1 publish the
   // canonical tier a moment later.
   if(botLadderFetchPromise)return botLadderFetchPromise;
-  if(!sb||typeof sb.rpc!=='function'){botLadderSyncState='offline';return currentBotLadder();}
+  if(!sb||typeof sb.rpc!=='function'){
+    botLadderLoaded=true;rebuildProjectedBotLadder();botLadderSyncState=botLadderQueueHasConflict(expectedUserId)?'conflict':botLadderQueueHasRecovery(expectedUserId)?'reconciling':botLadderQueueCount(expectedUserId)?'queued':'offline';
+    if(!botLadderQueueHasConflict(expectedUserId))scheduleBotLadderQueueRetry();return currentBotLadder();
+  }
   if(!force&&botLadderLoaded&&Date.now()-botLadderFetchedAt<BOT_LADDER_REFRESH_MS)return currentBotLadder();
   const requestVersion=++botLadderRequestVersion;botLadderSyncState='syncing';
   let request;
@@ -470,9 +743,31 @@ async function refreshBotLadder(force=false){
       const {data,error}=await sb.rpc('get_outpost_zero_bot_ladder');if(error)throw error;
       const row=botLadderRpcRow(data);if(!row)throw new Error('AI ladder returned no account state.');
       if(requestVersion===botLadderRequestVersion&&authUser&&String(authUser.id||'')===expectedUserId){
-        applyBotLadderSnapshot(row,expectedUserId);botLadderFetchedAt=Date.now();botLadderSyncState='ready';
+        botLadderRpcMissing=false;
+        // A prior submit may have committed even when its response was lost.
+        // Before applying this fresh canonical row, make every local pending
+        // receipt unprojected and blocking until replay proves accepted/duplicate.
+        if(!markBotLadderQueueReconciling(expectedUserId)){
+          botLadderLoaded=true;botLadderSyncState='storage_error';return currentBotLadder();
+        }
+        applyBotLadderSnapshot(row,expectedUserId);
+        if(botLadderCanonicalStorageReady===false){botLadderSyncState='storage_error';return currentBotLadder();}
+        // An older build may have synced this exact match to AI 01 while its
+        // AI 03 evidence remained queued. Submit as unprojected recovery first:
+        // duplicate proves prior credit; accepted supplies canonical credit.
+        admitBotLadderTrainingRecovery(expectedUserId,'recovery');botLadderTrainingRecoverySnapshots.delete(expectedUserId);
+        rebuildProjectedBotLadder();botLadderFetchedAt=Date.now();
+        botLadderSyncState=botLadderQueueHasConflict(expectedUserId)?'conflict':botLadderQueueHasRecovery(expectedUserId)?'reconciling':botLadderQueueCount(expectedUserId)?'queued':'ready';
+        Promise.resolve().then(()=>flushBotLadderResultQueue());
       }
-    }catch(e){if(requestVersion===botLadderRequestVersion)botLadderSyncState='offline';}
+    }catch(e){
+      if(requestVersion===botLadderRequestVersion&&authUser&&String(authUser.id||'')===expectedUserId){
+        botLadderRpcMissing=botLadderMissingRpcError(e);botLadderLoaded=true;
+        if(botLadderRpcMissing)admitBotLadderTrainingRecovery(expectedUserId,botLadderCanonicalCached?'recovery':'pending');
+        rebuildProjectedBotLadder();botLadderSyncState=botLadderQueueHasConflict(expectedUserId)?'conflict':botLadderQueueHasRecovery(expectedUserId)?'reconciling':botLadderQueueCount(expectedUserId)?'queued':'offline';
+        if(!botLadderQueueHasConflict(expectedUserId))scheduleBotLadderQueueRetry();
+      }
+    }
     finally{if(botLadderFetchPromise===request)botLadderFetchPromise=null;}
     return currentBotLadder();
   })();
@@ -499,22 +794,24 @@ function botLadderProgressText(state=botLadder){
   return botDifficultyName(state.tier)+' · PROGRESS '+state.progress+'/'+BOT_LADDER_MAX_PROGRESS+' · WIN STREAK '+state.winStreak+'/3 · LOSS STREAK '+state.lossStreak+'/3';
 }
 function initializeBotLadderMatch(match,mode,difficulty,adminTest=false,modelId=activeBotModelId){
-  const canSubmit=!adminTest&&botLadderReadyForMatch(),accountId=canSubmit?String(authUser.id||''):'';
+  const accountId=!adminTest&&botLadderReadyForMatch()?botLadderOwnerId(authUser&&authUser.id):'',matchId=accountId?createBotLadderMatchId():'',
+    canSubmit=!!(accountId&&matchId);
   match.botLadderMode=String(mode||'ai1v1');match.botDifficulty=clamp(Math.floor(+difficulty||0),0,4);
   match.botModelId=botModelRelease(modelId).id;
   match.botAdminTest=!!adminTest;match.botLadderAccountId=accountId;match.botLadderReadOnly=!canSubmit;
   match.botLadderStartState=currentBotLadder();match.botLadderResultState=currentBotLadder();match.botLadderRecorded=false;
-  match.botLadderMatchId=canSubmit?createBotLadderMatchId():'';match.botLadderSubmitAttempts=0;
+  match.botLadderMatchId=matchId;match.botLadderSubmitAttempts=0;
   match.botLadderSubmitInFlight=false;match.botLadderSubmitDone=!canSubmit;match.botLadderRetryTimer=null;
-  match.botLadderSubmitWon=null;match.botLadderSyncStatus=adminTest?'admin_test':canSubmit?'ready':authUser?'offline':'guest';
+  match.botLadderSubmitWon=null;match.botLadderSubmitResponse=null;
+  match.botLadderSyncStatus=adminTest?'admin_test':canSubmit?'ready':authUser?(botLadderQueueStorageReady===false?'save_unavailable':'offline'):'guest';
   match.botLadderDelta=0;match.botLadderPromoted=false;match.botLadderDemoted=false;
+  if(canSubmit)botLadderRuntimeMatches.set(botLadderQueueKey(accountId,matchId),match);
   if(typeof initializeAiTrainingMatch==='function')initializeAiTrainingMatch(match);
   return match;
 }
-function botLadderSubmissionEligible(match){
-  const liveId=authUser&&String(authUser.id||'');
-  return !!(match&&sb&&typeof sb.rpc==='function'&&liveId&&botLadderReady()&&
-    String(match.botLadderAccountId||'')===liveId&&match.botLadderMatchId&&!match.botAdminTest);
+function botLadderMissingRpcError(error){
+  const text=[error&&error.code,error&&error.message,error&&error.details,error&&error.hint,error].filter(Boolean).join(' ').toLowerCase();
+  return /pgrst202|schema cache|could not find[^\n]*function|function[^\n]*get_outpost_zero_bot_ladder[^\n]*does not exist/.test(text);
 }
 function finishBotLadderSubmission(match,status){
   if(!match)return;if(match.botLadderRetryTimer){clearTimeout(match.botLadderRetryTimer);match.botLadderRetryTimer=null;}
@@ -523,49 +820,150 @@ function finishBotLadderSubmission(match,status){
 }
 function cancelBotLadderSubmission(match){
   if(!match||match.botLadderSubmitDone)return;
-  if(match.botLadderRecorded)return; // a finished first-to-five result still deserves its exact-once retry
+  if(match.botLadderRecorded)return; // a completed result owns a durable retry even after the arena closes
   if(match.botLadderRetryTimer){clearTimeout(match.botLadderRetryTimer);match.botLadderRetryTimer=null;}
-  if(!match.botLadderSubmitInFlight)finishBotLadderSubmission(match,'offline');
+  if(!match.botLadderSubmitInFlight){finishBotLadderSubmission(match,'cancelled');botLadderRuntimeMatches.delete(botLadderQueueKey(match.botLadderAccountId,match.botLadderMatchId));}
 }
-async function submitBotLadderResult(matchId,won,difficulty,match){
-  if(!match||match.botLadderSubmitDone||match.botLadderSubmitInFlight||match.botLadderRetryTimer)return null;
-  if(!botLadderSubmissionEligible(match)||String(matchId||'')!==String(match.botLadderMatchId||'')){
-    match.botLadderResultState=currentBotLadder();finishBotLadderSubmission(match,match.botAdminTest?'admin_test':authUser?'offline':'guest');return null;
+function clearBotLadderQueueRetry(){if(botLadderQueueRetryTimer){clearTimeout(botLadderQueueRetryTimer);botLadderQueueRetryTimer=null;}}
+function scheduleBotLadderQueueRetry(rateLimited=false){
+  const owner=botLadderOwnerId(authUser&&authUser.id);if(!owner||!botLadderQueueCount(owner)||botLadderQueueHasConflict(owner)||botLadderQueueRetryTimer)return false;
+  const index=Math.min(botLadderQueueRetryLevel,BOT_LADDER_QUEUE_RETRY_MS.length-1),base=BOT_LADDER_QUEUE_RETRY_MS[index],
+    delay=rateLimited?Math.max(BOT_LADDER_RATE_LIMIT_RETRY_MS,base):base;
+  botLadderQueueRetryLevel=Math.min(botLadderQueueRetryLevel+1,BOT_LADDER_QUEUE_RETRY_MS.length-1);
+  botLadderQueueRetryTimer=setTimeout(()=>{botLadderQueueRetryTimer=null;
+    void refreshBotLadder(true).finally(()=>flushBotLadderResultQueue());
+  },delay);return true;
+}
+function botLadderQueuedOutcome(match,won){
+  const outcome=advanceBotLadderState(match.botLadderStartState,won),liveOwner=botLadderOwnerId(authUser&&authUser.id),owner=botLadderOwnerId(match.botLadderAccountId);
+  match.botLadderDelta=outcome.delta;match.botLadderPromoted=outcome.promoted;match.botLadderDemoted=outcome.demoted;
+  match.botLadderResultState=liveOwner===owner&&botLadderUserId===owner?rebuildProjectedBotLadder():outcome.state;return outcome;
+}
+function persistCompletedBotLadderMatch(match){
+  if(!match||!match.botLadderRecorded||!match.botLadderAccountId||!match.botLadderMatchId)return false;
+  const entry={v:1,owner:match.botLadderAccountId,matchId:match.botLadderMatchId,won:!!match.botLadderSubmitWon,
+    difficulty:match.botDifficulty,queuedAt:match.botLadderQueuedAt||Date.now()};
+  match.botLadderQueuedAt=entry.queuedAt;
+  if(!enqueueBotLadderResult(entry)){
+    match.botLadderSubmitDone=false;match.botLadderSyncStatus=botLadderQueueCount(entry.owner)>=BOT_LADDER_RESULT_QUEUE_MAX?'queue_full':'save_failed';
+    botLadderPendingResult=match;
+    if(!match.botLadderRetryTimer)match.botLadderRetryTimer=setTimeout(()=>{match.botLadderRetryTimer=null;persistCompletedBotLadderMatch(match);},2500);
+    return false;
   }
-  if(match.botLadderSubmitAttempts>0&&match.botLadderSubmitWon!==!!won)return null;
-  match.botLadderSubmitWon=!!won;match.botLadderSubmitAttempts++;match.botLadderSubmitInFlight=true;match.botLadderSyncStatus='syncing';
-  try{
-    const {data,error}=await sb.rpc('submit_outpost_zero_bot_ladder',{
-      p_match_id:matchId,p_won:!!won,p_difficulty:clamp(Math.floor(+difficulty||0),0,4)});if(error)throw error;
-    const row=botLadderRpcRow(data);if(!row)throw new Error('AI ladder submission returned no account state.');
-    const sameAccount=!!(authUser&&String(authUser.id||'')===String(match.botLadderAccountId||'')&&botLadderUserId===String(match.botLadderAccountId||'')),
-      state=applyBotLadderSnapshot(row,match.botLadderAccountId),reason=String(row.reason||'');
-    if(sameAccount){botLadderFetchedAt=Date.now();botLadderSyncState='ready';}match.botLadderResultState=state;
-    match.botLadderDelta=clamp(Math.floor(+row.delta||0),-1,1);match.botLadderPromoted=row.promoted===true;match.botLadderDemoted=row.demoted===true;
-    const status=row.accepted===true?'accepted':reason==='duplicate'?'duplicate':reason==='duplicate_conflict'?'duplicate_conflict':
-      reason==='rate_limited'?'rate_limited':reason==='difficulty_mismatch'?'difficulty_mismatch':'rejected';
-    finishBotLadderSubmission(match,status);return row;
-  }catch(e){
-    match.botLadderSubmitInFlight=false;match.botLadderResultState=currentBotLadder();
-    if(match.botLadderSubmitAttempts<BOT_LADDER_SUBMIT_MAX_ATTEMPTS&&botLadderSubmissionEligible(match)){
-      match.botLadderSyncStatus='retrying';const delay=BOT_LADDER_SUBMIT_RETRY_MS[match.botLadderSubmitAttempts-1];
-      match.botLadderRetryTimer=setTimeout(()=>{match.botLadderRetryTimer=null;
-        if(!botLadderSubmissionEligible(match)){
-          if(authUser&&String(authUser.id||'')===String(match.botLadderAccountId||''))botLadderSyncState='offline';
-          finishBotLadderSubmission(match,'offline');return;
-        }
-        void submitBotLadderResult(matchId,won,difficulty,match);
-      },delay);
-    }else{if(authUser&&String(authUser.id||'')===String(match.botLadderAccountId||''))botLadderSyncState='offline';finishBotLadderSubmission(match,'offline');}
-    return null;
-  }
+  botLadderQueuedOutcome(match,entry.won);finishBotLadderSubmission(match,
+    botLadderOwnerId(authUser&&authUser.id)===entry.owner?(botLadderSyncState==='ready'?'queued':'queued_offline'):'queued_owner');
+  if(botLadderOwnerId(authUser&&authUser.id)===entry.owner){botLadderSyncState='queued';void flushBotLadderResultQueue();}
+  return true;
 }
 function recordCompletedBotLadderMatch(won,match){
-  if(!match||match.botLadderRecorded)return false;match.botLadderRecorded=true;match.botLadderResultState=currentBotLadder();
+  if(!match||match.botLadderRecorded)return false;match.botLadderRecorded=true;match.botLadderSubmitWon=!!won;match.botLadderResultState=currentBotLadder();
   if(match.botAdminTest){finishBotLadderSubmission(match,'admin_test');return true;}
   if(!match.botLadderAccountId||!match.botLadderMatchId){finishBotLadderSubmission(match,authUser?'offline':'guest');return true;}
-  botLadderPendingResult=match;
-  void submitBotLadderResult(match.botLadderMatchId,!!won,match.botDifficulty,match);return true;
+  persistCompletedBotLadderMatch(match);return true;
+}
+function botLadderRuntimeMatch(entry){return botLadderRuntimeMatches.get(botLadderQueueKey(entry&&entry.owner,entry&&entry.matchId))||null;}
+function publishBotLadderQueueStatus(entry,status,row=null,cloudFinal=false){
+  const match=botLadderRuntimeMatch(entry);if(!match)return;
+  if(row&&status==='accepted'){
+    match.botLadderSubmitResponse=row;match.botLadderDelta=clamp(Math.floor(+row.delta||0),-1,1);
+    match.botLadderPromoted=row.promoted===true;match.botLadderDemoted=row.demoted===true;
+  }else if(row)match.botLadderSubmitResponse=row;
+  const liveOwner=botLadderOwnerId(authUser&&authUser.id);
+  match.botLadderResultState=liveOwner===entry.owner&&botLadderUserId===entry.owner?currentBotLadder():match.botLadderResultState;
+  finishBotLadderSubmission(match,status);if(cloudFinal)botLadderRuntimeMatches.delete(botLadderQueueKey(entry.owner,entry.matchId));
+}
+async function flushBotLadderResultQueue(){
+  if(botLadderQueueFlushPromise){botLadderQueueFlushRequested=true;return botLadderQueueFlushPromise;}
+  let request;
+  request=(async()=>{
+    const owner=botLadderOwnerId(authUser&&authUser.id);if(!owner)return {sent:0,queued:0};
+    if(!sb||typeof sb.rpc!=='function'||(typeof navigator!=='undefined'&&navigator.onLine===false)){
+      botLadderSyncState=botLadderQueueHasConflict(owner)?'conflict':botLadderQueueHasRecovery(owner)?'reconciling':botLadderQueueCount(owner)?'queued':'offline';
+      if(!botLadderQueueHasConflict(owner))scheduleBotLadderQueueRetry();return {sent:0,queued:botLadderQueueCount(owner)};
+    }
+    let sent=0;
+    while(true){
+      if(botLadderOwnerId(authUser&&authUser.id)!==owner){botLadderQueueFlushRequested=true;break;}
+      const entry=botLadderQueueEntries(owner)[0];if(!entry)break;
+      if(entry.status==='conflict'){botLadderSyncState='conflict';break;}
+      const match=botLadderRuntimeMatch(entry);if(match)match.botLadderSubmitAttempts++;
+      try{
+        const {data,error}=await sb.rpc('submit_outpost_zero_bot_ladder',{
+          p_match_id:entry.matchId,p_won:entry.won,p_difficulty:entry.difficulty});if(error)throw error;
+        if(botLadderOwnerId(authUser&&authUser.id)!==owner){botLadderQueueFlushRequested=true;break;}
+        const row=botLadderRpcRow(data);if(!row)throw new Error('AI ladder submission returned no account state.');
+        const reason=String(row.reason||''),accepted=row.accepted===true||reason==='accepted'||reason==='duplicate';
+        if(accepted){
+          const wasPending=entry.status==='pending';
+          if(!markBotLadderResultReconciling(owner,entry.matchId)){
+            rebuildProjectedBotLadder();botLadderSyncState='storage_error';publishBotLadderQueueStatus(entry,'storage_error');scheduleBotLadderQueueRetry();break;
+          }
+          rebuildProjectedBotLadder();
+          // Cache the credited canonical state before acknowledging the local
+          // receipt. If this write fails, duplicate replay remains safe and an
+          // offline reload still has the original unacknowledged receipt.
+          if(!saveBotLadderCanonicalCache(owner,row)){
+            if(wasPending)restoreBotLadderResultPending(owner,entry.matchId);rebuildProjectedBotLadder();
+            botLadderSyncState='storage_error';publishBotLadderQueueStatus(entry,'storage_error');scheduleBotLadderQueueRetry();break;
+          }
+          const durableCanonical=loadBotLadderCanonicalCache(owner)||normalizeBotLadder(row);
+          if(!removeBotLadderQueuedResult(owner,entry.matchId)){publishBotLadderQueueStatus(entry,'queued_offline');scheduleBotLadderQueueRetry();break;}
+          applyBotLadderSnapshot(durableCanonical,owner,true);botLadderFetchedAt=Date.now();botLadderRpcMissing=false;
+          publishBotLadderQueueStatus(entry,reason==='duplicate'?'duplicate':'accepted',row,true);sent++;botLadderQueueRetryLevel=0;continue;
+        }
+        if(reason==='rate_limited'){
+          applyBotLadderSnapshot(row,owner);
+          if(botLadderCanonicalStorageReady===false){botLadderSyncState='storage_error';publishBotLadderQueueStatus(entry,'storage_error');scheduleBotLadderQueueRetry();break;}
+          publishBotLadderQueueStatus(entry,'queued_rate_limited');scheduleBotLadderQueueRetry(true);break;
+        }
+        if(reason==='difficulty_mismatch'||reason==='duplicate_conflict'){
+          // The server did not prove that this exact receipt was credited. Keep
+          // it durably quarantined and stop later results from passing it.
+          if(!quarantineBotLadderQueuedResult(owner,entry.matchId,reason)){publishBotLadderQueueStatus(entry,'queued_offline');scheduleBotLadderQueueRetry();break;}
+          applyBotLadderSnapshot(row,owner);publishBotLadderQueueStatus(entry,reason,row);botLadderSyncState='conflict';break;
+        }
+        publishBotLadderQueueStatus(entry,'queued_offline',row);scheduleBotLadderQueueRetry();break;
+      }catch(e){
+        botLadderRpcMissing=botLadderMissingRpcError(e);botLadderSyncState=entry.status==='recovery'?'reconciling':'queued';
+        publishBotLadderQueueStatus(entry,'queued_offline');scheduleBotLadderQueueRetry();break;
+      }
+    }
+    const queued=botLadderQueueCount(owner);
+    if(!queued){clearBotLadderQueueRetry();botLadderQueueRetryLevel=0;if(botLadderUserId===owner)botLadderSyncState='ready';}
+    else if(botLadderUserId===owner&&botLadderSyncState!=='storage_error')botLadderSyncState=botLadderQueueHasConflict(owner)?'conflict':botLadderQueueHasRecovery(owner)?'reconciling':'queued';
+    return {sent,queued};
+  })();
+  botLadderQueueFlushPromise=request;
+  try{return await request;}finally{
+    if(botLadderQueueFlushPromise===request)botLadderQueueFlushPromise=null;
+    const again=botLadderQueueFlushRequested;botLadderQueueFlushRequested=false;if(again)Promise.resolve().then(()=>flushBotLadderResultQueue());
+  }
+}
+async function submitBotLadderResult(matchId,won,difficulty,match){
+  if(!match||String(match.botLadderMatchId||'')!==String(matchId||'')||match.botDifficulty!==clamp(Math.floor(+difficulty||0),0,4))return null;
+  if(!match.botLadderRecorded)recordCompletedBotLadderMatch(!!won,match);
+  else if(match.botLadderSyncStatus==='save_failed'||match.botLadderSyncStatus==='queue_full')persistCompletedBotLadderMatch(match);
+  await flushBotLadderResultQueue();return match.botLadderSubmitResponse||null;
+}
+function bindBotLadderSyncEvents(){
+  if(botLadderSyncEventsBound)return false;botLadderSyncEventsBound=true;loadBotLadderResultQueue();loadBotLadderTombstones();
+  const resume=()=>{if(!authUser)return;clearBotLadderQueueRetry();botLadderQueueRetryLevel=0;void refreshBotLadder(true).finally(()=>flushBotLadderResultQueue());};
+  const storageChanged=event=>{
+    const key=String(event&&event.key||''),owner=botLadderOwnerId(authUser&&authUser.id);if(!owner||botLadderUserId!==owner)return;
+    const receiptEvent=key===BOT_LADDER_RESULT_STORAGE_KEY||key.startsWith(BOT_LADDER_RESULT_ITEM_PREFIX),
+      canonicalEvent=key===BOT_LADDER_CANONICAL_ITEM_PREFIX+owner;
+    if(!receiptEvent&&!canonicalEvent)return;
+    if(canonicalEvent){
+      if(!markBotLadderQueueReconciling(owner)){botLadderSyncState='storage_error';return;}
+      const cached=loadBotLadderCanonicalCache(owner);if(cached){botLadderCanonicalStorageReady=true;applyBotLadderSnapshot(cached,owner,true);}
+    }
+    botLadderResultQueueLoaded=false;loadBotLadderResultQueue(true);
+    rebuildProjectedBotLadder();botLadderSyncState=botLadderQueueHasConflict(owner)?'conflict':botLadderQueueHasRecovery(owner)?'reconciling':botLadderQueueCount(owner)?'queued':botLadderServerLoaded?'ready':'offline';
+    if(botLadderQueueCount(owner)&&!botLadderQueueHasConflict(owner))void flushBotLadderResultQueue();
+  };
+  if(typeof window!=='undefined'&&window.addEventListener){window.addEventListener('online',resume);window.addEventListener('focus',resume);window.addEventListener('storage',storageChanged);}
+  if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();});
+  return true;
 }
 function botLadderMatchSettled(match){return !!(match&&match.botLadderSubmitDone&&!match.botLadderSubmitInFlight&&!match.botLadderRetryTimer);}
 function botLadderHasPendingResult(){return !!(botLadderPendingResult&&!botLadderMatchSettled(botLadderPendingResult));}
@@ -573,11 +971,16 @@ function botLadderMatchResultText(match){
   const state=normalizeBotLadder(match&&match.botLadderResultState||botLadder),progress=botLadderProgressText(state),status=String(match&&match.botLadderSyncStatus||'');
   if(status==='admin_test')return 'ADMIN TEST · ACCOUNT LADDER UNCHANGED';
   if(status==='guest')return 'BEGINNER · SIGN IN TO SYNC YOUR LADDER';
-  if(status==='syncing')return 'SAVING RESULT TO YOUR ACCOUNT…';
-  if(status==='retrying')return 'RETRYING ACCOUNT SAVE…';
+  if(status==='save_unavailable')return 'DEVICE SAVE UNAVAILABLE · LADDER MATCH BLOCKED';
+  if(status==='storage_error')return 'RESULT SAFE · DEVICE RECONCILIATION BLOCKED';
+  if(status==='save_failed'||status==='queue_full')return 'RESULT NOT SAFE YET · KEEP THIS PAGE OPEN';
   if(status==='offline')return 'LADDER OFFLINE · RESULT NOT RECORDED';
-  if(status==='rate_limited')return 'RESULT RATE LIMITED · '+progress;
-  if(status==='difficulty_mismatch'||status==='duplicate_conflict')return 'RESULT REJECTED SAFELY · REFRESHING LADDER';
+  if(status==='queued'||status==='queued_offline'||status==='queued_owner'||status==='queued_rate_limited'){
+    const prefix=match&&match.botLadderPromoted?'PROMOTED TO '+botDifficultyName(state.tier):match&&match.botLadderDemoted?'RANKED DOWN TO '+botDifficultyName(state.tier):
+      match&&match.botLadderDelta<0?'3-LOSS PENALTY · -1 PROGRESS':match&&match.botLadderDelta>0?'WIN +1 PROGRESS':'RESULT SAVED';
+    return prefix+' · '+progress+' · SAVED ON THIS DEVICE · WILL SYNC';
+  }
+  if(status==='difficulty_mismatch'||status==='duplicate_conflict')return 'RESULT CONFLICT · RECEIPT KEPT ON THIS DEVICE · '+progress;
   if(match&&match.botLadderPromoted)return 'PROMOTED TO '+botDifficultyName(state.tier)+' · '+progress;
   if(match&&match.botLadderDemoted)return 'RANKED DOWN TO '+botDifficultyName(state.tier)+' · '+progress;
   if(match&&match.botLadderDelta<0)return '3-LOSS PENALTY · -1 PROGRESS · '+progress;
@@ -642,11 +1045,15 @@ function startBotArena(options){
   const adminTest=options.adminTest===true&&typeof isMainAdmin==='function'&&isMainAdmin();
   if(!adminTest&&options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai1v1',()=>startBotArena(Object.assign({},options,{ladderReady:true}))))return true;
+  if(!adminTest&&authUser&&!botLadderReadyForMatch()){
+    if(arena)arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'CPU ladder is still syncing. Try Start again.';
+    if(typeof sfx==='function')sfx('dry');return false;
+  }
   const difficulty=adminTest?4:(botLadderReadyForMatch()?botLadder.tier:0),
     modelId=adminTest?botModelRelease(options.modelId).id:botModelRelease(activeBotModelId).id;
-  // A normal signed-in match waits once for the canonical account row. If the
-  // service is unavailable it still starts at Beginner, read-only, and never
-  // invents local progress. Admin comparisons are explicitly non-scoring.
+  // A normal signed-in match waits once for the canonical account row. During
+  // an outage it uses the owner-only cached/projected tier and creates a stable
+  // receipt before play; admin comparisons remain explicitly non-scoring.
   if(arena&&isBotArena()&&typeof cancelBotLadderSubmission==='function')cancelBotLadderSubmission(arena);
   if(arena&&(arena.queueChannel||arena.matchChannel)) leaveArena('',false);
   else if(arena&&arena.savedUtility!==undefined) loadout.utility=arena.savedUtility;

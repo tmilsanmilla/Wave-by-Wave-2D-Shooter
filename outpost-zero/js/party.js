@@ -513,12 +513,22 @@ function partyPromptCpuFriendInvite(){
   }
   const accepted=(Array.isArray(socialFriends)?socialFriends:[]).filter(row=>row&&row.status==='accepted');
   if(!accepted.length){partyDirectCpuNotice('ADD A FRIEND FIRST, THEN SEND A CPU GAME INVITE');sfx('dry');return false;}
+  const choices=[],seen=new Set();
+  for(const friendship of accepted){
+    const userId=String(socialFriendOther(friendship)||''),profile=socialProfiles&&socialProfiles[userId],handle=String(profile&&profile.handle||'');
+    if(!userId||seen.has(userId)||!usernameIsChosenForUser(handle,userId))continue;
+    seen.add(userId);choices.push({userId,handle});
+  }
+  choices.sort((a,b)=>a.handle.localeCompare(b.handle,undefined,{sensitivity:'base'}));
+  if(!choices.length){
+    partyDirectCpuNotice('FRIEND USERNAMES ARE NOT READY · REFRESH SOCIAL AND TRY AGAIN');void fetchSocial(true);sfx('dry');return false;
+  }
   openForm({title:'INVITE A FRIEND',hint:'Choose an accepted friend. They can accept and the 2v2 CPU game starts automatically.',saveLabel:'INVITE',
-    fields:[{id:'handle',label:'FRIEND USERNAME',type:'text',placeholder:'operator_7'}],onSave:v=>{
-      const key=typeof socialHandleKey==='function'?socialHandleKey(v.handle):String(v.handle||'').toLowerCase(),
-        person=Object.values(socialProfiles||{}).find(profile=>socialHandleKey(profile.handle_key||profile.handle)===key);
-      if(!person||!socialAcceptedFriend(person.user_id)){formError('Choose an accepted friend.');return;}
-      const recipient=String(person.user_id||''),owner=String(authUser.id||''),username=partyDefaultName(),token=partyCpuDirectInviteToken(),
+    fields:[{id:'recipient',label:'ACCEPTED FRIEND',type:'select',value:choices[0].userId,
+      options:choices.map(friend=>({value:friend.userId,label:'@'+friend.handle}))}],onSave:v=>{
+      const recipient=String(v.recipient||''),choice=choices.find(friend=>friend.userId===recipient),person=socialProfiles&&socialProfiles[recipient];
+      if(!choice||!person||!usernameIsChosenForUser(person.handle,recipient)||!socialAcceptedFriend(recipient)){formError('Choose an accepted friend.');return;}
+      const owner=String(authUser.id||''),username=partyDefaultName(),token=partyCpuDirectInviteToken(),
         expiresAt=Date.now()+2*60*1000,code=randomArenaCode();
       if(!username){formError('Your username is still loading.');return;}
       if(!token){formError('Secure private invites are unavailable in this browser.');return;}
@@ -803,6 +813,10 @@ function startOfflineCpu2v2(options={}){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
   if(options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai2v2',()=>startOfflineCpu2v2({ladderReady:true})))return true;
+  if(authUser&&!botLadderReadyForMatch()){
+    if(arena)arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'Resolve the pending CPU ladder result before starting.';
+    sfx('dry');return false;
+  }
   const mine=partyCpuKit(loadout);if(!mine){pracNeedMsgT=now+1600;sfx('dry');return false;}
   if(partyCpuSessionOpen()){
     arena.status='Finish or leave the current CPU team match first.';sfx('dry');return false;
@@ -860,6 +874,10 @@ function offlineCpu2v2Rematch(options={}){
   if(!botLadderMatchSettled(partyCpuMatch)){arena.status='Saving your ladder result before Play Again…';sfx('dry');return false;}
   if(!(options&&options.ladderReady===true)&&
      deferBotLadderMatchStart('ai2v2',()=>offlineCpu2v2Rematch({ladderReady:true})))return true;
+  if(authUser&&!botLadderReadyForMatch()){
+    arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'Resolve the pending CPU ladder result before Play Again.';
+    sfx('dry');return false;
+  }
   initializeBotLadderMatch(partyCpuMatch,'ai2v2',botLadderReadyForMatch()?botLadder.tier:0,false);
   partyCpuMatch.epoch=Math.max(partyCpuMatch.epoch+1,Math.floor(now));partyCpuMatch.round=0;partyCpuMatch.scores={allies:0,cpus:0};
   partyCpuMatch.roundResolved=false;partyCpuMatch.phase='map_vote';

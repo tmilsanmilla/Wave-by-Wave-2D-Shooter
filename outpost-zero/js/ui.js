@@ -1601,7 +1601,14 @@ function drawOfflineCpuModes(){
   ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(offlineCpuView==='1v1'?'CPU 1v1':offlineCpuView==='2v2'?'CPU 2v2 · NEW · BETA':'PLAY AGAINST CPU',W-20),W/2,titleY);
   const directCpuStatus=offlineCpuView==='2v2'&&typeof party!=='undefined'&&party&&party.directCpu?String(party.status||'PRIVATE FRIEND GAME · CONNECTING'):'';
-  const ladderSyncText=authUser?(botLadderSyncState==='syncing'?'ACCOUNT LADDER · SYNCING':botLadderReady()?'ACCOUNT LADDER · SYNCED':'ACCOUNT LADDER · '+String(botLadderSyncState||'loading').toUpperCase()):'GUEST · BEGINNER · PROGRESS IS NOT SAVED',
+  const ladderState=String(botLadderSyncState||'idle'),ladderSyncText=!authUser?'GUEST · BEGINNER · PROGRESS IS NOT SAVED':
+      ladderState==='ready'?'ACCOUNT LADDER · SYNCED':
+      ladderState==='queued'?'ACCOUNT LADDER · SAVED ON DEVICE · SYNC PENDING':
+      ladderState==='reconciling'?'ACCOUNT LADDER · VERIFYING SAVED RESULT':
+      ladderState==='conflict'?'ACCOUNT LADDER · RESULT CONFLICT · RECEIPT KEPT':
+      ladderState==='storage_error'?'ACCOUNT LADDER · DEVICE SAVE ERROR':
+      ladderState==='offline'?'ACCOUNT LADDER · CLOUD OFFLINE · DEVICE SAVE READY':
+      ladderState==='syncing'?'ACCOUNT LADDER · SYNCING':'ACCOUNT LADDER · LOADING',
     syncText=(directCpuStatus||ladderSyncText)+(offlineCpuView==='2v2'?' · BETA':'');
   ctx.fillStyle=directCpuStatus?'#bfa8ff':'#8a9268';ctx.font='700 '+(tiny?6:landscape?7:9)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(syncText,W-20),W/2,titleY+titleFs+(tiny?1:4));
@@ -1611,13 +1618,13 @@ function drawOfflineCpuModes(){
   backRect={x:margin,y:backY,w:backW,h:backH};
   const drawButton=(id,label,note,x,y,w,h,col,enabled=true)=>{
     const hot=enabled&&((mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h)||(offlineCpuKeyboardActive&&offlineCpuFocusId===id));
-    const rect={id,x,y,w,h,enabled};offlineCpuRects.push(rect);
+    const primary=id==='cpu_start_1v1',rect={id,x,y,w,h,enabled};offlineCpuRects.push(rect);
     ctx.fillStyle=enabled?(hot?col:'rgba(0,0,0,.48)'):'rgba(35,35,37,.76)';ctx.fillRect(x,y,w,h);
     ctx.strokeStyle=enabled?col:'#4b4d49';ctx.lineWidth=1.5;ctx.strokeRect(x+.5,y+.5,w-1,h-1);
     ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=enabled?(hot?'#101208':'#f0ead4'):'#656660';
-    ctx.font='700 '+(tiny?(h<32?8:11):landscape?(h<36?10:14):(h<40?14:18))+'px ui-monospace,Consolas,monospace';
+    ctx.font='700 '+(primary?(tiny?14:landscape?17:22):(tiny?(h<32?8:11):landscape?(h<36?10:14):(h<40?14:18)))+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(label,w-12),x+w/2,y+h/2-(note?(h<44?4:7):0));
-    if(note){ctx.fillStyle=enabled?(hot?'#27301e':'#818a76'):'#555650';ctx.font='700 '+(tiny?6:landscape?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(note,w-12),x+w/2,y+h/2+(h<44?7:13));}
+    if(note){ctx.fillStyle=enabled?(hot?'#27301e':'#818a76'):'#555650';ctx.font='700 '+(primary?(tiny?7:landscape?8:10):(tiny?6:landscape?7:9))+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(note,w-12),x+w/2,y+h/2+(h<44?7:13));}
     return rect;
   };
   const drawBack=()=>{
@@ -1649,7 +1656,15 @@ function drawOfflineCpuModes(){
 
   if(offlineCpuView==='1v1'){
     const ladder=currentBotLadder(),active=clamp(Math.floor(+ladder.tier||0),0,BOT_DIFFICULTIES.length-1),progress=clamp(Math.floor(+ladder.progress||0),0,BOT_LADDER_MAX_PROGRESS);
-    const startH=backH,startW=Math.min(320,contentW-backW-(tiny?6:10)),startX=x0+contentW-startW,startY=backY;
+    const footerGap=tiny?6:10,startH=tiny?44:landscape?50:58,desiredStartW=Math.min(tiny?(W<=360?260:360):landscape?400:440,contentW);
+    let startW=desiredStartW,startX=(W-startW)/2,startY=H-margin-startH;
+    const backRight=backRect.x+backRect.w,horizontallyClear=startX>=backRight+footerGap;
+    if(!horizontallyClear){
+      if(landscape){
+        startW=Math.max(180,Math.min(startW,W-2*(backRight+footerGap)));
+        startX=(W-startW)/2;
+      }else startY=backY-footerGap-startH;
+    }
     const gridTop=headerBottom+(tiny?2:6),gridBottom=startY-(tiny?5:8),availableGrid=Math.max(150,gridBottom-gridTop),gridGap=tiny?6:8,
       minCardW=H<350?165:W<=340?134:142,
       cols=Math.min(BOT_DIFFICULTIES.length,Math.max(1,Math.floor((contentW+gridGap)/(minCardW+gridGap)))),rows=Math.ceil(BOT_DIFFICULTIES.length/cols),
@@ -1705,8 +1720,11 @@ function drawOfflineCpuModes(){
       ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#eff7fa';ctx.font='700 '+(tiny?6:landscape?7:9)+'px ui-monospace,Consolas,monospace';
       wrapTextClamped(tooltip.copy,tipX+(tiny?6:9),tipY+(tiny?6:9),tipW-(tiny?12:18),tiny?9:landscape?10:12,tiny?4:3);
     }
-    const startNote=authUser?'FIRST TO 5 · RESULT UPDATES THIS LADDER':'FIRST TO 5 · GUEST RESULT IS NOT SAVED';
-    drawButton('cpu_start_1v1','START 1v1',startNote,startX,startY,startW,startH,'#7fd8ff',botLadderSyncState!=='syncing');
+    const ladderCanStart=!authUser||botLadderReadyForMatch(),startNote=!authUser?'FIRST TO 5 · GUEST RESULT IS NOT SAVED':
+      ladderCanStart?'FIRST TO 5 · RESULT UPDATES THIS LADDER':
+      ladderState==='reconciling'?'VERIFYING YOUR SAVED RESULT':ladderState==='conflict'?'RESULT CONFLICT · RECEIPT KEPT':
+      ladderState==='storage_error'?'DEVICE SAVE UNAVAILABLE':'LADDER IS STILL SYNCING';
+    drawButton('cpu_start_1v1','START 1v1',startNote,startX,startY,startW,startH,'#7fd8ff',ladderCanStart);
     drawBack();ctx.textAlign='left';ctx.textBaseline='alphabetic';return;
   }
 
@@ -1714,7 +1732,7 @@ function drawOfflineCpuModes(){
     cardH=Math.min(tiny?72:landscape?84:110,availableH),cardY=cardTop+Math.max(0,(availableH-cardH)/2),cardW=(contentW-gap)/2;
   const friendOnline=typeof partyServiceAvailable==='function'&&partyServiceAvailable(),directOpen=!!(typeof party!=='undefined'&&party&&party.directCpu&&party.channel);
   const cards=[
-    {id:'cpu_local_2v2',title:'LOCAL',sub:'YOU + ALLY CPU',detail:'BEING TESTED · COUNTS FOR LADDER',col:'#7fd8ff',enabled:!directOpen},
+    {id:'cpu_local_2v2',title:'LOCAL',sub:'YOU + ALLY CPU',detail:'BEING TESTED · COUNTS FOR LADDER',col:'#7fd8ff',enabled:!directOpen&&(!authUser||botLadderReadyForMatch())},
     directOpen
       ?party.phase==='closing'
         ?{id:'cpu_direct_closing',title:'CLOSING',sub:'FINISHING CONNECTION',detail:'UNRANKED FRIEND GAME',col:'#8a9268',enabled:false,smallTitle:true}

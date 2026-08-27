@@ -8,6 +8,10 @@ let socialFriendPage=0, socialMessagePage=0;
 let socialMessageTo=null, msgKind='admin';
 let socialDomPageActive=false;
 let socialFetchVersion=0, socialAccountId='', socialFetchUserId='', socialFetchPromise=null, socialFetchQueued=false;
+const SOCIAL_REALTIME_RETRY_MS=3000, SOCIAL_CPU_INVITE_POLL_MS=7000;
+let socialRealtimeRetryAt=0, socialCpuInvitePollAt=0, socialCpuInvitePolling=false;
+let socialCpuInvitePromptedIds=new Set();
+let socialCpuInvitePromptUserId='';
 let usernameClaimOpen=false, usernameClaimMode='closed', usernameClaimUserId='';
 let socialAccountSettingsSqlReady=null;
 
@@ -202,11 +206,13 @@ async function socialFetchOwnProfile(userId){
 function socialSetupStatus(){ return 'SECURE SOCIAL STORAGE IS NOT ENABLED · RUN SOCIAL SQL SETUP'; }
 function socialDropRealtime(){
   if(socialChannel&&sb){ try{ sb.removeChannel(socialChannel); }catch(e){} }
-  socialChannel=null;
+  socialChannel=null; socialRealtimeRetryAt=0;
 }
 function prepareSocialForAccount(userId){
   const id=String(userId||'');
   if(socialAccountId===id) return false;
+  if(socialCpuInvitePromptUserId&&typeof formOpen!=='undefined'&&formOpen&&typeof closeForm==='function') closeForm();
+  socialCpuInvitePromptUserId='';
   if(usernameClaimUserId&&usernameClaimUserId!==id) closeUsernameClaim(true);
   socialAccountId=id;
   socialFetchVersion++;
@@ -215,33 +221,47 @@ function prepareSocialForAccount(userId){
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialAccountSettingsSqlReady=null;
   socialFriendPage=0; socialMessagePage=0;
+  socialCpuInvitePollAt=0; socialCpuInvitePolling=false; socialCpuInvitePromptedIds=new Set();
   socialStatus=id?'CHECKING YOUR USERNAME...':'SIGN IN FOR FRIENDS + PRIVATE MESSAGES';
   return true;
 }
 function resetSocialState(message){
   socialAccountId=''; socialFetchVersion++;
+  if(socialCpuInvitePromptUserId&&typeof formOpen!=='undefined'&&formOpen&&typeof closeForm==='function') closeForm();
+  socialCpuInvitePromptUserId='';
   socialFetchUserId=''; socialFetchPromise=null; socialFetchQueued=false;
   socialDropRealtime(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialAccountSettingsSqlReady=null;
   socialFriendPage=0; socialMessagePage=0;
+  socialCpuInvitePollAt=0; socialCpuInvitePolling=false; socialCpuInvitePromptedIds=new Set();
   socialStatus=message||'SIGN IN FOR FRIENDS + PRIVATE MESSAGES';
   closeUsernameClaim();
 }
 function setupSocialRealtime(){
   if(!sb||!authUser||socialChannel||socialBackend.friends!==true||socialBackend.messages!==true||typeof sb.channel!=='function') return;
   try{
+    const owner=String(authUser.id||'');
     let ch=sb.channel('oz-social-'+authUser.id);
     // DELETE change payloads cannot be filtered through row-level security
     // after their row is gone. Listen only for inserts/updates; a removed
     // friendship is picked up by the normal page refresh/poll instead of
     // leaking its row ID to unrelated signed-in subscribers.
     for(const event of ['INSERT','UPDATE']){
-      ch=ch.on('postgres_changes',{event,schema:'public',table:SOCIAL_FRIEND_TABLE},()=>fetchSocial(true));
-      ch=ch.on('postgres_changes',{event,schema:'public',table:SOCIAL_MESSAGE_TABLE},()=>fetchSocial(true));
+      ch=ch.on('postgres_changes',{event,schema:'public',table:SOCIAL_FRIEND_TABLE},()=>{socialCpuInvitePollAt=0;void fetchSocial(true);});
+      ch=ch.on('postgres_changes',{event,schema:'public',table:SOCIAL_MESSAGE_TABLE},()=>{socialCpuInvitePollAt=0;void fetchSocial(true);});
     }
-    ch.subscribe(); socialChannel=ch;
-  }catch(e){ socialChannel=null; }
+    socialChannel=ch;
+    ch.subscribe(status=>{
+      if(socialChannel!==ch||!authUser||String(authUser.id||'')!==owner)return;
+      if(status==='SUBSCRIBED'){
+        socialRealtimeRetryAt=0; socialCpuInvitePollAt=Date.now()+SOCIAL_CPU_INVITE_POLL_MS;
+      }else if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){
+        socialChannel=null; socialRealtimeRetryAt=Date.now()+SOCIAL_REALTIME_RETRY_MS; socialCpuInvitePollAt=0;
+        try{sb.removeChannel(ch);}catch(e){}
+      }
+    });
+  }catch(e){ socialChannel=null; socialRealtimeRetryAt=Date.now()+SOCIAL_REALTIME_RETRY_MS; }
 }
 function socialFriendOther(row){
   if(!row||!authUser) return '';
@@ -266,6 +286,81 @@ function socialPerson(userId){
 function socialMergeRows(a,b){
   const byId=new Map(); for(const row of [...(a||[]),...(b||[])]) if(row&&row.id!=null) byId.set(String(row.id),row);
   return [...byId.values()];
+}
+function socialCpuInvitePromptAvailable(){
+  if(!authUser||typeof state==='undefined'||state!=='select')return false;
+  if(typeof formOpen!=='undefined'&&formOpen)return false;
+  if(typeof party!=='undefined'&&party&&party.directCpu)return false;
+  if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())return false;
+  if(typeof arena!=='undefined'&&arena&&(arena.active||arena.queueChannel||arena.matchChannel))return false;
+  if(typeof reportOpen!=='undefined'&&reportOpen||typeof postOpen!=='undefined'&&postOpen||
+     typeof msgOpen!=='undefined'&&msgOpen||typeof scoreEditOpen!=='undefined'&&scoreEditOpen||
+     typeof appealOpen!=='undefined'&&appealOpen||typeof promoOpen!=='undefined'&&promoOpen||
+     typeof accountMenuOpen!=='undefined'&&accountMenuOpen||typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen||
+     typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen||typeof dailyGateOpen!=='undefined'&&dailyGateOpen||
+     typeof firstAccountWelcomeOpen!=='undefined'&&firstAccountWelcomeOpen||typeof signUpPromptOpen!=='undefined'&&signUpPromptOpen)return false;
+  if(typeof topModal==='function'&&topModal())return false;
+  return true;
+}
+function socialMaybePromptCpuGameInvite(){
+  if(socialCpuInvitePromptUserId&&typeof formOpen!=='undefined'&&!formOpen)socialCpuInvitePromptUserId='';
+  if(!socialCpuInvitePromptAvailable())return false;
+  const owner=String(authUser.id||''),rows=(Array.isArray(socialMessages)?socialMessages:[]).slice()
+    .sort((a,b)=>Date.parse(b&&b.created_at||0)-Date.parse(a&&a.created_at||0));
+  for(const row of rows){
+    if(!row||String(row.recipient_id||'')!==owner)continue;
+    const senderId=String(row.sender_id||''),invite=socialCpuGameInvite(row.body);
+    if(!invite||!socialAcceptedFriend(senderId))continue;
+    const promptId=String(row.id==null?(senderId+'|'+row.body):row.id);
+    if(socialCpuInvitePromptedIds.has(promptId))continue;
+    socialCpuInvitePromptedIds.add(promptId);
+    const handle=String(socialPerson(senderId).handle||'FRIEND').slice(0,32);
+    socialStatus='CPU 2v2 INVITE FROM @'+handle+' · START OR DISMISS';
+    socialCpuInvitePromptUserId=owner;
+    openForm({title:'CPU 2v2 INVITE',hint:'@'+handle+' invited you to play together against two CPUs. Start joins the private game immediately.',
+      saveLabel:'START GAME',fields:[],
+      onCancel:()=>{socialCpuInvitePromptUserId='';socialStatus='CPU 2v2 INVITE DISMISSED · IT REMAINS IN PRIVATE MESSAGES UNTIL IT EXPIRES';},
+      onSave:()=>{
+        if(!authUser||String(authUser.id||'')!==owner){socialCpuInvitePromptUserId='';closeForm();return;}
+        const fresh=socialCpuGameInvite(row.body);
+        if(!fresh||!socialAcceptedFriend(senderId)){formError('That CPU 2v2 invite expired or is no longer from a friend.');return;}
+        socialCpuInvitePromptUserId='';
+        closeForm();
+        if(typeof partyJoinCpuInvite!=='function'||!partyJoinCpuInvite({...fresh,senderId}))
+          socialStatus=socialStatus||'COULD NOT START THAT CPU 2v2 INVITE';
+      }});
+    return true;
+  }
+  return false;
+}
+async function socialPollCpuGameInvites(force=false){
+  const clock=Date.now(),owner=authUser?String(authUser.id||''):'';
+  if(!sb||!owner||typeof navigator!=='undefined'&&navigator.onLine===false||socialCpuInvitePolling)return false;
+  if(!force&&clock<socialCpuInvitePollAt)return false;
+  socialCpuInvitePollAt=clock+SOCIAL_CPU_INVITE_POLL_MS; socialCpuInvitePolling=true;
+  try{
+    const result=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at')
+      .eq('recipient_id',owner).like('body','OUTPOST ZERO · CPU 2V2 GAME INVITE · %').order('created_at',{ascending:false}).limit(8);
+    if(!authUser||String(authUser.id||'')!==owner)return false;
+    if(result&&result.error)throw result.error;
+    socialMessages=socialMergeRows(socialMessages,result&&result.data).sort((a,b)=>Date.parse(b.created_at||0)-Date.parse(a.created_at||0)).slice(0,60);
+    socialMaybePromptCpuGameInvite();return true;
+  }catch(e){
+    if(authUser&&String(authUser.id||'')===owner)socialCpuInvitePollAt=Date.now()+SOCIAL_CPU_INVITE_POLL_MS;
+    return false;
+  }finally{
+    if(!authUser||String(authUser.id||'')===owner)socialCpuInvitePolling=false;
+  }
+}
+function socialResumeSync(){
+  socialRealtimeRetryAt=0; socialCpuInvitePollAt=0;
+  if(authUser&&sb&&!(typeof navigator!=='undefined'&&navigator.onLine===false))void fetchSocial(true);
+}
+function socialTick(clock=Date.now()){
+  if(!authUser||!sb||typeof navigator!=='undefined'&&navigator.onLine===false)return;
+  if(!socialChannel&&socialBackend.friends===true&&socialBackend.messages===true&&clock>=socialRealtimeRetryAt)setupSocialRealtime();
+  if(typeof state!=='undefined'&&state==='select'&&clock>=socialCpuInvitePollAt)void socialPollCpuGameInvites();
+  socialMaybePromptCpuGameInvite();
 }
 async function fetchSocial(force=false){
   if(!authUser){ resetSocialState(); return false; }
@@ -369,6 +464,8 @@ async function fetchSocialOnce(userId){
       if(!stillCurrent()) return false;
       for(const m of socialMessages) if(String(m.recipient_id)===userId&&!m.read_at) m.read_at=new Date().toISOString();
     }
+    socialCpuInvitePollAt=Date.now()+SOCIAL_CPU_INVITE_POLL_MS;
+    socialMaybePromptCpuGameInvite();
     return true;
   }catch(error){
     if(!stillCurrent()) return false;

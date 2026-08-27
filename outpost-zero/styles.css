@@ -162,10 +162,11 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   #formgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;text-align:left}
   #formgrid label{display:flex;flex-direction:column;gap:4px;color:#8a9268;
     font:9px ui-monospace,Consolas,monospace;letter-spacing:.5px}
-  #formgrid input{background:rgba(0,0,0,.5);border:1px solid #4a4634;color:#e8d9a8;
+  #formgrid input,#formgrid select{background:rgba(0,0,0,.5);border:1px solid #4a4634;color:#e8d9a8;
     font:700 14px ui-monospace,Consolas,monospace;padding:8px;width:100%;box-sizing:border-box;
     pointer-events:auto;user-select:text;-webkit-user-select:text}
-  #formgrid input:focus{outline:none;border-color:#7fd8ff}
+  #formgrid select{min-height:44px;cursor:pointer}
+  #formgrid input:focus,#formgrid select:focus{outline:2px solid rgba(127,216,255,.25);outline-offset:1px;border-color:#7fd8ff}
   #formgrid .was{color:#5a5648;font-size:8px}
   #formextra{margin:12px 0 0}
   #formextra button{width:100%;padding:10px;margin-top:6px}

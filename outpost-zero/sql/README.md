@@ -175,8 +175,10 @@ for guests. The submit RPC accepts a match UUID, win/loss result, and difficulty
 but never accepts a user ID. It validates the match difficulty against the
 server-side current tier, admits each UUID once, rate-limits using server time,
 and calculates wins, losses, streaks, promotions, demotions, and a monotonic
-revision inside the transaction. Ladder state is not stored in browser local
-storage or the general profile JSON.
+revision inside the transaction. The server remains canonical. The browser
+keeps only owner-scoped unsynced match receipts plus an advisory ladder cache
+so a reload or temporary outage cannot erase a result; neither is copied into
+the general profile JSON.
 
 AI 02 is separate because model history is global while ladder progress is
 private per account. Every release maps to an allowlisted behavior snapshot

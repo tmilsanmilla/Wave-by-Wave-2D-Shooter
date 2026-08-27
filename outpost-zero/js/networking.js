@@ -742,6 +742,7 @@ function bindDomEvents(){
     if(authUser&&profileLoaded&&typeof fetchTemporaryWeaponGrants==='function')
       void fetchTemporaryWeaponGrants(String(authUser.id||''),authProfileRequestVersion);
     if(sb&&typeof fetchMyBan==='function')void fetchMyBan();
+    if(typeof socialResumeSync==='function')socialResumeSync();
   };
   addEventListener('online',refreshTemporaryGifts);
   addEventListener('focus',refreshTemporaryGifts);
