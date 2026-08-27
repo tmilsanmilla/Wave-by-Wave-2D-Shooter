@@ -82,12 +82,14 @@ async function initAuth(){
       prepareBotLadderForAccount(authUser?String(authUser.id):'');
       if(authUser) beginUsernameClaimCheck();
       void refreshBotLadder(true);
+      if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true);
       sb.auth.onAuthStateChange((_e, sess)=>{
         authUser = sess ? sess.user : null;
         const profileUserId=authUser ? String(authUser.id) : '';
         prepareLastLoadoutForAccount(profileUserId);
         prepareBotLadderForAccount(profileUserId);
         void refreshBotLadder(false);
+        if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(false);
         const profileRequestVersion=++authProfileRequestVersion;
         if(profileUserId && firstAccountTutorialUserId && firstAccountTutorialUserId!==profileUserId){
           firstAccountWelcomeOpen=false;

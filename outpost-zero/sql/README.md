@@ -63,16 +63,19 @@ Medium, Hard, and Impossible. Guests play Beginner without creating database
 state. Normal completed AI matches update only the signed-in account; creator
 and main-admin comparison tests never update the ladder.
 
-Run this independent feature script:
+Run these independent feature scripts in order:
 
 1. `ai/01-global-training.sql` — private per-account ladder, exact-once match
    receipts, RLS, narrow read/submit RPCs, and API grants
+2. `ai/02-model-history.sql` — immutable tactical model releases, the global
+   active-model pointer, creator/main-admin activation, and an append-only audit
 
 If Social was the last feature you installed, do not rerun its four files for
-this change; paste and run only this AI script next.
+this change; paste and run the AI scripts instead. If you already ran AI 01 for
+the five-tier ladder, paste and run only AI 02 next.
 
-The historical filename is intentionally retained so there is still only one
-AI script to paste. The script is rerunnable and does not delete profile data.
+The historical AI 01 filename is retained for ladder compatibility. Both AI
+scripts are rerunnable and do not delete profile data.
 If an older copy of AI 01 created the abandoned shared-XP tables, it revokes the
 old browser API but leaves those tables intact. Supabase may show a general
 warning because it creates `security definer` RPCs; those functions have fixed
@@ -86,6 +89,16 @@ server-side current tier, admits each UUID once, rate-limits using server time,
 and calculates wins, losses, streaks, promotions, demotions, and a monotonic
 revision inside the transaction. Ladder state is not stored in browser local
 storage or the general profile JSON.
+
+AI 02 is separate because model history is global while ladder progress is
+private per account. Every release maps to an allowlisted behavior snapshot
+embedded in the game; Supabase stores no executable code. `TEST MODEL` runs an
+isolated admin comparison and never writes ladder or live-model state. `BRING
+BACK MODEL` atomically changes the global model pointer for future matches,
+keeps newer releases in history, and records who made the change. It does not
+alter any player's difficulty or an already-running match. Direct table access
+is denied, and the activation RPC verifies the creator/main-admin role from the
+signed Supabase JWT and server-side admins table rather than trusting the UI.
 
 Because matches run locally, the database cannot independently prove a reported
 win. UUID receipts plus the 30-second, 20-per-hour, and 100-per-day server-time

@@ -18,7 +18,7 @@ let unrankedRun=false;                              // next-season (early access
 let adminOpen=false, adminUsed=false, adminBtnRect={x:-99,y:-99,w:0,h:0}, adminRects=[];
 let testMode=false;                                 // test mode (all admins); storage is a viewer popout now
 let adminPanelOpen=false, adminHubBtnRect=null, adminPanelRects=[];
-let aiLearningOpen=false, aiLearningRects=[], aiLearningDifficulty=0, aiLearningNotice='';
+let aiLearningOpen=false, aiLearningRects=[], aiLearningDifficulty=4, aiLearningNotice='',aiLearningSelectedModelId='',aiLearningRestoreBusyId='';
 const ROOT_ADMIN='tmilsanmilla@gmail.com';          // can never be kicked or demoted
 let adminRoles={};                                  // email -> 'main'|'co' (from the Supabase admins table)
 let banners=[], pendingBanners=[], updatesFeed={staff:[],player:[]};
@@ -37,16 +37,36 @@ function canEditLoadedPlayer(){ return canEditPlayer()&&peData&&!peData.publicOn
 function canBan(){ return isMainAdmin(); }            // main admins may ban directly now
 function openAiLearning(){
   if(!isMainAdmin()){ aiLearningOpen=false; sfx('dry'); return false; }
-  aiLearningDifficulty=typeof botLadder!=='undefined'?clamp(Math.floor(+botLadder.tier||0),0,4):0;
-  aiLearningNotice='Five fixed difficulties use the same best tactical brain.';
+  aiLearningDifficulty=4;
+  aiLearningSelectedModelId=typeof activeBotModelId==='string'?activeBotModelId:'apex-v5';
+  aiLearningNotice='Loading the globally active tactical model…';
   adminPanelOpen=false; aiLearningOpen=true;
-  if(typeof refreshBotLadder==='function') void refreshBotLadder(true).then(()=>{
+  if(typeof refreshBotModelHistory==='function') void refreshBotModelHistory(true).then(()=>{
     if(!aiLearningOpen) return;
-    aiLearningNotice='Admin tests never change your synced account ladder.';
+    aiLearningSelectedModelId=activeBotModelId;
+    aiLearningNotice='Tests use Impossible execution for a fair comparison and never change the player ladder.';
   });
   return true;
 }
-function closeAiLearning(){ aiLearningOpen=false; aiLearningNotice=''; }
+function closeAiLearning(){ aiLearningOpen=false; aiLearningNotice=''; aiLearningRestoreBusyId=''; }
+async function confirmAiLearningModelRestore(modelId){
+  if(!isMainAdmin()){ closeAiLearning(); sfx('dry'); return false; }
+  const model=typeof botModelRelease==='function'?botModelRelease(modelId):null;
+  if(!model||model.id===activeBotModelId||aiLearningRestoreBusyId)return false;
+  const prompt='Bring back '+model.name+' globally?\n\nFuture CPU matches will use this tactical model. Current matches and every player\'s difficulty/progress stay unchanged.';
+  if(typeof confirm!=='function'||!confirm(prompt)){aiLearningNotice='Bring Back Model cancelled.';return false;}
+  aiLearningRestoreBusyId=model.id;aiLearningSelectedModelId=model.id;
+  aiLearningNotice='Bringing back '+model.name+' for future matches…';
+  try{
+    const row=await activateBotModelRelease(model.id);
+    if(row&&row.accepted===false&&String(row.reason||'')!=='already_active')throw new Error(String(row.reason||'activation rejected'));
+    aiLearningSelectedModelId=activeBotModelId;
+    aiLearningNotice=model.name+' is LIVE NOW for future matches · current matches and player ladders were unchanged.';
+    return true;
+  }catch(e){
+    aiLearningNotice='Bring Back Model failed · '+String(e&&e.message||'model service unavailable');sfx('dry');return false;
+  }finally{aiLearningRestoreBusyId='';}
+}
 const PE_ITEMS=()=>GEM_SHOP.map(it=>it.key);          // everything ownable
 function normalizedPlayerOwned(value){
   if(Array.isArray(value)){ const out={}; for(const key of value) out[key]=true; return out; }

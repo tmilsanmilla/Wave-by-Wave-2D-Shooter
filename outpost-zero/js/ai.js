@@ -155,12 +155,12 @@ function cpuAiCoverPoint(bot,target,avoid=[]){
   }
   return best;
 }
-function cpuAiFindPath(bot,goal,avoid=[],clock=0){
+function cpuAiFindPath(bot,goal,avoid=[],clock=0,allowPortals=true){
   if(!bot||!goal)return null;
   const r=Math.max(1,+bot.r||15),bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:0,top:0,right:WORLD.w,bottom:WORLD.h},
     gx=clamp(+goal.x||bot.x,bounds.left+r+2,bounds.right-r-2),gy=clamp(+goal.y||bot.y,bounds.top+r+2,bounds.bottom-r-2);
   if(cpuAiPositionBlocked(gx,gy,r))return null;
-  const portals=typeof activeArenaPortals==='function'&&clock>=(bot.portalLockUntil||0)?activeArenaPortals().slice():[];
+  const portals=allowPortals&&typeof activeArenaPortals==='function'&&clock>=(bot.portalLockUntil||0)?activeArenaPortals().slice():[];
   // Most fights do not need a graph at all. Keep the common clear route cheap;
   // Dimension still builds the graph so a useful teleport can beat walking.
   if(!portals.length&&cpuAiMoveSegmentClear(bot.x,bot.y,gx,gy,r,avoid)){
@@ -233,7 +233,7 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
     const recovering=clock<(bot.aiStuckUntil||0),roll=cpuAiNext(bot),blocked=cpuAiLosBlocked(bot.x,bot.y,target.x,target.y),underFire=clock<(bot.underFireUntil||0),
       losing=Number.isFinite(+bot.hp)&&Number.isFinite(+target.hp)&&bot.hp<target.hp*.78;
     if(recovering)bot.aiTactic='flank';
-    else if(underFire&&losing)bot.aiTactic='cover';
+    else if(config.useReactiveCover!==false&&underFire&&losing)bot.aiTactic='cover';
     else if(blocked)bot.aiTactic='flank';
     else if(d>(config.approach||520))bot.aiTactic=roll<.58?'push':roll<.82?'flank':'orbit';
     else if(d<(config.retreat||230))bot.aiTactic=roll<.60?'retreat':roll<.88?'orbit':'flank';
@@ -287,7 +287,7 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
     else best={x:-fx,y:-fy};
   }
   const caught=avoid.some(zone=>Math.hypot(bot.x-zone.x,bot.y-zone.y)<zone.radius);
-  if(!caught&&Math.hypot(best.x,best.y)>.01){
+  if(config.useNavigation!==false&&!caught&&Math.hypot(best.x,best.y)>.01){
     const goal=cpuAiTacticalGoal(bot,target,tactic,side,best,avoid),goalClose=Math.hypot((+bot.aiNavGoalX||0)-goal.x,(+bot.aiNavGoalY||0)-goal.y)<=96,
       samePortalSeq=Math.max(0,Math.floor(+bot.aiNavPortalSeq||0))===Math.max(0,Math.floor(+bot.portalSeq||0));
     let route=null;
@@ -301,7 +301,7 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
       }
     }
     if(!route){
-      route=cpuAiFindPath(bot,goal,avoid,clock);
+      route=cpuAiFindPath(bot,goal,avoid,clock,config.usePortals!==false);
       if(route){
         bot.aiNavPath=route.path;bot.aiNavUntil=clock+CPU_AI_NAV_REUSE_MS;bot.aiNavGoalX=goal.x;bot.aiNavGoalY=goal.y;
         bot.aiNavPortalSeq=Math.max(0,Math.floor(+bot.portalSeq||0));
@@ -317,17 +317,34 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
 const BOT_LADDER_MAX_PROGRESS=10,BOT_LADDER_REFRESH_MS=30000;
 const BOT_LADDER_SUBMIT_RETRY_MS=Object.freeze([750,2500]),BOT_LADDER_SUBMIT_MAX_ATTEMPTS=3;
 const BOT_DIFFICULTIES=Object.freeze([
-  Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'LEARNING THE ARENA',detail:'Patient reactions and forgiving aim.',
-    reactionMs:950,moveSpeed:2.15,aimNoise:.130,shotJitter:.055,fireAimError:.200,leadFactor:.18,maxLeadMs:90,thinkMs:260,turnRate:.040}),
-  Object.freeze({id:1,key:'easy',name:'EASY',summary:'STEADIER EXECUTION',detail:'Faster choices and basic movement prediction.',
-    reactionMs:700,moveSpeed:2.45,aimNoise:.085,shotJitter:.035,fireAimError:.135,leadFactor:.40,maxLeadMs:150,thinkMs:205,turnRate:.055}),
-  Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'BALANCED TACTICS',detail:'Confident cover use, leading, and pressure.',
-    reactionMs:480,moveSpeed:2.80,aimNoise:.045,shotJitter:.018,fireAimError:.080,leadFactor:.64,maxLeadMs:230,thinkMs:150,turnRate:.075}),
-  Object.freeze({id:3,key:'hard',name:'HARD',summary:'FAST AND PRECISE',detail:'Quick decisions, strong leading, and sharp turns.',
-    reactionMs:300,moveSpeed:3.15,aimNoise:.020,shotJitter:.009,fireAimError:.045,leadFactor:.82,maxLeadMs:300,thinkMs:100,turnRate:.105}),
-  Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'THE COMPLETE BOT',detail:'The strongest fair execution of the shared tactical brain.',
-    reactionMs:150,moveSpeed:3.55,aimNoise:.006,shotJitter:.003,fireAimError:.022,leadFactor:.98,maxLeadMs:380,thinkMs:60,turnRate:.145}),
+  Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'STRONG FOUNDATIONS',detail:'Competent from the first match, with readable mistakes.',
+    reactionMs:650,moveSpeed:2.55,aimNoise:.070,shotJitter:.026,fireAimError:.105,leadFactor:.40,maxLeadMs:170,thinkMs:190,turnRate:.065}),
+  Object.freeze({id:1,key:'easy',name:'EASY',summary:'QUICKER DECISIONS',detail:'Cleaner movement and early movement prediction.',
+    reactionMs:520,moveSpeed:2.70,aimNoise:.050,shotJitter:.018,fireAimError:.080,leadFactor:.57,maxLeadMs:225,thinkMs:150,turnRate:.080}),
+  Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'COMPLETE TACTICS',detail:'Reliable routes, leading, cover pressure, and TNT plays.',
+    reactionMs:380,moveSpeed:2.90,aimNoise:.030,shotJitter:.011,fireAimError:.055,leadFactor:.72,maxLeadMs:290,thinkMs:110,turnRate:.100}),
+  Object.freeze({id:3,key:'hard',name:'HARD',summary:'RELENTLESS TACTICIAN',detail:'A genuinely hard opponent with fast, precise decisions.',
+    reactionMs:220,moveSpeed:3.10,aimNoise:.012,shotJitter:.004,fireAimError:.027,leadFactor:.90,maxLeadMs:390,thinkMs:70,turnRate:.145}),
+  Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'STRONGEST FAIR EXECUTION',detail:'Near-perfect decisions and aim without health or damage cheats.',
+    reactionMs:80,moveSpeed:3.23,aimNoise:.002,shotJitter:.0007,fireAimError:.008,leadFactor:1,maxLeadMs:520,thinkMs:32,turnRate:.220}),
 ]);
+// Tactical releases are a separate axis from Beginner–Impossible execution.
+// Releases are cumulative, immutable, and allowlisted in both client and SQL.
+const BOT_MODEL_RELEASES=Object.freeze([
+  Object.freeze({id:'scout-v1',name:'SCOUT V1',improved:'Randomized strafing and useful long-range fire.',
+    usePrediction:false,useNavigation:false,useStuckRecovery:false,useReactiveCover:false,useTnt:false,usePortals:false}),
+  Object.freeze({id:'ranger-v2',name:'RANGER V2',improved:'Added target tracking and predictive aim.',
+    usePrediction:true,useNavigation:false,useStuckRecovery:false,useReactiveCover:false,useTnt:false,usePortals:false}),
+  Object.freeze({id:'pathfinder-v3',name:'PATHFINDER V3',improved:'Added wall-aware routes and recovery when a bot gets stuck.',
+    usePrediction:true,useNavigation:true,useStuckRecovery:true,useReactiveCover:false,useTnt:false,usePortals:false}),
+  Object.freeze({id:'sentinel-v4',name:'SENTINEL V4',improved:'Added reactive cover plus TNT avoidance and detonation.',
+    usePrediction:true,useNavigation:true,useStuckRecovery:true,useReactiveCover:true,useTnt:true,usePortals:false}),
+  Object.freeze({id:'apex-v5',name:'APEX V5',improved:'Added portal routing and the complete tactical decision set.',
+    usePrediction:true,useNavigation:true,useStuckRecovery:true,useReactiveCover:true,useTnt:true,usePortals:true}),
+]);
+const LATEST_BOT_MODEL_ID='apex-v5',BOT_MODEL_REFRESH_MS=30000;
+let activeBotModelId=LATEST_BOT_MODEL_ID,activeBotModelRevision=0,activeBotModelUpdatedAt='';
+let botModelSyncState='default',botModelFetchedAt=0,botModelFetchPromise=null,botModelAdminRows=[];
 let botLadder={tier:0,progress:0,winStreak:0,lossStreak:0,wins:0,losses:0,revision:0,updatedAt:''};
 let botLadderUserId='',botLadderLoaded=false,botLadderSyncState='guest',botLadderFetchedAt=0;
 let botLadderFetchPromise=null,botLadderRequestVersion=0,botLadderLaunchPending='',botLadderPendingResult=null;
@@ -337,6 +354,56 @@ function botDifficulty(value=botLadder.tier){
   return BOT_DIFFICULTIES[tier];
 }
 function botDifficultyName(value=botLadder.tier){return botDifficulty(value).name;}
+function botModelRelease(value=activeBotModelId){
+  const id=String(value||'').trim().toLowerCase();
+  return BOT_MODEL_RELEASES.find(model=>model.id===id)||BOT_MODEL_RELEASES.find(model=>model.id===LATEST_BOT_MODEL_ID);
+}
+function botModelPointerRow(data){return Array.isArray(data)?data[0]||null:(data&&typeof data==='object'?data:null);}
+function applyActiveBotModelPointer(raw){
+  raw=botModelPointerRow(raw);if(!raw)return botModelRelease();
+  const id=String(raw.active_model_id||raw.model_id||'').toLowerCase(),allowed=BOT_MODEL_RELEASES.some(model=>model.id===id);
+  if(!allowed)return botModelRelease();
+  const revision=Math.max(0,Math.floor(+raw.revision||+raw.active_revision||0));
+  if(revision<activeBotModelRevision)return botModelRelease();
+  activeBotModelId=id;activeBotModelRevision=revision;
+  activeBotModelUpdatedAt=String(raw.updated_at||'');return botModelRelease();
+}
+async function refreshActiveBotModel(force=false){
+  if(botModelFetchPromise)return botModelFetchPromise;
+  if(!sb||typeof sb.rpc!=='function'){botModelSyncState='default';return botModelRelease();}
+  if(!force&&botModelFetchedAt&&Date.now()-botModelFetchedAt<BOT_MODEL_REFRESH_MS)return botModelRelease();
+  botModelSyncState='syncing';let request;
+  request=(async()=>{
+    try{
+      const {data,error}=await sb.rpc('get_outpost_zero_bot_model');if(error)throw error;
+      applyActiveBotModelPointer(data);botModelFetchedAt=Date.now();botModelSyncState='ready';
+    }catch(e){botModelSyncState='default';}
+    finally{if(botModelFetchPromise===request)botModelFetchPromise=null;}
+    return botModelRelease();
+  })();
+  botModelFetchPromise=request;return request;
+}
+async function refreshBotModelHistory(force=false){
+  if(!isMainAdmin())return [];
+  if(force)await refreshActiveBotModel(true);else await refreshActiveBotModel(false);
+  if(!sb||typeof sb.rpc!=='function'){botModelAdminRows=[];return botModelAdminRows;}
+  try{
+    const {data,error}=await sb.rpc('list_outpost_zero_bot_models');if(error)throw error;
+    botModelAdminRows=Array.isArray(data)?data.filter(row=>BOT_MODEL_RELEASES.some(model=>model.id===String(row&&row.model_id||''))):[];
+    const live=botModelAdminRows.find(row=>row&&row.active===true);if(live)applyActiveBotModelPointer(live);
+  }catch(e){botModelAdminRows=[];}
+  return botModelAdminRows.slice();
+}
+async function activateBotModelRelease(modelId){
+  if(!isMainAdmin()||!sb||typeof sb.rpc!=='function')return {accepted:false,reason:'unavailable'};
+  const id=String(modelId||'').toLowerCase();
+  if(!BOT_MODEL_RELEASES.some(model=>model.id===id))return {accepted:false,reason:'invalid_model'};
+  const {data,error}=await sb.rpc('activate_outpost_zero_bot_model',{p_model_id:id});if(error)throw error;
+  const row=botModelPointerRow(data)||{};
+  if(row.accepted===false&&String(row.reason||'')!=='already_active')return row;
+  applyActiveBotModelPointer(row);botModelFetchedAt=Date.now();botModelSyncState='ready';
+  await refreshBotModelHistory(false);return row;
+}
 function normalizeBotLadder(raw){
   raw=raw&&typeof raw==='object'?raw:{};
   const whole=(value,max=Number.MAX_SAFE_INTEGER)=>{
@@ -421,9 +488,10 @@ function botLadderProgressText(state=botLadder){
   state=normalizeBotLadder(state);
   return botDifficultyName(state.tier)+' · PROGRESS '+state.progress+'/'+BOT_LADDER_MAX_PROGRESS+' · WIN STREAK '+state.winStreak+'/3 · LOSS STREAK '+state.lossStreak+'/3';
 }
-function initializeBotLadderMatch(match,mode,difficulty,adminTest=false){
+function initializeBotLadderMatch(match,mode,difficulty,adminTest=false,modelId=activeBotModelId){
   const canSubmit=!adminTest&&botLadderReadyForMatch(),accountId=canSubmit?String(authUser.id||''):'';
   match.botLadderMode=String(mode||'ai1v1');match.botDifficulty=clamp(Math.floor(+difficulty||0),0,4);
+  match.botModelId=botModelRelease(modelId).id;
   match.botAdminTest=!!adminTest;match.botLadderAccountId=accountId;match.botLadderReadOnly=!canSubmit;
   match.botLadderStartState=currentBotLadder();match.botLadderResultState=currentBotLadder();match.botLadderRecorded=false;
   match.botLadderMatchId=canSubmit?createBotLadderMatchId():'';match.botLadderSubmitAttempts=0;
@@ -504,44 +572,46 @@ function botLadderMatchResultText(match){
   if(match&&match.botLadderDelta>0)return 'WIN +1 PROGRESS · '+progress;
   return progress;
 }
-function arenaBotTuning(difficulty=botLadder.tier){
-  // Health, weapon damage, fire cadence, range, navigation, TNT safety, cover,
-  // portals, prediction, and stuck recovery are shared. Only execution scales.
-  return Object.freeze(Object.assign({},BOT_AI,botDifficulty(difficulty)));
+function arenaBotTuning(difficulty=botLadder.tier,modelId=activeBotModelId){
+  // Health, weapon damage, fire cadence, range, and weapon rules never scale.
+  // Difficulty controls fair execution, while the frozen tactical release
+  // controls which cumulative decisions exist.
+  return Object.freeze(Object.assign({},BOT_AI,botDifficulty(difficulty),botModelRelease(modelId)));
 }
 function isBotArena(){ return !!(arena&&arena.mode==='bot'); }
 function isLocalArena(){ return isBotArena()||(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()); }
 function arenaMeId(){ return isBotArena()?LOCAL_DUEL_PLAYER:(authUser&&authUser.id); }
 function arenaOpponentId(){ return isBotArena()?LOCAL_DUEL_BOT:(arena&&arena.opponent&&arena.opponent.id); }
-function startAiLearningBotTest(selectedDifficulty){
+function startAiLearningBotTest(selectedModelId){
   if(!isMainAdmin()){ closeAiLearning(); sfx('dry'); return false; }
-  const difficulty=clamp(Math.floor(+selectedDifficulty||0),0,4),savedLoadout=Object.assign({},loadout),
+  const model=botModelRelease(selectedModelId),difficulty=4,savedLoadout=Object.assign({},loadout),
     usable=(key,fallback)=>key&&WEAPONS[key]&&!(typeof isLocked==='function'&&isLocked(key))?key:fallback;
   loadout={primary:usable(loadout.primary,'ar'),secondary:usable(loadout.secondary,'m9'),
     melee:usable(loadout.melee,'knife'),utility:null};
   aiLearningOpen=false; adminUsed=true;
-  startBotArena({adminTest:true,difficulty,adminTestSeed:'outpost-zero-ai-difficulty-comparison-v2',
+  startBotArena({adminTest:true,difficulty,modelId:model.id,adminTestSeed:'outpost-zero-ai-model-comparison-v3',
     returnToAiLearning:true,returnPage:selPage,savedLoadout});
   return true;
 }
 function restartAiLearningBotTest(match=arena){
   if(!match||!match.botAdminTest||!isMainAdmin()) return false;
-  startBotArena({adminTest:true,difficulty:match.botDifficulty,
-    adminTestSeed:match.botAdminTestSeed||'outpost-zero-ai-difficulty-comparison-v2',returnToAiLearning:true,
+  startBotArena({adminTest:true,difficulty:4,modelId:match.botModelId,
+    adminTestSeed:match.botAdminTestSeed||'outpost-zero-ai-model-comparison-v3',returnToAiLearning:true,
     returnPage:match.botAdminReturnPage||'hub',savedLoadout:Object.assign({},match.botAdminSavedLoadout||loadout)});
   return true;
 }
 function deferBotLadderMatchStart(mode,start){
   const accountId=authUser&&String(authUser.id||'');
-  if(!accountId||botLadderReadyForMatch())return false;
   if(botLadderLaunchPending)return true;
   botLadderLaunchPending=String(mode||'ai1v1');
   const originArena=arena,originPartyCpu=typeof partyCpuMatch!=='undefined'?partyCpuMatch:null,
     fromBotResult=mode==='ai1v1'&&isBotArena()&&arena.phase==='match_end',
     fromTeamResult=mode==='ai2v2'&&typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()&&partyCpuMatch.phase==='match_end';
-  if(arena)arena.status='SYNCING YOUR AI LADDER…';
-  void refreshBotLadder(true).then(()=>{
-    if(botLadderLaunchPending!==mode||!authUser||String(authUser.id||'')!==accountId)return;
+  if(arena)arena.status=accountId?'SYNCING AI MODEL + LADDER…':'SYNCING AI MODEL…';
+  const ladderRequest=accountId?refreshBotLadder(true):Promise.resolve(currentBotLadder());
+  void Promise.all([ladderRequest,refreshActiveBotModel(true)]).then(()=>{
+    const liveAccountId=authUser&&String(authUser.id||'')||'';
+    if(botLadderLaunchPending!==mode||liveAccountId!==accountId)return;
     botLadderLaunchPending='';
     // Leaving the loadout screen while the RPC is in flight cancels launch.
     // A late cloud response may update the account cache but cannot start play.
@@ -554,12 +624,13 @@ function deferBotLadderMatchStart(mode,start){
   return true;
 }
 function cancelBotLadderLaunch(){botLadderLaunchPending='';}
-function startBotArena(options={}){
+function startBotArena(options){
   options=options&&typeof options==='object'?options:{};
   const adminTest=options.adminTest===true&&typeof isMainAdmin==='function'&&isMainAdmin();
   if(!adminTest&&options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai1v1',()=>startBotArena(Object.assign({},options,{ladderReady:true}))))return true;
-  const difficulty=adminTest?clamp(Math.floor(+options.difficulty||0),0,4):(botLadderReadyForMatch()?botLadder.tier:0);
+  const difficulty=adminTest?4:(botLadderReadyForMatch()?botLadder.tier:0),
+    modelId=adminTest?botModelRelease(options.modelId).id:botModelRelease(activeBotModelId).id;
   // A normal signed-in match waits once for the canonical account row. If the
   // service is unavailable it still starts at Beginner, read-only, and never
   // invents local progress. Admin comparisons are explicitly non-scoring.
@@ -568,12 +639,13 @@ function startBotArena(options={}){
   else if(arena&&arena.savedUtility!==undefined) loadout.utility=arena.savedUtility;
   arena=freshArena('Offline 1v1 vs AI ready.');
   arena.mode='bot'; arena.phase='lobby'; arena.active=true;
-  initializeBotLadderMatch(arena,'ai1v1',difficulty,adminTest);
-  arena.botAdminTestSeed=adminTest?String(options.adminTestSeed||'outpost-zero-ai-difficulty-comparison-v2'):'';
+  initializeBotLadderMatch(arena,'ai1v1',difficulty,adminTest,modelId);
+  arena.botAdminTestSeed=adminTest?String(options.adminTestSeed||'outpost-zero-ai-model-comparison-v3'):'';
   arena.botAdminReturnToLearning=adminTest&&options.returnToAiLearning===true;
   arena.botAdminReturnPage=String(options.returnPage||'hub');
   arena.botAdminSavedLoadout=adminTest?Object.assign({},options.savedLoadout||loadout):null;
-  arena.botTuning=arenaBotTuning(difficulty);
+  arena.botModelId=modelId;
+  arena.botTuning=arenaBotTuning(difficulty,modelId);
   arena.scores={[LOCAL_DUEL_PLAYER]:0,[LOCAL_DUEL_BOT]:0};
   arena.savedUtility=loadout.utility; loadout.utility=null;
   arena.opponent={id:LOCAL_DUEL_BOT,name:'OUTPOST BOT',r:15,hp:ARENA_HP,
@@ -600,7 +672,7 @@ function arenaBotStartRound(){
     player.mags[k]=magSize(k); player.reserve[k]=WEAPONS[k].melee?Infinity:magSize(k)*5;
   }
   if(typeof arenaResetMapRuntime==='function') arenaResetMapRuntime();
-  const tuning=arena.botTuning||arenaBotTuning(arena.botDifficulty), b=arena.opponent,bw=WEAPONS[BOT_AI.weapon],
+  const tuning=arena.botTuning||arenaBotTuning(arena.botDifficulty,arena.botModelId), b=arena.opponent,bw=WEAPONS[BOT_AI.weapon],
     left=typeof duelArenaSpawn==='function'?duelArenaSpawn(0):{x:880,y:900,angle:0},
     right=typeof duelArenaSpawn==='function'?duelArenaSpawn(1):{x:1520,y:900,angle:Math.PI},
     bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:600,top:450,right:1800,bottom:1350};
@@ -690,25 +762,25 @@ function arenaBotFlushProjectiles(){
 }
 function updateArenaBot(dtms){
   if(!isBotArena()||!arenaCanAct()||!arena.opponent) return;
-  const tuning=arena.botTuning||arenaBotTuning(arena.botDifficulty), b=arena.opponent, w=WEAPONS[BOT_AI.weapon],
+  const tuning=arena.botTuning||arenaBotTuning(arena.botDifficulty,arena.botModelId), b=arena.opponent, w=WEAPONS[BOT_AI.weapon],
     shotSpeed=weaponBulletSpeed(BOT_AI.weapon),dt=dtms/16.667;
-  cpuAiTrackTarget(b,player,dtms);
+  if(tuning.usePrediction)cpuAiTrackTarget(b,player,dtms);
   if(b.reloadEnd&&now>=b.reloadEnd){ b.reloadEnd=0; b.mag=w.mag; }
 
   const tntShot={damage:BOT_AI.damage,rng:w.range,fall:w.fall,maxRange:tuning.maxRange};
-  if(now>=(b.tntThinkAt||0)){
+  if(tuning.useTnt&&now>=(b.tntThinkAt||0)){
     b.tntThinkAt=now+CPU_AI_TNT_RETHINK_MS;
     b.tntPlan=cpuAiTntPlan(b,[player],[b],tntShot,now);
-  }
+  }else if(!tuning.useTnt)b.tntPlan=null;
 
   if(now>=b.thinkAt){
-    if(cpuAiObserveMovement(b,now))b.aiTacticUntil=now;
+    if(tuning.useStuckRecovery&&cpuAiObserveMovement(b,now))b.aiTacticUntil=now;
     b.thinkAt=now+tuning.thinkMs;
     if(now>=b.aimNoiseAt){b.aimNoise=cpuAiRange(b,-tuning.aimNoise,tuning.aimNoise);b.aimNoiseAt=now+cpuAiRange(b,450,750);}
     const move=cpuAiPickMove(b,player,[b],now,tuning,b.tntPlan);b.moveX=move.x;b.moveY=move.y;
   }
 
-  const lead=cpuAiLeadPoint(b,player,BOT_AI.weapon,tuning.leadFactor,tuning.maxLeadMs),liveTnt=typeof activeArenaTnt==='function'?activeArenaTnt():[],
+  const lead=cpuAiLeadPoint(b,player,BOT_AI.weapon,tuning.usePrediction?tuning.leadFactor:0,tuning.usePrediction?tuning.maxLeadMs:0),liveTnt=typeof activeArenaTnt==='function'?activeArenaTnt():[],
     plannedTnt=b.tntPlan&&b.tntPlan.targetId?liveTnt.find(t=>String(t.id)===String(b.tntPlan.targetId)):null;
   let aimX=lead.x,aimY=lead.y,aimTntId='';
   if(plannedTnt&&!cpuAiLosBlocked(b.x,b.y,b.tntPlan.aimX,b.tntPlan.aimY,plannedTnt.id)){

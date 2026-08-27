@@ -963,7 +963,8 @@ function leaveArena(status,toHub){
   const wasBot=isBotArena(),returnToAiLearning=wasBot&&arena.botAdminTest&&arena.botAdminReturnToLearning&&
     typeof isMainAdmin==='function'&&isMainAdmin(),
     aiLearningReturnPage=String(arena.botAdminReturnPage||'hub'),
-    aiLearningReturnDifficulty=wasBot&&arena.botAdminTest?clamp(Math.floor(+arena.botDifficulty||0),0,4):0,
+    aiLearningReturnDifficulty=wasBot&&arena.botAdminTest?clamp(Math.floor(+arena.botDifficulty||0),0,4):4,
+    aiLearningReturnModelId=wasBot&&arena.botAdminTest?String(arena.botModelId||LATEST_BOT_MODEL_ID):'',
     aiLearningSavedLoadout=wasBot&&arena.botAdminTest&&arena.botAdminSavedLoadout?
       Object.assign({},arena.botAdminSavedLoadout):null;
   if(wasBot&&typeof cancelBotLadderSubmission==='function')cancelBotLadderSubmission(arena);
@@ -989,8 +990,8 @@ function leaveArena(status,toHub){
   if(wasBot){
     pendingGameMode=null; modeBoardMode=toHub?null:'endless';
     if(returnToAiLearning){
-      modeBoardMode=null; selPage=aiLearningReturnPage; aiLearningDifficulty=aiLearningReturnDifficulty;
-      aiLearningNotice='Returned from '+botDifficultyName(aiLearningReturnDifficulty)+' admin test. Account ladder was unchanged.';
+      modeBoardMode=null; selPage=aiLearningReturnPage; aiLearningDifficulty=aiLearningReturnDifficulty;aiLearningSelectedModelId=aiLearningReturnModelId;
+      aiLearningNotice='Returned from '+botModelRelease(aiLearningReturnModelId).name+' at IMPOSSIBLE. Account ladder was unchanged.';
       aiLearningOpen=true; menuOpen=false; aiming=false; rmbAim=false;
       return;
     }

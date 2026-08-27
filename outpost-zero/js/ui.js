@@ -1012,7 +1012,7 @@ function drawArena(){
   ctx.fillStyle=cpuTeamMode?'#bfa8ff':botMode?'#7fd8ff':'#d05548'; ctx.font='700 '+(tiny?20:(W<440?25:34))+'px ui-monospace,Consolas,monospace';
   const arenaTitle=mapVoting?('MAP VOTE \u00b7 '+mapSeconds+'s'):mapReveal?'MAP SELECTED':
                    cpuTeamMode?('\u2694 OFFLINE 2v2 \u00b7 '+botDifficultyName(partyCpuMatch.botDifficulty)):
-                   botAdminTest?('\uD83E\uDDE0 AI TEST \u00b7 '+botDifficultyName(arena.botDifficulty)):
+                   botAdminTest?('\uD83E\uDDE0 AI TEST \u00b7 '+botModelRelease(arena.botModelId).name+' \u00b7 IMPOSSIBLE'):
                    botMode?('\u2694 1v1 VS '+botDifficultyName(arena.botDifficulty)+' CPU'):'\u2694 ONLINE MULTIPLAYER';
   ctx.fillText(fitLine(arenaTitle,W-18),W/2,titleY);
   ctx.fillStyle=queueNoticeActive?'#ff6b5d':'#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
@@ -1114,8 +1114,8 @@ function drawArena(){
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(ladderResult,pw-20),W/2,bodyY+(tiny?72:108));
     let y=bodyY+(tiny?84:126);
     if(botAdminTest){
-      y=button('bottestagain','TEST '+botDifficultyName(arena.botDifficulty)+' AGAIN',y,'#a7c15e','Same difficulty and deterministic AI seed.');
-      button('botlearningback','BACK TO AI BOT DIFFICULTIES',y,'#7fd8ff');
+      y=button('bottestagain','TEST '+botModelRelease(arena.botModelId).name+' AGAIN',y,'#a7c15e','Same Impossible execution and deterministic AI seed.');
+      button('botlearningback','BACK TO AI BOT MODELS',y,'#7fd8ff');
     }else{
       const settled=botLadderMatchSettled(arena);
       y=button(settled?'botrematch':'botwait',settled?'PLAY AGAIN':'SAVING RESULT\u2026',y,'#a7c15e',settled?'New first-to-5 match at your synced difficulty.':'Play Again unlocks after the cloud result settles.',settled);

@@ -379,7 +379,7 @@ function clickSelect(){
       // Play dashboard always enters the dedicated Party menu first.
       else if(r.id==='party_create') partyPromptCreate();
       else if(r.id==='party_join') partyPromptJoin();
-      else if(r.id==='offline_cpu_menu') { selPage='offlinecpu'; if(typeof refreshBotLadder==='function')void refreshBotLadder(true); sfx('swap'); }
+      else if(r.id==='offline_cpu_menu') { selPage='offlinecpu'; if(typeof refreshBotLadder==='function')void refreshBotLadder(true); if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true); sfx('swap'); }
       else chooseGameMode(r.mode,'modeboard');
       return;
     }
