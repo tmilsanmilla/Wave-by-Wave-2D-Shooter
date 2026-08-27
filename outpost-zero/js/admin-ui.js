@@ -1569,13 +1569,15 @@ function drawAiLearning(){
   }
   BOT_MODEL_RELEASES.forEach((model,i)=>{
     const y=listY+i*(rowH+gap),selected=aiLearningSelectedModelId===model.id,live=activeBotModelId===model.id,
+      training=typeof aiTrainingModelSummary==='function'?aiTrainingModelSummary(model.id):null,
       rowCol=live?'rgba(167,193,94,.13)':selected?'rgba(127,216,255,.10)':'rgba(255,255,255,.035)';
     ctx.fillStyle=rowCol;ctx.fillRect(cardX,y,cardW,rowH);ctx.strokeStyle=live?'#a7c15e':selected?'#7fd8ff':'#315568';ctx.lineWidth=live||selected?1.5:1;ctx.strokeRect(cardX+.5,y+.5,cardW,rowH);
     for(let c=1;c<4;c++){ctx.strokeStyle='#263d48';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(colX[c]+.5,y);ctx.lineTo(colX[c]+.5,y+rowH);ctx.stroke();}
     ctx.textAlign='left';ctx.fillStyle=live?'#a7c15e':selected?'#bfe8ff':'#e8d9a8';ctx.font='700 '+(tiny?7:9)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(model.name,modelW-(tiny?7:12)),cardX+(tiny?4:7),y+rowH*.38);
     ctx.fillStyle=live?'#a7c15e':'#65725d';ctx.font='700 '+(tiny?6:7)+'px ui-monospace,Consolas,monospace';
-    ctx.fillText(live?'LIVE NOW':'ARCHIVED',cardX+(tiny?4:7),y+rowH*.70);
+    const cloudGames=training&&typeof aiTrainingCompactNumber==='function'?aiTrainingCompactNumber(training.matches):'';
+    ctx.fillText(fitLine((live?'LIVE NOW':'ARCHIVED')+(cloudGames?' · '+cloudGames+' GAMES':''),modelW-(tiny?7:12)),cardX+(tiny?4:7),y+rowH*.70);
     ctx.fillStyle=selected?'#d7efff':'#9ca58b';ctx.font=(tiny?'7':'8')+'px ui-monospace,Consolas,monospace';ctx.textBaseline='top';
     wrapTextClamped(model.improved,colX[1]+(tiny?4:7),y+rowH/2-(tiny?7:8),noteW-(tiny?8:14),tiny?8:10,2);ctx.textBaseline='middle';
 
@@ -1597,7 +1599,8 @@ function drawAiLearning(){
   ctx.textAlign='center';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:8)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(aiLearningNotice||'Tests never deploy a model.',cardW-12),W/2,noticeY+noticeH*.32);
   ctx.fillStyle='#7f876e';ctx.font=(tiny?'6':'7')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('BRING BACK REQUIRES CONFIRMATION · CHANGES FUTURE MATCHES ONLY · PLAYER RANKS NEVER CHANGE',cardW-12),W/2,noticeY+noticeH*.68);
+  ctx.fillText(fitLine(typeof aiTrainingAdminStatusText==='function'?aiTrainingAdminStatusText():'TRAINING GAMES · CLOUD UNAVAILABLE',cardW-12),W/2,noticeY+noticeH*.55);
+  ctx.fillText(fitLine('BRING BACK REQUIRES CONFIRMATION · CHANGES FUTURE MATCHES ONLY · PLAYER RANKS NEVER CHANGE',cardW-12),W/2,noticeY+noticeH*.79);
 
   const closeW=Math.min(220,cardW),closeX=W/2-closeW/2,close={id:'model_close',x:closeX,y:btnY,w:closeW,h:btnH,enabled:!aiLearningRestoreBusyId};aiLearningRects.push(close);
   const closeHot=close.enabled&&mouse.x>=close.x&&mouse.x<=close.x+close.w&&mouse.y>=close.y&&mouse.y<=close.y+close.h;

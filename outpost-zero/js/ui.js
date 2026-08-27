@@ -1100,7 +1100,9 @@ function drawArena(){
     ctx.fillStyle='#e8d9a8';ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace';ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268';ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
     ctx.fillStyle='#8a9268';ctx.fillText(fitLine(botLadderMatchResultText(partyCpuMatch),pw-20),W/2,bodyY+(tiny?72:108));
-    let y=bodyY+(tiny?84:126),settled=botLadderMatchSettled(partyCpuMatch);
+    ctx.fillStyle='#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(typeof aiTrainingMatchStatusText==='function'?aiTrainingMatchStatusText(partyCpuMatch):'',pw-20),W/2,bodyY+(tiny?82:122));
+    let y=bodyY+(tiny?94:140),settled=botLadderMatchSettled(partyCpuMatch);
     y=button(settled?'teamrematch':'teamwait',settled?'PLAY AGAIN':'SAVING RESULT\u2026',y,'#a7c15e',settled?'New first-to-5 team match at your synced difficulty.':'Play Again unlocks after the cloud result settles.',settled);
     y=button('teamloadout','CHANGE WEAPONS',y,'#7fd8ff');
     button('teamleave','BACK TO OFFLINE VS CPU',y,'#8a9268');
@@ -1112,8 +1114,11 @@ function drawArena(){
     ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace'; ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(ladderResult,pw-20),W/2,bodyY+(tiny?72:108));
-    let y=bodyY+(tiny?84:126);
+    if(!botAdminTest){ctx.fillStyle='#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine(typeof aiTrainingMatchStatusText==='function'?aiTrainingMatchStatusText(arena):'',pw-20),W/2,bodyY+(tiny?82:122));}
+    let y=bodyY+(tiny?94:140);
     if(botAdminTest){
+      y=bodyY+(tiny?84:126);
       y=button('bottestagain','TEST '+botModelRelease(arena.botModelId).name+' AGAIN',y,'#a7c15e','Same Impossible execution and deterministic AI seed.');
       button('botlearningback','BACK TO AI BOT MODELS',y,'#7fd8ff');
     }else{

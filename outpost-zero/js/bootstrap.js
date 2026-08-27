@@ -9,10 +9,12 @@ loadMeta();
 bindDomEvents();
 bindCoreEvents();
 bindSocialDomControls();
+if(typeof bindAiTrainingSyncEvents==='function')bindAiTrainingSyncEvents();
 
 initAuth().finally(()=>{
   // The local file must still restore layout work when Supabase is unavailable.
   if(!sb) fetchLayout();
+  if(typeof flushAiTrainingQueue==='function')void flushAiTrainingQueue();
 });
 
 // A referral survives while the visitor signs in. Give that visitor a clear,

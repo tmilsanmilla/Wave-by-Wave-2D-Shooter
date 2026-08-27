@@ -41,7 +41,9 @@ function openAiLearning(){
   aiLearningSelectedModelId=typeof activeBotModelId==='string'?activeBotModelId:'apex-v5';
   aiLearningNotice='Loading the globally active tactical model…';
   adminPanelOpen=false; aiLearningOpen=true;
-  if(typeof refreshBotModelHistory==='function') void refreshBotModelHistory(true).then(()=>{
+  const history=typeof refreshBotModelHistory==='function'?refreshBotModelHistory(true):Promise.resolve(),
+    training=typeof refreshAiTrainingSummary==='function'?refreshAiTrainingSummary(true):Promise.resolve();
+  void Promise.all([history,training]).then(()=>{
     if(!aiLearningOpen) return;
     aiLearningSelectedModelId=activeBotModelId;
     aiLearningNotice='Tests use Impossible execution for a fair comparison and never change the player ladder.';

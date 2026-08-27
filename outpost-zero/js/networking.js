@@ -90,6 +90,7 @@ async function initAuth(){
         prepareBotLadderForAccount(profileUserId);
         void refreshBotLadder(false);
         if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(false);
+        if(typeof flushAiTrainingQueue==='function')void flushAiTrainingQueue();
         const profileRequestVersion=++authProfileRequestVersion;
         if(profileUserId && firstAccountTutorialUserId && firstAccountTutorialUserId!==profileUserId){
           firstAccountWelcomeOpen=false;

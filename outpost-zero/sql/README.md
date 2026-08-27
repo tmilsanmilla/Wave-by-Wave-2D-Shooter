@@ -69,13 +69,15 @@ Run these independent feature scripts in order:
    receipts, RLS, narrow read/submit RPCs, and API grants
 2. `ai/02-model-history.sql` — immutable tactical model releases, the global
    active-model pointer, creator/main-admin activation, and an append-only audit
+3. `ai/03-game-training.sql` — privacy-limited completed-match training
+   summaries, exact-once offline retries, and creator/main-admin aggregates
 
 If Social was the last feature you installed, do not rerun its four files for
-this change; paste and run the AI scripts instead. If you already ran AI 01 for
-the five-tier ladder, paste and run only AI 02 next.
+this change; paste and run the AI scripts instead. If you already ran AI 01 and
+AI 02, paste and run only AI 03 next.
 
-The historical AI 01 filename is retained for ladder compatibility. Both AI
-scripts are rerunnable and do not delete profile data.
+The historical AI 01 filename is retained for ladder compatibility. All three
+AI scripts are rerunnable and do not delete profile data.
 If an older copy of AI 01 created the abandoned shared-XP tables, it revokes the
 old browser API but leaves those tables intact. Supabase may show a general
 warning because it creates `security definer` RPCs; those functions have fixed
@@ -100,8 +102,33 @@ alter any player's difficulty or an already-running match. Direct table access
 is denied, and the activation RPC verifies the creator/main-admin role from the
 signed Supabase JWT and server-side admins table rather than trusting the UI.
 
+AI 03 connects finished normal local AI 1v1, local AI 2v2, and Party CPU 2v2
+games to the shared model-history system. A Party game produces one receipt
+from its authority host only; the other client never submits a duplicate. Party
+CPU uses the fixed full Apex V5 tactical feature set at difficulty 2, so its
+receipt is explicitly tagged `party2v2`, `apex-v5`, and difficulty 2 even when
+an archived global model is active. This keeps Party samples distinguishable
+from local model/difficulty samples during trusted aggregate analysis.
+
+The browser sends one bounded summary with a stable UUID; if the network or RPC
+is unavailable, the same summary remains in an owner-isolated device queue for
+up to 30 days and is retried after reconnect. Guests contribute separately from
+signed-in accounts. Admin comparison tests, unfinished or disconnected Party
+games, non-host Party clients, and player-versus-player matches are not
+submitted. The database stores no email, username, teammate ID, loadout, chat,
+input log, or exact position, and creator/main admins see aggregates rather
+than player rows.
+
+Training summaries do not contain executable code and can never activate a
+model or alter ladder progress. They measure how each frozen model performs and
+where its movement, navigation, TNT, and portal behavior needs work. Turning
+that evidence into a new tactical release still requires a reviewed game-code
+change (or a future trusted training worker); untrusted browser reports are not
+allowed to rewrite the globally active bot automatically.
+
 Because matches run locally, the database cannot independently prove a reported
 win. UUID receipts plus the 30-second, 20-per-hour, and 100-per-day server-time
-limits prevent accidental duplicates and simple request spam; fully cheat-proof
-results would require a future authoritative match server or server-issued
-begin-match ticket.
+limits prevent accidental duplicates and simple request spam on the player
+ladder. Training delivery permits an offline backlog but caps each account or
+installation at 120 per hour and 500 per day. Fully cheat-proof results would
+require a future authoritative match server or server-issued begin-match ticket.

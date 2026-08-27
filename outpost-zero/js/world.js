@@ -236,7 +236,7 @@ function arenaTntDamage(actor,tnt){
   const cx=tnt.x+tnt.w/2,cy=tnt.y+tnt.h/2,d=Math.hypot(actor.x-cx,actor.y-cy);
   return d>=tnt.radius?0:Math.min(ARENA_HP,tnt.damage*(1-d/tnt.radius));
 }
-function arenaApplyCpuTeamTntDetonation(tnt){
+function arenaApplyCpuTeamTntDetonation(tnt,sourceActorId=''){
   if(typeof isOfflineCpuTeamMapArena!=='function'||!isOfflineCpuTeamMapArena()||
      typeof cpuTeamIsAuthority!=='function'||!cpuTeamIsAuthority()||typeof partyCpuMatch==='undefined') return false;
   const localId=typeof cpuTeamLocalId==='function'?String(cpuTeamLocalId()||''):'', seen=new Set();
@@ -246,10 +246,15 @@ function arenaApplyCpuTeamTntDetonation(tnt){
     seen.add(String(actor.id)); const local=String(actor.id)===localId, target=local?player:actor;
     const blast=arenaTntDamage(target,tnt), before=local?Math.max(0,+player.hp||0):Math.max(0,+actor.hp||0);
     if(blast<=0) continue;
+    const dealt=Math.min(before,blast);
+    if(actor.team==='A'&&typeof recordAiTrainingBotSignalById==='function'){
+      recordAiTrainingBotSignalById(sourceActorId,'bot_damage_dealt',dealt);
+    }
     if(local){
       damagePlayerHp(blast,{kind:'tnt',mergeMs:90}); player.hurtFlash=1; player.hurtCd=240; actor.hp=Math.max(0,+player.hp||0);
     } else {
-      const dealt=Math.min(before,blast); actor.hp=Math.max(0,before-blast); actor.hitT=now+120;
+      actor.hp=Math.max(0,before-blast); actor.hitT=now+120;
+      if(actor.team==='B'&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(actor,'bot_damage_taken',dealt);
       if(typeof addDamageNumber==='function') addDamageNumber(actor,dealt,false,90,'tnt');
     }
   }
@@ -260,20 +265,27 @@ function arenaApplyCpuTeamTntDetonation(tnt){
 }
 // Shared local application. online.js supplies the small broadcast/receive hook;
 // the Offline bot and the shooter's own blast are resolved here immediately.
-function arenaApplyTntDetonation(tntId,source='remote'){
+function arenaApplyTntDetonation(tntId,source='remote',sourceActorId=''){
   if(!isArenaMapBattlefield()||activeArenaMapId()!=='construction') return false;
   const t=activeArenaTnt(true).find(x=>x.id===String(tntId||''));
   const dead=arenaDestroyedTnt(); if(!t||dead.has(t.id)) return false;
   dead.add(t.id); (arena.tntFx||(arena.tntFx=[])).push({x:t.x+t.w/2,y:t.y+t.h/2,t:now,r:t.radius});
 
   if(typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena()){
-    arenaApplyCpuTeamTntDetonation(t);
+    arenaApplyCpuTeamTntDetonation(t,sourceActorId);
   } else {
     const playerHit=arenaTntDamage(player,t);
-    if(playerHit>0){ damagePlayerHp(playerHit,{kind:'tnt',mergeMs:90}); player.hurtFlash=1; player.hurtCd=240; }
+    if(playerHit>0){
+      if(typeof recordAiTrainingBotSignalById==='function'){
+        recordAiTrainingBotSignalById(sourceActorId,'bot_damage_dealt',Math.min(Math.max(0,+player.hp||0),playerHit));
+      }
+      damagePlayerHp(playerHit,{kind:'tnt',mergeMs:90}); player.hurtFlash=1; player.hurtCd=240;
+    }
     if(typeof isBotArena==='function'&&isBotArena()&&arena.opponent){
       const bot=arena.opponent,botHit=arenaTntDamage(bot,t),before=Math.max(0,+bot.hp||0);
-      if(botHit>0){ const dealt=Math.min(before,botHit); bot.hp=Math.max(0,before-botHit); bot.hitT=now+120; addDamageNumber(bot,dealt,false,90,'tnt'); }
+      if(botHit>0){ const dealt=Math.min(before,botHit); bot.hp=Math.max(0,before-botHit); bot.hitT=now+120;
+        if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(bot,'bot_damage_taken',dealt);
+        addDamageNumber(bot,dealt,false,90,'tnt'); }
       if(player.hp<=0&&bot.hp<=0) arenaBotResolve(null);
       else if(player.hp<=0) arenaBotResolve(LOCAL_DUEL_BOT);
       else if(bot.hp<=0) arenaBotResolve(LOCAL_DUEL_PLAYER);
@@ -302,7 +314,10 @@ function arenaDamageTnt(tntId,damage,actorId,announce=true){
   const ledger=arenaTntDamageLedger(),row=ledger.get(t.id)||{},old=arenaTntDamageValue(row[actorId])||0;
   row[actorId]=arenaTntDamageValue(old+hit);ledger.set(t.id,row);
   if(announce&&typeof arenaBroadcastTntHit==='function') arenaBroadcastTntHit(t.id,row[actorId]);
-  if(arenaTntHp(t.id)<=0) return arenaApplyTntDetonation(t.id,'local');
+  if(arenaTntHp(t.id)<=0){
+    if(typeof recordAiTrainingBotSignalById==='function')recordAiTrainingBotSignalById(actorId,'bot_tnt_detonations');
+    return arenaApplyTntDetonation(t.id,'local',actorId);
+  }
   if(typeof burst==='function') burst(t.x+t.w/2,t.y+t.h/2,'#ffd270',5,3);
   if(typeof sfx==='function') sfx('hit');
   return true;

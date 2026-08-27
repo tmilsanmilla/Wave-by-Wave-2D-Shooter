@@ -244,6 +244,15 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
   const tactic=bot.aiTactic,side=bot.aiSide||1,bias=tactic==='push'?[1.15,.25]:tactic==='retreat'?[-1.15,.35]:
     tactic==='orbit'?[0,1]:tactic==='hold'?[-.08,.55]:tactic==='cover'?[-.25,.7]:[.55,.85];
   const avoid=tntPlan&&Array.isArray(tntPlan.avoid)?tntPlan.avoid:[],mates=Array.isArray(allies)?allies:[],r=Math.max(1,+bot.r||15);
+  if(avoid.length&&typeof recordAiTrainingBotSignal==='function'){
+    if(!(bot.aiTrainingTntAvoided instanceof Set))bot.aiTrainingTntAvoided=new Set();
+    for(const zone of avoid){
+      const id=String(zone&&zone.id||'');if(!id||bot.aiTrainingTntAvoided.has(id))continue;
+      if(Math.hypot(bot.x-(+zone.x||0),bot.y-(+zone.y||0))<=Math.max(0,+zone.radius||0)+96){
+        bot.aiTrainingTntAvoided.add(id);recordAiTrainingBotSignal(bot,'bot_tnt_avoidances');
+      }
+    }
+  }
   let best=null;
   for(const offset of [-Math.PI,-Math.PI*.75,-Math.PI*.5,-Math.PI*.25,0,Math.PI*.25,Math.PI*.5,Math.PI*.75,Math.PI]){
     const a=Math.atan2(fy,fx)+offset+cpuAiRange(bot,-.12,.12),x=Math.cos(a),y=Math.sin(a),probeX=bot.x+x*72,probeY=bot.y+y*72;
@@ -302,6 +311,7 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
     }
     if(!route){
       route=cpuAiFindPath(bot,goal,avoid,clock,config.usePortals!==false);
+      if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(bot,'bot_path_replans');
       if(route){
         bot.aiNavPath=route.path;bot.aiNavUntil=clock+CPU_AI_NAV_REUSE_MS;bot.aiNavGoalX=goal.x;bot.aiNavGoalY=goal.y;
         bot.aiNavPortalSeq=Math.max(0,Math.floor(+bot.portalSeq||0));
@@ -497,7 +507,9 @@ function initializeBotLadderMatch(match,mode,difficulty,adminTest=false,modelId=
   match.botLadderMatchId=canSubmit?createBotLadderMatchId():'';match.botLadderSubmitAttempts=0;
   match.botLadderSubmitInFlight=false;match.botLadderSubmitDone=!canSubmit;match.botLadderRetryTimer=null;
   match.botLadderSubmitWon=null;match.botLadderSyncStatus=adminTest?'admin_test':canSubmit?'ready':authUser?'offline':'guest';
-  match.botLadderDelta=0;match.botLadderPromoted=false;match.botLadderDemoted=false;return match;
+  match.botLadderDelta=0;match.botLadderPromoted=false;match.botLadderDemoted=false;
+  if(typeof initializeAiTrainingMatch==='function')initializeAiTrainingMatch(match);
+  return match;
 }
 function botLadderSubmissionEligible(match){
   const liveId=authUser&&String(authUser.id||'');
@@ -687,6 +699,7 @@ function arenaBotStartRound(){
     aimNoise:0,strafe:1,strafeUntil:now,
     reactionAt:arena.roundStartAt+tuning.reactionMs,moveX:0,moveY:0,lastThinkX:right.x,lastThinkY:right.y,
     aiStuckTicks:0,aiStuckUntil:0,aiFailedMoveX:0,aiFailedMoveY:0,aiNavPath:[],aiNavUntil:0,aiUsingPortal:false,
+    aiTrainingTntAvoided:new Set(),aiTrainingWallAt:0,
     lastPlayerX:player.x,lastPlayerY:player.y,playerVx:0,playerVy:0});
   b.strafe=cpuAiNext(b)<.5?-1:1;b.strafeUntil=now+cpuAiRange(b,900,1500);
   state='play'; menuOpen=false; aiming=false; rmbAim=false;
@@ -715,6 +728,7 @@ function arenaBotResolve(winnerId){
   arena.clearProjectiles=true;
   const over=winnerId&&(arena.scores[winnerId]||0)>=ARENA_TARGET;
   if(over){
+    if(typeof recordCompletedAiTrainingMatch==='function')recordCompletedAiTrainingMatch(winnerId===LOCAL_DUEL_PLAYER,arena);
     recordCompletedBotLadderMatch(winnerId===LOCAL_DUEL_PLAYER,arena);
     arena.phase='match_end'; arena.active=false; arena.nextRoundAt=0;
     if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
@@ -737,6 +751,7 @@ function arenaHitOpponent(dmg,kind){
   if(!arenaCanAct()||!arena.opponent||arena.roundResolved) return;
   const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
   const dealt=Math.min(Math.max(0,arena.opponent.hp),hit);
+  if(typeof recordAiTrainingSignal==='function')recordAiTrainingSignal(arena,'bot_damage_taken',dealt);
   arena.opponent.hp=Math.max(0,arena.opponent.hp-hit);arena.opponent.hitT=now+90;
   arena.opponent.underFireUntil=now+900;arena.opponent.aiTacticUntil=now;arena.opponent.thinkAt=now;
   addDamageNumber(arena.opponent,dealt,kind==='crit'||kind==='parry');
@@ -749,6 +764,10 @@ function arenaBotHitPlayer(dmg){
     parryUntil=0;arenaHitOpponent(120,'parry');
     burst(player.x,player.y,'#bfe8ff',10,4);addShake(3);sfx('hit');
     waveMsg='TWIN SAI PARRY';waveMsgT=now+900;return;
+  }
+  const dealt=Math.min(Math.max(0,+player.hp||0),hit);
+  if(typeof recordAiTrainingSignal==='function'){
+    recordAiTrainingSignal(arena,'bot_hits');recordAiTrainingSignal(arena,'bot_damage_dealt',dealt);
   }
   damagePlayerHp(hit); player.hurtFlash=1; player.hurtCd=140;
   burst(player.x,player.y,'#d05548',6,3); addShake(3); sfx('hurt');
@@ -774,7 +793,9 @@ function updateArenaBot(dtms){
   }else if(!tuning.useTnt)b.tntPlan=null;
 
   if(now>=b.thinkAt){
-    if(tuning.useStuckRecovery&&cpuAiObserveMovement(b,now))b.aiTacticUntil=now;
+    if(tuning.useStuckRecovery&&cpuAiObserveMovement(b,now)){
+      b.aiTacticUntil=now;if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_stuck_recoveries');
+    }
     b.thinkAt=now+tuning.thinkMs;
     if(now>=b.aimNoiseAt){b.aimNoise=cpuAiRange(b,-tuning.aimNoise,tuning.aimNoise);b.aimNoiseAt=now+cpuAiRange(b,450,750);}
     const move=cpuAiPickMove(b,player,[b],now,tuning,b.tntPlan);b.moveX=move.x;b.moveY=move.y;
@@ -790,11 +811,19 @@ function updateArenaBot(dtms){
   const turn=Math.atan2(Math.sin(desired-b.angle),Math.cos(desired-b.angle));
   b.angle+=clamp(turn,-tuning.turnRate*dt,tuning.turnRate*dt);
   const tacticSpeed=b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=tuning.moveSpeed*tacticSpeed*dt,
-    nx=b.x+b.moveX*spd,ny=b.y+b.moveY*spd;
-  if(!pointInRects(nx,b.y)) b.x=nx;
-  if(!pointInRects(b.x,ny)) b.y=ny;
+    moveStartX=b.x,moveStartY=b.y,nx=b.x+b.moveX*spd,ny=b.y+b.moveY*spd,
+    blockedX=pointInRects(nx,b.y),blockedY=pointInRects(b.x,ny);
+  if(!blockedX) b.x=nx;
+  if(!blockedY) b.y=ny;
   clampActorToArena(b); collideRects(b); clampActorToArena(b);
-  if(typeof arenaPortalStep==='function') arenaPortalStep(b,now);
+  if(typeof recordAiTrainingBotSignal==='function'){
+    recordAiTrainingBotSignal(b,'bot_distance_px',Math.hypot(b.x-moveStartX,b.y-moveStartY));
+    if((blockedX||blockedY)&&now>=(b.aiTrainingWallAt||0)){
+      b.aiTrainingWallAt=now+250;recordAiTrainingBotSignal(b,'bot_wall_contacts');
+    }
+  }
+  const usedPortal=typeof arenaPortalStep==='function'&&arenaPortalStep(b,now);
+  if(usedPortal&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_portal_uses');
   const pdx=b.x-player.x,pdy=b.y-player.y,rr=b.r+player.r+3,d2=pdx*pdx+pdy*pdy;
   if(d2>0&&d2<rr*rr){ const d=Math.sqrt(d2),p=(rr-d)/d; b.x+=pdx*p; b.y+=pdy*p; }
   clampActorToArena(b); b.tx=b.x; b.ty=b.y;
@@ -822,5 +851,6 @@ function updateArenaBot(dtms){
   const a=b.angle+cpuAiRange(b,-tuning.shotJitter,tuning.shotJitter), sx=b.x+Math.cos(a)*7, sy=b.y+Math.sin(a)*7;
   ebullets.push({x:sx,y:sy,vx:Math.cos(a)*shotSpeed,vy:Math.sin(a)*shotSpeed,life:weaponBulletLife(BOT_AI.weapon,1200),dmg:BOT_AI.damage,
     botArena:true,dist:0,rng:w.range,fall:w.fall,fg:BOT_AI.forgiveness});
+  if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_shots');
   if(b.mag<=0) b.reloadEnd=now+w.reload;
 }
