@@ -501,6 +501,18 @@ function drawWorld(){
 }
 
 /* ---------------- render: HUD ---------------- */
+function touchWeaponSelectorLayout(count){
+  count=Math.max(1,Math.min(4,Math.floor(+count||1)));
+  const arenaMini=typeof isArenaMapBattlefield==='function'&&isArenaMapBattlefield();
+  const short=H<430, tutorial=!!tutorialOn;
+  // Keep one vertical rail at the extreme top-left in every touch layout. It
+  // stays left of the Campaign minimap and top-right actions. On a short
+  // landscape it narrows to x=8..48, just clear of the movement-stick circle.
+  const timeStopped=typeof now==='number'&&typeof timeStopUntil==='number'&&now<timeStopUntil;
+  const x=W<360||short?8:14, y=tutorial||arenaMini?158:(timeStopped?86:64);
+  const w=short?40:Math.min(84,W<360?80:84),h=28,gap=4;
+  return {x,y,w,h,gap,columns:1,rows:count,width:w,height:count*h+(count-1)*gap};
+}
 function drawHUD(){
   const w=WEAPONS[player.cur];
   const sw=swayScreen();
@@ -611,7 +623,7 @@ function drawHUD(){
     }
   } else {
     const medLeft=Math.max(1,medDropKillsRequired()-medDropKillAcc);
-    ctx.fillText(fitLine('WAVE '+Math.max(1,wave)+'   KILLS '+kills+'   MED IN '+medLeft+'   BEST '+hiScore,W-pad*2), pad, pad+28);
+    ctx.fillText(fitLine('WAVE '+Math.max(1,wave)+'   KILLS '+kills+'   MED IN '+medLeft+'   STASH '+medStash+'/'+MED_STASH_MAX+' [H]   BEST '+hiScore,W-pad*2), pad, pad+28);
   }
   }
   if(now<timeStopUntil){
@@ -644,25 +656,34 @@ function drawHUD(){
                 : w.melee ? 'MELEE'
                 : (player.reloadEnd>now ? 'RELOADING' : ((isFinite(mag)?mag:'\u221E')+' / '+(isFinite(player.reserve[player.cur])?player.reserve[player.cur]:'\u221E')));
   ctx.fillText(ammoTxt, pad, H-42);
-  // slots: 1 primary / 2 sidearm / 3 melee / 4 utility
+  // slots: 1 primary / 2 sidearm / 3 melee / 4 utility. On touch these are
+  // real top-left selectors; desktop keeps the original bottom HUD exactly.
   const slots=[loadout.primary, loadout.secondary, loadout.melee];
   if(loadout.utility) slots.push(loadout.utility);
+  touchButtons=[]; touchWeaponSelectorBounds=null;
+  const touchSlots=touchUI?touchWeaponSelectorLayout(slots.length):null;
+  if(touchSlots) touchWeaponSelectorBounds={x:touchSlots.x,y:touchSlots.y,w:touchSlots.width,h:touchSlots.height};
   for(let i=0;i<slots.length;i++){
-    const x=pad+i*66, y=H-102-40, k=slots[i];
+    const col=touchSlots?i%touchSlots.columns:i, row=touchSlots?Math.floor(i/touchSlots.columns):0;
+    const x=touchSlots?touchSlots.x+col*(touchSlots.w+touchSlots.gap):pad+i*66;
+    const y=touchSlots?touchSlots.y+row*(touchSlots.h+touchSlots.gap):H-102-40, k=slots[i];
+    const slotW=touchSlots?touchSlots.w:60, slotH=touchSlots?touchSlots.h:20;
     const isU = i===3;
     const cur = isU ? utilityOut : (!utilityOut && k===player.cur);
-    ctx.fillStyle = cur ? 'rgba(232,182,88,0.22)' : 'rgba(0,0,0,0.4)';
-    ctx.fillRect(x,y,60,20);
-    ctx.strokeStyle = cur ? '#e8b658' : '#4a4634';
-    ctx.strokeRect(x+0.5,y+0.5,60,20);
-    ctx.fillStyle = cur ? '#e8b658' : '#8a9268';
-    ctx.font='11px ui-monospace,Consolas,monospace';
-    ctx.fillText(String(i+1), x+6, y+5);
+    const pressed=touchSlots&&pressedBtn===String(i+1);
+    ctx.fillStyle = pressed ? 'rgba(232,182,88,0.5)' : cur ? 'rgba(232,182,88,0.22)' : 'rgba(0,0,0,0.55)';
+    ctx.fillRect(x,y,slotW,slotH);
+    ctx.strokeStyle = pressed||cur ? '#e8b658' : '#4a4634';
+    ctx.strokeRect(x+0.5,y+0.5,slotW,slotH);
+    ctx.fillStyle = pressed||cur ? '#e8b658' : '#8a9268';
+    ctx.font=(touchSlots?'700 11px':'11px')+' ui-monospace,Consolas,monospace';
+    ctx.fillText(String(i+1), x+6, y+(touchSlots?8:5));
     ctx.textAlign='right';
     const SLOT_TAG={timeturner:'TIME', warpwave:'WARP', terafists:'TERA', portal:'PORTAL', solarrifle:'SOLAR'};
     const tag = SLOT_TAG[k] || (isU ? UTILITIES[k] : WEAPONS[k]).name.split(' ')[0];
-    ctx.fillText(tag, x+54, y+5);
+    if(!touchSlots||slotW>=52) ctx.fillText(touchSlots?fitLine(tag,slotW-24):tag, x+slotW-6, y+(touchSlots?8:5));
     ctx.textAlign='left';
+    if(touchSlots) touchButtons.push({key:String(i+1),x,y,w:slotW,h:slotH});
   }
 
   // cooldown bars — laid out in fixed non-overlapping columns, right of the slot chips
@@ -751,7 +772,6 @@ function drawHUD(){
   ctx.textAlign='left';
 
   // touch controls
-  touchButtons=[];
   if(touchUI){
     // movement joystick, bottom-left
     const st=sticks.move;
@@ -799,15 +819,9 @@ function drawHUD(){
       }, now<(dashReadyT||0));
     }
 
-    // --- top-right icon row: SWAP, FIST (melee ability), GRENADE (utility) ---
+    // --- top-right icon row: melee ability, utility, and carried medkit ---
     const rY=124, rR=30;
     let rx=W-14-rR;
-    // SWAP weapon
-    iconBtn('swp', rx, rY, rR, (cx,cy)=>{
-      ctx.beginPath(); ctx.moveTo(cx-10,cy-4); ctx.lineTo(cx+10,cy-4); ctx.lineTo(cx+5,cy-9); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(cx+10,cy+4); ctx.lineTo(cx-10,cy+4); ctx.lineTo(cx-5,cy+9); ctx.stroke();
-    }, false);
-    rx-=rR*2+10;
     // FIST — activate the equipped melee's special in every playable mode.
     iconBtn('f', rx, rY, rR, (cx,cy)=>{
       ctx.lineWidth=2.2;
@@ -825,6 +839,16 @@ function drawHUD(){
         ctx.strokeRect(cx-4,cy-11,8,5);                               // top cap
         ctx.beginPath(); ctx.moveTo(cx+5,cy-9); ctx.lineTo(cx+10,cy-13); ctx.stroke(); // pin
       }, utilityOut);
+      rx-=rR*2+10;
+    }
+    // Stashed world medkits are usable with every loadout. Arena never has
+    // campaign drops, so keep that mode's already-busy controls unchanged.
+    if(practiceMode!=='arena'){
+      iconBtn('med', rx, rY, rR, (cx,cy)=>{
+        ctx.fillRect(cx-11,cy-3,22,6); ctx.fillRect(cx-3,cy-11,6,22);
+        ctx.font='700 8px ui-monospace,Consolas,monospace'; ctx.textAlign='center';
+        ctx.fillText('MED '+medStash,cx,cy+18); ctx.textAlign='left';
+      }, false);
     }
 
     // top-right HP + ammo panel (below the icon row)

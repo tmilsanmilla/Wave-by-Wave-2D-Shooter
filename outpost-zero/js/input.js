@@ -81,6 +81,7 @@ addEventListener('keydown', e=>{
     activateContextAction();                              // melee ability, ranged aim, or visible utility
   }
   if(k==='r') startReload();
+  if(k==='h' && !e.repeat) useStashedMedkit();
   if(k===' ') doDash();
   if(k==='f') quickMelee();
   if(k==='g' && !e.repeat) utilQuick();
@@ -152,7 +153,7 @@ cv.addEventListener('contextmenu', e=> e.preventDefault());
 const touchUI = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
 const STICK_R=60;
 const sticks={ move:{id:null,cx:0,cy:0,dx:0,dy:0}, aim:{id:null,cx:0,cy:0,dx:0,dy:0} };
-let touchButtons=[], pressedBtn=null, menuTouchId=null;
+let touchButtons=[], touchWeaponSelectorBounds=null, pressedBtn=null, menuTouchId=null;
 let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null, touchUtilityUsed=false, touchFireCadence=false;
 function resetHeldGameplayInput(){
   // A click/touch/Enter used to launch a mode must never become gameplay input.
@@ -167,20 +168,39 @@ function resetHeldGameplayInput(){
   fireSuppressT=Math.max(fireSuppressT,now+250);
 }
 function buttonAt(x,y){
-  // magnet: snap to the nearest button within a generous radius, so hurried
-  // boss-fight taps don't get swallowed by the aim stick
+  // Prefer the exact visible target. Weapon slots are rectangular while the
+  // action controls are circular, so an overlapping magnetic margin must
+  // never turn a deliberate numbered-slot tap into another action.
+  for(const b of touchButtons){
+    if(b.w!=null&&b.h!=null){
+      if(x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h) return b;
+    } else if((x-b.x)*(x-b.x)+(y-b.y)*(y-b.y)<=b.r*b.r) return b;
+  }
+  // Magnet: snap to the nearest button just outside its visible edge, so a
+  // hurried tap is still usable without creating overlapping visible buttons.
   let best=null, bd=1e9;
   for(const b of touchButtons){
-    const d2=(x-b.x)*(x-b.x)+(y-b.y)*(y-b.y);
-    if(d2 <= (b.r+22)*(b.r+22) && d2<bd){ bd=d2; best=b; }
+    let d2,limit;
+    if(b.w!=null&&b.h!=null){
+      const dx=Math.max(b.x-x,0,x-(b.x+b.w)),dy=Math.max(b.y-y,0,y-(b.y+b.h));
+      d2=dx*dx+dy*dy; limit=12;
+    } else {
+      d2=(x-b.x)*(x-b.x)+(y-b.y)*(y-b.y); limit=b.r+22;
+    }
+    if(d2<=limit*limit&&d2<bd){bd=d2;best=b;}
   }
   return best;
 }
 function doButton(k){
   if(k==='rld') startReload();
   else if(k==='swp') switchWeapon(player.cur===loadout.primary ? loadout.secondary : loadout.primary);
+  else if(k==='1') switchWeapon(loadout.primary);
+  else if(k==='2') switchWeapon(loadout.secondary);
+  else if(k==='3') switchWeapon(loadout.melee);
+  else if(k==='4') equipUtility();
   else if(k==='e') activateContextAction();
   else if(k==='g') utilQuick();
+  else if(k==='med') useStashedMedkit();
   else if(k==='dsh') doDash();
   else if(k==='f') quickMelee();
 }
@@ -191,6 +211,10 @@ cv.addEventListener('touchstart', e=>{
   }
   for(const t of e.changedTouches){
     const x=px(t.clientX), y=t.clientY;
+    if(tutorialOn&&state==='play'&&!menuOpen){
+      mouse.x=x; mouse.y=y;
+      if(tutorialClick()) continue;
+    }
     if(chestRewardOpen){ mouse.x=x; mouse.y=y; chestRewardClick(); continue; }
     if(respawnPromptT){ mouse.x=x; mouse.y=y; respawnPromptClick(); continue; }
     if(powerMenuOpen){ mouse.x=x; mouse.y=y; powerMenuClick(); continue; }

@@ -1,13 +1,14 @@
 "use strict";
 
 function meleeAbility(){
-  if(tutorialOn) tutMeleeUsed=true;
   if(state!=='play') return;
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
   const k=player.cur;
   const ready = now >= (abilityCD[k]||0);
+  let activated=false;
   if(k==='scythe'){                                  // reaper dash: far, slow to restore
     if(!ready){ sfx('dry'); return; }
+    activated=true;
     let dx=0,dy=0;
     if(keys['w'])dy--; if(keys['s'])dy++; if(keys['a'])dx--; if(keys['d'])dx++;
     if(!dx&&!dy){ const a=aimAngle(); dx=Math.cos(a); dy=Math.sin(a); }
@@ -26,6 +27,7 @@ function meleeAbility(){
     if(left){
       sfx('dry'); waveMsg='FLURRY \u2014 LAND '+left+' MORE HIT'+(left===1?'':'S'); waveMsgT=now+1400; return;
     }
+    activated=true;
     teraHitCharge=0;
     fistFlurryUntil=now+1600; fistNextT=0;
     sfx('crit');
@@ -34,6 +36,7 @@ function meleeAbility(){
     const arenaTargets=arenaMeleeTargetsAt(player.x,player.y,R);
     const targets=practiceMode==='arena'?arenaTargets:enemies.filter(e=>Math.hypot(e.x-player.x,e.y-player.y)-e.r < R);
     if(!targets.length || !ready){ sfx('dry'); return; }
+    activated=true;
     for(const best of targets){
       if(practiceMode==='arena'){
         arenaMeleeSpecialHit(best,180*perks.dmg*wm('knife').dmg,'knife');
@@ -53,6 +56,7 @@ function meleeAbility(){
     abilityCD[k]=now+abilityCdOf(k);
   } else if(k==='hammer'){                           // ground slam: wide 360 shockwave
     if(!ready){ sfx('dry'); return; }
+    activated=true;
     const R=160*wm('hammer').slamR;
     player.swingT=now; player.swingA=0; player.swingArc=6.3; player.swingR=R; player.swingDur=220;
     destroyMissilesInRadius(player.x, player.y, R);   // slam shockwave knocks down missiles
@@ -77,6 +81,7 @@ function meleeAbility(){
     abilityCD[k]=now+abilityCdOf(k);
   } else if(k==='twinsai'){                          // PARRY stance: reflect the next incoming shot
     if(!ready){ sfx('dry'); return; }
+    activated=true;
     parryUntil=now+TWIN_SAI_PARRY_MS; parrySeq++;    // sequence lets the Party host consume exactly one guard
     player.swingT=now; player.swingA=0; player.swingArc=6.3; player.swingR=60; player.swingDur=200;
     for(let i=0;i<14;i++) particles.push({x:player.x,y:player.y,
@@ -86,12 +91,14 @@ function meleeAbility(){
     abilityCD[k]=now+abilityCdOf(k);
   } else if(k==='chainsaw'){                         // RIP: constant nearby damage + i-frames, with no forced lunge
     if(!ready){ sfx('dry'); return; }
+    activated=true;
     sawChargeUntil=now+400; sawChargeTick=0; sawChargeDmg=42; sawChargeR=72;
     player.hurtCd=Math.max(player.hurtCd,550);       // i-frames through the whole RIP
     abilityCD[k]=now+abilityCdOf(k);
     noiseBurst(0.2,0.3,300);
   } else if(k==='bdaggers'){                         // hurl both flaming blades straight at the crosshair
     if(!ready || daggersOut){ sfx('dry'); return; }
+    activated=true;
     const a=aimAngle();
     abilityCD[k]=now+abilityCdOf(k);
     daggersOut = { t:now+1500, end:abilityCD[k], blades:[] }; // fixed 3s cooldown
@@ -103,5 +110,11 @@ function meleeAbility(){
                               returning:false, hits:new Set()});
     }
     sfx('slash');
+  }
+  // Count only an ability that actually activated. A dry/cooldown/out-of-range
+  // press returns above and cannot pass the hands-on tutorial drill.
+  if(tutorialOn&&activated){
+    if(typeof tutorialRecordMeleeAbility==='function') tutorialRecordMeleeAbility();
+    else tutMeleeUsed=true;
   }
 }

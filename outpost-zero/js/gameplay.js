@@ -146,13 +146,13 @@ function startGame(){
   resetHeldGameplayInput();
   clearCameraShake();
   selPage='hub';
-  perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,pierce:0,acc:1,medDropEvery:MED_DROP_KILLS_BASE,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
+  perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,pierce:0,acc:1,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
   perkCounts={}; upgradeOffered=false; upgradeChoices=[]; wmods={}; utilMods={}; bossBounty=false;
   surgeT=0; windReadyWave=0; dashReadyT=0; sawFuel=100; sawLock=false; player.lastSaw=0;
   flameFuel=100; flameLock=false; daggersOut=null; splitBalls=[]; flames=[]; comboStep=0; comboNextT=0; freezeFx=[];
   timeStopUntil=0; timeStopArm=0; fistFlurryUntil=0; fistNextT=0; teraHitCharge=teraHitsRequired(); parryUntil=0; parrySeq=0;
   sawChargeUntil=0; sawChargeTick=0; abilityCD={}; quickReadyT=0; player.dashSpd=14; player.spinT=0; player.animT=0;
-  utilReadyT=0; medChan=0; medChanHeal=0; medKillCharge=medKillsRequired(); medDropKillAcc=0; balls=[]; grenades=[]; pearls=[]; utilityOut=false;
+  utilReadyT=0; medChan=0; medChanHeal=0; medKillCharge=medKillsRequired(); medDropKillAcc=0; medStash=0; balls=[]; grenades=[]; pearls=[]; utilityOut=false;
   player.dashUntil=0; player.regenT=0; player.ddx=0; player.ddy=0; player.swingDur=130;
   player.x=WORLD.w/2; player.y=WORLD.h/2; player.hp=perks.maxhp;
   player.cur=loadout.primary;

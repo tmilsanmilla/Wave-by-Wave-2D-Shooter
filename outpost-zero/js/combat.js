@@ -2,7 +2,6 @@
 
 /* ---------------- combat ---------------- */
 function switchWeapon(k){
-  if(tutorialOn && k!==player.cur) tutSwapped=true;
   if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
   if(state!=='play') return;
   resetFireCadence();
@@ -15,10 +14,15 @@ function switchWeapon(k){
   player.cur=k; player.reloadEnd=0; player.equipEnd=now+EQUIP_WAIT; player.bloom=0;
   player.animT=now;                                  // equip flourish (cosmetic only)
   aiming=false; rmbAim=false;
+  if(tutorialOn){
+    if(typeof tutorialRecordWeaponSwitch==='function') tutorialRecordWeaponSwitch();
+    else tutSwapped=true;
+  }
   sfx('swap');
 }
 function meleeSwing(w, mul, flurryGenerated=false){
   if(player.equipEnd>now) return;                    // still drawing the weapon
+  if(tutorialOn&&typeof tutorialRecordMeleeSwing==='function') tutorialRecordMeleeSwing();
   const arc=w.arc*wm(player.cur).arc;
   let base=aimAngle();
   // combo weapons (daggers): alternate a left then a right slash, each offset half an arc
@@ -118,6 +122,32 @@ function medDeny(why){
     waveMsg='\u2695 MEDKIT \u2014 INTEGRITY FULL'; waveMsgT=now+1000;
   }
 }
+// Dropped world medkits are an Endless inventory item, separate from the
+// equipped Field Medkit's kill recharge. They can be carried with any loadout.
+function collectDroppedMedkit(){
+  if(medStash>=MED_STASH_MAX) return false;
+  medStash++;
+  waveMsg='\u2695 MEDKIT STORED  '+medStash+'/'+MED_STASH_MAX+'  \u00b7  H TO USE'; waveMsgT=now+1800;
+  burst(player.x,player.y,'#f2f2ee',10,3); sfx('pickup');
+  if(tutorialOn&&typeof tutorialRecordMedkitCollected==='function') tutorialRecordMedkitCollected();
+  return true;
+}
+function useStashedMedkit(){
+  if(state!=='play') return false;
+  if(medStash<=0){
+    waveMsg='\u2695 MEDKIT STASH EMPTY'; waveMsgT=now+1100; sfx('dry'); return false;
+  }
+  if(player.hp>=perks.maxhp){
+    waveMsg='\u2695 MEDKIT \u2014 INTEGRITY FULL'; waveMsgT=now+1100; sfx('dry'); return false;
+  }
+  medStash--;
+  const before=player.hp;
+  player.hp=Math.min(perks.maxhp,player.hp+perks.medkitHeal);
+  waveMsg='\u2695 MEDKIT USED  +'+Math.ceil(player.hp-before)+' HP  \u00b7  '+medStash+' LEFT'; waveMsgT=now+1500;
+  burst(player.x,player.y,'#5ec46a',16,4); sfx('pickup');
+  if(tutorialOn&&typeof tutorialRecordMedkitUsed==='function') tutorialRecordMedkitUsed();
+  return true;
+}
 function medFinish(){         // spend the ready charge: quick-heal start or long-heal completion
   medKillCharge=0;
 }
@@ -205,7 +235,6 @@ function quickMelee(){
 }
 
 function startReload(){
-  if(tutorialOn && player.mags[player.cur]<magSize(player.cur) && player.reserve[player.cur]>0) tutReloaded=true;
   const w=WEAPONS[player.cur];
   if(w.melee) return;
   if(w.cell) return;                                 // battery weapons recharge on their own
@@ -308,6 +337,10 @@ function update(dtms){
     const take=Math.min(cap-player.mags[player.cur], player.reserve[player.cur]);
     player.mags[player.cur]+=take; player.reserve[player.cur]-=take;
     player.reloadEnd=0; sfx('loaded');
+    if(tutorialOn){
+      if(typeof tutorialRecordReloadCompleted==='function') tutorialRecordReloadCompleted();
+      else tutReloaded=true;
+    }
   }
   // chainsaw battery: slow recharge, hard lockout when drained
   if(sawFuel<100 && now-(player.lastSaw||0)>600){
@@ -1047,15 +1080,17 @@ function update(dtms){
   // pickups
   for(let i=pickups.length-1;i>=0;i--){
     const p=pickups[i];
-    // auto-collect: pickups fly to the player (medkits wait on the ground while HP is full)
-    // pickups no longer fly to you — walk over them to collect
-    const wanted = p.type==='ammo' || p.type==='fuel' || p.type==='chest' || player.hp < perks.maxhp;
+    // Pickups stay on the ground until walked over. Dropped medkits go into a
+    // five-pack stash even at full health, and wait here when that stash is full.
+    const wanted = p.type==='ammo' || p.type==='fuel' || p.type==='chest' ||
+                   (p.type==='med' && medStash<MED_STASH_MAX);
     if(wanted && dist2(p.x,p.y,player.x,player.y) < 34*34){
       if(p.type==='ammo'){
         for(const k of [loadout.primary, loadout.secondary]){
           if(isFinite(player.reserve[k])) player.reserve[k]+=magSize(k);
         }
         sfx('ammo');
+        if(tutorialOn&&typeof tutorialRecordAmmoCollected==='function') tutorialRecordAmmoCollected();
       } else if(p.type==='fuel'){
         sawFuel=Math.min(100, sawFuel+10);
         if(sawLock&&sawFuel>=100) sawLock=false;
@@ -1095,9 +1130,8 @@ function update(dtms){
         }
         burst(p.x,p.y,'#ffd24d',18,5); sfx('pickup');
         taskProgress('chests',1);
-      } else {
-        player.hp=Math.min(perks.maxhp,player.hp+perks.medkitHeal);
-        sfx('pickup');
+      } else if(p.type==='med'){
+        if(!collectDroppedMedkit()) continue;
       }
       pickups.splice(i,1);
     }

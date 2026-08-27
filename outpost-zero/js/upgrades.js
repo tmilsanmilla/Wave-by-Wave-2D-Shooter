@@ -1,14 +1,14 @@
 "use strict";
 
 /* ---------------- upgrades ---------------- */
-const MED_KILLS_REQUIRED=10, MED_DROP_KILLS_BASE=20, TERA_HITS_REQUIRED=15, MED_CHANNEL_MS=8000;
-let perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,pierce:0,acc:1,medDropEvery:MED_DROP_KILLS_BASE,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
+const MED_KILLS_REQUIRED=10, MED_DROP_KILLS_BASE=20, MED_STASH_MAX=5, TERA_HITS_REQUIRED=15, MED_CHANNEL_MS=8000;
+let perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,pierce:0,acc:1,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
 let perkCounts={}, upgradeChoices=[], upgradeRects=[], upgradeOffered=false;
 let surgeT=0, windReadyWave=0, dashReadyT=0, sawFuel=100, sawLock=false, sawChargeUntil=0, sawChargeTick=0;
 let flameFuel=100, flameLock=false, daggersOut=null, splitBalls=[], flames=[], comboStep=0, comboNextT=0, freezeFx=[];
 let timeStopUntil=0, timeStopArm=0, fistFlurryUntil=0, fistNextT=0, teraHitCharge=15, parryUntil=0, parrySeq=0;
 let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
-let utilReadyT=0, medChan=0, medChanHeal=0, medKillCharge=MED_KILLS_REQUIRED, medDropKillAcc=0, balls=[], grenades=[], pearls=[], utilityOut=false;
+let utilReadyT=0, medChan=0, medChanHeal=0, medKillCharge=MED_KILLS_REQUIRED, medDropKillAcc=0, medStash=0, balls=[], grenades=[], pearls=[], utilityOut=false;
 const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:6400, warpwave:18000, timeturner:12000};
 const TWIN_SAI_PARRY_MS=2500;
 let wmods={}, utilMods={}, bossBounty=false;
@@ -17,7 +17,7 @@ function um(k){ return utilMods[k] || (utilMods[k]={cd:1}); }
 function abilityCdOf(k){ return Math.max(1500, (ABILITY_CD[k]||0) * wm(k).cdAdd); }
 function utilityCdOf(k){ return UTILITIES[k].cd*um(k).cd; }
 function medKillsRequired(){ return Math.max(5,Math.ceil(MED_KILLS_REQUIRED*um('medkit').cd)); }
-function medDropKillsRequired(){ return Math.max(1,Math.round(perks.medDropEvery||MED_DROP_KILLS_BASE)); }
+function medDropKillsRequired(){ return MED_DROP_KILLS_BASE; }
 function teraHitsRequired(){ return Math.max(8,Math.ceil(TERA_HITS_REQUIRED*wm('terafists').cdAdd)); }
 const ROMAN=['','I','II','III'];
 const WEAPON_MODS=[];
@@ -50,7 +50,6 @@ const TIER_CHAINS=[
   {n:'SPEED LOADER', ds:['reload 20% faster','reload 25% faster again','reload 30% faster again'], fs:[()=>perks.reload*=0.80,()=>perks.reload*=0.75,()=>perks.reload*=0.70]},
   {n:'EXTENDED MAGS', ds:['+30% magazine size','+40% more magazine size','+50% more magazine size'], fs:[()=>perks.mag*=1.30,()=>perks.mag*=1.40,()=>perks.mag*=1.50]},
   {n:'MATCH BARREL', ds:['25% tighter spread','35% tighter spread again','removes recoil bloom'], fs:[()=>perks.acc*=0.75,()=>perks.acc*=0.65,()=>perks.noBloom=1]},
-  {n:'FIELD MEDIC', ds:['guaranteed medkit every 16 kills','every 12 kills and 30 healing','every 8 kills and 40 healing'], fs:[()=>perks.medDropEvery=16,()=>{perks.medDropEvery=12;perks.medkitHeal=30;},()=>{perks.medDropEvery=8;perks.medkitHeal=40;}]},
   {n:'KEVLAR WEAVE', ds:['take 20% less damage','take 25% less damage again','take 30% less and unlock Second Wind'], fs:[()=>perks.armor*=0.80,()=>perks.armor*=0.75,()=>{perks.armor*=0.70;perks.secondWind=1;}]},
   {n:'FRAG SHELLS', ds:['enemies explode on death','explosions deal +50% damage','explosions deal double damage'], fs:[()=>perks.explode=1,()=>perks.explode=1.5,()=>perks.explode=2]},
 ];

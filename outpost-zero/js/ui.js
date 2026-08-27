@@ -303,31 +303,110 @@ function drawSelect(){
 function slotFor(cat){ const c=CATS.find(c=>c[0]===cat); return c ? c[1] : 'primary'; }
 let howToRects=[];
 // ---- INTERACTIVE TUTORIAL: learn by doing, with the real HUD visible throughout ----
+// Counters are cumulative for the session, while tutStepBase snapshots them at
+// the start of every drill. Inputs made during an earlier lesson therefore
+// cannot instantly complete a later one (especially important on touch, where
+// aiming also fires).
 let tutorialOn=false, tutStep=0, tutDone=false, tutStartPos=null, tutFired=0, tutKilled=0,
-    tutReloaded=false, tutSwapped=false, tutMeleeUsed=false, tutRects=[], tutStepT=0;
+    tutReloaded=false, tutReloadCount=0, tutSwapped=false, tutSwapCount=0,
+    tutMeleeUsed=false, tutMeleeUseCount=0, tutMeleeSwingCount=0,
+    tutAmmoCollected=0, tutMedCollected=0, tutMedUsed=0, tutMoveDistance=0,
+    tutLastPos=null, tutAimTargets=new Set(), tutRects=[], tutStepT=0, tutStepBase={},
+    tutorialLoadoutBackup=null;
 const TUT_STEPS=[
-  {id:'move',   title:'MOVE',        how:'WASD  \u00b7  or drag the left side on touch',
-   why:'Keep moving. Standing still is how runs end.',
-   watch:'you have moved {n}/40 steps'},
-  {id:'aim',    title:'AIM',         how:'move the mouse  \u00b7  or drag the right side',
-   why:'Your weapon always points where you aim.',
-   watch:'turn to face the targets'},
-  {id:'shoot',  title:'SHOOT',       how:'hold LEFT MOUSE',
-   why:'Watch the AMMO counter drop as you fire.',
-   watch:'{n}/6 shots fired'},
-  {id:'reload', title:'RELOAD',      how:'press R',
-   why:'Empty mag? Reload. Watch the bar fill and the ammo jump back up.',
-   watch:'waiting for a reload'},
-  {id:'swap',   title:'SWAP WEAPONS',how:'press Q, or 1 / 2 / 3',
-   why:'Each slot has its own ammo. Swap instead of reloading under pressure.',
-   watch:'waiting for a weapon swap'},
-  {id:'kill',   title:'TAKE ONE DOWN',how:'shoot a target until it drops',
-   why:'Targets here respawn. Real enemies do not.',
-   watch:'{n}/1 target down'},
-  {id:'melee',  title:'MELEE ABILITY',how:'press E or F',
-   why:'Your melee has a special move. Tera Fists recharge from normal hits; others use a timer.',
-   watch:'waiting for E / F'},
+  {id:'move', title:'KEEP MOVING',
+   how:'WASD  \u00b7  touch: drag the left movement stick',
+   why:'Move for a full drill. Standing still makes you an easy target.',
+   watch:'movement: {n}/90 steps'},
+  {id:'aim', title:'TRACK THREE TARGETS',
+   how:'point the crosshair at three different outlined targets',
+   why:'Mouse aims freely. On touch, press and drag on the battlefield.',
+   watch:'targets aimed at: {n}/3'},
+  {id:'shoot', title:'MAGAZINE AMMO',
+   how:'fire 12 rounds into the targets',
+   why:'HUD: left number = rounds in the magazine; right number = finite reserve ammo.',
+   watch:'rounds fired: {n}/12'},
+  {id:'reload', title:'RELOAD BEFORE EMPTY',
+   how:'press R  \u00b7  touch: tap the reload icon, then wait',
+   why:'Reloading moves rounds from reserve into the magazine. Reserve ammo is not infinite.',
+   watch:'completed reloads: {n}/1'},
+  {id:'shoot-again', title:'FIRE AND RELOAD AGAIN',
+   how:'fire 12 more rounds, then reload one more time',
+   why:'Practise the full fire/reload cycle now, before enemies fight back.',
+   watch:'rounds {shots}/12  \u00b7  reloads {reloads}/1'},
+  {id:'ammo', title:'COLLECT AN AMMO CRATE',
+   how:'walk over the outlined gold crate',
+   why:'Ammo crates refill weapon reserves. They stay on the ground until you collect them.',
+   watch:'ammo crates collected: {n}/1'},
+  {id:'swap', title:'SWAP WEAPONS THREE TIMES',
+   how:'press Q or 1 / 2  \u00b7  touch: tap a numbered slot at the top-left',
+   why:'Every weapon has its own magazine and reserve. Swap when one runs low.',
+   watch:'successful swaps: {n}/3'},
+  {id:'kill', title:'ELIMINATE THREE TARGETS',
+   how:'aim, fire, reload, and keep moving',
+   why:'Put the controls together. Range targets respawn after three seconds.',
+   watch:'targets eliminated: {n}/3'},
+  {id:'melee', title:'USE YOUR MELEE ABILITY',
+   how:'press F  \u00b7  or E with melee equipped  \u00b7  touch: tap the fist',
+   why:'Melee abilities need the right range and may have a cooldown. A target is close now.',
+   watch:'successful melee abilities: {n}/1'},
+  {id:'med-pickup', title:'STORE A DROPPED MEDKIT',
+   how:'walk over the outlined white-and-red medkit',
+   why:'Dropped medkits go into your stash, even at full health. The stash holds up to five.',
+   watch:'medkits stored: {n}/1'},
+  {id:'med-use', title:'USE A STASHED MEDKIT',
+   how:'press H  \u00b7  touch: tap MED',
+   why:'Use a stashed medkit whenever you are hurt. Picking one up does not heal automatically.',
+   watch:'stashed medkits used: {n}/1'},
 ];
+function tutorialCounterSnapshot(){
+  return {fired:tutFired,killed:tutKilled,reloads:tutReloadCount,swaps:tutSwapCount,
+    melee:tutMeleeUseCount,swings:tutMeleeSwingCount,ammo:tutAmmoCollected,
+    med:tutMedCollected,medUsed:tutMedUsed};
+}
+function tutorialDelta(key){ return Math.max(0,(tutorialCounterSnapshot()[key]||0)-(tutStepBase[key]||0)); }
+function tutorialRecordReloadCompleted(){ if(!tutorialOn) return; tutReloaded=true; tutReloadCount++; }
+function tutorialRecordWeaponSwitch(){ if(!tutorialOn) return; tutSwapped=true; tutSwapCount++; }
+function tutorialRecordMeleeSwing(){ if(tutorialOn) tutMeleeSwingCount++; }
+function tutorialRecordMeleeAbility(){ if(!tutorialOn) return; tutMeleeUsed=true; tutMeleeUseCount++; }
+function tutorialRecordAmmoCollected(){ if(tutorialOn) tutAmmoCollected++; }
+function tutorialRecordMedkitCollected(){ if(tutorialOn) tutMedCollected++; }
+function tutorialRecordMedkitUsed(){ if(tutorialOn) tutMedUsed++; }
+function tutorialRestoreLoadout(){
+  if(!tutorialLoadoutBackup) return;
+  loadout={primary:tutorialLoadoutBackup.primary,secondary:tutorialLoadoutBackup.secondary,
+    melee:tutorialLoadoutBackup.melee,utility:tutorialLoadoutBackup.utility};
+  tutorialLoadoutBackup=null;
+}
+function tutorialSpawnPickup(type){
+  for(let i=pickups.length-1;i>=0;i--) if(pickups[i].tutorialPickup) pickups.splice(i,1);
+  const offsets=[[105,58],[-105,58],[105,-58],[-105,-58],[0,125],[0,-125]];
+  let x=player.x,y=player.y;
+  for(const [dx,dy] of offsets){
+    const tx=clamp(player.x+dx,30,WORLD.w-30),ty=clamp(player.y+dy,30,WORLD.h-30);
+    if(Math.hypot(tx-player.x,ty-player.y)<55) continue;
+    if(typeof pointInRects==='function'&&pointInRects(tx,ty)) continue;
+    x=tx;y=ty;break;
+  }
+  pickups.push({x,y,type,tutorialPickup:true});
+}
+function tutorialPlaceAbilityTarget(){
+  let target=enemies.find(e=>e&&e.hp>0);
+  if(!target){
+    const i=practiceSpawns.findIndex(sp=>!sp.alive);
+    if(i>=0){ practiceSpawns[i].respawnAt=0; spawnPracticeEnemy(practiceSpawns[i],i); target=enemies[enemies.length-1]; }
+  }
+  if(target){ target.x=clamp(player.x+48,25,WORLD.w-25); target.y=player.y; target.practiceStill=true; }
+}
+function tutorialBeginStep(){
+  tutStepT=now; tutStepBase=tutorialCounterSnapshot();
+  const st=TUT_STEPS[tutStep]; if(!st) return;
+  if(st.id==='aim') tutAimTargets=new Set();
+  if(st.id==='ammo') tutorialSpawnPickup('ammo');
+  if(st.id==='melee') tutorialPlaceAbilityTarget();
+  if(st.id==='med-pickup') tutorialSpawnPickup('med');
+  if(st.id==='med-use') player.hp=Math.min(player.hp,perks.maxhp*0.55);
+}
 function startTutorial(){
   // A new account can sign in from an Offline/Online duel result before the
   // first-login welcome opens. Tear that session down before Practice starts,
@@ -337,54 +416,103 @@ function startTutorial(){
     else partyCpuAbort('Party CPU match setup was cancelled for the tutorial.',true);
   } else if(arena&&(practiceMode==='arena'||arena.active||arena.queueChannel||arena.matchChannel)) leaveArena('',true);
   soloPractice=false;
-  if(!loadout.primary)   loadout.primary='smg';
-  if(!loadout.secondary) loadout.secondary='m9';
-  if(!loadout.melee)     loadout.melee='knife';
+  if(typeof tutorialLoadoutBackup!=='undefined'&&!tutorialLoadoutBackup)
+    tutorialLoadoutBackup={primary:loadout.primary,secondary:loadout.secondary,
+      melee:loadout.melee,utility:loadout.utility};
+  // A known kit makes every lesson available and keeps ammo goals identical
+  // for new and returning players. Constrained/offline builds can fall back to
+  // their equipped equivalent instead of failing on an unavailable definition.
+  const trainingPrimary=typeof WEAPONS!=='undefined'&&WEAPONS.smg?'smg':loadout.primary;
+  const trainingSecondary=typeof WEAPONS!=='undefined'&&WEAPONS.m9?'m9':loadout.secondary;
+  const trainingMelee=typeof WEAPONS!=='undefined'&&WEAPONS.knife?'knife':loadout.melee;
+  const trainingUtility=typeof UTILITIES==='undefined'||UTILITIES.medkit?'medkit':loadout.utility;
+  loadout={primary:trainingPrimary,secondary:trainingSecondary,melee:trainingMelee,utility:trainingUtility};
   startPractice('range');
   tutorialOn=true; tutStep=0; tutDone=false; tutStepT=now;
-  tutFired=0; tutKilled=0; tutReloaded=false; tutSwapped=false; tutMeleeUsed=false;
+  tutFired=0; tutKilled=0; tutReloaded=false; tutReloadCount=0; tutSwapped=false; tutSwapCount=0;
+  tutMeleeUsed=false; tutMeleeUseCount=0; tutMeleeSwingCount=0; tutAmmoCollected=0;
+  tutMedCollected=0; tutMedUsed=0; tutMoveDistance=0; tutAimTargets=new Set();
   tutStartPos={x:player.x,y:player.y};
+  tutLastPos={x:player.x,y:player.y};
+  // Practice normally grants infinite ammunition. Tutorial deliberately uses
+  // finite reserves so the two-number HUD and ammo crates have real meaning.
+  player.reserve[loadout.primary]=magSize(loadout.primary)*2;
+  player.reserve[loadout.secondary]=magSize(loadout.secondary)*2;
+  if(typeof medStash!=='undefined') medStash=0;
+  if(typeof tutorialBeginStep==='function') tutorialBeginStep();
   waveMsg=''; waveMsgT=0;
 }
-function tutorialTeardown(){ tutorialOn=false; tutDone=false; }
+function tutorialTeardown(){ tutorialOn=false; tutDone=false; tutorialRestoreLoadout(); }
 function endTutorial(){
   tutorialOn=false; tutDone=false;
   practiceMode=null; practiceSpawns=[]; enemies=[]; soloPractice=false;
+  tutorialRestoreLoadout();
   restoreTryLoadout();
   state='select'; selPage='howto';
 }
 function tutMoved(){
-  if(!tutStartPos) return 0;
-  return Math.round(Math.hypot(player.x-tutStartPos.x, player.y-tutStartPos.y)/8);
+  return Math.round(tutMoveDistance/8);
+}
+function tutorialTrackMovement(){
+  if(!tutLastPos){ tutLastPos={x:player.x,y:player.y}; return; }
+  const d=Math.hypot(player.x-tutLastPos.x,player.y-tutLastPos.y);
+  // Ignore respawns/teleports; this drill is about controlled movement.
+  if(d>0&&d<45) tutMoveDistance+=d;
+  tutLastPos={x:player.x,y:player.y};
+}
+function tutorialTrackAim(){
+  if(!TUT_STEPS[tutStep]||TUT_STEPS[tutStep].id!=='aim') return;
+  const wp=screenToWorld(mouse.x,mouse.y);
+  let best=null,bestD=Infinity;
+  for(const e of enemies){
+    const d=Math.hypot(wp.x-e.x,wp.y-e.y);
+    if(d<=e.r+34&&d<bestD){ best=e; bestD=d; }
+  }
+  if(best) tutAimTargets.add(best.spawnId!=null?'spawn:'+best.spawnId:'type:'+best.type);
 }
 function tutStepDone(){
   const st=TUT_STEPS[tutStep]; if(!st) return false;
   switch(st.id){
-    case 'move':   return tutMoved()>=40;
-    case 'aim':    return Math.abs(Math.atan2(mouse.y-H/2, mouse.x-W/2))<1.2 && now-tutStepT>900;
-    case 'shoot':  return tutFired>=6;
-    case 'reload': return tutReloaded;
-    case 'swap':   return tutSwapped;
-    case 'kill':   return tutKilled>=1;
-    case 'melee':  return tutMeleeUsed;
+    case 'move':        return tutMoved()>=90;
+    case 'aim':         return tutAimTargets.size>=3;
+    case 'shoot':       return tutorialDelta('fired')>=12;
+    case 'reload':      return tutorialDelta('reloads')>=1;
+    case 'shoot-again': return tutorialDelta('fired')>=12&&tutorialDelta('reloads')>=1;
+    case 'ammo':        return tutorialDelta('ammo')>=1;
+    case 'swap':        return tutorialDelta('swaps')>=3;
+    case 'kill':        return tutorialDelta('killed')>=3;
+    case 'melee':       return tutorialDelta('melee')>=1;
+    case 'med-pickup':  return tutorialDelta('med')>=1;
+    case 'med-use':     return tutorialDelta('medUsed')>=1;
   }
   return false;
 }
 function tutProgressText(){
   const st=TUT_STEPS[tutStep]; if(!st) return '';
-  const n = st.id==='move' ? Math.min(40,tutMoved())
-          : st.id==='shoot' ? Math.min(6,tutFired)
-          : st.id==='kill' ? Math.min(1,tutKilled) : 0;
-  return st.watch.replace('{n}', n);
+  const n = st.id==='move' ? Math.min(90,tutMoved())
+          : st.id==='aim' ? Math.min(3,tutAimTargets.size)
+          : st.id==='shoot' ? Math.min(12,tutorialDelta('fired'))
+          : st.id==='reload' ? Math.min(1,tutorialDelta('reloads'))
+          : st.id==='ammo' ? Math.min(1,tutorialDelta('ammo'))
+          : st.id==='swap' ? Math.min(3,tutorialDelta('swaps'))
+          : st.id==='kill' ? Math.min(3,tutorialDelta('killed'))
+          : st.id==='melee' ? Math.min(1,tutorialDelta('melee'))
+          : st.id==='med-pickup' ? Math.min(1,tutorialDelta('med'))
+          : st.id==='med-use' ? Math.min(1,tutorialDelta('medUsed')) : 0;
+  return st.watch.replace('{n}',n)
+    .replace('{shots}',Math.min(12,tutorialDelta('fired')))
+    .replace('{reloads}',Math.min(1,tutorialDelta('reloads')));
+}
+function tutorialAdvanceStep(){
+  tutStep++;
+  if(tutStep>=TUT_STEPS.length){ tutDone=true; sfx('wave'); }
+  else { tutorialBeginStep(); sfx('pickup'); }
 }
 function tutorialUpdate(){
   if(!tutorialOn || tutDone) return;
-  if(tutStepDone()){
-    tutStep++;
-    tutStepT=now;
-    if(tutStep>=TUT_STEPS.length){ tutDone=true; sfx('wave'); }
-    else sfx('pickup');
-  }
+  tutorialTrackMovement();
+  tutorialTrackAim();
+  if(tutStepDone()) tutorialAdvanceStep();
 }
 function drawTutorialOverlay(){
   if(!tutorialOn) return;
@@ -418,10 +546,9 @@ function drawTutorialOverlay(){
   ctx.fillStyle='rgba(8,12,6,0.92)'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#a7c15e'; ctx.lineWidth=2; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   // step counter
-  ctx.textAlign='left'; ctx.textBaseline='middle';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('INTERACTIVE TUTORIAL · STEP '+(tutStep+1)+' OF '+TUT_STEPS.length,pw-120), px+12, py+16);
-  ctx.textAlign='center';
+  ctx.fillText(fitLine('REQUIRED DRILL '+(tutStep+1)+' OF '+TUT_STEPS.length,pw-170), W/2, py+16);
   ctx.fillStyle='#cfe0a8'; ctx.font='700 17px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(st.title, pw-24), W/2, py+34);
   ctx.fillStyle='#e8d9a8'; ctx.font='700 12px ui-monospace,Consolas,monospace';
@@ -430,15 +557,8 @@ function drawTutorialOverlay(){
   ctx.fillText(fitLine(st.why, pw-24), W/2, py+74);
   ctx.fillStyle='#a7c15e'; ctx.font='700 10px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(tutProgressText(), pw-24), W/2, py+92);
-  // skip / quit
-  const sw=86, sh=22, sx=px+pw-sw-8, sy=py+8;
-  tutRects.push({x:sx,y:sy,w:sw,h:sh,id:'skip'});
-  const shv=mouse.x>=sx&&mouse.x<=sx+sw&&mouse.y>=sy&&mouse.y<=sy+sh;
-  ctx.fillStyle=shv?'rgba(255,255,255,0.16)':'rgba(255,255,255,0.05)'; ctx.fillRect(sx,sy,sw,sh);
-  ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(sx+0.5,sy+0.5,sw,sh);
-  ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-  ctx.fillText('SKIP STEP \u203A', sx+sw/2, sy+sh/2);
-  const qw=64, qx=px+8, qy=py+8;
+  // Every drill is required. The whole tutorial can still be exited.
+  const sh=22, qw=64, qx=px+pw-qw-8, qy=py+8;
   tutRects.push({x:qx,y:qy,w:qw,h:sh,id:'quit'});
   const qhv=mouse.x>=qx&&mouse.x<=qx+qw&&mouse.y>=qy&&mouse.y<=qy+sh;
   ctx.fillStyle=qhv?'rgba(208,85,72,0.3)':'rgba(208,85,72,0.12)'; ctx.fillRect(qx,qy,qw,sh);
@@ -454,13 +574,37 @@ function drawTutorialOverlay(){
     ctx.setLineDash&&ctx.setLineDash([]);
     ctx.restore();
   };
-  if(st.id==='shoot'||st.id==='reload') hint(16,H-92,{w:190,h:56});     // the ammo block
-  if(st.id==='swap')                    hint(16,H-92,{w:300,h:56});     // the weapon slots
+  if(st.id==='shoot'||st.id==='reload'||st.id==='shoot-again'){
+    if(touchUI) hint(W-164,166,{w:150,h:54});
+    else hint(16,H-92,{w:190,h:56});                                  // the ammo block
+  }
+  if(st.id==='swap'){
+    if(touchUI&&touchWeaponSelectorBounds)
+      hint(touchWeaponSelectorBounds.x,touchWeaponSelectorBounds.y,
+        {w:touchWeaponSelectorBounds.w,h:touchWeaponSelectorBounds.h}); // live 1–4 selector geometry
+    else hint(16,H-142,{w:210,h:22});                                  // the weapon slots
+  }
+  // Outline required world objects and unvisited aim targets. The ring is
+  // screen-space, so it remains readable while the camera follows the player.
+  const ringWorld=(o,col)=>{
+    const sx=(o.x-cam.x)*zoom+W/2, sy=(o.y-cam.y)*zoom+H/2;
+    if(sx<-60||sx>W+60||sy<-60||sy>H+60) return;
+    ctx.save(); ctx.strokeStyle=col; ctx.lineWidth=3;
+    ctx.setLineDash&&ctx.setLineDash([7,5]);
+    ctx.beginPath(); ctx.arc(sx,sy,Math.max(22,(o.r||18)*zoom+12),0,TAU); ctx.stroke();
+    ctx.setLineDash&&ctx.setLineDash([]); ctx.restore();
+  };
+  if(st.id==='aim') for(const e of enemies){
+    const key=e.spawnId!=null?'spawn:'+e.spawnId:'type:'+e.type;
+    ringWorld(e,tutAimTargets.has(key)?'#5ec46a':'#e8b658');
+  }
+  if(st.id==='ammo'||st.id==='med-pickup'){
+    const p=pickups.find(o=>o.tutorialPickup); if(p) ringWorld(p,st.id==='ammo'?'#ffd24d':'#ff766d');
+  }
 }
 function tutorialClick(){
   for(const r of tutRects){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
-      if(r.id==='skip'){ tutStep++; tutStepT=now; if(tutStep>=TUT_STEPS.length) tutDone=true; sfx('swap'); return true; }
       if(r.id==='quit'){ endTutorial(); sfx('swap'); return true; }
       if(r.id==='stay'){ tutorialOn=false; sfx('swap'); return true; }
       return true;
@@ -527,10 +671,11 @@ function drawTutorial(){
     ['SHOOT','left mouse \u00b7 touch: tap / hold the field'],
     ['AIM / SCOPE','hold right mouse or E (guns)'],
     ['RELOAD','R \u00b7 touch: reload button'],
-    ['SWAP WEAPON','1-4 or Q \u00b7 touch: swap button'],
+    ['SWAP WEAPON','1-4 or Q \u00b7 touch: top-left 1-4 slots'],
     ['MELEE ABILITY','E/F with melee out \u00b7 F anytime \u00b7 or right-click'],
     ['UTILITY','G = quick cast \u00b7 right-click while equipped \u00b7 4 = equip'],
-    ['PICKUPS','medkit every '+MED_DROP_KILLS_BASE+' kills \u00b7 Field Medic lowers it \u00b7 ammo stays put'],
+    ['AMMO','magazine / reserve is limited \u00b7 walk over gold ammo crates to refill reserves'],
+    ['MEDKITS','drop every '+MED_DROP_KILLS_BASE+' campaign kills \u00b7 walk over to stash (max 5) \u00b7 H / touch MED'],
     ['WAVES','clear a wave \u2192 choose an upgrade'],
     ['MOD LEVELS','every 10th wave offers ONLY weapon mods'],
     ['WARLORDS','every 5th wave \u2014 they trickle in, not all at once'],
