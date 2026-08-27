@@ -9,6 +9,7 @@ let socialMessageTo=null, msgKind='admin';
 let socialDomPageActive=false;
 let socialFetchVersion=0, socialAccountId='', socialFetchUserId='', socialFetchPromise=null, socialFetchQueued=false;
 let usernameClaimOpen=false, usernameClaimMode='closed', usernameClaimUserId='';
+let socialAccountSettingsSqlReady=null;
 
 function socialHandleKey(value){
   return String(value||'').trim().replace(/^@/,'').toLowerCase().replace(/[^a-z0-9_]/g,'').slice(0,32);
@@ -109,7 +110,9 @@ function openUsernameClaim(mode='checking',message='Checking your account userna
   if(el.wrap){ el.wrap.className='ui '+mode; el.wrap.style.display=settingsOwnsRequired?'none':'flex'; }
   if(el.title) el.title.textContent=mode==='required'?'CHOOSE YOUR USERNAME':mode==='error'?'USERNAME REQUIRED':'CHECKING USERNAME';
   if(el.hint) el.hint.textContent=mode==='required'
-    ? 'Open Settings to choose the unique public username shown on leaderboards, parties, friends, and messages. Your sign-in email is visible only in this private setup.'
+    ? (socialAccountSettingsSqlReady===false
+      ? 'The Social 05 database update is required before you can choose or change a username. Your sign-in email remains private.'
+      : 'Open Settings to choose the unique public username shown on leaderboards, parties, friends, and messages. Your sign-in email is visible only in this private setup.')
     : mode==='error'?'Your username could not be verified. Retry the secure profile check or sign out.':'Checking the public username attached to your account.';
   if(el.status) el.status.textContent=usernameClaimPrivateStatus(message);
   if(el.save){ el.save.disabled=mode!=='required'; el.save.textContent='OPEN SETTINGS'; }
@@ -176,6 +179,26 @@ function socialSetupMissing(error){
   const text=String(error&&error.message||error||'').toLowerCase();
   return /relation|schema cache|does not exist|permission denied|row-level security|could not find/.test(text);
 }
+function socialUsernameClockMissing(error){
+  const text=[error&&error.code,error&&error.message,error&&error.details,error&&error.hint,error]
+    .filter(Boolean).join(' ').toLowerCase();
+  return text.includes('username_changed_at')&&/column|schema cache|could not find|does not exist/.test(text);
+}
+async function socialFetchOwnProfile(userId){
+  const currentFields='user_id,handle,handle_key,display_name,username_changed_at,updated_at';
+  const legacyFields='user_id,handle,handle_key,display_name,updated_at';
+  let result=await sb.from(SOCIAL_PROFILE_TABLE).select(currentFields).eq('user_id',userId).maybeSingle();
+  let settingsSqlReady=true;
+  // During a staggered deploy, Social 05 may not be installed yet. Existing
+  // chosen usernames remain verifiable through the older Social schema, but
+  // choosing/changing a name still stays disabled until the secure RPC lands.
+  if(result&&result.error&&socialUsernameClockMissing(result.error)){
+    result=await sb.from(SOCIAL_PROFILE_TABLE).select(legacyFields).eq('user_id',userId).maybeSingle();
+    settingsSqlReady=false;
+    if(result&&result.data) result.data={...result.data,username_changed_at:null};
+  }
+  return {result,settingsSqlReady};
+}
 function socialSetupStatus(){ return 'SECURE SOCIAL STORAGE IS NOT ENABLED · RUN SOCIAL SQL SETUP'; }
 function socialDropRealtime(){
   if(socialChannel&&sb){ try{ sb.removeChannel(socialChannel); }catch(e){} }
@@ -190,6 +213,7 @@ function prepareSocialForAccount(userId){
   socialFetchUserId=''; socialFetchPromise=null; socialFetchQueued=false;
   socialDropRealtime(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
+  socialAccountSettingsSqlReady=null;
   socialFriendPage=0; socialMessagePage=0;
   socialStatus=id?'CHECKING YOUR USERNAME...':'SIGN IN FOR FRIENDS + PRIVATE MESSAGES';
   return true;
@@ -199,6 +223,7 @@ function resetSocialState(message){
   socialFetchUserId=''; socialFetchPromise=null; socialFetchQueued=false;
   socialDropRealtime(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
+  socialAccountSettingsSqlReady=null;
   socialFriendPage=0; socialMessagePage=0;
   socialStatus=message||'SIGN IN FOR FRIENDS + PRIVATE MESSAGES';
   closeUsernameClaim();
@@ -281,8 +306,9 @@ async function fetchSocialOnce(userId){
   const stillCurrent=()=>socialFetchVersion===fetchVersion&&authUser&&String(authUser.id||'')===userId;
   try{
     const previousUsername=socialProfile&&String(socialProfile.handle||'');
-    let profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,username_changed_at,updated_at').eq('user_id',userId).maybeSingle();
+    let fetchedProfile=await socialFetchOwnProfile(userId),profileResult=fetchedProfile.result;
     if(!stillCurrent()) return false;
+    socialAccountSettingsSqlReady=fetchedProfile.settingsSqlReady;
     if(profileResult.error){ socialBackend.profiles=false; throw profileResult.error; }
     socialBackend.profiles=true;
     if(!profileResult.data){
@@ -290,8 +316,9 @@ async function fetchSocialOnce(userId){
       const made=await sb.from(SOCIAL_PROFILE_TABLE).insert({user_id:userId,handle,handle_key:handle,display_name:handle});
       if(!stillCurrent()) return false;
       if(made&&made.error){ socialBackend.profiles=false; throw made.error; }
-      profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,username_changed_at,updated_at').eq('user_id',userId).maybeSingle();
+      fetchedProfile=await socialFetchOwnProfile(userId); profileResult=fetchedProfile.result;
       if(!stillCurrent()) return false;
+      socialAccountSettingsSqlReady=fetchedProfile.settingsSqlReady;
       if(profileResult.error||!profileResult.data) throw profileResult.error||new Error('Social profile could not be created.');
     }
     socialProfile=profileResult.data; socialProfiles={[userId]:socialProfile};
@@ -329,9 +356,11 @@ async function fetchSocialOnce(userId){
       if(!stillCurrent()) return false;
       if(!people.error) for(const p of people.data||[]) socialProfiles[String(p.user_id)]=p;
     }
-    socialStatus=usernameNeedsClaim(socialProfile,authUser)
-      ? 'CHOOSE YOUR USERNAME · THIS REPLACES THE TEMPORARY ACCOUNT NAME EVERYWHERE'
-      : 'SOCIAL READY · PRIVATE MESSAGES ARE FRIENDS-ONLY';
+    socialStatus=socialAccountSettingsSqlReady===false
+      ? 'SOCIAL READY · RUN SOCIAL 05 FOR USERNAME SETTINGS'
+      : usernameNeedsClaim(socialProfile,authUser)
+        ? 'CHOOSE YOUR USERNAME · THIS REPLACES THE TEMPORARY ACCOUNT NAME EVERYWHERE'
+        : 'SOCIAL READY · PRIVATE MESSAGES ARE FRIENDS-ONLY';
     socialLastFetch=Date.now();
     setupSocialRealtime();
     const unread=socialMessages.some(m=>String(m.recipient_id)===userId&&!m.read_at);
@@ -400,6 +429,7 @@ async function socialUpdateHandle(value,requiredClaim=false){
   const key=username.toLowerCase();
   if(usernameIsGeneratedForUser(username,authUser&&authUser.id)){ showError('Choose a real username, not the temporary account label.'); return false; }
   if(!sb||!authUser){ showError('Sign in and reconnect first.'); return false; }
+  if(socialAccountSettingsSqlReady===false){ showError('Install Social 05 in Supabase before choosing or changing a username.'); return false; }
   const userId=String(authUser.id||'');
   if(requiredClaim) usernameClaimBusy(true,'Saving your unique username...');
   let markerFailure=false;
