@@ -142,6 +142,7 @@ function burst(x,y,col,n,pow){
 
 /* ---------------- game flow ---------------- */
 function startGame(){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
   resetHeldGameplayInput();
   clearCameraShake();
   selPage='hub';

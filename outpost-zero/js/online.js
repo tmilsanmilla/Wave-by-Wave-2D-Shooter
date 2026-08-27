@@ -468,6 +468,9 @@ function arenaRefreshUsername(){
   return true;
 }
 function arenaQuickMatch(){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
+    arena.status='Choose your username before entering Online multiplayer.'; sfx('dry'); return false;
+  }
   // Recheck at the real queue boundary: a friend may have joined the party
   // while this player was choosing weapons or viewing the Arena menu.
   if(!partyAllowsQueue('arena')) return false;

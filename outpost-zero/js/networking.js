@@ -24,6 +24,7 @@ const ONBOARDING_VERSION=1;
 let onboardingVersion=ONBOARDING_VERSION;
 let firstAccountTutorialUserId='', firstAccountWelcomeOpen=false, firstAccountWelcomeRects=[];
 let authProfileRequestVersion=0;
+let postUsernameGateUserId='';
 const $ = id => document.getElementById(id);
 
 function cleanUsername(value){
@@ -48,15 +49,20 @@ function leaderboardReadFailure(error){
 }
 function displayName(u){
   if(!u) return 'guest';
-  if(authUser&&String(u.id||'')===String(authUser.id||'')&&typeof socialProfile!=='undefined'&&socialProfile&&socialProfile.handle){
+  const own=authUser&&String(u.id||'')===String(authUser.id||'');
+  const matchingProfile=own&&typeof socialProfile!=='undefined'&&socialProfile&&socialProfile.handle&&
+    (socialProfile.user_id==null||String(socialProfile.user_id)===String(u.id||''));
+  if(matchingProfile){
     const live=cleanUsername(socialProfile.handle);
     if(live){
       const key=live.toLowerCase(), suffix=String(u.id||'').replace(/-/g,'').toLowerCase();
       const pending=key==='username_not_set'||key==='usernamenotset'||
         (!!suffix&&(key==='op_'+suffix.slice(0,20)||key==='op_'+suffix.slice(0,8)));
-      return pending?'operator':live;
+      const needsClaim=typeof usernameNeedsClaim==='function'&&usernameNeedsClaim(socialProfile,u);
+      return pending||needsClaim?'operator':live;
     }
   }
+  if(own&&typeof usernameNeedsClaim==='function'&&usernameNeedsClaim(null,u)) return 'operator';
   const meta=u.user_metadata||{};
   return cleanUsername(meta.username||meta.preferred_username||meta.full_name||meta.name)||'operator';
 }
@@ -68,9 +74,27 @@ function leaderboardUsername(row){
   return cleanUsername(row&&((row.username!=null?row.username:row.name)))||'USERNAME NOT SET';
 }
 function paintUserbar(){
-  $('uname').textContent = authUser ? displayName(authUser) : 'not signed in';
+  $('uname').textContent = authUser
+    ? (typeof ownerPrivateDisplayName==='function'?ownerPrivateDisplayName(authUser):displayName(authUser))
+    : 'not signed in';
   $('uemail').textContent = '';
   $('ubtn').textContent  = authUser ? 'SIGN OUT' : 'SIGN IN';
+}
+function continueAfterUsernameGate(userId){
+  const id=String(userId||''), liveId=authUser?String(authUser.id||''):'';
+  if(!id||id!==liveId) return false;
+  if(typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()){
+    postUsernameGateUserId=id; return false;
+  }
+  postUsernameGateUserId='';
+  processReferral();
+  if(!openDailyGate()) maybeFirstRunTutorial();
+  return true;
+}
+function resumeAfterUsernameClaim(){
+  const id=authUser?String(authUser.id||''):'';
+  if(!id||postUsernameGateUserId!==id||!profileLoaded) return false;
+  return continueAfterUsernameGate(id);
 }
 async function initAuth(){
   if(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase){
@@ -78,20 +102,25 @@ async function initAuth(){
       sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
       const { data } = await sb.auth.getSession();
       authUser = data.session ? data.session.user : null;
+      prepareSocialForAccount(authUser?String(authUser.id):'');
+      if(authUser) beginUsernameClaimCheck();
       prepareLastLoadoutForAccount(authUser?String(authUser.id):'');
       prepareBotLadderForAccount(authUser?String(authUser.id):'');
-      if(authUser) beginUsernameClaimCheck();
       void refreshBotLadder(true);
       if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true);
       sb.auth.onAuthStateChange((_e, sess)=>{
+        if(_e==='PASSWORD_RECOVERY') recovering=true;
         authUser = sess ? sess.user : null;
         const profileUserId=authUser ? String(authUser.id) : '';
+        prepareSocialForAccount(profileUserId);
+        if(authUser&&!recovering) beginUsernameClaimCheck();
         prepareLastLoadoutForAccount(profileUserId);
         prepareBotLadderForAccount(profileUserId);
         void refreshBotLadder(false);
         if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(false);
         if(typeof flushAiTrainingQueue==='function')void flushAiTrainingQueue();
         const profileRequestVersion=++authProfileRequestVersion;
+        if(postUsernameGateUserId&&postUsernameGateUserId!==profileUserId) postUsernameGateUserId='';
         if(profileUserId && firstAccountTutorialUserId && firstAccountTutorialUserId!==profileUserId){
           firstAccountWelcomeOpen=false;
           firstAccountTutorialUserId='';
@@ -123,15 +152,13 @@ async function initAuth(){
           // the account that is signed in now.
           const liveUserId=authUser ? String(authUser.id) : '';
           if(!profileReady || profileRequestVersion!==authProfileRequestVersion || liveUserId!==profileUserId) return;
-          processReferral();
-          if(!openDailyGate()) maybeFirstRunTutorial();
+          continueAfterUsernameGate(profileUserId);
         });
         fetchScoreReqs(); fetchMyBan(); fetchWeaponDefs(); fetchOwnBest();
         setupRealtime();                              // re-subscribe: RLS scope changes with the signed-in user
         if(authUser&&!recovering) beginUsernameClaimCheck();
         if(authUser) fetchSocial(true);
         if(_e==='PASSWORD_RECOVERY'){
-          recovering=true;
           closeUsernameClaim();
           $('authwrap').style.display='flex';
           $('resetbox').style.display='block';
@@ -192,6 +219,7 @@ function setupRealtime(){
   }catch(e){ rtStatus='down'; rtChannel=null; }
 }
 async function submitScore(sc){
+  if(typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()) return;
   if(banBlocksBoard()) return;                       // any live ban keeps you off the leaderboard
   if(practiceMode) return;                           // range/practice runs are never ranked
   if(unrankedRun) return;                            // next-season weapons: practice only, never ranked
@@ -213,6 +241,7 @@ async function submitScore(sc){
   }catch(err){ console.warn('score submit failed', err); }
 }
 async function submitArenaWin(){
+  if(typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()) return;
   if(banBlocksBoard()||unrankedRun||adminUsed||!sb||!authUser) return;
   try{
     const game='outpost-zero-arena-wins';
@@ -298,7 +327,14 @@ async function toggleAuth(){
   if(authUser && sb){
     try{ if(typeof arenaForfeitBeforeSignOut==='function') await arenaForfeitBeforeSignOut(); }
     catch(error){ console.warn('arena sign-out forfeit failed',error); }
-    await sb.auth.signOut(); authUser=null; paintUserbar();
+    let signOutError=null;
+    try{ const result=await sb.auth.signOut(); signOutError=result&&result.error||null; }
+    catch(error){ signOutError=error; }
+    if(signOutError) console.warn('cloud sign-out failed; clearing this screen locally',signOutError);
+    authUser=null; authProfileRequestVersion++; postUsernameGateUserId='';
+    if(typeof resetSocialState==='function') resetSocialState('SIGNED OUT');
+    else if(typeof closeUsernameClaim==='function') closeUsernameClaim(true);
+    paintUserbar();
   }
   else { arenaAuthPending=false; $('aguest').style.display='block'; $('authwrap').style.display='flex'; }
 }

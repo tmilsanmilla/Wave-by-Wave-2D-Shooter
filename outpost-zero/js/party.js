@@ -18,7 +18,9 @@ function partySessionIdentity(chosenName){
   // second local player does not silently collapse two party seats into one.
   const id=(authUser?('user:'+authUser.id+':'+sid):('guest:'+sid)).slice(0,80);
   const profile=typeof socialProfile!=='undefined'&&socialProfile;
-  let fallback=authUser?partyCleanName(profile&&profile.handle):('GUEST-'+sid.slice(-4).toUpperCase());
+  const profileForAccount=profile&&authUser&&(profile.user_id==null||String(profile.user_id)===String(authUser.id||''));
+  const profileClaimed=profileForAccount&&!(typeof usernameNeedsClaim==='function'&&usernameNeedsClaim(profile,authUser));
+  let fallback=authUser?partyCleanName(profileClaimed&&profile.handle):('GUEST-'+sid.slice(-4).toUpperCase());
   // Signed-in players always use their canonical Outpost username. Only
   // guests may choose a temporary Party alias.
   let name=authUser
@@ -30,7 +32,9 @@ function partySessionIdentity(chosenName){
 function partyDefaultName(){
   if(authUser){
     const profile=typeof socialProfile!=='undefined'&&socialProfile;
-    return partyCleanName(profile&&profile.handle);
+    const matches=profile&&(profile.user_id==null||String(profile.user_id)===String(authUser.id||''));
+    if(!matches||(typeof usernameNeedsClaim==='function'&&usernameNeedsClaim(profile,authUser))) return '';
+    return partyCleanName(profile.handle);
   }
   try{ return partyCleanName(sessionStorage.getItem('oz_party_name_v1')); }catch(e){ return ''; }
 }
@@ -296,6 +300,9 @@ function partyPresenceSync(ch){
   }
 }
 function partyConnect(code,creating,name){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
+    party.status='CHOOSE YOUR USERNAME BEFORE JOINING A PARTY.'; sfx('dry'); return false;
+  }
   if(!partyServiceAvailable()){ party=freshParty('PARTIES NEED AN INTERNET CONNECTION.'); selPage='party'; sfx('dry'); return false; }
   leaveParty('',false);
   const self=partySessionIdentity(name), clean=String(code||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
@@ -324,6 +331,9 @@ function partyConnect(code,creating,name){
   selPage='party'; return true;
 }
 function partyPromptCreate(){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
+    party.status='CHOOSE YOUR USERNAME BEFORE CREATING A PARTY.'; sfx('dry'); return false;
+  }
   if(!partyServiceAvailable()){ party.status='PARTIES NEED AN INTERNET CONNECTION.'; sfx('dry'); return; }
   const signedIn=!!authUser, username=partyDefaultName();
   if(signedIn&&!username){ party.status='YOUR USERNAME IS STILL LOADING. TRY AGAIN IN A MOMENT.'; fetchSocial(true); sfx('dry'); return; }
@@ -332,6 +342,9 @@ function partyPromptCreate(){
     onSave:v=>{ const name=signedIn?username:partyCleanName(v.name); if(!name){ formError('Enter a guest name.'); return; } closeForm(); partyConnect(randomArenaCode(),true,name); }});
 }
 function partyPromptJoin(prefill=''){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
+    party.status='CHOOSE YOUR USERNAME BEFORE JOINING A PARTY.'; sfx('dry'); return false;
+  }
   if(!partyServiceAvailable()){ party.status='PARTIES NEED AN INTERNET CONNECTION.'; sfx('dry'); return; }
   const initialCode=String(prefill||'').toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,6);
   if(party.accepted&&party.code&&initialCode.length===6&&initialCode===party.code){
@@ -601,6 +614,7 @@ function partyCpuApplyRoundStart(p){
 // are never created or consulted by this lifecycle.
 function startOfflineCpu2v2(options={}){
   options=options&&typeof options==='object'?options:{};
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
   if(options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai2v2',()=>startOfflineCpu2v2({ladderReady:true})))return true;
   const mine=partyCpuKit(loadout);if(!mine){pracNeedMsgT=now+1600;sfx('dry');return false;}

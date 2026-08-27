@@ -638,6 +638,7 @@ function deferBotLadderMatchStart(mode,start){
 function cancelBotLadderLaunch(){botLadderLaunchPending='';}
 function startBotArena(options){
   options=options&&typeof options==='object'?options:{};
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
   const adminTest=options.adminTest===true&&typeof isMainAdmin==='function'&&isMainAdmin();
   if(!adminTest&&options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai1v1',()=>startBotArena(Object.assign({},options,{ladderReady:true}))))return true;

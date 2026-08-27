@@ -16,7 +16,9 @@ function frame(){
 
   // `now` is a GAME clock. It freezes while the pause menu (or a modal) is open, so
   // utility cooldowns, reloads, ability timers and burn/freeze don't tick while paused.
-  const frozen = menuOpen || powerMenuOpen || respawnPromptT || chestRewardOpen || reportOpen || postOpen || msgOpen || scoreEditOpen || appealOpen || promoOpen || formOpen || (typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen);
+  const frozen = menuOpen || powerMenuOpen || respawnPromptT || chestRewardOpen || reportOpen || postOpen || msgOpen || scoreEditOpen || appealOpen || promoOpen || formOpen ||
+    (typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()) ||
+    (typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen);
   if(frozen){
     simAcc=0;
   } else {

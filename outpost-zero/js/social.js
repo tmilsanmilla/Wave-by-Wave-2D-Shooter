@@ -7,7 +7,7 @@ let socialBackend={profiles:null,friends:null,messages:null};
 let socialFriendPage=0, socialMessagePage=0;
 let socialMessageTo=null, msgKind='admin';
 let socialDomPageActive=false;
-let socialFetchVersion=0;
+let socialFetchVersion=0, socialAccountId='', socialFetchUserId='', socialFetchPromise=null, socialFetchQueued=false;
 let usernameClaimOpen=false, usernameClaimMode='closed', usernameClaimUserId='';
 
 function socialHandleKey(value){
@@ -17,10 +17,54 @@ function socialDefaultHandle(){
   const suffix=String(authUser&&authUser.id||'guest').replace(/-/g,'').slice(0,20).toLowerCase();
   return ('op_'+suffix).slice(0,32);
 }
+function usernameIsGeneratedForUser(value,userId){
+  const key=socialHandleKey(value), suffix=String(userId||'').replace(/-/g,'').toLowerCase();
+  if(!key||key==='username_not_set'||key==='usernamenotset') return true;
+  return !!suffix&&(key==='op_'+suffix.slice(0,20)||key==='op_'+suffix.slice(0,8));
+}
+function usernameIsChosenForUser(value,userId){
+  const raw=String(value||'').trim().replace(/^@/,'');
+  return /^[A-Za-z0-9_]{3,32}$/.test(raw)&&!usernameIsGeneratedForUser(raw,userId);
+}
+function usernameClaimMarker(user=authUser){
+  if(!user) return '';
+  const value=String(user.user_metadata&&user.user_metadata.username||'').trim().replace(/^@/,'');
+  return usernameIsChosenForUser(value,user.id)?value:'';
+}
+function usernameNeedsClaim(profile=socialProfile,user=authUser){
+  if(!user) return false;
+  const userId=String(user.id||''), profileForUser=profile&&String(profile.user_id||userId)===userId;
+  if(!profileForUser||!usernameIsChosenForUser(profile.handle,userId)) return true;
+  const marker=usernameClaimMarker(user);
+  return !marker||socialHandleKey(marker)!==socialHandleKey(profile.handle);
+}
 function socialHasGeneratedUsername(profile=socialProfile){
   if(!profile||!authUser) return false;
-  const key=socialHandleKey(profile.handle), suffix=String(authUser.id||'').replace(/-/g,'').toLowerCase();
-  return !!suffix&&(key==='op_'+suffix.slice(0,20)||key==='op_'+suffix.slice(0,8));
+  return usernameIsGeneratedForUser(profile.handle,profile.user_id||authUser.id);
+}
+function usernameClaimRequired(){
+  return !!(authUser&&!recovering&&usernameNeedsClaim(socialProfile,authUser));
+}
+function usernameGateBlocksGameplay(){
+  return !!(authUser&&!recovering&&(usernameClaimOpen||usernameClaimRequired()));
+}
+function ownerPrivateDisplayName(user=authUser){
+  if(!user||!authUser||String(user.id||'')!==String(authUser.id||'')){
+    return typeof displayName==='function'?displayName(user):'operator';
+  }
+  const profileForUser=socialProfile&&String(socialProfile.user_id||user.id)===String(user.id||'');
+  if(profileForUser&&!usernameNeedsClaim(socialProfile,user)) return String(socialProfile.handle||'operator').slice(0,32);
+  return String(user.email||'').trim().slice(0,160)||'username required';
+}
+function usernameClaimPrivateStatus(message){
+  const email=authUser&&String(authUser.email||'').trim();
+  return (email?'SIGNED IN AS '+email+' · ':'')+String(message||'');
+}
+function requireResolvedUsernameForGameplay(){
+  if(!usernameGateBlocksGameplay()) return true;
+  beginUsernameClaimCheck();
+  if(authUser&&!socialFetchPromise) void fetchSocial(true);
+  return false;
 }
 function usernameClaimElements(){
   if(typeof document==='undefined') return {wrap:null,title:null,hint:null,input:null,save:null,retry:null,signout:null,status:null};
@@ -35,28 +79,40 @@ function usernameClaimElements(){
     status:document.getElementById('usernameclaimstatus')
   };
 }
-function closeUsernameClaim(){
+function closeUsernameClaim(force=false){
+  // A signed-in player cannot dismiss the gate by Escape, a stale callback,
+  // or a direct canvas action. Only sign-out/recovery, or a profile plus Auth
+  // marker that agree on the chosen username, may release it.
+  if(!force&&usernameClaimRequired()){
+    if(!usernameClaimOpen) beginUsernameClaimCheck();
+    return false;
+  }
   usernameClaimOpen=false; usernameClaimMode='closed'; usernameClaimUserId='';
   const el=usernameClaimElements();
   if(el.wrap){ el.wrap.style.display='none'; el.wrap.className='ui'; }
   if(el.input) el.input.value='';
   if(el.status) el.status.textContent='';
+  return true;
 }
 function openUsernameClaim(mode='checking',message='Checking your account username...'){
   if(!authUser||recovering){ closeUsernameClaim(); return false; }
   const id=String(authUser.id||'');
   if(!id){ closeUsernameClaim(); return false; }
-  const el=usernameClaimElements(), same=usernameClaimOpen&&usernameClaimUserId===id;
+  const el=usernameClaimElements(), preserveRequiredInput=usernameClaimOpen&&usernameClaimUserId===id&&usernameClaimMode==='required';
   usernameClaimOpen=true; usernameClaimMode=mode; usernameClaimUserId=id;
   if(el.wrap){ el.wrap.className='ui '+mode; el.wrap.style.display='flex'; }
   if(el.title) el.title.textContent=mode==='required'?'CHOOSE YOUR USERNAME':mode==='error'?'USERNAME REQUIRED':'CHECKING USERNAME';
   if(el.hint) el.hint.textContent=mode==='required'
-    ? 'Choose the unique public username shown on leaderboards, parties, friends, and messages. Your email always stays private.'
+    ? 'Choose the unique public username shown on leaderboards, parties, friends, and messages. Your sign-in email is visible only in this private setup.'
     : mode==='error'?'Your username could not be verified. Retry the secure profile check or sign out.':'Checking the public username attached to your account.';
-  if(el.status) el.status.textContent=message;
+  if(el.status) el.status.textContent=usernameClaimPrivateStatus(message);
   if(el.save) el.save.disabled=mode!=='required';
   if(el.signout) el.signout.disabled=false;
-  if(mode==='required'&&!same&&el.input) el.input.value='';
+  if(mode==='required'&&!preserveRequiredInput&&el.input){
+    const existing=socialProfile&&String(socialProfile.user_id||id)===id&&
+      usernameIsChosenForUser(socialProfile.handle,id)?String(socialProfile.handle):'';
+    el.input.value=existing;
+  }
   if(mode==='required') try{ setTimeout(()=>el.input&&el.input.focus(),0); }catch(e){}
   return true;
 }
@@ -71,7 +127,7 @@ function syncUsernameClaim(){
   if(!socialProfile||String(socialProfile.user_id||'')!==String(authUser.id||'')){
     return openUsernameClaim('checking','Checking your account username...');
   }
-  if(socialHasGeneratedUsername(socialProfile)){
+  if(usernameNeedsClaim(socialProfile,authUser)){
     openUsernameClaim('required','Use 3–32 letters, numbers, or underscores.');
     return true;
   }
@@ -79,6 +135,9 @@ function syncUsernameClaim(){
 }
 function usernameClaimFailed(message){
   if(!authUser||recovering){ closeUsernameClaim(); return false; }
+  // Friends/messages can fail after the canonical profile has already been
+  // verified. That is a normal Social error, not a reason to lock gameplay.
+  if(!usernameClaimRequired()){ closeUsernameClaim(); return false; }
   openUsernameClaim('error',message||'Could not verify your username. Check your connection and retry.');
   return true;
 }
@@ -86,7 +145,7 @@ function usernameClaimBusy(busy,status){
   const el=usernameClaimElements();
   if(el.save) el.save.disabled=!!busy;
   if(el.signout) el.signout.disabled=!!busy;
-  if(status&&el.status) el.status.textContent=status;
+  if(status&&el.status) el.status.textContent=usernameClaimPrivateStatus(status);
 }
 async function usernameClaimSubmit(){
   const el=usernameClaimElements();
@@ -94,8 +153,10 @@ async function usernameClaimSubmit(){
 }
 async function usernameClaimRetry(){
   if(!authUser) return false;
+  const userId=String(authUser.id||'');
   openUsernameClaim('checking','Checking your account username...');
   const ok=await fetchSocial(true);
+  if(!authUser||String(authUser.id||'')!==userId) return false;
   if(!ok&&usernameClaimMode==='checking') usernameClaimFailed('Could not verify your username. Check your connection and retry.');
   return ok;
 }
@@ -113,8 +174,22 @@ function socialDropRealtime(){
   if(socialChannel&&sb){ try{ sb.removeChannel(socialChannel); }catch(e){} }
   socialChannel=null;
 }
-function resetSocialState(message){
+function prepareSocialForAccount(userId){
+  const id=String(userId||'');
+  if(socialAccountId===id) return false;
+  if(usernameClaimUserId&&usernameClaimUserId!==id) closeUsernameClaim(true);
+  socialAccountId=id;
   socialFetchVersion++;
+  socialFetchUserId=''; socialFetchPromise=null; socialFetchQueued=false;
+  socialDropRealtime(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
+  socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
+  socialFriendPage=0; socialMessagePage=0;
+  socialStatus=id?'CHECKING YOUR USERNAME...':'SIGN IN FOR FRIENDS + PRIVATE MESSAGES';
+  return true;
+}
+function resetSocialState(message){
+  socialAccountId=''; socialFetchVersion++;
+  socialFetchUserId=''; socialFetchPromise=null; socialFetchQueued=false;
   socialDropRealtime(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialFriendPage=0; socialMessagePage=0;
@@ -146,7 +221,7 @@ function socialFriendshipWith(userId){
 function socialAcceptedFriend(userId){ const r=socialFriendshipWith(userId); return !!(r&&r.status==='accepted'); }
 function socialPerson(userId){
   const p=socialProfiles[String(userId||'')]||{};
-  const username=String(p.handle||'operator');
+  const username=usernameIsGeneratedForUser(p.handle,userId)?'USERNAME NOT SET':String(p.handle||'USERNAME NOT SET');
   return {handle:username,display:username};
 }
 function socialMergeRows(a,b){
@@ -160,10 +235,36 @@ async function fetchSocial(force=false){
     usernameClaimFailed('Could not verify your username while offline. Reconnect and retry.');
     return false;
   }
-  if(socialLoading||(!force&&Date.now()-socialLastFetch<2500)) return false;
-  const userId=String(authUser.id||''), fetchVersion=++socialFetchVersion;
+  const userId=String(authUser.id||'');
+  if(socialAccountId!==userId) prepareSocialForAccount(userId);
+  if(socialFetchPromise&&socialFetchUserId===userId){
+    // A forced refresh during an in-flight read (notably after a username
+    // write or repeated Auth callback) gets one follow-up pass. All callers
+    // await the same drain promise instead of racing profile snapshots.
+    if(force) socialFetchQueued=true;
+    return socialFetchPromise;
+  }
+  if(!force&&Date.now()-socialLastFetch<2500) return true;
+  socialFetchUserId=userId; socialLoading=true; socialStatus='REFRESHING SOCIAL...';
+  const request=(async()=>{
+    let result=false;
+    do{
+      socialFetchQueued=false;
+      result=await fetchSocialOnce(userId);
+    }while(socialFetchQueued&&authUser&&String(authUser.id||'')===userId&&socialAccountId===userId);
+    return result;
+  })();
+  socialFetchPromise=request;
+  try{ return await request; }
+  finally{
+    if(socialFetchPromise===request){
+      socialFetchPromise=null; socialFetchUserId=''; socialFetchQueued=false; socialLoading=false;
+    }
+  }
+}
+async function fetchSocialOnce(userId){
+  const fetchVersion=++socialFetchVersion;
   const stillCurrent=()=>socialFetchVersion===fetchVersion&&authUser&&String(authUser.id||'')===userId;
-  socialLoading=true; socialStatus='REFRESHING SOCIAL...';
   try{
     const previousUsername=socialProfile&&String(socialProfile.handle||'');
     let profileResult=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name,updated_at').eq('user_id',userId).maybeSingle();
@@ -181,6 +282,7 @@ async function fetchSocial(force=false){
     }
     socialProfile=profileResult.data; socialProfiles={[userId]:socialProfile};
     syncUsernameClaim();
+    if(typeof resumeAfterUsernameClaim==='function') resumeAfterUsernameClaim();
     // Auth metadata can be stale or absent. Repaint as soon as the canonical
     // Social username arrives so the header never keeps showing an old alias.
     if(typeof paintUserbar==='function') paintUserbar();
@@ -212,7 +314,7 @@ async function fetchSocial(force=false){
       if(!stillCurrent()) return false;
       if(!people.error) for(const p of people.data||[]) socialProfiles[String(p.user_id)]=p;
     }
-    socialStatus=socialHasGeneratedUsername()
+    socialStatus=usernameNeedsClaim(socialProfile,authUser)
       ? 'CHOOSE YOUR USERNAME · THIS REPLACES THE TEMPORARY ACCOUNT NAME EVERYWHERE'
       : 'SOCIAL READY · PRIVATE MESSAGES ARE FRIENDS-ONLY';
     socialLastFetch=Date.now();
@@ -233,7 +335,7 @@ async function fetchSocial(force=false){
       ? 'Account usernames need the Social database update. Retry after the update is installed.'
       : 'Could not verify your username. Check your connection and retry.');
     socialDropRealtime(); return false;
-  }finally{ if(socialFetchVersion===fetchVersion) socialLoading=false; }
+  }
 }
 function socialPromptAddFriend(){
   if(!authUser){ toggleAuth(); return; }
@@ -260,7 +362,7 @@ function socialPromptEditHandle(){
 }
 function socialPromptEditProfile(){
   if(!authUser){ toggleAuth(); return; }
-  const firstChoice=socialHasGeneratedUsername();
+  const firstChoice=usernameNeedsClaim(socialProfile,authUser);
   openForm({title:firstChoice?'CHOOSE USERNAME':'EDIT USERNAME',hint:(firstChoice
       ? 'Your account has a temporary private-safe label. Choose the public username shown on leaderboards, parties, friends, and messages.'
       : 'This unique username is shown everywhere and is how friends find you. Username changes are free. Email stays private.'),saveLabel:firstChoice?'CHOOSE USERNAME':'SAVE USERNAME',
@@ -270,27 +372,49 @@ function socialPromptEditProfile(){
 async function socialUpdateHandle(value,requiredClaim=false){
   const username=String(value||'').trim().replace(/^@/,'');
   const showError=message=>{
-    if(requiredClaim){ const el=usernameClaimElements(); if(el.status) el.status.textContent=message; usernameClaimBusy(false); }
+    if(requiredClaim){ const el=usernameClaimElements(); if(el.status) el.status.textContent=usernameClaimPrivateStatus(message); usernameClaimBusy(false); }
     else formError(message);
   };
   if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){ showError('Use 3–32 letters, numbers, or _.'); return false; }
   const key=username.toLowerCase();
-  if(socialHasGeneratedUsername({handle:username})){ showError('Choose a real username, not the temporary account label.'); return false; }
+  if(usernameIsGeneratedForUser(username,authUser&&authUser.id)){ showError('Choose a real username, not the temporary account label.'); return false; }
   if(!sb||!authUser){ showError('Sign in and reconnect first.'); return false; }
   const userId=String(authUser.id||'');
   if(requiredClaim) usernameClaimBusy(true,'Saving your unique username...');
+  let markerFailure=false;
   try{
     const result=await sb.from(SOCIAL_PROFILE_TABLE).update({handle:username,handle_key:key,display_name:username}).eq('user_id',userId);
     if(result&&result.error) throw result.error;
     if(!authUser||String(authUser.id||'')!==userId) return false;
+    // Auth metadata is the durable proof that this account explicitly chose
+    // its username. It distinguishes older imported profile labels from a
+    // completed claim after verification or a future login.
+    markerFailure=true;
+    const markerResult=await sb.auth.updateUser({data:{username}});
+    if(markerResult&&markerResult.error) throw markerResult.error;
+    markerFailure=false;
+    if(!authUser||String(authUser.id||'')!==userId) return false;
+    const returnedUser=markerResult&&markerResult.data&&markerResult.data.user;
+    authUser=returnedUser&&String(returnedUser.id||'')===userId
+      ? returnedUser
+      : {...authUser,user_metadata:{...(authUser.user_metadata||{}),username}};
     if(socialProfile&&String(socialProfile.user_id||'')===userId){
       socialProfile={...socialProfile,handle:username,handle_key:key,display_name:username};
       socialProfiles[userId]=socialProfile;
     }
     if(requiredClaim) syncUsernameClaim(); else closeForm();
-    await fetchSocial(true); paintUserbar(); fetchBoard(); socialStatus='USERNAME UPDATED · @'+username; sfx('swap'); return true;
+    if(typeof partyRefreshUsername==='function') partyRefreshUsername();
+    if(typeof arenaRefreshUsername==='function') arenaRefreshUsername();
+    if(typeof resumeAfterUsernameClaim==='function') resumeAfterUsernameClaim();
+    await fetchSocial(true);
+    if(!authUser||String(authUser.id||'')!==userId) return false;
+    paintUserbar(); fetchBoard(); socialStatus='USERNAME UPDATED · @'+username; sfx('swap'); return true;
   }catch(error){
-    showError(socialSetupMissing(error)?socialSetupStatus():'That username is unavailable. Try another one.'); return false;
+    if(!authUser||String(authUser.id||'')!==userId) return false;
+    showError(markerFailure
+      ? 'The username was saved, but account confirmation failed. Retry to finish.'
+      : socialSetupMissing(error)?socialSetupStatus():'That username is unavailable. Try another one.');
+    return false;
   }
 }
 
@@ -315,10 +439,10 @@ function socialLayoutIdentity(rect){
   if(!box||!authUser){ if(box) box.style.display='none'; return; }
   const ready=!!socialProfile;
   box.classList.toggle('narrow',rect.w<500);
-  const firstChoice=ready&&socialHasGeneratedUsername();
+  const firstChoice=ready&&usernameNeedsClaim(socialProfile,authUser);
   if(text) text.textContent=ready?(firstChoice?'USERNAME REQUIRED · CHOOSE ONE NOW':'USERNAME  @'+socialProfile.handle):'LOADING YOUR USERNAME...';
   if(copy) copy.disabled=!ready||firstChoice;
-  if(edit){ edit.disabled=!ready; edit.textContent=ready&&socialHasGeneratedUsername()?'CHOOSE USERNAME':'EDIT USERNAME'; }
+  if(edit){ edit.disabled=!ready; edit.textContent=ready&&usernameNeedsClaim(socialProfile,authUser)?'CHOOSE USERNAME':'EDIT USERNAME'; }
   socialPlaceDomElement(box,rect);
 }
 function socialLayoutPartyJoin(rect,enabled){
@@ -337,7 +461,7 @@ function socialPartyJoinFromInline(){
 }
 async function socialCopyOwnHandle(){
   if(!socialProfile||!socialProfile.handle){ socialStatus='YOUR SOCIAL PROFILE IS STILL LOADING'; sfx('dry'); return false; }
-  if(socialHasGeneratedUsername()){
+  if(usernameNeedsClaim(socialProfile,authUser)){
     socialStatus='CHOOSE A USERNAME BEFORE COPYING IT';
     socialPromptEditProfile(); sfx('dry'); return false;
   }

@@ -1230,6 +1230,9 @@ function openModeLeaderboard(){
   selPage='modeboard'; fetchBoard(); sfx('swap'); return true;
 }
 function chooseGameMode(mode,returnPage='modeboard'){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
+    modeBoardNotice='CHOOSE YOUR USERNAME TO PLAY'; modeBoardNoticeT=performance.now()+2800; sfx('dry'); return false;
+  }
   if(!['arena','arena2v2','endless','ai1v1','ai2v2'].includes(mode)){ sfx('dry'); return false; }
   // Size is checked before locked/auth states so a party always gets the
   // useful queue-capacity explanation for the button it just chose.
@@ -1252,6 +1255,9 @@ function chooseGameMode(mode,returnPage='modeboard'){
   selPage='loadout'; sfx('swap'); return true;
 }
 function launchSelectedMode(){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
+    modeBoardNotice='CHOOSE YOUR USERNAME TO PLAY'; modeBoardNoticeT=performance.now()+2800; sfx('dry'); return false;
+  }
   if(!(loadout.primary&&loadout.secondary&&loadout.melee)){
     pracNeedMsgT=now+1600; sfx('dry'); return false;
   }
@@ -3264,7 +3270,8 @@ function drawAccountChip(){
   // who you are, under the button, clipped so it can never reach the centre column
   ctx.textAlign='left'; ctx.font='9px ui-monospace,Consolas,monospace'; ctx.fillStyle='#8a9268';
   const room=Math.max(60, Math.min(150, W*0.30));
-  ctx.fillText(fitLine(authUser?displayName(authUser):'not signed in', room), bx, by+bh+9);
+  const privateAccountName=authUser&&typeof ownerPrivateDisplayName==='function'?ownerPrivateDisplayName(authUser):displayName(authUser);
+  ctx.fillText(fitLine(authUser?privateAccountName:'not signed in', room), bx, by+bh+9);
   };
   withBlockColour('account', paintAccount);
   ctx.restore();

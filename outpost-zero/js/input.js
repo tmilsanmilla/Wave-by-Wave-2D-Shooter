@@ -27,7 +27,9 @@ function activateContextAction(){
 }
 addEventListener('keydown', e=>{
   if(typingInField(e)) return;          // don't eat keys while typing in the auth form
-  if(typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen){
+  if((typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay())||
+     (typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen)){
+    if(typeof requireResolvedUsernameForGameplay==='function') requireResolvedUsernameForGameplay();
     const gate=typeof document!=='undefined'&&document.getElementById('usernameclaimwrap');
     if(!(gate&&gate.contains(e.target))) e.preventDefault();
     return;
@@ -90,7 +92,8 @@ addEventListener('keydown', e=>{
 });
 addEventListener('keyup', e=>{
   if(typingInField(e)) return;
-  if(typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen){ keys[e.key.toLowerCase()]=false; return; }
+  if((typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay())||
+     (typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen)){ keys[e.key.toLowerCase()]=false; return; }
   keys[e.key.toLowerCase()]=false;
 });
 
@@ -100,6 +103,9 @@ cv.addEventListener('mousemove', e=>{
   if(dragSlider && mouse.down) setSliderFromMouse();
 });
 cv.addEventListener('mousedown', e=>{
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
+    mouse.down=false; resetFireCadence(); e.preventDefault(); return;
+  }
   if(tutorialOn && state==='play' && !menuOpen){ const r=cv.getBoundingClientRect();
     mouse.x=(e.clientX-r.left); mouse.y=(e.clientY-r.top);
     if(tutorialClick()){ e.preventDefault(); return; } }
@@ -180,6 +186,9 @@ function doButton(k){
 }
 cv.addEventListener('touchstart', e=>{
   e.preventDefault(); initAudio();
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
+    resetHeldGameplayInput(); return;
+  }
   for(const t of e.changedTouches){
     const x=px(t.clientX), y=t.clientY;
     if(chestRewardOpen){ mouse.x=x; mouse.y=y; chestRewardClick(); continue; }
