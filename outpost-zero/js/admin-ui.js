@@ -1915,7 +1915,6 @@ function drawAdminPanel(){
   // everyone with admin: broadcast a banner
   actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 Home + every Inbox'+(isMainAdmin()?'':' (needs approval)'));
   actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up \u00b7 edit \u00b7 ban');
-  if(isMainAdmin()) actionBtn('ailearning','\uD83E\uDDE0 AI BOT MODELS \u2014 model history \u00b7 test \u00b7 bring back');
   if(isMainAdmin()) actionBtn('layout','\u2194 LAYOUT EDITOR \u2014 move home page sections');
   if(isMainAdmin()) actionBtn('promos','\uD83C\uDF81 PROMO CODES \u2014 create \u00b7 edit \u00b7 expire');
 
@@ -1971,7 +1970,6 @@ function adminPanelClick(){
       if(id==='post'){ openPost(); sfx('swap'); return; }
       if(id==='promos'){ adminPanelOpen=false; promoAdminOpen=true; fetchPromos(); sfx('swap'); return; }
       if(id==='players'){ adminPanelOpen=false; playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
-      if(id==='ailearning'){ openAiLearning(); sfx('swap'); return; }
       if(id==='layout'){
         if(!isMainAdmin()){ sfx('dry'); return; }
         adminPanelOpen=false; selPage='hub'; layoutMode=true; layoutPick=null; sfx('swap'); return;

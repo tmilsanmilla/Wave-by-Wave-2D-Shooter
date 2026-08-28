@@ -1,9 +1,9 @@
 "use strict";
 
 /* ---------------- offline arena: one-device 1v1 vs AI ---------------- */
-const BOT_AI=Object.freeze({weapon:'ar',damage:34,fireMs:225,reactionMs:550,moveSpeed:2.65,
-  retreat:230,approach:520,maxRange:850,forgiveness:8,aimNoise:0.04,shotJitter:0.015,
-  fireAimError:0.06,leadFactor:0.55,maxLeadMs:180,thinkMs:150,turnRate:0.07});
+const BOT_AI=Object.freeze({weapon:'ar',damage:34,fireMs:245,reactionMs:575,moveSpeed:2.60,
+  retreat:240,approach:535,maxRange:840,forgiveness:8,aimNoise:0.045,shotJitter:0.0165,
+  fireAimError:0.065,leadFactor:0.52,maxLeadMs:170,thinkMs:158,turnRate:0.066});
 const CPU_AI_TNT_RETHINK_MS=200,CPU_AI_TNT_SCORE_MIN=45,CPU_AI_TNT_AVOID_PAD=42;
 const CPU_AI_MOVE_MIN_MS=550,CPU_AI_MOVE_MAX_MS=1300,CPU_AI_TRACK_JUMP=180;
 const CPU_AI_NAV_CLEARANCE=10,CPU_AI_NAV_STEP=12,CPU_AI_NAV_REUSE_MS=450,CPU_AI_STUCK_TICKS=3,CPU_AI_STUCK_RECOVERY_MS=900;
@@ -332,15 +332,15 @@ const BOT_LADDER_RESULT_QUEUE_MAX=128,BOT_LADDER_TOMBSTONE_MAX=512;
 const BOT_LADDER_QUEUE_RETRY_MS=Object.freeze([2000,10000,30000,120000]),BOT_LADDER_RATE_LIMIT_RETRY_MS=31000;
 const BOT_DIFFICULTIES=Object.freeze([
   Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'STRONG FOUNDATIONS',detail:'Competent from the first match, with readable mistakes.',
-    reactionMs:650,moveSpeed:2.55,aimNoise:.070,shotJitter:.026,fireAimError:.105,leadFactor:.40,maxLeadMs:170,thinkMs:190,turnRate:.065}),
+    reactionMs:670,moveSpeed:2.50,aimNoise:.080,shotJitter:.030,fireAimError:.125,leadFactor:.35,maxLeadMs:150,thinkMs:198,turnRate:.055}),
   Object.freeze({id:1,key:'easy',name:'EASY',summary:'QUICKER DECISIONS',detail:'Cleaner movement and early movement prediction.',
-    reactionMs:520,moveSpeed:2.70,aimNoise:.050,shotJitter:.018,fireAimError:.080,leadFactor:.57,maxLeadMs:225,thinkMs:150,turnRate:.080}),
+    reactionMs:540,moveSpeed:2.65,aimNoise:.060,shotJitter:.022,fireAimError:.100,leadFactor:.52,maxLeadMs:205,thinkMs:160,turnRate:.070}),
   Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'COMPLETE TACTICS',detail:'Reliable routes, leading, cover pressure, and TNT plays.',
-    reactionMs:380,moveSpeed:2.90,aimNoise:.030,shotJitter:.011,fireAimError:.055,leadFactor:.72,maxLeadMs:290,thinkMs:110,turnRate:.100}),
+    reactionMs:400,moveSpeed:2.85,aimNoise:.040,shotJitter:.015,fireAimError:.075,leadFactor:.67,maxLeadMs:270,thinkMs:118,turnRate:.090}),
   Object.freeze({id:3,key:'hard',name:'HARD',summary:'RELENTLESS TACTICIAN',detail:'A genuinely hard opponent with fast, precise decisions.',
-    reactionMs:220,moveSpeed:3.10,aimNoise:.012,shotJitter:.004,fireAimError:.027,leadFactor:.90,maxLeadMs:390,thinkMs:70,turnRate:.145}),
+    reactionMs:240,moveSpeed:3.00,aimNoise:.022,shotJitter:.006,fireAimError:.047,leadFactor:.85,maxLeadMs:370,thinkMs:78,turnRate:.135}),
   Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'STRONGEST FAIR EXECUTION',detail:'Near-perfect decisions and aim without health or damage cheats.',
-    reactionMs:80,moveSpeed:3.23,aimNoise:.002,shotJitter:.0007,fireAimError:.008,leadFactor:1,maxLeadMs:520,thinkMs:32,turnRate:.220}),
+    reactionMs:100,moveSpeed:3.15,aimNoise:.012,shotJitter:.0020,fireAimError:.040,leadFactor:.95,maxLeadMs:500,thinkMs:40,turnRate:.195}),
 ]);
 // Tactical releases are a separate axis from Beginner–Impossible execution.
 // Releases are cumulative, immutable, and allowlisted in both client and SQL.

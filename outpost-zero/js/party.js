@@ -1211,8 +1211,8 @@ function partyCpuSpawnBotShot(bot,target,profile){
 }
 function partyCpuHostStep(dtms,clock){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight'||partyCpuMatch.roundResolved) return;
-  const dt=dtms/16.667,w=WEAPONS.ar,partyProfile={approach:560,retreat:260,maxRange:1050,leadFactor:.68,maxLeadMs:220,
-    aimNoise:.075,shotJitter:.028,fireAimError:.11,turnRate:.07,moveSpeed:2.75,thinkMs:150},
+  const dt=dtms/16.667,w=WEAPONS.ar,partyProfile={approach:580,retreat:290,maxRange:1010,leadFactor:.60,maxLeadMs:205,
+    aimNoise:.085,shotJitter:.032,fireAimError:.125,turnRate:.06,moveSpeed:2.60,thinkMs:165},
     shotProfile={damage:Math.min(18,w.dmg*.85),rng:w.range,fall:w.fall,maxRange:1050};
   for(const b of partyCpuMatch.bots){
     if(b.hp<=0) continue;
@@ -1266,7 +1266,7 @@ function partyCpuHostStep(dtms,clock){
     const dx=aimX-b.x,dy=aimY-b.y,d=Math.hypot(dx,dy)||1,targetA=Math.atan2(dy,dx),aimErr=Math.abs(cpuAiAngleDelta(targetA,b.angle));
     if(d>profile.maxRange||aimErr>profile.fireAimError)continue;
     if(b.mag<=0){ b.reloadEnd=clock+w.reload; continue; }
-    const interval=w.fireRate*1.55; if(clock-b.lastShot<interval) continue;
+    const interval=w.fireRate*1.68; if(clock-b.lastShot<interval) continue;
     b.lastShot=b.lastShot>0&&clock-b.lastShot<interval*4?b.lastShot+interval:clock;b.mag--;b.flash=clock+55;
     partyCpuSpawnBotShot(b,aimTntId?{id:aimTntId,kind:'tnt'}:target,profile);if(b.mag<=0)b.reloadEnd=clock+w.reload;
   }
