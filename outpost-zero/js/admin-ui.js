@@ -215,7 +215,7 @@ function drawInboxTabs(px,py,pw,y,rects){
   const TABS=[];
   if(isAdmin())     TABS.push(['msgs','\u2709 MESSAGES'+(unreadMsgs?' ('+unreadMsgs+')':'')]);
   if(isMainAdmin()) TABS.push(['updates','\uD83D\uDCE5 UPDATES']);
-  if(isMainAdmin()) TABS.push(['log','\uD83D\uDCDC LOG']);
+  if(isMainAdmin()) TABS.push(['log','\uD83D\uDCDC ADMIN AUDIT LOG']);
   if(isAdmin())     TABS.push(['archive','\uD83D\uDDC3 ARCHIVE']);
   if(TABS.length<2) return y;                       // nothing to switch between
   const tw=Math.min(160,(pw-40)/TABS.length), th=22;
@@ -1611,9 +1611,9 @@ function drawMsgs(){
   ctx.strokeStyle='#a7c15e'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   ctx.fillStyle='#cfe0a8'; ctx.font='700 17px ui-monospace,Consolas,monospace';
-  ctx.fillText('\u2709 MESSAGES', W/2, py+26);
+  ctx.fillText('\u2709 ADMIN INBOX', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText(sb?'admin-to-admin mail \u00b7 newest first':'messages live on the deployed site', W/2, py+42);
+  ctx.fillText(sb?'admin messages \u00b7 newest first':'admin messages live on the deployed site', W/2, py+42);
   msgsRects=[];
   const x0=px+16, rw=pw-32; let y=drawInboxTabs(px,py,pw,py+50,msgsRects);
   if(isMainAdmin()){                                 // COMPOSE: start a message from here
@@ -1743,12 +1743,12 @@ function drawAdminAuditLog(){
     ctx.fillStyle='rgba(0,0,0,.34)';ctx.fillRect(x0,y,rw,rowH);ctx.strokeStyle='#4a5960';ctx.strokeRect(x0+.5,y+.5,rw,rowH);
     ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=col;ctx.font='700 '+(tiny?7:8)+'px ui-monospace,Consolas,monospace';
     let when=row.createdAt;try{when=new Date(row.createdAt).toLocaleString();}catch(error){}
-    ctx.fillText(fitLine(row.action.toUpperCase()+' \u00b7 '+String(when),rw-14),x0+7,y+10);
+    ctx.fillText(fitLine(adminAuditLabelize(row.action)+' \u00b7 '+String(when).replace(' GMT',''),rw-14),x0+7,y+10);
     ctx.fillStyle='#cdd6b0';ctx.font=(tiny?7:9)+'px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(row.actor+' \u2192 '+(row.target||'GLOBAL'),rw-72),x0+7,y+25);
+    const targetLabel=(row.actor||'?')+' \u2192 '+(row.target||'GLOBAL');
+    ctx.fillText(fitLine(targetLabel,rw-72),x0+7,y+25);
     ctx.fillStyle='#8a9268';ctx.font=(tiny?7:8)+'px ui-monospace,Consolas,monospace';
-    const detail=Object.keys(row.details||{}).length?JSON.stringify(row.details):'no extra details';
-    ctx.fillText(fitLine(detail,rw-78),x0+7,y+rowH-8);
+    ctx.fillText(fitLine(adminAuditDetailsSummary(row),rw-78),x0+7,y+rowH-8);
     ctx.textAlign='right';ctx.fillStyle='#bfe8ff';ctx.font='700 7px ui-monospace,Consolas,monospace';ctx.fillText('READ',x0+rw-8,y+rowH/2);
     auditRects.push({x:x0,y,w:rw,h:rowH,id:'audit:'+row.eventId,row});
     y+=rowH+gap;

@@ -667,6 +667,13 @@ function clickSelect(){
       else if(r.id==='official_update_open'&&typeof openReader==='function'){ openReader('OFFICIAL UPDATE',String(r.meta||'OUTPOST ZERO · OFFICIAL'),String(r.body||''),'public'); sfx('swap'); }
       else if(r.id==='inbox_notice_open'&&typeof socialOpenNotification==='function'){ socialOpenNotification(r.noticeKey); sfx('swap'); }
       else if(r.id==='inbox_message_open'&&typeof socialOpenInboxMessage==='function'){ socialOpenInboxMessage(r.messageKey); sfx('swap'); }
+      else if(r.id==='inbox_message_reply'){
+        if(!authUser){ toggleAuth(); return; }
+        const directRow=r.messageKey&&typeof socialPrivateMessageByUiKey==='function'?socialPrivateMessageByUiKey(r.messageKey):null;
+        const to=typeof r.replyTo==='string'&&r.replyTo?r.replyTo:(directRow?String(directRow.sender_id||directRow.recipient_id||''):null);
+        if(typeof openSocialMessageCompose==='function'&&to){ const handle=String(r.replyHandle||'friend'); openSocialMessageCompose(to,handle); }
+        sfx('swap');
+      }
       else if(r.id==='friend_message'||r.id==='dm_reply') openSocialMessageCompose(r.userId,r.handle);
       else if(r.id==='cpu_invite_play'&&typeof partyJoinCpuInvite==='function'){
         const joined=partyJoinCpuInvite(r.invite);if(joined&&typeof socialPrivateMessageByUiKey==='function'&&typeof socialHandleLegacyInvite==='function')socialHandleLegacyInvite(socialPrivateMessageByUiKey(r.messageKey));

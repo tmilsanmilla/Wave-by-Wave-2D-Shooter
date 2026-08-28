@@ -683,12 +683,35 @@ function normalizeAdminAuditRow(row){
     createdAt:String(r.created_at||'')};
 }
 function adminAuditPageRows(){ return adminAuditPages[adminAuditPage]||[]; }
+function adminAuditFormatValue(value){
+  if(value===null||value===undefined) return 'none';
+  if(typeof value==='boolean') return value?'YES':'NO';
+  if(typeof value==='number' && Number.isFinite(value)) return String(value);
+  if(typeof value==='string') return value.trim()||'empty';
+  if(Array.isArray(value)) return value.map(item=>adminAuditFormatValue(item)).join(', ');
+  if(typeof value==='object') return JSON.stringify(value);
+  return String(value);
+}
+function adminAuditLabelize(field){
+  return String(field||'field')
+    .replace(/[._-]+/g,' ')
+    .replace(/\s+/g,' ')
+    .replace(/(^|\\s)[a-z]/g,m=>m.toUpperCase())
+    .trim();
+}
+
+function adminAuditDetailsSummary(row){
+  const details=row&&typeof row==='object'?row.details:{};
+  if(!details||typeof details!=='object'||!Object.keys(details).length) return 'No extra details.';
+  return Object.keys(details).map((key)=>adminAuditLabelize(key)+': '+adminAuditFormatValue(details[key])).join(' • ');
+}
 function adminAuditDetailsText(row){
   if(!row) return '';
-  const lines=['ACTION: '+row.action.toUpperCase(),'RESULT: '+row.result.toUpperCase(),'ACTOR: '+row.actor,
-    'TARGET: '+(row.target||'GLOBAL'),'TIME: '+(row.createdAt||'unknown')];
-  const detail=row.details&&Object.keys(row.details).length?JSON.stringify(row.details,null,2):'No extra details.';
-  lines.push('',detail); return lines.join('\n');
+  const detailLines=['ACTION: '+adminAuditLabelize(row.action),
+    'RESULT: '+adminAuditLabelize(row.result),
+    'ACTOR: '+row.actor,'TARGET: '+(row.target||'GLOBAL'),'TIME: '+(row.createdAt||'unknown')],
+    extra=adminAuditDetailsSummary(row);
+  detailLines.push('',extra); return detailLines.join('\n');
 }
 async function fetchAdminAuditLog(reset=false){
   if(!sb||!authUser||!isMainAdmin()){

@@ -647,6 +647,13 @@ function socialNotificationKey(value){
 function socialNotificationText(value,max){
   return String(value||'').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'').trim().slice(0,max);
 }
+function socialNotificationDisplayTitle(kind,value){
+  const raw=socialNotificationText(value,100),lower=raw.toLowerCase(),fallback=socialNotificationFallbackTitle(kind);
+  if(!raw) return fallback;
+  const looksConfusing=lower==='true'||lower==='false'||lower==='field'||lower==='unknown'||lower==='n/a'||lower==='null'||
+    (/^[_a-z]+$/.test(lower)&&lower.includes('_')&&lower.length<=28)||lower.startsWith('field ')||lower.startsWith('field_');
+  return looksConfusing?fallback:raw;
+}
 function socialNotificationFallbackTitle(kind){
   const labels={admin_message:'MESSAGE FROM OUTPOST ZERO',official_update:'OFFICIAL UPDATE',ban_applied:'ACCOUNT NOTICE',
     ban_lifted:'BAN LIFTED',weapon_temporary_granted:'TEMPORARY WEAPON GIFT',weapon_temporary_extended:'TEMPORARY GIFT EXTENDED',
@@ -658,7 +665,10 @@ function socialNotificationFallbackTitle(kind){
 function socialNotificationAuthor(value,kind){
   const text=socialNotificationText(value,48),looksPrivate=/\b[^\s@]+@[^\s@]+\.[^\s@]+\b/.test(text),
     looksUuid=/\b[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\b/i.test(text);
-  if(text&&!looksPrivate&&!looksUuid)return text;
+  const valueLower=String(text||'').toLowerCase(),looksConfusing=!text||valueLower==='true'||valueLower==='false'||valueLower==='field'||
+    valueLower==='field grant'||valueLower.startsWith('field ')||valueLower.startsWith('field_')||
+    (/^[_a-z]+$/.test(valueLower)&&valueLower.includes('_')&&valueLower.length<=28);
+  if(!looksConfusing&&text&&!looksPrivate&&!looksUuid)return text;
   return kind==='admin_message'?'OUTPOST ZERO STAFF':kind==='official_update'?'OUTPOST ZERO OFFICIAL':'OUTPOST ZERO SYSTEM';
 }
 function socialInboxUiKey(kind,sourceValue){
@@ -683,7 +693,7 @@ function socialNormalizeNotification(row,serverNow){
     resourceKey=socialNotificationText(row&&row.resource_key,180);
   if(!notificationKey||!SOCIAL_NOTIFICATION_KINDS.has(kind)||!message||!Number.isFinite(createdAt)||
      createdAt>serverNow+5*60000)return null;
-  return {notificationKey,kind,title:title||socialNotificationFallbackTitle(kind),message,
+  return {notificationKey,kind,title:socialNotificationDisplayTitle(kind,title),message,
     authorLabel:socialNotificationAuthor(row&&row.author_label,kind),resourceKey,
     effectiveUntil:Number.isFinite(effectiveUntil)?effectiveUntil:0,createdAt,
     readAt:Number.isFinite(readAt)?readAt:0,isGlobal:row&&row.is_global===true,
