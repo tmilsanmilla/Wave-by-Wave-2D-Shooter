@@ -43,6 +43,7 @@ const PE_GIFT_DURATIONS=Object.freeze([
 ]);
 let peStep='choose', peMode='edit', peTarget='', peData=null, peEdit=null, peBusy=false, peBusyToken=0, peEditorSession=0;
 let peApplyRetryReceipt=null;
+let adminNotificationTargetUsername='',adminNotificationComposerEpoch=0,adminNotificationSendOp=null,adminNotificationRetryReceipt=null,adminNotificationTargetFormOpen=false;
 // The loaded-player editor is taller than a phone (and grows as weapons are
 // added), so its body scrolls independently while the title/footer stay put.
 // Bounds are recalculated by drawScores every frame from the actual content.
@@ -93,13 +94,24 @@ function clearPostComposerPrivateState(){
     if(status)status.textContent='';
   }
 }
+function clearAdminNotificationComposerState(){
+  adminNotificationComposerEpoch++;adminNotificationTargetUsername='';adminNotificationSendOp=null;adminNotificationRetryReceipt=null;
+  if(adminNotificationTargetFormOpen&&typeof formOpen!=='undefined'&&formOpen&&typeof closeForm==='function')closeForm();
+  adminNotificationTargetFormOpen=false;
+  if(typeof document!=='undefined'){
+    const subject=document.getElementById('msgsubject');if(subject){subject.value='';subject.hidden=true;subject.disabled=false;}
+    const message=document.getElementById('msgmsg'),send=document.getElementById('msgsend'),cancel=document.getElementById('msgcancel');
+    if(message)message.disabled=false;if(send)send.disabled=false;if(cancel)cancel.disabled=false;
+  }
+}
 function clearMainOnlyAdminState(){
   const closeStaffReport=!!staffReport;
   bannerDraftEpoch++;pendingBanners=[];
   clearAdminAuditCache();scoreReqs=[];updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];
   aiLearningOpen=false;adminsOpen=false;storageOpen=false;clearPostComposerPrivateState();staffReport=false;
   composePickOpen=false;
-  if(msgOpen&&typeof msgKind!=='undefined'&&msgKind==='admin'){msgOpen=false;msgTo='';}
+  if(msgOpen&&typeof msgKind!=='undefined'&&(msgKind==='admin'||msgKind==='player_notification')){msgOpen=false;msgTo='';}
+  clearAdminNotificationComposerState();
   if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
   if(typeof weaponEditOpen!=='undefined')weaponEditOpen=false;
   if(typeof layoutMode!=='undefined'){layoutMode=false;if(typeof layoutDrag!=='undefined')layoutDrag=null;if(typeof layoutPick!=='undefined')layoutPick=null;}
@@ -121,6 +133,7 @@ function scrubPrivilegedUiForAccountChange(){
   if(typeof appealOperationReceipt!=='undefined')appealOperationReceipt=null;if(typeof appealSubmitBusy!=='undefined')appealSubmitBusy=false;
   if(typeof clearReaderState==='function')clearReaderState();
   msgOpen=false;msgTo='';clearPostComposerPrivateState();staffReport=false;if(typeof appealOpen!=='undefined')appealOpen=false;
+  clearAdminNotificationComposerState();
   if(typeof document!=='undefined')for(const id of ['scorewrap','msgwrap','appealwrap','postwrap','repwrap']){const el=document.getElementById(id);if(el)el.style.display='none';}
 }
 function enforceAdminRolePrivacy(previousRank=''){
@@ -795,19 +808,117 @@ function drawComposePick(){
 function openMsgCompose(to){
   msgTo=String(to||'').toLowerCase(); if(!msgTo) return;
   msgKind='admin'; socialMessageTo=null;
+  clearAdminNotificationComposerState();
   msgOpen=true; adminsOpen=false;
   $('msgwrap').style.display='flex'; $('msgstatus').textContent='';
   $('msgmsg').value='';
+  $('msgmsg').maxLength=500;
   $('msgto').textContent='to: '+msgTo;
   const title=$('msgbox').querySelector('h2'); if(title) title.textContent='✉ MESSAGE';
   try{ $('msgmsg').focus(); }catch(e){}
 }
+function adminNotificationUsername(value){
+  const username=String(value||'').trim().replace(/^@/,'');
+  return /^[A-Za-z0-9_]{3,32}$/.test(username)&&!/^(?:username_?not_?set|usernamenotset)$/i.test(username)?username:'';
+}
+function adminNotificationRpcMissing(error){
+  const text=[error&&error.code,error&&error.message,error&&error.details,error&&error.hint].filter(Boolean).join(' ').toLowerCase();
+  return /pgrst202|could not find.*function|function .* does not exist/.test(text);
+}
+function adminNotificationSemanticError(error){
+  const code=String(error&&error.code||'').toUpperCase(),message=String(error&&error.message||'').toUpperCase();
+  return ['P0001','22023','22004','42501'].includes(code)||/RATE_LIMIT|TARGET_UNAVAILABLE|OPERATION_CONFLICT|ACCESS REQUIRED/.test(message);
+}
+function adminNotificationComposerAvailable(){
+  return !!(sb&&isMainAdmin()&&typeof socialNotificationSqlReady!=='undefined'&&socialNotificationSqlReady===true);
+}
+function adminOpenPlayerTargetMessage(username=''){
+  if(!adminNotificationComposerAvailable()){
+    peNotice='Player messages need Administration 03 and creator/main access.';sfx('dry');return false;
+  }
+  const target=adminNotificationUsername(username);
+  if(!target){
+    const owner=currentAuthUserId(),epoch=adminPrivacyEpoch;
+    adminNotificationTargetFormOpen=true;
+    openForm({title:'MESSAGE A PLAYER',hint:'Enter the player’s chosen public username. Account emails and IDs are never shown here.',saveLabel:'WRITE MESSAGE',
+      fields:[{id:'username',label:'PLAYER USERNAME',type:'text',placeholder:'operator_7'}],onSave:values=>{
+        if(!adminPrivacyRequestCurrent(epoch,owner)||!isMainAdmin()){adminNotificationTargetFormOpen=false;closeForm();return false;}
+        const chosen=adminNotificationUsername(values.username);if(!chosen){formError('Enter a chosen username (3–32 letters, numbers, or _).');return false;}
+        adminNotificationTargetFormOpen=false;closeForm();return adminOpenPlayerTargetMessage(chosen);
+      },onCancel:()=>{adminNotificationTargetFormOpen=false;}});return true;
+  }
+  clearAdminNotificationComposerState();
+  adminNotificationTargetUsername=target;adminNotificationComposerEpoch++;
+  msgKind='player_notification';socialMessageTo=null;msgTo='@'+target;msgOpen=true;adminsOpen=false;
+  $('msgwrap').style.display='flex';$('msgstatus').textContent='';$('msgmsg').value='';$('msgmsg').maxLength=600;
+  const subject=$('msgsubject');subject.hidden=false;subject.disabled=false;subject.value='';
+  $('msgto').textContent='private Inbox notice to: @'+target;
+  const title=$('msgbox').querySelector('h2');if(title)title.textContent='✉ MESSAGE PLAYER';
+  try{subject.focus();}catch(error){}
+  return true;
+}
+function setAdminNotificationComposerBusy(value){
+  const busy=!!value;for(const id of ['msgsubject','msgmsg','msgsend','msgcancel']){const element=$(id);if(element)element.disabled=busy;}
+}
+async function sendAdminPlayerNotification(){
+  if(adminNotificationSendOp)return false;
+  const owner=currentAuthUserId(),epoch=adminPrivacyEpoch,composerEpoch=adminNotificationComposerEpoch,
+    target=adminNotificationUsername(adminNotificationTargetUsername),subject=String($('msgsubject').value||'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim(),
+    message=String($('msgmsg').value||'').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g,'').trim();
+  const contextCurrent=()=>adminPrivacyRequestCurrent(epoch,owner)&&isMainAdmin()&&msgOpen&&msgKind==='player_notification'&&
+    adminNotificationComposerEpoch===composerEpoch&&adminNotificationTargetUsername===target;
+  if(!contextCurrent()||!adminNotificationComposerAvailable()){$('msgstatus').textContent='Administration 03 or creator/main access is required.';return false;}
+  if(!target){$('msgstatus').textContent='Choose a valid player username.';return false;}
+  if(subject.length<1||subject.length>80){$('msgstatus').textContent='Subject must be 1–80 characters.';return false;}
+  if(message.length<1||message.length>600){$('msgstatus').textContent='Message must be 1–600 characters.';return false;}
+  const fingerprint=target.toLowerCase()+'\n'+subject+'\n'+message;
+  if(!adminNotificationRetryReceipt||adminNotificationRetryReceipt.fingerprint!==fingerprint)
+    adminNotificationRetryReceipt={fingerprint,operationId:adminOperationUuid()};
+  const operationId=adminNotificationRetryReceipt.operationId,
+    args={p_recipient_username:target,p_subject:subject,p_message:message,p_operation_id:operationId},op={owner,epoch,composerEpoch,target,operationId};
+  adminNotificationSendOp=op;setAdminNotificationComposerBusy(true);$('msgstatus').textContent='sending privately...';
+  try{
+    let answer=null,lastError=null;
+    for(let attempt=0;attempt<2;attempt++){
+      if(!contextCurrent()||adminNotificationSendOp!==op)return false;
+      const result=await sb.rpc('send_outpost_zero_admin_notification',args);
+      if(!contextCurrent()||adminNotificationSendOp!==op)return false;
+      if(!result.error){answer=Array.isArray(result.data)?result.data[0]:result.data;break;}
+      lastError=result.error;if(adminNotificationSemanticError(lastError))break;
+    }
+    if(!answer){
+      if(adminNotificationRpcMissing(lastError)){socialNotificationSqlReady=false;throw new Error('Administration 03 is not installed.');}
+      throw lastError||new Error('message unavailable');
+    }
+    const notificationKey=typeof socialNotificationKey==='function'?socialNotificationKey(answer.notification_key):'',recipient=adminNotificationUsername(answer.recipient_username),
+      createdAt=Date.parse(answer.created_at||'');
+    if(!notificationKey||!recipient||recipient.toLowerCase()!==target.toLowerCase()||!Number.isFinite(createdAt))throw new Error('Invalid message receipt.');
+    adminNotificationRetryReceipt=null;peNotice='PRIVATE INBOX MESSAGE SENT TO @'+recipient;
+    $('msgstatus').textContent='sent to @'+recipient;if(typeof socialNotificationPollAt!=='undefined')socialNotificationPollAt=0;
+    if(typeof socialPollNotifications==='function')void socialPollNotifications(true);
+    if(adminNotificationSendOp===op)adminNotificationSendOp=null;
+    closeMsgCompose();return true;
+  }catch(error){
+    if(!contextCurrent()||adminNotificationSendOp!==op)return false;
+    const text=String(error&&error.message||error||'').toUpperCase();
+    $('msgstatus').textContent=/RATE_LIMIT/.test(text)?'Too many messages. Try again later.':
+      /TARGET_UNAVAILABLE/.test(text)?'That chosen username is unavailable.':
+      /ADMINISTRATION 03/.test(text)?'Run Administration 03 before sending player messages.':'Could not send. Review the message and try again.';
+    return false;
+  }finally{
+    if(adminNotificationSendOp===op){adminNotificationSendOp=null;if(contextCurrent())setAdminNotificationComposerBusy(false);}
+  }
+}
 function closeMsgCompose(){
+  if(msgKind==='player_notification'&&adminNotificationSendOp)return false;
   msgOpen=false; $('msgwrap').style.display='none'; msgKind='admin'; socialMessageTo=null;
+  clearAdminNotificationComposerState();$('msgmsg').maxLength=500;
   const title=$('msgbox').querySelector('h2'); if(title) title.textContent='✉ MESSAGE';
+  return true;
 }
 async function sendMsg(){
   if(msgKind==='social'){ await sendSocialMessage(); return; }
+  if(msgKind==='player_notification'){await sendAdminPlayerNotification();return;}
   const txt=($('msgmsg').value||'').trim();
   if(!txt){ $('msgstatus').textContent='write something first'; return; }
   if(!sb){

@@ -363,11 +363,12 @@ let botLadder={tier:0,progress:0,winStreak:0,lossStreak:0,wins:0,losses:0,revisi
 let botLadderCanonical={tier:0,progress:0,winStreak:0,lossStreak:0,wins:0,losses:0,revision:0,updatedAt:''};
 let botLadderUserId='',botLadderLoaded=false,botLadderSyncState='guest',botLadderFetchedAt=0;
 let botLadderServerLoaded=false,botLadderCanonicalCached=false,botLadderRpcMissing=false;
-let botLadderFetchPromise=null,botLadderRequestVersion=0,botLadderLaunchPending='',botLadderPendingResult=null;
+let botLadderFetchPromise=null,botLadderRequestVersion=0,botLadderLaunchPending='',botLadderLaunchVersion=0,botLadderPendingResult=null;
 let botLadderResultQueue=[],botLadderResultQueueLoaded=false,botLadderQueueStorageReady=null;
 let botLadderCanonicalStorageReady=null;
 let botLadderQueueFlushPromise=null,botLadderQueueFlushRequested=false,botLadderQueueRetryTimer=null,botLadderQueueRetryLevel=0;
 let botLadderTombstones=[],botLadderTombstonesLoaded=false,botLadderSyncEventsBound=false;
+let botLadderProjectionBlocked=false,botLadderReservedMatchOwner='',botLadderReservedMatchId='';
 const botLadderTrainingRecoverySnapshots=new Map();
 const botLadderRuntimeMatches=new Map();
 
@@ -430,10 +431,16 @@ function normalizeBotLadder(raw){
   raw=raw&&typeof raw==='object'?raw:{};
   const whole=(value,max=Number.MAX_SAFE_INTEGER)=>{
     const n=Number(value);return Number.isFinite(n)?Math.min(max,Math.max(0,Math.floor(n))):0;
+  },tier=whole(raw.tier!=null?raw.tier:raw.difficulty,4),streak=value=>{
+    const rawValue=Number(value);if(!Number.isFinite(rawValue))return 0;
+    const normalized=Math.floor(rawValue);return normalized>=0&&normalized<=2?normalized:0;
   };
-  return {tier:whole(raw.tier!=null?raw.tier:raw.difficulty,4),progress:whole(raw.progress,BOT_LADDER_MAX_PROGRESS),
-    winStreak:whole(raw.win_streak!=null?raw.win_streak:raw.winStreak,3),
-    lossStreak:whole(raw.loss_streak!=null?raw.loss_streak:raw.lossStreak,2),
+  // A persisted streak is always the number of wins/losses toward the next
+  // three-result trigger: 0, 1, or 2. Older Impossible rows could contain 3;
+  // treating that completed cycle as 0 repairs their local cache immediately.
+  return {tier,progress:whole(raw.progress,tier===4?BOT_LADDER_MAX_PROGRESS:BOT_LADDER_MAX_PROGRESS-1),
+    winStreak:streak(raw.win_streak!=null?raw.win_streak:raw.winStreak),
+    lossStreak:streak(raw.loss_streak!=null?raw.loss_streak:raw.lossStreak),
     wins:whole(raw.wins),losses:whole(raw.losses),revision:whole(raw.revision),
     updatedAt:typeof raw.updated_at==='string'?raw.updated_at:(typeof raw.updatedAt==='string'?raw.updatedAt:'')};
 }
@@ -524,6 +531,13 @@ function botLadderQueueHasConflict(owner=botLadderUserId){return botLadderQueueE
 function botLadderQueueHasRecovery(owner=botLadderUserId){return botLadderQueueEntries(owner).some(entry=>entry.status==='recovery');}
 function botLadderQueueBlocksPlay(owner=botLadderUserId){return botLadderQueueEntries(owner).some(entry=>entry.status==='conflict'||entry.status==='recovery');}
 function botLadderQueueKey(owner,matchId){return botLadderOwnerId(owner)+'|'+botLadderResultUuid(matchId);}
+function botLadderNextQueuedAt(owner,clock=Date.now()){
+  owner=botLadderOwnerId(owner);if(!owner)return 0;
+  const latest=loadBotLadderResultQueue(true).filter(entry=>entry.owner===owner)
+    .reduce((value,entry)=>Math.max(value,entry.queuedAt),0),candidate=Math.floor(Number(clock));
+  if(latest>=Number.MAX_SAFE_INTEGER)return 0;
+  return Math.max(Number.isSafeInteger(candidate)&&candidate>0?candidate:1,latest+1);
+}
 function enqueueBotLadderResult(entry){
   entry=normalizeBotLadderQueueEntry(entry);if(!entry)return false;
   const queue=loadBotLadderResultQueue(true),key=botLadderQueueKey(entry.owner,entry.matchId),existing=queue.find(item=>botLadderQueueKey(item.owner,item.matchId)===key);
@@ -658,15 +672,16 @@ function saveBotLadderCanonicalCache(owner,state){
 function advanceBotLadderState(raw,won){
   const state=normalizeBotLadder(raw),next=Object.assign({},state);let delta=0,promoted=false,demoted=false;
   if(won){
-    next.wins++;next.winStreak=Math.min(next.winStreak+1,3);next.lossStreak=0;
+    const completedWinCycle=next.winStreak>=2;
+    next.wins++;next.winStreak=completedWinCycle?0:next.winStreak+1;next.lossStreak=0;
     if(next.progress<BOT_LADDER_MAX_PROGRESS){next.progress++;delta=1;}
-    if(next.tier<4&&(next.winStreak>=3||next.progress>=BOT_LADDER_MAX_PROGRESS)){
+    if(next.tier<4&&(completedWinCycle||next.progress>=BOT_LADDER_MAX_PROGRESS)){
       next.tier++;next.progress=0;next.winStreak=0;next.lossStreak=0;promoted=true;
     }
   }else{
-    next.losses++;next.winStreak=0;next.lossStreak=Math.min(next.lossStreak+1,3);
-    if(next.lossStreak>=3){
-      next.lossStreak=0;
+    const completedLossCycle=next.lossStreak>=2;
+    next.losses++;next.winStreak=0;next.lossStreak=completedLossCycle?0:next.lossStreak+1;
+    if(completedLossCycle){
       if(next.progress>0){next.progress--;delta=-1;}
       else if(next.tier>0){next.tier--;next.progress=9;delta=-1;demoted=true;}
     }
@@ -675,10 +690,12 @@ function advanceBotLadderState(raw,won){
 }
 function rebuildProjectedBotLadder(){
   const owner=botLadderOwnerId(botLadderUserId);let projected=normalizeBotLadder(botLadderCanonical);
+  botLadderProjectionBlocked=false;
   for(const entry of botLadderQueueEntries(owner)){
     // A frozen match can only count at its starting tier. Stop projection at a
     // conflict and let the server return the canonical mismatch decision.
-    if(entry.status==='conflict'||entry.status==='recovery'||entry.difficulty!==projected.tier)break;projected=advanceBotLadderState(projected,entry.won).state;
+    if(entry.status==='conflict'||entry.status==='recovery'||entry.difficulty!==projected.tier){botLadderProjectionBlocked=true;break;}
+    projected=advanceBotLadderState(projected,entry.won).state;
   }
   botLadder=projected;return normalizeBotLadder(botLadder);
 }
@@ -706,7 +723,8 @@ function applyBotLadderSnapshot(raw,expectedUserId,cachePersisted=false){
 function prepareBotLadderForAccount(userId){
   userId=String(userId||'');
   if(userId===botLadderUserId)return currentBotLadder();
-  botLadderRequestVersion++;botLadderLaunchPending='';botLadderPendingResult=null;botLadderFetchPromise=null;
+  botLadderRequestVersion++;botLadderLaunchVersion++;botLadderLaunchPending='';botLadderPendingResult=null;botLadderFetchPromise=null;
+  botLadderReservedMatchOwner='';botLadderReservedMatchId='';
   loadBotLadderResultQueue();loadBotLadderTombstones();botLadderUserId=userId;
   if(userId)snapshotBotLadderTrainingRecovery(userId);
   const cached=userId?loadBotLadderCanonicalCache(userId):null;
@@ -720,8 +738,10 @@ function botLadderReady(){
   return !!(liveId&&botLadderLoaded&&botLadderUserId===liveId);
 }
 function botLadderReadyForMatch(){
+  const owner=botLadderOwnerId(authUser&&authUser.id);
   return botLadderReady()&&botLadderSyncState!=='syncing'&&botLadderQueueStorageReady!==false&&
-    botLadderCanonicalStorageReady!==false&&!botLadderQueueBlocksPlay(botLadderUserId)&&botLadderQueueCount(botLadderUserId)<BOT_LADDER_RESULT_QUEUE_MAX;
+    botLadderCanonicalStorageReady!==false&&!botLadderQueueBlocksPlay(botLadderUserId)&&!botLadderProjectionBlocked&&
+    botLadderQueueCount(botLadderUserId)<BOT_LADDER_RESULT_QUEUE_MAX&&botLadderSecureMatchReady(owner);
 }
 async function refreshBotLadder(force=false){
   const expectedUserId=authUser&&String(authUser.id||'');
@@ -776,14 +796,29 @@ async function refreshBotLadder(force=false){
 function fetchBotLadder(force=false){return refreshBotLadder(force);}
 function createBotLadderMatchId(){
   const secure=typeof crypto!=='undefined'?crypto:null;
-  try{if(secure&&typeof secure.randomUUID==='function')return secure.randomUUID();}catch(e){}
+  try{if(secure&&typeof secure.randomUUID==='function'){
+    const id=botLadderResultUuid(secure.randomUUID());if(id)return id;
+  }}catch(e){}
   try{
     if(secure&&typeof secure.getRandomValues==='function'){
       const bytes=new Uint8Array(16);secure.getRandomValues(bytes);bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;
       const hex=Array.from(bytes,b=>b.toString(16).padStart(2,'0')).join('');
-      return hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20);
+      return botLadderResultUuid(hex.slice(0,8)+'-'+hex.slice(8,12)+'-'+hex.slice(12,16)+'-'+hex.slice(16,20)+'-'+hex.slice(20));
     }
   }catch(e){}return '';
+}
+function reserveBotLadderMatchId(owner){
+  owner=botLadderOwnerId(owner);if(!owner)return '';
+  if(botLadderReservedMatchOwner===owner&&botLadderResultUuid(botLadderReservedMatchId))return botLadderReservedMatchId;
+  const id=createBotLadderMatchId();botLadderReservedMatchOwner=id?owner:'';botLadderReservedMatchId=id;return id;
+}
+function takeBotLadderMatchId(owner){
+  owner=botLadderOwnerId(owner);const id=reserveBotLadderMatchId(owner);
+  if(id&&botLadderReservedMatchOwner===owner){botLadderReservedMatchOwner='';botLadderReservedMatchId='';return id;}
+  return '';
+}
+function botLadderSecureMatchReady(owner=botLadderOwnerId(authUser&&authUser.id)){
+  owner=botLadderOwnerId(owner);return !owner||!!reserveBotLadderMatchId(owner);
 }
 function botLadderProgressForTier(tier,state=botLadder){
   state=normalizeBotLadder(state);tier=clamp(Math.floor(+tier||0),0,4);
@@ -791,15 +826,16 @@ function botLadderProgressForTier(tier,state=botLadder){
 }
 function botLadderProgressText(state=botLadder){
   state=normalizeBotLadder(state);
-  return botDifficultyName(state.tier)+' · PROGRESS '+state.progress+'/'+BOT_LADDER_MAX_PROGRESS+' · WIN STREAK '+state.winStreak+'/3 · LOSS STREAK '+state.lossStreak+'/3';
+  return botDifficultyName(state.tier)+' · SCORE '+state.progress+'/'+BOT_LADDER_MAX_PROGRESS+' · WIN STREAK '+state.winStreak+'/3 · LOSS STREAK '+state.lossStreak+'/3';
 }
 function initializeBotLadderMatch(match,mode,difficulty,adminTest=false,modelId=activeBotModelId){
-  const accountId=!adminTest&&botLadderReadyForMatch()?botLadderOwnerId(authUser&&authUser.id):'',matchId=accountId?createBotLadderMatchId():'',
-    canSubmit=!!(accountId&&matchId);
-  match.botLadderMode=String(mode||'ai1v1');match.botDifficulty=clamp(Math.floor(+difficulty||0),0,4);
+  const normalizedMode=String(mode||'ai1v1'),eligibleMode=normalizedMode==='ai1v1'||normalizedMode==='ai2v2',startState=currentBotLadder(),
+    accountId=!adminTest&&eligibleMode&&botLadderReadyForMatch()?botLadderOwnerId(authUser&&authUser.id):'',
+    matchId=accountId?takeBotLadderMatchId(accountId):'',canSubmit=!!(accountId&&matchId);
+  match.botLadderMode=normalizedMode;match.botDifficulty=accountId?startState.tier:clamp(Math.floor(+difficulty||0),0,4);
   match.botModelId=botModelRelease(modelId).id;
   match.botAdminTest=!!adminTest;match.botLadderAccountId=accountId;match.botLadderReadOnly=!canSubmit;
-  match.botLadderStartState=currentBotLadder();match.botLadderResultState=currentBotLadder();match.botLadderRecorded=false;
+  match.botLadderStartState=startState;match.botLadderResultState=startState;match.botLadderRecorded=false;match.botLadderCompetitiveStarted=false;
   match.botLadderMatchId=matchId;match.botLadderSubmitAttempts=0;
   match.botLadderSubmitInFlight=false;match.botLadderSubmitDone=!canSubmit;match.botLadderRetryTimer=null;
   match.botLadderSubmitWon=null;match.botLadderSubmitResponse=null;
@@ -818,8 +854,23 @@ function finishBotLadderSubmission(match,status){
   match.botLadderSubmitInFlight=false;match.botLadderSubmitDone=true;if(status)match.botLadderSyncStatus=status;
   if(botLadderPendingResult===match)botLadderPendingResult=null;
 }
-function cancelBotLadderSubmission(match){
+function botLadderMatchForfeitEligible(match){
+  return !!(match&&match.botLadderCompetitiveStarted===true&&!match.botAdminTest&&!match.botLadderRecorded&&
+    !match.botLadderSubmitDone&&botLadderOwnerId(match.botLadderAccountId)&&botLadderResultUuid(match.botLadderMatchId)&&
+    (match.botLadderMode==='ai1v1'||match.botLadderMode==='ai2v2'));
+}
+function markBotLadderMatchStarted(match){
+  if(!match||match.botLadderRecorded||match.botLadderSubmitDone)return false;
+  match.botLadderCompetitiveStarted=true;return botLadderMatchForfeitEligible(match);
+}
+function recordBotLadderForfeit(match,options={}){
+  if(!botLadderMatchForfeitEligible(match))return false;
+  match.botLadderForfeitReason=String(options&&options.reason||'left_match').slice(0,32);
+  return recordCompletedBotLadderMatch(false,match,options);
+}
+function cancelBotLadderSubmission(match,options={}){
   if(!match||match.botLadderSubmitDone)return;
+  if(recordBotLadderForfeit(match,options))return;
   if(match.botLadderRecorded)return; // a completed result owns a durable retry even after the arena closes
   if(match.botLadderRetryTimer){clearTimeout(match.botLadderRetryTimer);match.botLadderRetryTimer=null;}
   if(!match.botLadderSubmitInFlight){finishBotLadderSubmission(match,'cancelled');botLadderRuntimeMatches.delete(botLadderQueueKey(match.botLadderAccountId,match.botLadderMatchId));}
@@ -839,27 +890,54 @@ function botLadderQueuedOutcome(match,won){
   match.botLadderDelta=outcome.delta;match.botLadderPromoted=outcome.promoted;match.botLadderDemoted=outcome.demoted;
   match.botLadderResultState=liveOwner===owner&&botLadderUserId===owner?rebuildProjectedBotLadder():outcome.state;return outcome;
 }
-function persistCompletedBotLadderMatch(match){
+function persistCompletedBotLadderMatch(match,options={}){
   if(!match||!match.botLadderRecorded||!match.botLadderAccountId||!match.botLadderMatchId)return false;
+  const deferSync=options&&options.deferSync===true||match.botLadderDeferSync===true;
+  if(deferSync)match.botLadderDeferSync=true;
+  if(!match.botLadderQueuedAt)match.botLadderQueuedAt=botLadderNextQueuedAt(match.botLadderAccountId);
   const entry={v:1,owner:match.botLadderAccountId,matchId:match.botLadderMatchId,won:!!match.botLadderSubmitWon,
-    difficulty:match.botDifficulty,queuedAt:match.botLadderQueuedAt||Date.now()};
-  match.botLadderQueuedAt=entry.queuedAt;
-  if(!enqueueBotLadderResult(entry)){
+    difficulty:match.botDifficulty,queuedAt:match.botLadderQueuedAt};
+  if(!entry.queuedAt||!enqueueBotLadderResult(entry)){
     match.botLadderSubmitDone=false;match.botLadderSyncStatus=botLadderQueueCount(entry.owner)>=BOT_LADDER_RESULT_QUEUE_MAX?'queue_full':'save_failed';
     botLadderPendingResult=match;
     if(!match.botLadderRetryTimer)match.botLadderRetryTimer=setTimeout(()=>{match.botLadderRetryTimer=null;persistCompletedBotLadderMatch(match);},2500);
     return false;
   }
   botLadderQueuedOutcome(match,entry.won);finishBotLadderSubmission(match,
-    botLadderOwnerId(authUser&&authUser.id)===entry.owner?(botLadderSyncState==='ready'?'queued':'queued_offline'):'queued_owner');
-  if(botLadderOwnerId(authUser&&authUser.id)===entry.owner){botLadderSyncState='queued';void flushBotLadderResultQueue();}
+    botLadderOwnerId(authUser&&authUser.id)===entry.owner&&!deferSync?(botLadderSyncState==='ready'?'queued':'queued_offline'):'queued_owner');
+  if(botLadderOwnerId(authUser&&authUser.id)===entry.owner&&!deferSync){botLadderSyncState='queued';void flushBotLadderResultQueue();}
   return true;
 }
-function recordCompletedBotLadderMatch(won,match){
+function recordCompletedBotLadderMatch(won,match,options={}){
   if(!match||match.botLadderRecorded)return false;match.botLadderRecorded=true;match.botLadderSubmitWon=!!won;match.botLadderResultState=currentBotLadder();
   if(match.botAdminTest){finishBotLadderSubmission(match,'admin_test');return true;}
   if(!match.botLadderAccountId||!match.botLadderMatchId){finishBotLadderSubmission(match,authUser?'offline':'guest');return true;}
-  persistCompletedBotLadderMatch(match);return true;
+  persistCompletedBotLadderMatch(match,options);return true;
+}
+function activeLocalBotLadderMatch(){
+  if(typeof isBotArena==='function'&&isBotArena())return arena;
+  if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2())return partyCpuMatch;
+  return null;
+}
+function prepareBotLadderForAuthChange(nextUserId){
+  const previousUserId=botLadderOwnerId(authUser&&authUser.id),next=botLadderOwnerId(nextUserId);
+  if(previousUserId===next)return false;
+  const match=activeLocalBotLadderMatch();if(!match)return false;
+  // Supabase has already changed its internal JWT by the time the auth event
+  // reaches this callback. Persist owner A's forfeit synchronously, but never
+  // issue an RPC that could run under owner B's token.
+  cancelBotLadderSubmission(match,{deferSync:true,reason:'account_changed'});
+  if(typeof isBotArena==='function'&&isBotArena()&&typeof leaveArena==='function')leaveArena('CPU match ended because the account changed.',false);
+  else if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()&&typeof offlineCpu2v2Leave==='function')
+    offlineCpu2v2Leave('CPU match ended because the account changed.',false);
+  return true;
+}
+function handleBotLadderPageExit(event){
+  // A persisted pagehide is only a BFCache suspension; returning must resume
+  // the same match without a phantom loss. Reload/close uses persisted=false.
+  if(event&&event.persisted===true)return false;
+  const match=activeLocalBotLadderMatch();if(!match)return false;
+  return !!recordBotLadderForfeit(match,{deferSync:true,reason:'page_exit'});
 }
 function botLadderRuntimeMatch(entry){return botLadderRuntimeMatches.get(botLadderQueueKey(entry&&entry.owner,entry&&entry.matchId))||null;}
 function publishBotLadderQueueStatus(entry,status,row=null,cloudFinal=false){
@@ -961,7 +1039,9 @@ function bindBotLadderSyncEvents(){
     rebuildProjectedBotLadder();botLadderSyncState=botLadderQueueHasConflict(owner)?'conflict':botLadderQueueHasRecovery(owner)?'reconciling':botLadderQueueCount(owner)?'queued':botLadderServerLoaded?'ready':'offline';
     if(botLadderQueueCount(owner)&&!botLadderQueueHasConflict(owner))void flushBotLadderResultQueue();
   };
-  if(typeof window!=='undefined'&&window.addEventListener){window.addEventListener('online',resume);window.addEventListener('focus',resume);window.addEventListener('storage',storageChanged);}
+  if(typeof window!=='undefined'&&window.addEventListener){
+    window.addEventListener('online',resume);window.addEventListener('focus',resume);window.addEventListener('storage',storageChanged);
+  }
   if(typeof document!=='undefined'&&document.addEventListener)document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible')resume();});
   return true;
 }
@@ -977,14 +1057,14 @@ function botLadderMatchResultText(match){
   if(status==='offline')return 'LADDER OFFLINE · RESULT NOT RECORDED';
   if(status==='queued'||status==='queued_offline'||status==='queued_owner'||status==='queued_rate_limited'){
     const prefix=match&&match.botLadderPromoted?'PROMOTED TO '+botDifficultyName(state.tier):match&&match.botLadderDemoted?'RANKED DOWN TO '+botDifficultyName(state.tier):
-      match&&match.botLadderDelta<0?'3-LOSS PENALTY · -1 PROGRESS':match&&match.botLadderDelta>0?'WIN +1 PROGRESS':'RESULT SAVED';
+      match&&match.botLadderDelta<0?'3-LOSS PENALTY · -1 SCORE':match&&match.botLadderDelta>0?'WIN +1 SCORE':'RESULT SAVED';
     return prefix+' · '+progress+' · SAVED ON THIS DEVICE · WILL SYNC';
   }
   if(status==='difficulty_mismatch'||status==='duplicate_conflict')return 'RESULT CONFLICT · RECEIPT KEPT ON THIS DEVICE · '+progress;
   if(match&&match.botLadderPromoted)return 'PROMOTED TO '+botDifficultyName(state.tier)+' · '+progress;
   if(match&&match.botLadderDemoted)return 'RANKED DOWN TO '+botDifficultyName(state.tier)+' · '+progress;
-  if(match&&match.botLadderDelta<0)return '3-LOSS PENALTY · -1 PROGRESS · '+progress;
-  if(match&&match.botLadderDelta>0)return 'WIN +1 PROGRESS · '+progress;
+  if(match&&match.botLadderDelta<0)return '3-LOSS PENALTY · -1 SCORE · '+progress;
+  if(match&&match.botLadderDelta>0)return 'WIN +1 SCORE · '+progress;
   return progress;
 }
 function arenaBotTuning(difficulty=botLadder.tier,modelId=activeBotModelId){
@@ -1016,9 +1096,10 @@ function restartAiLearningBotTest(match=arena){
   return true;
 }
 function deferBotLadderMatchStart(mode,start){
+  mode=String(mode||'ai1v1');
   const accountId=authUser&&String(authUser.id||'');
   if(botLadderLaunchPending)return true;
-  botLadderLaunchPending=String(mode||'ai1v1');
+  const launchVersion=++botLadderLaunchVersion;botLadderLaunchPending=mode;
   const originArena=arena,originPartyCpu=typeof partyCpuMatch!=='undefined'?partyCpuMatch:null,
     fromBotResult=mode==='ai1v1'&&isBotArena()&&arena.phase==='match_end',
     fromTeamResult=mode==='ai2v2'&&typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()&&partyCpuMatch.phase==='match_end';
@@ -1026,19 +1107,20 @@ function deferBotLadderMatchStart(mode,start){
   const ladderRequest=accountId?refreshBotLadder(true):Promise.resolve(currentBotLadder());
   void Promise.all([ladderRequest,refreshActiveBotModel(true)]).then(()=>{
     const liveAccountId=authUser&&String(authUser.id||'')||'';
-    if(botLadderLaunchPending!==mode||liveAccountId!==accountId)return;
+    if(launchVersion!==botLadderLaunchVersion||botLadderLaunchPending!==mode||liveAccountId!==accountId)return;
     botLadderLaunchPending='';
     // Leaving the loadout screen while the RPC is in flight cancels launch.
     // A late cloud response may update the account cache but cannot start play.
     const fromLoadout=pendingGameMode===mode&&selPage==='loadout',
       botResultStill=fromBotResult&&arena===originArena&&isBotArena()&&arena.phase==='match_end',
       teamResultStill=fromTeamResult&&partyCpuMatch===originPartyCpu&&isLocalCpu2v2()&&partyCpuMatch.phase==='match_end';
-    if(!fromLoadout&&!botResultStill&&!teamResultStill)return;
+    const originStill=fromBotResult?botResultStill:fromTeamResult?teamResultStill:fromLoadout;
+    if(!originStill)return;
     start();
   });
   return true;
 }
-function cancelBotLadderLaunch(){botLadderLaunchPending='';}
+function cancelBotLadderLaunch(){botLadderLaunchVersion++;botLadderLaunchPending='';}
 function startBotArena(options){
   options=options&&typeof options==='object'?options:{};
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
@@ -1046,7 +1128,8 @@ function startBotArena(options){
   if(!adminTest&&options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai1v1',()=>startBotArena(Object.assign({},options,{ladderReady:true}))))return true;
   if(!adminTest&&authUser&&!botLadderReadyForMatch()){
-    if(arena)arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'CPU ladder is still syncing. Try Start again.';
+    if(arena)arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':
+      !botLadderSecureMatchReady()?'Secure CPU result save is unavailable in this browser.':'CPU ladder is still syncing. Try Start again.';
     if(typeof sfx==='function')sfx('dry');return false;
   }
   const difficulty=adminTest?4:(botLadderReadyForMatch()?botLadder.tier:0),
@@ -1116,7 +1199,7 @@ function arenaBotStartRound(){
 function arenaBotRoundTick(){
   if(!isBotArena()||!arena.active) return;
   if(arena.phase==='countdown'&&now>=arena.roundStartAt){
-    arena.phase='fight'; aiming=false; rmbAim=false;
+    arena.phase='fight';markBotLadderMatchStarted(arena); aiming=false; rmbAim=false;
     if(typeof duelArenaFitZoom==='function') zoom=duelArenaFitZoom();
     waveMsg='FIGHT'; waveMsgT=now+800;
   }

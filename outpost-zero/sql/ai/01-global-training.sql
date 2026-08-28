@@ -15,12 +15,16 @@ create table if not exists public.outpost_zero_bot_ladder (
   user_id uuid primary key references auth.users(id) on delete cascade,
   tier smallint not null default 0 check (tier between 0 and 4),
   progress smallint not null default 0 check (progress between 0 and 10),
-  win_streak smallint not null default 0 check (win_streak between 0 and 3),
-  loss_streak smallint not null default 0 check (loss_streak between 0 and 3),
+  win_streak smallint not null default 0,
+  loss_streak smallint not null default 0,
   wins bigint not null default 0 check (wins >= 0),
   losses bigint not null default 0 check (losses >= 0),
   revision bigint not null default 0,
   updated_at timestamptz not null default now(),
+  constraint outpost_zero_bot_ladder_win_streak_cycle
+    check (win_streak between 0 and 2),
+  constraint outpost_zero_bot_ladder_loss_streak_cycle
+    check (loss_streak between 0 and 2),
   constraint outpost_zero_bot_ladder_lower_tier_progress
     check (tier = 4 or progress <= 9)
 );
@@ -32,8 +36,45 @@ update public.outpost_zero_bot_ladder set revision = 0
 where revision is null or revision < 0;
 alter table public.outpost_zero_bot_ladder alter column revision set default 0;
 alter table public.outpost_zero_bot_ladder alter column revision set not null;
+
+-- A completed three-result streak is an event, not a stored display value.
+-- An early ladder build could leave Impossible wins at 3 forever because no
+-- promotion existed above tier 4. Repair those rows once and advance their
+-- revision so every cached client accepts the corrected canonical snapshot.
+update public.outpost_zero_bot_ladder
+set win_streak = case when win_streak > 2 then 0 else win_streak end,
+    loss_streak = case when loss_streak > 2 then 0 else loss_streak end,
+    revision = revision + 1,
+    updated_at = pg_catalog.clock_timestamp()
+where win_streak > 2 or loss_streak > 2;
+
+-- Replace the unnamed 0..3 checks from the first ladder release. Named 0..2
+-- constraints make the visible 0, 1, 2, reset cycle a database invariant and
+-- keep this entire file safe to rerun on both old and fresh installations.
+alter table public.outpost_zero_bot_ladder
+  drop constraint if exists outpost_zero_bot_ladder_win_streak_check;
+alter table public.outpost_zero_bot_ladder
+  drop constraint if exists outpost_zero_bot_ladder_loss_streak_check;
 do $block$
 begin
+  if not exists (
+    select 1 from pg_catalog.pg_constraint
+    where conrelid = 'public.outpost_zero_bot_ladder'::regclass
+      and conname = 'outpost_zero_bot_ladder_win_streak_cycle'
+  ) then
+    alter table public.outpost_zero_bot_ladder
+      add constraint outpost_zero_bot_ladder_win_streak_cycle
+      check (win_streak between 0 and 2);
+  end if;
+  if not exists (
+    select 1 from pg_catalog.pg_constraint
+    where conrelid = 'public.outpost_zero_bot_ladder'::regclass
+      and conname = 'outpost_zero_bot_ladder_loss_streak_cycle'
+  ) then
+    alter table public.outpost_zero_bot_ladder
+      add constraint outpost_zero_bot_ladder_loss_streak_cycle
+      check (loss_streak between 0 and 2);
+  end if;
   if not exists (
     select 1 from pg_catalog.pg_constraint
     where conrelid = 'public.outpost_zero_bot_ladder'::regclass
@@ -174,7 +215,12 @@ begin
       false,
       case when v_existing.won = p_won and v_existing.difficulty = p_difficulty
         then 'duplicate'::text else 'duplicate_conflict'::text end,
-      0, false, false;
+      case when v_existing.won = p_won and v_existing.difficulty = p_difficulty
+        then v_existing.delta::integer else 0 end,
+      case when v_existing.won = p_won and v_existing.difficulty = p_difficulty
+        then v_existing.promoted else false end,
+      case when v_existing.won = p_won and v_existing.difficulty = p_difficulty
+        then v_existing.demoted else false end;
     return;
   end if;
 
@@ -225,6 +271,11 @@ begin
       v_state.win_streak := 0;
       v_state.loss_streak := 0;
       v_promoted := true;
+    elsif v_state.win_streak >= 3 then
+      -- Impossible is the ceiling, but its consecutive-win bar must still
+      -- complete and restart instead of becoming permanently stuck at 3.
+      v_state.win_streak := 0;
+      v_state.loss_streak := 0;
     end if;
   else
     v_state.losses := v_state.losses + 1;

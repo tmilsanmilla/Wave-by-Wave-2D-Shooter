@@ -78,17 +78,18 @@ function drawHubPosts(topY, maxBottom){
   ctx.textBaseline='alphabetic';
   return topY+bh;
 }
-let readerOpen=false, readerTitle='', readerMeta='', readerBody='', readerRects=[], readerScroll=0, readerAccess='public';
+let readerOpen=false, readerTitle='', readerMeta='', readerBody='', readerRects=[], readerScroll=0, readerAccess='public',readerAction=null;
 function clearReaderState(){
-  readerOpen=false;readerTitle='';readerMeta='';readerBody='';readerRects=[];readerScroll=0;readerAccess='public';
+  readerOpen=false;readerTitle='';readerMeta='';readerBody='';readerRects=[];readerScroll=0;readerAccess='public';readerAction=null;
 }
 function readerAccessAllowed(){
   return readerAccess==='main'?isMainAdmin():readerAccess==='admin'?isAdmin():true;
 }
 function enforceReaderAccess(){if(readerOpen&&!readerAccessAllowed()){clearReaderState();return false;}return true;}
-function openReader(title, meta, body, access='public'){
+function openReader(title, meta, body, access='public',action=null){
   readerOpen=true; readerTitle=String(title||''); readerMeta=String(meta||'');
   readerBody=String(body||''); readerScroll=0;readerAccess=['admin','main'].includes(access)?access:'public';
+  readerAction=action&&typeof action.run==='function'?{label:String(action.label||'OPEN').slice(0,20),owner:String(action.owner||''),run:action.run}:null;
 }
 function readerLines(maxW){
   const out=[],width=Math.max(1,Number(maxW)||1);
@@ -137,7 +138,7 @@ function drawReader(){
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(readerMeta, pw-24), W/2, py+40);
   readerRects=[];
-  const x0=px+18, top=py+56, bottom=py+ph-46, lh=15;
+  const footerButtonH=44,x0=px+18, top=py+56, bottom=py+ph-footerButtonH-12, lh=15;
   ctx.font='11px ui-monospace,Consolas,monospace';
   // measure once with the arrow gutter reserved, so the two can never collide
   const gutter=58;
@@ -171,7 +172,9 @@ function drawReader(){
     ctx.textAlign='right'; ctx.fillStyle='#6b7455'; ctx.font='8px ui-monospace,Consolas,monospace';
     ctx.fillText((readerScroll+1)+'-'+Math.min(lines.length,readerScroll+fit)+' of '+lines.length, px+pw-14, bottom+12);
   }
-  const cbw=Math.min(130,(pw-50)/2), cbh=28, gap=10, cby=py+ph-36;
+  const actions=readerAction?[['action',readerAction.label,'#bfa8ff'],['copy','COPY TEXT','#a7c15e'],['close','CLOSE','#7fd8ff']]:
+    [['copy','COPY TEXT','#a7c15e'],['close','CLOSE','#7fd8ff']],gap=8,
+    cbw=Math.min(130,(pw-40-gap*(actions.length-1))/actions.length), cbh=footerButtonH, cby=py+ph-cbh-6;
   const button=(id,label,bx,col)=>{
     readerRects.push({x:bx,y:cby,w:cbw,h:cbh,id});
     const hv=mouse.x>=bx&&mouse.x<=bx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
@@ -180,11 +183,8 @@ function drawReader(){
     ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=hv?'#101208':'#bfe8ff';
     ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(label,bx+cbw/2,cby+cbh/2);
   };
-  // Center the two actions as one group.  `first` is the left edge of COPY,
-  // not the midpoint between the buttons.
-  const first=W/2-(cbw*2+gap)/2;
-  button('copy','COPY TEXT',first,'#a7c15e');
-  button('close','CLOSE',first+cbw+gap,'#7fd8ff');
+  const first=W/2-(cbw*actions.length+gap*(actions.length-1))/2;
+  actions.forEach((item,index)=>button(item[0],item[1],first+index*(cbw+gap),item[2]));
   ctx.textAlign='left'; ctx.textBaseline='top';
 }
 async function copyReaderText(){
@@ -199,6 +199,11 @@ function readerClick(){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       if(r.id==='close'){ clearReaderState(); sfx('swap'); return; }
       if(r.id==='copy'){ copyReaderText(); return; }
+      if(r.id==='action'){
+        const action=readerAction,owner=authUser?String(authUser.id||''):'';
+        if(!action||action.owner&&action.owner!==owner){clearReaderState();sfx('dry');return;}
+        try{action.run();sfx('swap');}catch(error){clearReaderState();sfx('dry');}return;
+      }
       if(r.id==='up'){ readerScroll=Math.max(0,readerScroll-3); sfx('aim'); return; }
       if(r.id==='down'){ readerScroll+=3; sfx('aim'); return; }
       return;
@@ -1186,6 +1191,9 @@ function drawScores(){
     if(canEditPlayer())
       big('go_ban','\u26D4 BAN','temporary or permanent \u00b7 account / device / leaderboard',
           ['rgba(208,85,72,0.14)','rgba(208,85,72,0.32)','#d05548','#e0a8a0']);
+    if(typeof adminNotificationComposerAvailable==='function'&&adminNotificationComposerAvailable())
+      big('go_message','\u2709 MESSAGE PLAYER','send a private Inbox notice by chosen username',
+          ['rgba(191,168,255,0.14)','rgba(191,168,255,0.32)','#bfa8ff','#e5dcff']);
     y+=4;
     if(!canEditPlayer()) return peFooter(px,py,pw,ph);
     ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
@@ -1461,6 +1469,7 @@ function scoresClick(){
       if(id==='back'){ peStep='choose'; peData=null; resetPlayerEditScroll(); sfx('swap'); return; }
       if(id==='go_edit'){ peMode='edit'; openScoreEdit(); sfx('swap'); return; }
       if(id==='go_ban'){ if(!canEditPlayer()){ sfx('dry'); return; } peMode='ban'; openScoreEdit(); sfx('swap'); return; }
+      if(id==='go_message'){ if(typeof adminOpenPlayerTargetMessage==='function')adminOpenPlayerTargetMessage();else sfx('dry'); return; }
       if(id==='busy'){sfx('dry');return;}
       if(id==='apply'){ if(canEditLoadedPlayer() && peDirty()) peApply(); else sfx('dry'); return; }
       if(!canEditLoadedPlayer() && (id.indexOf('n_')===0||id.indexOf('p:')===0||id.indexOf('m:')===0||id.indexOf('tp:')===0||id.indexOf('tm:')===0||id.indexOf('pp:')===0||id.indexOf('pm:')===0)){ sfx('dry'); return; }

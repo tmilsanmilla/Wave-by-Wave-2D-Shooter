@@ -1,16 +1,81 @@
 "use strict";
 
 /* ---------------- render: world ---------------- */
-function drawRemoteShotVisuals(list){
+const HOSTILE_PROJECTILE_HEAD_RADIUS_PX=6, HOSTILE_PROJECTILE_HALO_RADIUS_PX=8;
+function hostileProjectileCollisionRadius(projectile){
+  const b=projectile||{};
+  if(Number.isFinite(+b.dangerRadius))return Math.max(3,Math.min(32,+b.dangerRadius));
+  if(b.h)return Math.max(9,Number.isFinite(+b.r)?+b.r:0);
+  if(b.king)return 8;
+  if(b.botArena)return Math.max(3,Math.min(16,3+(Number.isFinite(+b.fg)?Math.max(0,+b.fg):0)));
+  if(b.team==='B')return 4;
+  return 3;
+}
+function hostileProjectileProfile(projectile,source){
+  if(source==='firework')return {danger:'#ff3f36',accent:'#ffd37a',tail:30,head:7,diamond:true};
+  if(projectile&&projectile.h)return {danger:'#ff3f36',accent:'#ffe0a3',tail:34,head:7};
+  if(projectile&&projectile.king)return {danger:'#ff275f',accent:Math.sin(now/85)>0?'#ffd3ff':'#fff0d4',tail:25,head:7.5};
+  if(source==='remote')return {danger:'#ff3b34',accent:projectile&&projectile.col||'#fff1dc',tail:30,head:6.5};
+  if(source==='cpu')return {danger:'#ff3b34',accent:'#fff0dc',tail:28,head:6.5};
+  if(projectile&&projectile.botArena)return {danger:'#ff3b34',accent:'#fff0dc',tail:32,head:6.5};
+  return {danger:'#ff4438',accent:'#fff2de',tail:27,head:HOSTILE_PROJECTILE_HEAD_RADIUS_PX};
+}
+function drawHostileProjectileCue(projectile,source='enemy'){
+  const b=projectile||{},x=+b.x,y=+b.y,vx=+b.vx||0,vy=+b.vy||0;
+  if(!Number.isFinite(x)||!Number.isFinite(y))return false;
+  const profile=hostileProjectileProfile(b,source),scale=1/Math.max(0.05,+zoom||1);
+  const speed=Math.hypot(vx,vy),ux=speed?vx/speed:0,uy=speed?vy/speed:0;
+  const tail=profile.tail*scale,head=profile.head*scale;
+  const dangerRadius=Math.max((profile.head+1)*scale,hostileProjectileCollisionRadius(b));
+  const halo=Math.max(HOSTILE_PROJECTILE_HALO_RADIUS_PX*scale,dangerRadius+1.5*scale);
+  ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+  // Every hostile family gets the same black/red danger silhouette. Weapon
+  // color is confined to the small inner core, so it can never read as an
+  // allied blue or a local gold tracer on dark, portal, or TNT backgrounds.
+  ctx.strokeStyle='rgba(20,4,5,.94)';ctx.lineWidth=8*scale;
+  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-ux*tail,y-uy*tail);ctx.stroke();
+  ctx.strokeStyle=profile.danger;ctx.lineWidth=5*scale;
+  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-ux*tail,y-uy*tail);ctx.stroke();
+  ctx.strokeStyle=profile.accent;ctx.lineWidth=1.7*scale;
+  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-ux*tail*.58,y-uy*tail*.58);ctx.stroke();
+  ctx.fillStyle='rgba(15,3,4,.96)';ctx.beginPath();ctx.arc(x,y,halo,0,TAU);ctx.fill();
+  ctx.strokeStyle=profile.danger;ctx.lineWidth=2*scale;ctx.beginPath();ctx.arc(x,y,dangerRadius,0,TAU);ctx.stroke();
+  ctx.fillStyle=profile.danger;ctx.beginPath();ctx.arc(x,y,head,0,TAU);ctx.fill();
+  ctx.strokeStyle='#270609';ctx.lineWidth=1.7*scale;ctx.stroke();
+  if(profile.diamond){
+    const d=4.1*scale;ctx.fillStyle=profile.accent;ctx.beginPath();
+    ctx.moveTo(x,y-d);ctx.lineTo(x+d,y);ctx.lineTo(x,y+d);ctx.lineTo(x-d,y);ctx.closePath();ctx.fill();
+  }else{
+    ctx.fillStyle=profile.accent;ctx.beginPath();ctx.arc(x,y,2.3*scale,0,TAU);ctx.fill();
+  }
+  ctx.restore();return true;
+}
+function drawRemoteShotVisuals(list,hostile=false){
   if(!Array.isArray(list)||!list.length)return;
-  ctx.lineCap='round';
+  if(hostile){for(const b of list)drawHostileProjectileCue(b,'remote');return;}
+  ctx.save();ctx.lineCap='round';
   for(const b of list){
     const speed=Math.hypot(+b.vx||0,+b.vy||0),ux=speed?b.vx/speed:0,uy=speed?b.vy/speed:0;
-    ctx.strokeStyle=b.col||'rgba(255,210,145,.9)';ctx.lineWidth=3.2/zoom;
+    ctx.strokeStyle=b.col||'rgba(127,216,255,.9)';ctx.lineWidth=3.2/zoom;
     ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-ux*22,b.y-uy*22);ctx.stroke();
-    ctx.strokeStyle='#fff5da';ctx.lineWidth=1.2/zoom;
+    ctx.strokeStyle='#eaf8ff';ctx.lineWidth=1.2/zoom;
     ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-ux*12,b.y-uy*12);ctx.stroke();
   }
+  ctx.restore();
+}
+function drawRemoteFireworkExplosionVisuals(list){
+  if(!Array.isArray(list)||!list.length)return;
+  const scale=1/Math.max(0.05,+zoom||1);ctx.save();
+  for(const fx of list){
+    if(!fx||!Number.isFinite(+fx.x)||!Number.isFinite(+fx.y))continue;
+    const max=Math.max(1,+fx.maxLife||650),progress=clamp(1-(+fx.life||0)/max,0,1),alpha=1-progress;
+    ctx.strokeStyle='rgba(24,3,4,'+(0.9*alpha)+')';ctx.lineWidth=7*scale;
+    ctx.beginPath();ctx.arc(fx.x,fx.y,(10+42*progress)*scale,0,TAU);ctx.stroke();
+    ctx.strokeStyle='rgba(255,63,54,'+(0.96*alpha)+')';ctx.lineWidth=4*scale;
+    ctx.beginPath();ctx.arc(fx.x,fx.y,(10+42*progress)*scale,0,TAU);ctx.stroke();
+    ctx.fillStyle='rgba(255,223,157,'+(0.8*alpha)+')';ctx.beginPath();ctx.arc(fx.x,fx.y,(6*(1-progress)+1)*scale,0,TAU);ctx.fill();
+  }
+  ctx.restore();
 }
 function drawPartyCpuActors(){
   if(!isCpuTeamArena())return;
@@ -38,8 +103,9 @@ function drawPartyCpuActors(){
     }
   }
   for(const b of partyCpuMatch.shots){
-    const col=b.team==='A'?'#7fd8ff':'#ff7468',a=Math.atan2(b.vy,b.vx);
-    ctx.strokeStyle=col;ctx.lineWidth=2.2/zoom;ctx.beginPath();ctx.moveTo(b.x-Math.cos(a)*8,b.y-Math.sin(a)*8);ctx.lineTo(b.x+Math.cos(a)*2,b.y+Math.sin(a)*2);ctx.stroke();
+    if(b.team!=='A')continue;
+    const a=Math.atan2(b.vy,b.vx);
+    ctx.strokeStyle='#7fd8ff';ctx.lineWidth=2.2/zoom;ctx.beginPath();ctx.moveTo(b.x-Math.cos(a)*8,b.y-Math.sin(a)*8);ctx.lineTo(b.x+Math.cos(a)*2,b.y+Math.sin(a)*2);ctx.stroke();
   }
   drawRemoteShotVisuals(partyCpuMatch.visualShots);
 }
@@ -48,7 +114,6 @@ function drawArenaOpponentWorld(){
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){drawPartyCpuActors();return;}
   if(!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
-  drawRemoteShotVisuals(arena.remoteShots);
   // Online state owns the existing opponent tag.  The local AI used to expose
   // extra perfect information (exact HP, a tracking nameplate, and a confirmed
   // hit flash) that a normal 1v1 does not give the Offline player.
@@ -69,6 +134,55 @@ function drawArenaOpponentWorld(){
     ctx.fillText(String(e.name||'OPPONENT').slice(0,16),e.x,e.y-r-27);
     ctx.textAlign='left'; ctx.textBaseline='alphabetic';
   }
+}
+function drawHostileProjectileWorldPass(playBounds){
+  const bounds=playBounds||activeArenaBounds();
+  ctx.save();ctx.beginPath();ctx.rect(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top);ctx.clip();
+  for(const b of ebullets)drawHostileProjectileCue(b,b&&b.h?'homing':b&&b.king?'king':'enemy');
+  if(practiceMode==='arena'){
+    if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){
+      for(const b of partyCpuMatch.shots)if(b&&b.team==='B')drawHostileProjectileCue(b,'cpu');
+    }else{
+      drawRemoteShotVisuals(arena.remoteShots,true);
+      if(Array.isArray(arena.remoteFireworks))for(const b of arena.remoteFireworks)drawHostileProjectileCue(b,'firework');
+      drawRemoteFireworkExplosionVisuals(arena.remoteFireworkFx);
+    }
+  }
+  ctx.restore();
+}
+function collectLiveHostileProjectiles(){
+  const result=[],add=(list,accept)=>{
+    if(!Array.isArray(list))return;
+    for(const b of list)if(b&&Number.isFinite(+b.x)&&Number.isFinite(+b.y)&&
+      (!Number.isFinite(+b.life)||+b.life>0)&&(!accept||accept(b)))result.push(b);
+  };
+  add(ebullets);
+  if(practiceMode==='arena'){
+    if(typeof isCpuTeamArena==='function'&&isCpuTeamArena())add(partyCpuMatch.shots,b=>b.team==='B');
+    else{add(arena.remoteShots);add(arena.remoteFireworks);}
+  }
+  return result;
+}
+function drawScopedHostileProjectileCues(){
+  const weapon=WEAPONS[player.cur];
+  if(state!=='play'||!aiming||!weapon||!weapon.scoped)return 0;
+  const bounds=activeArenaBounds(),visible=collectLiveHostileProjectiles();let drawn=0;
+  ctx.save();ctx.lineJoin='round';
+  for(const b of visible){
+    const x=+b.x,y=+b.y;
+    if(x<bounds.left||x>bounds.right||y<bounds.top||y>bounds.bottom)continue;
+    const point=worldToScreen(x,y),sx=+point.x,sy=+point.y;
+    // This is not an off-screen warning system: only an already-visible live
+    // projectile center receives a small post-vignette marker at its true spot.
+    if(!Number.isFinite(sx)||!Number.isFinite(sy)||sx<0||sx>W||sy<0||sy>H)continue;
+    const footprint=Math.max(8,hostileProjectileCollisionRadius(b)*Math.max(0.05,+zoom||1));
+    ctx.fillStyle='rgba(15,3,4,.96)';ctx.beginPath();ctx.arc(sx,sy,footprint+2,0,TAU);ctx.fill();
+    ctx.strokeStyle='#ff3b34';ctx.lineWidth=2;ctx.beginPath();ctx.arc(sx,sy,footprint,0,TAU);ctx.stroke();
+    ctx.fillStyle='#ff3b34';ctx.beginPath();ctx.moveTo(sx,sy-6);ctx.lineTo(sx+6,sy);ctx.lineTo(sx,sy+6);ctx.lineTo(sx-6,sy);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='#fff1dc';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.fillStyle='#fff1dc';ctx.beginPath();ctx.arc(sx,sy,1.8,0,TAU);ctx.fill();drawn++;
+  }
+  ctx.restore();return drawn;
 }
 function drawWorld(){
   ctx.fillStyle='#101208';
@@ -275,29 +389,6 @@ function drawWorld(){
     }
   }
 
-  // enemy bullets
-  ctx.lineCap='round';
-  for(const b of ebullets){
-    if(b.h){
-      ctx.strokeStyle='#ff9a4a'; ctx.lineWidth=4.2/zoom;
-      ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*2.4,b.y-b.vy*2.4); ctx.stroke();
-      // body — brighter when healthy, dimmer as it's shot down
-      const hpf=clamp((b.hp||18)/18,0.2,1);
-      ctx.fillStyle='#ff9a4a';
-      ctx.beginPath(); ctx.arc(b.x,b.y,4.5,0,TAU); ctx.fill();
-      ctx.fillStyle='rgba(255,240,200,'+hpf+')';
-      ctx.beginPath(); ctx.arc(b.x,b.y,2.4,0,TAU); ctx.fill();
-    } else if(b.king){
-      const flashGreen=Math.sin(now/85)>0;
-      ctx.fillStyle='#ff3030';
-      ctx.beginPath(); ctx.arc(b.x,b.y,8,0,TAU); ctx.fill();
-      ctx.fillStyle=flashGreen?'#5cff55':'#ffb0b0';
-      ctx.beginPath(); ctx.arc(b.x,b.y,3.5,0,TAU); ctx.fill();
-    } else {
-      ctx.strokeStyle='#e05b52'; ctx.lineWidth=3/zoom;
-      ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*1.6,b.y-b.vy*1.6); ctx.stroke();
-    }
-  }
   // player bullets
   for(const b of bullets){
     ctx.strokeStyle=b.col||'rgba(232,182,88,0.85)'; ctx.lineWidth=3.2/zoom;
@@ -474,6 +565,11 @@ function drawWorld(){
   ctx.beginPath(); ctx.arc(0,0,player.r*0.55,-0.9,0.9); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
   ctx.restore();
 
+  // Incoming ordnance is deliberately the last world-space combat layer, so
+  // enemy bodies, the local player, and dense wave effects cannot cover the
+  // projectile head during the short reaction window before impact.
+  drawHostileProjectileWorldPass(playBounds);
+
   // melee swing arc — animation length tracks the weapon's swing speed
   const swingDur = player.swingDur || 130;
   if(player.swingT && now-player.swingT<swingDur){
@@ -588,6 +684,11 @@ function drawHUD(){
     ctx.fillStyle='rgba(180,30,30,'+(0.35*player.hurtFlash)+')';
     ctx.fillRect(0,0,W,H);
   }
+
+  // The sniper vignette intentionally hides most of the world, but never an
+  // incoming projectile whose center is already on screen. Draw after the hurt
+  // flash as well, so the red fullscreen wash cannot erase the danger marker.
+  if(scoped)drawScopedHostileProjectileCues();
 
   const pad=18;
   // score / wave
@@ -792,13 +893,12 @@ function drawHUD(){
   if(touchUI){
     // movement joystick, bottom-left
     const st=sticks.move;
-    const gx=110, gy=H-120;
-    const ax=st.id!==null?st.cx:gx, ay=st.id!==null?st.cy:gy;
+    const center=touchMoveStickCenter(),gx=center.x,gy=center.y;
     ctx.globalAlpha=st.id!==null?0.5:0.22;
     ctx.strokeStyle='#cdd6b0'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.arc(ax,ay,STICK_R,0,TAU); ctx.stroke();
+    ctx.beginPath(); ctx.arc(gx,gy,STICK_R,0,TAU); ctx.stroke();
     ctx.fillStyle='#cdd6b0';
-    ctx.beginPath(); ctx.arc(ax+st.dx,ay+st.dy,24,0,TAU); ctx.fill();
+    ctx.beginPath(); ctx.arc(gx+st.dx,gy+st.dy,24,0,TAU); ctx.fill();
     ctx.globalAlpha=1;
 
     const iconBtn=(key,cx,cy,R,draw,active)=>{

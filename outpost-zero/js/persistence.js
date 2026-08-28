@@ -63,7 +63,10 @@ function dropExpiredTemporaryLoadout(keys,options){
     const next=[loadout.primary,loadout.secondary,loadout.melee].find(key=>key&&WEAPONS[key]&&!isLocked(key));
     const fallback=SHARED_LOADOUT_DEFAULTS.primary;
     if(next&&typeof switchWeapon==='function'&&state==='play')switchWeapon(next);
-    else player.cur=next||(!isLocked(fallback)?fallback:PRIMARIES.find(key=>WEAPONS[key]&&!isLocked(key)))||'smg';
+    else {
+      if(typeof cancelFanTheHammer==='function')cancelFanTheHammer();
+      player.cur=next||(!isLocked(fallback)?fallback:PRIMARIES.find(key=>WEAPONS[key]&&!isLocked(key)))||'smg';
+    }
   }
   if(savedChanged){
     persistLastLoadoutLocal();

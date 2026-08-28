@@ -249,6 +249,8 @@ function arenaSend(event,payload){
   try{ return arena.matchChannel.send({type:'broadcast',event,payload:body}); }catch(e){ return null; }
 }
 const REMOTE_SHOT_QUEUE_MAX=300, REMOTE_SHOT_SEEN_MAX=500;
+const REMOTE_FIREWORK_QUEUE_MAX=24, REMOTE_FIREWORK_FX_MAX=32, REMOTE_FIREWORK_SEEN_MAX=96;
+const REMOTE_FIREWORK_FUSE_MS=480, REMOTE_FIREWORK_FX_MS=650;
 function remoteShotWeaponOwned(loadout,weaponId){
   const id=String(weaponId||''),w=WEAPONS[id];
   if(!w||w.melee||w.firework||!loadout) return false;
@@ -267,6 +269,30 @@ function remoteShotRemember(seen,id){
   seen.add(id);
   if(seen.size>REMOTE_SHOT_SEEN_MAX){
     const keep=[...seen].slice(-Math.floor(REMOTE_SHOT_SEEN_MAX/2));seen.clear();for(const value of keep)seen.add(value);
+  }
+  return true;
+}
+function remoteFireworkWeaponOwned(loadout,weaponId){
+  const id=String(weaponId||''),w=WEAPONS[id];
+  return !!(id==='fireworks'&&w&&w.firework&&!w.melee&&loadout&&
+    [loadout.primary,loadout.secondary].some(k=>String(k||'')===id));
+}
+function remoteFireworkIdValid(id,owner,epoch,round){
+  const value=String(id||'');if(!value||value.length>120)return false;
+  const prefix=String(owner)+':'+Math.floor(+epoch||0)+':'+Math.floor(+round||0)+':firework:';
+  if(!value.startsWith(prefix))return false;
+  const seq=value.slice(prefix.length);
+  return /^\d{1,10}$/.test(seq)&&+seq>0;
+}
+function remoteFireworkIdSequence(id){
+  const match=String(id||'').match(/:firework:(\d{1,10})$/);
+  return match&&+match[1]>0?+match[1]:0;
+}
+function remoteFireworkRemember(seen,id){
+  if(!(seen instanceof Set)||seen.has(id))return false;
+  seen.add(id);
+  if(seen.size>REMOTE_FIREWORK_SEEN_MAX){
+    const keep=[...seen].slice(-Math.floor(REMOTE_FIREWORK_SEEN_MAX/2));seen.clear();for(const value of keep)seen.add(value);
   }
   return true;
 }
@@ -304,6 +330,7 @@ function remoteShotBuild(packet,sender,loadout){
     wamp:w.wave?24*(1+0.5*Math.sin(now/700)):0,wk:w.wave?0.05*(1+0.4*Math.sin(now/1100+2)):0,
     phaseWalls:Math.max(0,Math.min(2,Math.floor(+w.phaseWalls||0))),phaseWallActive:false,
     gimmickId:w.gimmick&&typeof w.gimmick.id==='string'?w.gimmick.id:'',
+    dangerRadius:Math.max(4,Math.min(32,4+(Number.isFinite(+w.fg)?Math.max(0,+w.fg):0))),
     col:weaponColor(weaponId,w.tracer||null),weapon:weaponId,ownerId:String(packet.from||'')}));
 }
 function remoteShotPacketFromBullets(id,weaponId,spawned){
@@ -322,6 +349,19 @@ function arenaBroadcastShot(weaponId,spawned){
   const id=String(authUser.id)+':'+arena.matchEpoch+':'+arena.round+':shot:'+(++arena.shotSeq),packet=remoteShotPacketFromBullets(id,weaponId,spawned);
   if(!packet)return false;packet.portalSeq=Math.max(0,Math.floor(+player.portalSeq||0));arenaSend('shot',packet);return true;
 }
+function remoteFireworkPacketFromProjectile(id,weaponId,spawned){
+  if(!spawned||!['x','y','tx','ty'].every(key=>typeof spawned[key]==='number'&&Number.isFinite(spawned[key])))return null;
+  return {id:String(id),weapon:String(weaponId||''),x:spawned.x,y:spawned.y,
+    tx:spawned.tx,ty:spawned.ty,fuseMs:REMOTE_FIREWORK_FUSE_MS};
+}
+function arenaBroadcastFirework(weaponId,spawned){
+  if(!arena||!authUser||!arena.matchChannel||!arena.opponent||arena.phase!=='fight'||!arenaCanAct()||
+     isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())||!remoteFireworkWeaponOwned(loadout,weaponId))return false;
+  arena.fireworkSeq=Math.max(0,Math.floor(+arena.fireworkSeq||0))+1;
+  const id=String(authUser.id)+':'+arena.matchEpoch+':'+arena.round+':firework:'+arena.fireworkSeq;
+  const packet=remoteFireworkPacketFromProjectile(id,weaponId,spawned);if(!packet)return false;
+  packet.portalSeq=Math.max(0,Math.floor(+player.portalSeq||0));arenaSend('firework',packet);return true;
+}
 function arenaApplyRemoteShot(p){
   if(!p||!arena||!arena.active||arena.networkHold||!arena.opponent||arena.phase!=='fight'||p.round!==arena.round||String(p.from)!==String(arena.opponent.id)||
      !remoteShotIdValid(p.id,p.from,arena.matchEpoch,arena.round))return false;
@@ -331,6 +371,44 @@ function arenaApplyRemoteShot(p){
   if(!remoteShotRemember(arena.seenShots,String(p.id)))return false;
   if(!Array.isArray(arena.remoteShots))arena.remoteShots=[];
   arena.remoteShots.push(...visuals);if(arena.remoteShots.length>REMOTE_SHOT_QUEUE_MAX)arena.remoteShots.splice(0,arena.remoteShots.length-REMOTE_SHOT_QUEUE_MAX);
+  arena.opponent.cur=String(p.weapon);arena.opponent.flash=now+55;return true;
+}
+function remoteFireworkBuild(packet,sender,loadout){
+  if(!packet||!sender)return null;
+  const weaponId=String(packet&&packet.weapon||''),w=WEAPONS[weaponId];
+  if(!remoteFireworkWeaponOwned(loadout,weaponId)||typeof packet.fuseMs!=='number'||
+     !Number.isSafeInteger(packet.fuseMs)||packet.fuseMs!==REMOTE_FIREWORK_FUSE_MS)return null;
+  if(!['x','y','tx','ty'].every(key=>typeof packet[key]==='number'&&Number.isFinite(packet[key])))return null;
+  const x=packet.x,y=packet.y,tx=packet.tx,ty=packet.ty;
+  const portalSeq=packet.portalSeq,knownPortalSeq=Math.max(0,Math.floor(+sender.portalSeq||0));
+  if(typeof portalSeq!=='number'||!Number.isSafeInteger(portalSeq)||portalSeq<knownPortalSeq||portalSeq>knownPortalSeq+1)return null;
+  const bounds=activeArenaBounds();
+  if(x<bounds.left+12||x>bounds.right-12||y<bounds.top+12||y>bounds.bottom-12||
+     tx<bounds.left+12||tx>bounds.right-12||ty<bounds.top+12||ty>bounds.bottom-12)return null;
+  const sx=Number.isFinite(+sender.tx)?+sender.tx:+sender.x,sy=Number.isFinite(+sender.ty)?+sender.ty:+sender.y;
+  const nearCurrent=Number.isFinite(+sender.x)&&Number.isFinite(+sender.y)&&Math.hypot(x-sender.x,y-sender.y)<=180;
+  const nearTarget=Number.isFinite(sx)&&Number.isFinite(sy)&&Math.hypot(x-sx,y-sy)<=180;
+  if(!nearCurrent&&!nearTarget&&!remoteShotPortalOriginValid(packet,sender,x,y))return null;
+  const dx=tx-x,dy=ty-y,distance=Math.hypot(dx,dy);
+  if(!Number.isFinite(distance)||distance>+w.range+0.001)return null;
+  const a=distance?Math.atan2(dy,dx):0,speed=(distance/REMOTE_FIREWORK_FUSE_MS)*16;
+  return {x,y,tx,ty,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:REMOTE_FIREWORK_FUSE_MS,
+    maxLife:REMOTE_FIREWORK_FUSE_MS,weapon:weaponId,ownerId:String(packet.from||''),hostile:true};
+}
+function arenaApplyRemoteFirework(p){
+  if(!p||!arena||!arena.active||arena.networkHold||!arena.opponent||arena.phase!=='fight'||p.round!==arena.round||
+     String(p.from)!==String(arena.opponent.id)||!remoteFireworkIdValid(p.id,p.from,arena.matchEpoch,arena.round))return false;
+  const sequence=remoteFireworkIdSequence(p.id);
+  if(sequence<=Math.max(0,Math.floor(+arena.remoteFireworkHighestSeq||0)))return false;
+  if(!(arena.seenFireworks instanceof Set))arena.seenFireworks=new Set();
+  if(arena.seenFireworks.has(String(p.id)))return false;
+  const visual=remoteFireworkBuild(p,arena.opponent,arena.opponent.loadout);if(!visual)return false;
+  if(!remoteFireworkRemember(arena.seenFireworks,String(p.id)))return false;
+  arena.remoteFireworkHighestSeq=sequence;
+  if(!Array.isArray(arena.remoteFireworks))arena.remoteFireworks=[];
+  arena.remoteFireworks.push(visual);
+  if(arena.remoteFireworks.length>REMOTE_FIREWORK_QUEUE_MAX)
+    arena.remoteFireworks.splice(0,arena.remoteFireworks.length-REMOTE_FIREWORK_QUEUE_MAX);
   arena.opponent.cur=String(p.weapon);arena.opponent.flash=now+55;return true;
 }
 function stepRemoteShotVisuals(list,dtms){
@@ -365,6 +443,31 @@ function stepRemoteShotVisuals(list,dtms){
       }
     }
     if(dead)list.splice(i,1);
+  }
+}
+function remoteFireworkAddFx(x,y){
+  if(!Array.isArray(arena.remoteFireworkFx))arena.remoteFireworkFx=[];
+  arena.remoteFireworkFx.push({x:+x,y:+y,life:REMOTE_FIREWORK_FX_MS,maxLife:REMOTE_FIREWORK_FX_MS});
+  if(arena.remoteFireworkFx.length>REMOTE_FIREWORK_FX_MAX)
+    arena.remoteFireworkFx.splice(0,arena.remoteFireworkFx.length-REMOTE_FIREWORK_FX_MAX);
+}
+function stepRemoteFireworkVisuals(list,dtms){
+  const elapsed=Math.max(0,+dtms||0),dt=elapsed/16.667;
+  if(Array.isArray(list))for(let i=list.length-1;i>=0;i--){
+    const b=list[i];b.life-=elapsed;let burstNow=false;
+    const stepLen=Math.hypot(+b.vx||0,+b.vy||0)*dt,steps=Math.max(1,Math.ceil(stepLen/7)),stepDt=dt/steps;
+    for(let s=0;s<steps&&!burstNow;s++){
+      b.x+=b.vx*stepDt;b.y+=b.vy*stepDt;
+      if(projectileOutsideArena(b,12)){clampProjectileToArena(b,12);burstNow=true;break;}
+      if(pointInRects(b.x,b.y)){b.vx*=-0.5;b.vy*=-0.5;}
+      if(b.life<=40&&Math.hypot(b.x-b.tx,b.y-b.ty)<18)burstNow=true;
+    }
+    if(b.life<=0)burstNow=true;
+    if(burstNow){remoteFireworkAddFx(b.x,b.y);list.splice(i,1);}
+  }
+  if(Array.isArray(arena.remoteFireworkFx))for(let i=arena.remoteFireworkFx.length-1;i>=0;i--){
+    arena.remoteFireworkFx[i].life-=elapsed;
+    if(arena.remoteFireworkFx[i].life<=0)arena.remoteFireworkFx.splice(i,1);
   }
 }
 /* A match becomes binding as soon as both ready players enter map voting and
@@ -410,7 +513,8 @@ function arenaApplyForfeitResult(p){
   const scores=Object.assign({},arena.scores);
   scores[winner]=Math.max(ARENA_TARGET,Math.max(0,Math.floor(+scores[winner]||0)));
   scores[loser]=Math.max(0,Math.floor(+scores[loser]||0));
-  arena.scores=scores; arena.roundResolved=true; arena.nextRoundAt=0; arena.active=false; arena.remoteShots=[];
+  arena.scores=scores; arena.roundResolved=true; arena.nextRoundAt=0; arena.active=false;
+  arena.remoteShots=[];arena.remoteFireworks=[];arena.remoteFireworkFx=[];
   arena.mapVoteStartPending=false; arena.rematchVotes=new Set(); arena.forfeitResultId=resultId;
   arena.forfeitPacket={room:arena.room,epoch:arena.matchEpoch,round:arena.round,resultId,winner,loser,
     reason:String(p.reason||'disconnect').slice(0,24)};
@@ -719,7 +823,7 @@ function arenaConnectRoom(code,wantsHost,mode,expectedIds){
   arena.wantsHost=!!wantsHost; arena.expectedIds=expectedIds; arena.joinedAt=arena.joinedAt||Date.now();
   arena.localReady=mode==='queue'; arena.remoteReady=false;
   const ch=sb.channel('oz-arena-v1-'+code,{config:{broadcast:{self:false,ack:false},presence:{key:authUser.id}}});
-  for(const ev of ['state','shot','hit','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
+  for(const ev of ['state','shot','firework','hit','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
                     'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_tnt_hit','map_hazard','map_hazard_ack','leave','room_full'])
     ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload));
   ch.on('presence',{event:'sync'},()=>arenaMatchPresenceSync(ch));
@@ -857,6 +961,7 @@ function arenaReceive(event,p){
     return;
   }
   if(event==='shot'){ arenaApplyRemoteShot(p); return; }
+  if(event==='firework'){ arenaApplyRemoteFirework(p); return; }
   if(event==='state'){
     if(p.round!==arena.round) return;
     if(activeArenaMapId()==='construction'&&p.tntDamage&&typeof p.tntDamage==='object')
@@ -916,7 +1021,9 @@ function arenaApplyRematchStart(p){
   arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
   arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.hitSeq=0; arena.pendingUnscopedHits=new Set();
-  arena.seenShots=new Set(); arena.shotSeq=0; arena.remoteShots=[]; arena.winRecorded=false;
+  arena.seenShots=new Set(); arena.shotSeq=0; arena.remoteShots=[];
+  arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
+  arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.winRecorded=false;
   arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
   arenaResetMapVote('arena');
   arena.phase='lobby'; arena.status='Rematch confirmed. Starting round 1...';
@@ -935,7 +1042,9 @@ function arenaApplyRoundStart(p){
   resetWeaponGimmickState();
   clearCameraShake();
   arena.round=p.round; arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=false;
-  arena.seenShots=new Set();arena.shotSeq=0;arena.remoteShots=[];arena.pendingUnscopedHits=new Set();
+  arena.seenShots=new Set();arena.shotSeq=0;arena.remoteShots=[];
+  arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
+  arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.pendingUnscopedHits=new Set();
   // Use a relative countdown on each device. Absolute browser clocks can be
   // minutes apart even when both players have a healthy connection.
   const startDelay=Number.isFinite(+p.startDelay)?clamp(+p.startDelay,0,10000):clamp((+p.startAt||Date.now())-Date.now(),0,10000);
@@ -975,7 +1084,10 @@ function arenaWallTick(wall){
   if(isBotArena()) return;                              // local duels use the pausable fixed-step game clock
   const elapsed=arena.wallTickAt?clamp(wall-arena.wallTickAt,0,250):16.667;
   arena.wallTickAt=wall;
-  if(arena.active&&arena.phase==='fight'&&!arena.networkHold)stepRemoteShotVisuals(arena.remoteShots,elapsed);
+  if(arena.active&&arena.phase==='fight'&&!arena.networkHold){
+    stepRemoteShotVisuals(arena.remoteShots,elapsed);
+    stepRemoteFireworkVisuals(arena.remoteFireworks,elapsed);
+  }
   if(arena.opponent){
     const alpha=1-Math.pow(0.78,elapsed/16.667);           // same smoothing at 20, 60, or 144 FPS
     arena.opponent.x+=(arena.opponent.tx-arena.opponent.x)*alpha;
@@ -1063,7 +1175,8 @@ function arenaLocalKO(cause=null){
   if(arena.phase!=='fight') return;
   const hazard=arenaHazardCauseValid(cause)?{kind:'tnt',eventId:String(cause.eventId),tntId:String(cause.tntId)}:null;
   const shot=hazard?null:arenaUnscopedKillCause(cause,arena.opponent&&arena.opponent.id);
-  arena.phase='ko_wait'; player.hp=0; arena.localKoCause=hazard||shot; arena.remoteShots=[];
+  arena.phase='ko_wait'; player.hp=0; arena.localKoCause=hazard||shot;
+  arena.remoteShots=[];arena.remoteFireworks=[];arena.remoteFireworkFx=[];
   arenaSend('ko',Object.assign({dead:authUser.id},hazard||shot||{}));
   if(authUser.id===arena.hostId){
     if(hazard) arenaHostRecordHazardHp(hazard.eventId,hazard.tntId,authUser.id,0);
@@ -1087,7 +1200,8 @@ function arenaHostResolve(winnerId,cause=null){
 function arenaApplyRoundResult(p){
   if(!p||Math.floor(+p.epoch||0)!==arena.matchEpoch||p.round!==arena.round) return;
   if(arena.roundResolved&&(arena.phase==='round_end'||arena.phase==='match_end')) return;
-  arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=true; arena.remoteShots=[];
+  arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=true;
+  arena.remoteShots=[];arena.remoteFireworks=[];arena.remoteFireworkFx=[];
   arenaCelebrateConfirmedUnscopedKill(p,p.winner);
   arena.pendingUnscopedHits=new Set();
   const nextDelay=Number.isFinite(+p.nextDelay)?clamp(+p.nextDelay,0,10000):clamp((+p.nextAt||0)-Date.now(),0,10000);

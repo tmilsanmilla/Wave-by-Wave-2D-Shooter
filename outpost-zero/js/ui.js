@@ -1268,8 +1268,15 @@ function drawArena(){
     ctx.fillStyle='#8a9268';ctx.fillText(fitLine(botLadderMatchResultText(partyCpuMatch),pw-20),W/2,bodyY+(tiny?72:108));
     ctx.fillStyle='#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(typeof aiTrainingMatchStatusText==='function'?aiTrainingMatchStatusText(partyCpuMatch):'',pw-20),W/2,bodyY+(tiny?82:122));
-    let y=bodyY+(tiny?94:140),settled=botLadderMatchSettled(partyCpuMatch);
-    y=button(settled?'teamrematch':'teamwait',settled?'PLAY AGAIN':'SAVING RESULT\u2026',y,'#a7c15e',settled?'New first-to-5 team match at your synced difficulty.':'Play Again unlocks after the cloud result settles.',settled);
+    let y=bodyY+(tiny?94:140),settled=botLadderMatchSettled(partyCpuMatch),rematchReady=settled&&(!authUser||
+      (typeof botLadderReadyForMatch==='function'&&botLadderReadyForMatch()&&
+       (typeof botLadderSecureMatchReady!=='function'||botLadderSecureMatchReady()))),
+      blockedNote=typeof botLadderSecureMatchReady==='function'&&!botLadderSecureMatchReady()?'Secure result saving is unavailable. Return to the CPU ladder.':
+        botLadderSyncState==='conflict'?'Resolve the saved-result conflict from the CPU ladder.':
+        botLadderSyncState==='reconciling'?'Wait while the saved result is verified.':
+        botLadderSyncState==='storage_error'?'Device saving must recover before another ladder match.':'Return to the CPU ladder to finish syncing.';
+    y=button(rematchReady?'teamrematch':'teamwait',!settled?'SAVING RESULT\u2026':rematchReady?'PLAY AGAIN':'LADDER NOT READY',y,'#a7c15e',
+      !settled?'Play Again unlocks after this result is safely recorded.':rematchReady?'New first-to-5 team match at your current ladder difficulty.':blockedNote,rematchReady);
     y=button('teamloadout','CHANGE WEAPONS',y,'#7fd8ff');
     button('teamleave','BACK TO OFFLINE VS CPU',y,'#8a9268');
   } else if(botMode&&arena.phase==='match_end'){
@@ -1288,8 +1295,15 @@ function drawArena(){
       y=button('bottestagain','TEST '+botModelRelease(arena.botModelId).name+' AGAIN',y,'#a7c15e','Same Impossible execution and deterministic AI seed.');
       button('botlearningback','BACK TO AI BOT MODELS',y,'#7fd8ff');
     }else{
-      const settled=botLadderMatchSettled(arena);
-      y=button(settled?'botrematch':'botwait',settled?'PLAY AGAIN':'SAVING RESULT\u2026',y,'#a7c15e',settled?'New first-to-5 match at your synced difficulty.':'Play Again unlocks after the cloud result settles.',settled);
+      const settled=botLadderMatchSettled(arena),rematchReady=settled&&(!authUser||
+        (typeof botLadderReadyForMatch==='function'&&botLadderReadyForMatch()&&
+         (typeof botLadderSecureMatchReady!=='function'||botLadderSecureMatchReady()))),
+        blockedNote=typeof botLadderSecureMatchReady==='function'&&!botLadderSecureMatchReady()?'Secure result saving is unavailable. Return to the CPU ladder.':
+          botLadderSyncState==='conflict'?'Resolve the saved-result conflict from the CPU ladder.':
+          botLadderSyncState==='reconciling'?'Wait while the saved result is verified.':
+          botLadderSyncState==='storage_error'?'Device saving must recover before another ladder match.':'Return to the CPU ladder to finish syncing.';
+      y=button(rematchReady?'botrematch':'botwait',!settled?'SAVING RESULT\u2026':rematchReady?'PLAY AGAIN':'LADDER NOT READY',y,'#a7c15e',
+        !settled?'Play Again unlocks after this result is safely recorded.':rematchReady?'New first-to-5 match at your current ladder difficulty.':blockedNote,rematchReady);
       y=button('botloadout','CHANGE WEAPONS',y,'#7fd8ff');
       button('botleave','BACK TO OFFLINE \u00b7 ONE DEVICE ONLY',y,'#8a9268');
     }
@@ -1342,23 +1356,88 @@ function drawArena(){
   }
   ctx.textBaseline='alphabetic'; ctx.textAlign='left';
 }
+let cpuUiLaunchVersion=0,cpuUiPendingIntent=0,cpuUiPendingMode='',cpuUiPendingOrigin='';
+function cpuLaunchMode(mode){return mode==='ai1v1'||mode==='ai2v2'||mode==='partycpu2v2';}
+function beginCpuLaunchIntent(mode,origin=''){
+  if(!cpuLaunchMode(mode))return 0;
+  mode=String(mode);origin=String(origin);
+  if(cpuUiPendingIntent&&cpuUiPendingMode===mode&&cpuUiPendingOrigin===origin&&cpuUiPendingIntent===cpuUiLaunchVersion)
+    return cpuUiPendingIntent;
+  cpuUiPendingMode=mode;cpuUiPendingOrigin=origin;cpuUiPendingIntent=++cpuUiLaunchVersion;return cpuUiPendingIntent;
+}
+function cpuLaunchIntentCurrent(intent){return !intent||intent===cpuUiLaunchVersion;}
+function cancelCpuLaunchIntent(){
+  cpuUiLaunchVersion++;cpuUiPendingIntent=0;cpuUiPendingMode='';cpuUiPendingOrigin='';
+  if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
+}
+function cpuResultRouteToLoadout(mode,message){
+  mode=mode==='ai2v2'?'ai2v2':'ai1v1';
+  if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
+  if(mode==='ai2v2')offlineCpu2v2Leave('',false);else leaveArena('',false);
+  pendingGameMode=mode;modeBoardMode='endless';loadoutBackPage='offlinecpu';restoreLastLoadoutForMode(mode);selPage='loadout';
+  modeBoardNotice=String(message||'CHOOSE YOUR WEAPONS BEFORE PLAYING AGAIN');modeBoardNoticeT=performance.now()+4200;
+  return false;
+}
+function cpuResultRematch(mode,temporaryGiftVerified=false,ladderReady=false,uiIntent=0){
+  mode=mode==='ai2v2'?'ai2v2':'ai1v1';
+  if(!uiIntent&&typeof beginCpuLaunchIntent==='function')uiIntent=beginCpuLaunchIntent(mode,'result');
+  const team=mode==='ai2v2',match=team?partyCpuMatch:arena,
+    stillCurrent=()=>(typeof cpuLaunchIntentCurrent!=='function'||cpuLaunchIntentCurrent(uiIntent))&&
+      (typeof menuOpen==='undefined'||!menuOpen)&&(team?
+      (partyCpuMatch===match&&typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()&&partyCpuMatch.phase==='match_end'):
+      (arena===match&&isBotArena()&&arena.phase==='match_end'));
+  if(!stillCurrent())return false;
+  const expired=(message='TEMPORARY WEAPON ACCESS CHANGED · PICK ANOTHER')=>{
+    if(!stillCurrent())return false;
+    if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
+    cpuResultRouteToLoadout(mode,message);sfx('dry');return false;
+  };
+  if(typeof temporaryWeaponLoadoutReady==='function'&&!temporaryWeaponLoadoutReady())return expired();
+  if(!loadout||!loadout.primary||!loadout.secondary||!loadout.melee)
+    return expired('A TEMPORARY WEAPON EXPIRED OR YOUR LOADOUT IS INCOMPLETE · PICK ANOTHER');
+  if(!temporaryGiftVerified&&typeof verifyTemporaryWeaponLoadoutForLaunch==='function'){
+    const verified=verifyTemporaryWeaponLoadoutForLaunch(
+      ()=>{if(stillCurrent())cpuResultRematch(mode,true,ladderReady,uiIntent);},expired);
+    if(!verified){if(stillCurrent())arena.status='VERIFYING TEMPORARY WEAPON ACCESS BEFORE PLAY AGAIN…';return true;}
+  }
+  if(!stillCurrent())return false;
+  // Refreshing the canonical ladder/model can outlive a temporary grant.
+  // Re-enter through this validator after refresh so a mid-wait revoke or
+  // expiry cannot launch either ranked mode with a stale weapon entitlement.
+  if(!ladderReady&&typeof deferBotLadderMatchStart==='function'&&
+     deferBotLadderMatchStart(mode,()=>{if(stillCurrent())cpuResultRematch(mode,false,true,uiIntent);}))return true;
+  if(!stillCurrent())return false;
+  if(team){
+    const localId=typeof cpuTeamLocalId==='function'?String(cpuTeamLocalId()||''):'',
+      kit=typeof partyCpuKit==='function'?partyCpuKit(loadout):null;
+    if(!localId||!kit)return expired('YOUR CPU 2v2 LOADOUT CHANGED · PICK YOUR WEAPONS AGAIN');
+    partyCpuMatch.loadouts[localId]=kit;partyCpuMatch.localLoadout=kit;
+  }
+  return team?offlineCpu2v2Rematch({ladderReady:true}):startBotArena({ladderReady:true});
+}
 function arenaClick(){
   const hit=r=>mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
   for(const r of arenaRects) if(r.enabled!==false&&hit(r)){
     if(r.mapId){ arenaCastMapVote(r.mapId); return; }
     else if(r.id==='map_leave') leaveArena('Left the map vote.',false);
-    else if(r.id==='teamrematch') offlineCpu2v2Rematch();
+    else if(r.id==='teamrematch') cpuResultRematch('ai2v2');
     else if(r.id==='teamloadout'){
+      if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
       offlineCpu2v2Leave('',false);pendingGameMode='ai2v2';modeBoardMode='endless';loadoutBackPage='offlinecpu';restoreLastLoadoutForMode('ai2v2');selPage='loadout';
     }
-    else if(r.id==='teamleave') offlineCpu2v2Leave('',false);
+    else if(r.id==='teamleave'){
+      if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();offlineCpu2v2Leave('',false);
+    }
     else if(r.id==='bottestagain') restartAiLearningBotTest(arena);
     else if(r.id==='botlearningback') leaveArena('',false);
-    else if(r.id==='botrematch') startBotArena();
+    else if(r.id==='botrematch') cpuResultRematch('ai1v1');
     else if(r.id==='botloadout'){
+      if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
       leaveArena('',false); pendingGameMode='ai1v1'; modeBoardMode='endless'; loadoutBackPage='offlinecpu'; restoreLastLoadoutForMode('ai1v1'); selPage='loadout';
     }
-    else if(r.id==='botleave') leaveArena('',false);
+    else if(r.id==='botleave'){
+      if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();leaveArena('',false);
+    }
     else if(r.id==='signin'){
       arenaAuthPending=true; $('aguest').style.display='none'; $('authmsg').textContent='Sign in is required for Online multiplayer on different devices.'; $('authwrap').style.display='flex';
     } else if(r.id==='quick') arenaQuickMatch();
@@ -1420,10 +1499,15 @@ function chooseGameMode(mode,returnPage='modeboard'){
   restoreLastLoadoutForMode(mode);
   selPage='loadout'; sfx('swap'); return true;
 }
-function launchSelectedMode(temporaryGiftVerified=false){
+function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=''){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     modeBoardNotice='CHOOSE YOUR USERNAME TO PLAY'; modeBoardNoticeT=performance.now()+2800; sfx('dry'); return false;
   }
+  const launchMode=String(expectedMode||pendingGameMode||''),cpuLaunch=typeof cpuLaunchMode==='function'&&cpuLaunchMode(launchMode);
+  if(cpuLaunch&&!uiIntent&&typeof beginCpuLaunchIntent==='function')uiIntent=beginCpuLaunchIntent(launchMode,'loadout');
+  const cpuStillCurrent=()=>!cpuLaunch||((typeof cpuLaunchIntentCurrent!=='function'||cpuLaunchIntentCurrent(uiIntent))&&pendingGameMode===launchMode&&selPage==='loadout'&&
+    (typeof state==='undefined'||state==='select')&&(typeof menuOpen==='undefined'||!menuOpen));
+  if(!cpuStillCurrent())return false;
   if(typeof temporaryWeaponLoadoutReady==='function'&&!temporaryWeaponLoadoutReady()){
     dropUnownedFromLoadout();
     modeBoardNotice='A TEMPORARY WEAPON EXPIRED OR COULD NOT BE VERIFIED · PICK ANOTHER';
@@ -1431,11 +1515,12 @@ function launchSelectedMode(temporaryGiftVerified=false){
   }
   if(!temporaryGiftVerified&&typeof verifyTemporaryWeaponLoadoutForLaunch==='function'){
     const ready=verifyTemporaryWeaponLoadoutForLaunch(
-      ()=>launchSelectedMode(true),
-      ()=>{modeBoardNotice='TEMPORARY WEAPON ACCESS CHANGED · PICK ANOTHER';modeBoardNoticeT=performance.now()+3200;pracNeedMsgT=now+2000;sfx('dry');}
+      ()=>{if(cpuStillCurrent())launchSelectedMode(true,uiIntent,launchMode);},
+      ()=>{if(cpuStillCurrent()){modeBoardNotice='TEMPORARY WEAPON ACCESS CHANGED · PICK ANOTHER';modeBoardNoticeT=performance.now()+3200;pracNeedMsgT=now+2000;sfx('dry');}}
     );
     if(!ready){modeBoardNotice='VERIFYING TEMPORARY GIFT WITH THE SERVER…';modeBoardNoticeT=performance.now()+3200;return false;}
   }
+  if(!cpuStillCurrent())return false;
   if(!(loadout.primary&&loadout.secondary&&loadout.melee)){
     pracNeedMsgT=now+1600; sfx('dry'); return false;
   }
@@ -1466,7 +1551,7 @@ function navigateSelectBack(){
   if(selPage==='weapons'){ selPage='hub'; sfx('swap'); return; }
   if(CATS.some(c=>c[0]===selPage)){ selPage=pendingGameMode?'loadout':'hub'; sfx('swap'); return; }
   if(selPage==='loadout'){
-    if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
+    if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
     if(pendingGameMode==='partycpu2v2'){
       const direct=!!(party&&party.directCpu);partyCpuAbort(direct?'FRIEND CPU GAME SETUP CANCELLED.':'Party CPU match setup was cancelled.',true);
       selPage=direct?'offlinecpu':'party';if(direct)offlineCpuView='2v2';sfx('swap');return;
@@ -1479,7 +1564,7 @@ function navigateSelectBack(){
     pendingGameMode=null; modeBoardMode=null; modeBoardOrigin='hub'; selPage=destination; sfx('swap'); return;
   }
   if(selPage==='offlinecpu'){
-    if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
+    if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
     if(party&&party.directCpu){
       if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())partyCpuAbort('FRIEND CPU GAME SETUP CANCELLED.',true);
       else if(typeof partyDirectCpuClose==='function')partyDirectCpuClose('FRIEND INVITE CANCELLED');
@@ -1501,6 +1586,7 @@ function navigateSelectBack(){
   }
   if(selPage==='modes'){ selPage='hub'; sfx('swap'); return; }
   if(selPage==='arena'){
+    if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
     if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()){ offlineCpu2v2Leave('',false); sfx('swap'); return; }
     if(isBotArena()){ leaveArena('',false); sfx('swap'); return; }
     leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'hub'; sfx('swap'); return;
@@ -1601,7 +1687,11 @@ function drawOfflineCpuModes(){
   ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(offlineCpuView==='1v1'?'CPU 1v1':offlineCpuView==='2v2'?'CPU 2v2 · NEW · BETA':'PLAY AGAINST CPU',W-20),W/2,titleY);
   const directCpuStatus=offlineCpuView==='2v2'&&typeof party!=='undefined'&&party&&party.directCpu?String(party.status||'PRIVATE FRIEND GAME · CONNECTING'):'';
-  const ladderState=String(botLadderSyncState||'idle'),ladderSyncText=!authUser?'GUEST · BEGINNER · PROGRESS IS NOT SAVED':
+  const ladderState=String(botLadderSyncState||'idle'),ladderResultPending=!!(authUser&&typeof botLadderHasPendingResult==='function'&&botLadderHasPendingResult()),
+    ladderSecureReady=!authUser||typeof botLadderSecureMatchReady!=='function'||botLadderSecureMatchReady(),
+    ladderSyncText=!authUser?'GUEST · BEGINNER · SCORE IS NOT SAVED':
+      ladderResultPending?'ACCOUNT LADDER · PREVIOUS RESULT STILL SAVING':
+      !ladderSecureReady?'ACCOUNT LADDER · SECURE RESULT SAVE UNAVAILABLE':
       ladderState==='ready'?'ACCOUNT LADDER · SYNCED':
       ladderState==='queued'?'ACCOUNT LADDER · SAVED ON DEVICE · SYNC PENDING':
       ladderState==='reconciling'?'ACCOUNT LADDER · VERIFYING SAVED RESULT':
@@ -1686,9 +1776,13 @@ function drawOfflineCpuModes(){
           rowGap=cardH<135?2:4,rowH=(cardH-headH-pad-rowGap*2)/3,innerX=x+pad,innerW=cardW-pad*2;
         ctx.textBaseline='middle';ctx.textAlign='center';ctx.fillText(BOT_DIFFICULTIES[i].name,x+cardW/2,y+headH*.42);
         ctx.fillStyle='#7fd8ff';ctx.font='700 '+(cardW<155?6.5:tiny?7:8)+'px ui-monospace,Consolas,monospace';ctx.fillText('CURRENT',x+cardW/2,y+headH*.76);
-        const metrics=[
-          {id:'score',label:'SCORE',value:progress,max:BOT_LADDER_MAX_PROGRESS,col:'#7fd8ff',copy:'EVERY WIN ADDS +1 SCORE. REACH SCORE 10 TO PROMOTE AND RESET THIS BAR.'},
-          {id:'wins',label:'CONSECUTIVE WINS',value:wins,max:3,col:'#a7c15e',copy:'REACH 3 CONSECUTIVE WINS TO PROMOTE IMMEDIATELY. THIS COUNTER THEN RESETS TO 0.'},
+        const maxTier=active===BOT_DIFFICULTIES.length-1,metrics=[
+          {id:'score',label:'SCORE',value:progress,max:BOT_LADDER_MAX_PROGRESS,col:'#7fd8ff',copy:maxTier?
+            'IMPOSSIBLE IS THE HIGHEST TIER. WINS ADD +1 SCORE UNTIL THIS BAR IS COMPLETE AT SCORE 10.':
+            'EVERY WIN ADDS +1 SCORE. REACH SCORE 10 TO PROMOTE AND RESET THIS BAR.'},
+          {id:'wins',label:'CONSECUTIVE WINS',value:wins,max:3,col:'#a7c15e',copy:maxTier?
+            'IMPOSSIBLE IS THE HIGHEST TIER. THE THIRD CONSECUTIVE WIN RESETS THIS COUNTER; SCORE STAYS CAPPED AT 10.':
+            'REACH 3 CONSECUTIVE WINS TO PROMOTE IMMEDIATELY. THIS COUNTER THEN RESETS TO 0.'},
           {id:'losses',label:'CONSECUTIVE LOSSES',value:losses,max:3,col:'#d05548',copy:'REACH 3 CONSECUTIVE LOSSES TO LOSE 1 SCORE. AT SCORE 0, YOU CAN RANK DOWN.'}
         ];
         for(let m=0;m<metrics.length;m++){
@@ -1720,8 +1814,10 @@ function drawOfflineCpuModes(){
       ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#eff7fa';ctx.font='700 '+(tiny?6:landscape?7:9)+'px ui-monospace,Consolas,monospace';
       wrapTextClamped(tooltip.copy,tipX+(tiny?6:9),tipY+(tiny?6:9),tipW-(tiny?12:18),tiny?9:landscape?10:12,tiny?4:3);
     }
-    const ladderCanStart=!authUser||botLadderReadyForMatch(),startNote=!authUser?'FIRST TO 5 · GUEST RESULT IS NOT SAVED':
+    const ladderCanStart=!authUser||(botLadderReadyForMatch()&&!ladderResultPending&&ladderSecureReady),startNote=!authUser?'FIRST TO 5 · GUEST RESULT IS NOT SAVED':
       ladderCanStart?'FIRST TO 5 · RESULT UPDATES THIS LADDER':
+      ladderResultPending?'PREVIOUS RESULT IS STILL SAVING':
+      !ladderSecureReady?'SECURE RESULT SAVE UNAVAILABLE':
       ladderState==='reconciling'?'VERIFYING YOUR SAVED RESULT':ladderState==='conflict'?'RESULT CONFLICT · RECEIPT KEPT':
       ladderState==='storage_error'?'DEVICE SAVE UNAVAILABLE':'LADDER IS STILL SYNCING';
     drawButton('cpu_start_1v1','START 1v1',startNote,startX,startY,startW,startH,'#7fd8ff',ladderCanStart);
@@ -1732,7 +1828,7 @@ function drawOfflineCpuModes(){
     cardH=Math.min(tiny?72:landscape?84:110,availableH),cardY=cardTop+Math.max(0,(availableH-cardH)/2),cardW=(contentW-gap)/2;
   const friendOnline=typeof partyServiceAvailable==='function'&&partyServiceAvailable(),directOpen=!!(typeof party!=='undefined'&&party&&party.directCpu&&party.channel);
   const cards=[
-    {id:'cpu_local_2v2',title:'LOCAL',sub:'YOU + ALLY CPU',detail:'BEING TESTED · COUNTS FOR LADDER',col:'#7fd8ff',enabled:!directOpen&&(!authUser||botLadderReadyForMatch())},
+    {id:'cpu_local_2v2',title:'LOCAL',sub:'YOU + ALLY CPU',detail:'BEING TESTED · COUNTS FOR LADDER',col:'#7fd8ff',enabled:!directOpen&&(!authUser||(botLadderReadyForMatch()&&!ladderResultPending&&ladderSecureReady))},
     directOpen
       ?party.phase==='closing'
         ?{id:'cpu_direct_closing',title:'CLOSING',sub:'FINISHING CONNECTION',detail:'UNRANKED FRIEND GAME',col:'#8a9268',enabled:false,smallTitle:true}
@@ -1826,6 +1922,13 @@ function drawSocialButton(id,label,x,y,w,h,col,enabled=true,extra={}){
   ctx.font='700 '+(h<27?7:w<100?8:h<38?9:11)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(label,w-7),x+w/2,y+h/2); return r;
 }
+function drawSocialAttentionBadge(rect){
+  if(!rect)return;
+  const small=rect.w<115||rect.h<38,bw=small?20:26,bh=small?15:19,bx=rect.x+rect.w-bw-(small?3:5),by=rect.y+(small?3:5);
+  ctx.save();ctx.fillStyle='#d72f2f';ctx.fillRect(bx,by,bw,bh);ctx.strokeStyle='#ffd0c8';ctx.lineWidth=1;ctx.strokeRect(bx+.5,by+.5,bw-1,bh-1);
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#fff7f2';ctx.font='900 '+(small?9:12)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('!!',bx+bw/2,by+bh/2);ctx.restore();
+}
 function drawSocial(){
   selBg(); socialRects=[];
   const tiny=H<390, short=H<430, compact=H<600;
@@ -1864,8 +1967,10 @@ function drawSocial(){
   const partyY=contentBottom-partyH,pageBottom=partyY-gap;
 
   const navGap=tiny?5:compact?8:12,navW=(contentW-navGap)/2;
-  drawSocialButton('social_view_friends','FRIENDS',contentX,contentTop,navW,navH,'#7fd8ff',true,{active:activeSocialView!=='inbox'});
-  drawSocialButton('social_view_inbox','PRIVATE INBOX',contentX+navW+navGap,contentTop,navW,navH,'#a7c15e',true,{active:activeSocialView==='inbox'});
+  const friendsNav=drawSocialButton('social_view_friends','FRIENDS',contentX,contentTop,navW,navH,'#7fd8ff',true,{active:activeSocialView!=='inbox'}),
+    inboxNav=drawSocialButton('social_view_inbox','PRIVATE INBOX',contentX+navW+navGap,contentTop,navW,navH,'#a7c15e',true,{active:activeSocialView==='inbox'});
+  if(typeof socialHasUnreadFriendsActivity==='function'&&socialHasUnreadFriendsActivity())drawSocialAttentionBadge(friendsNav);
+  if(typeof socialHasUnreadInboxActivity==='function'&&socialHasUnreadInboxActivity())drawSocialAttentionBadge(inboxNav);
   const viewY=contentTop+navH+gap,view={x:contentX,y:viewY,w:contentW,h:Math.max(24,pageBottom-viewY)};
 
   const panelFrame=(p,title,col,sub)=>{
@@ -1967,12 +2072,15 @@ function drawSocial(){
       const stamp=Date.parse(value||'');if(!Number.isFinite(stamp))return 'OUTPOST ZERO · OFFICIAL';
       const date=new Date(stamp);try{return 'POSTED '+date.toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(error){return 'POSTED '+date.toISOString().slice(0,16).replace('T',' ')+' UTC';}
     };
-    const official=(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.message||'').trim())
+    const official=(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.message||'').trim()&&
+        !(typeof socialOfficialBannerAlreadyNotified==='function'&&socialOfficialBannerAlreadyNotified(row)))
       .map(row=>({kind:'official',id:row.id,body:String(row.message||''),created_at:row.created_at||'',meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)}));
+    const notices=(authUser&&typeof socialNotifications!=='undefined'&&Array.isArray(socialNotifications)?socialNotifications:[])
+      .map(notice=>({kind:'notification',notice,created_at:new Date(notice.createdAt||0).toISOString(),sortAt:+notice.createdAt||0}));
     const direct=(authUser&&Array.isArray(socialMessages)?socialMessages:[]).map(row=>({kind:'direct',row,created_at:row&&row.created_at||'',sortAt:Date.parse(row&&row.created_at||'')||(+row.id||0)}));
     const cloudInvites=(authUser&&typeof socialPartyInvites!=='undefined'&&Array.isArray(socialPartyInvites)?socialPartyInvites:[]).map(invite=>({kind:'cloud_party_invite',invite,
       created_at:new Date(invite.createdAt||0).toISOString(),sortAt:+invite.createdAt||0}));
-    const inboxRows=official.concat(cloudInvites,direct).sort((a,b)=>b.sortAt-a.sortAt);
+    const inboxRows=notices.concat(official,cloudInvites,direct).sort((a,b)=>b.sortAt-a.sortAt);
     const dmReady=!!(authUser&&socialBackend.profiles===true&&socialBackend.messages===true&&socialBackend.friends===true);
     const dmMissing=!!(authUser&&(socialBackend.profiles===false||socialBackend.messages===false||socialBackend.friends===false));
     const dmLoading=!!(authUser&&socialLoading&&socialBackend.profiles===null);
@@ -1986,6 +2094,17 @@ function drawSocial(){
       panelMessage(p,empty,headY+(footerY-headY)/2,dmMissing?'#d05548':'#8a9268');
     }else for(let i=0;i<pageRows.length;i++){
       const item=pageRows[i],y=headY+i*rowH;
+      if(item.kind==='notification'){
+        const notice=item.notice||{},unread=!notice.readAt,
+          col=/^ban_/.test(notice.kind)?'#ff6b5d':/^friend_/.test(notice.kind)?'#7fd8ff':
+            /^weapon_|currency_updated|upgrades_updated|score_updated/.test(notice.kind)?'#e8b658':notice.kind==='admin_message'?'#bfa8ff':'#a7c15e';
+        ctx.fillStyle=unread?(i%2?'rgba(208,85,72,0.10)':'rgba(208,85,72,0.16)'):(i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)');ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+        ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=col;ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine((unread?'● NEW · ':'')+String(notice.title||'OUTPOST ZERO NOTICE')+' · '+String(notice.authorLabel||'OUTPOST ZERO'),p.w-(tiny?48:96)),p.x+9,y+3);
+        ctx.textAlign='right';ctx.fillStyle='#a7c15e';ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(tiny?'OPEN ›':'OPEN TO READ ›',p.x+p.w-9,y+3);
+        ctx.textAlign='left';ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(notice.message||''),p.w-18),p.x+9,y+(tiny?13:compact?17:22));
+        socialRects.push({id:'inbox_notice_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,noticeKey:String(notice.uiKey||'')});continue;
+      }
       if(item.kind==='official'){
         ctx.fillStyle=i%2?'rgba(232,182,88,0.08)':'rgba(232,182,88,0.13)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
         ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText('OFFICIAL UPDATE',p.x+9,y+3);
@@ -2004,29 +2123,36 @@ function drawSocial(){
         if(stillLive)drawSocialButton('cloud_party_invite_accept',cpu?'START':'JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{inviteKey:String(invite.uiKey||'')});
         continue;
       }
-      const m=item.row,incoming=String(m.recipient_id)===String(authUser.id),other=incoming?m.sender_id:m.recipient_id,person=socialPerson(other),canReply=socialAcceptedFriend(other);
+      const m=item.row,incoming=String(m.recipient_id)===String(authUser.id),other=incoming?m.sender_id:m.recipient_id,person=socialPerson(other),canReply=socialAcceptedFriend(other),
+        messageKey=typeof socialPrivateMessageUiKey==='function'?socialPrivateMessageUiKey(m):'',handledInvite=typeof socialLegacyInviteHandled==='function'&&socialLegacyInviteHandled(m,authUser.id);
       const cpuEnvelope=typeof socialCpuGameInviteEnvelope==='function'?socialCpuGameInviteEnvelope(m.body):null;
-      const cpuInvite=incoming&&canReply&&typeof socialCpuGameInvite==='function'?socialCpuGameInvite(m.body):null;
+      const cpuInvite=incoming&&canReply&&!handledInvite&&typeof socialCpuGameInvite==='function'?socialCpuGameInvite(m.body):null;
       const partyEnvelope=typeof socialPartyInviteEnvelope==='function'?socialPartyInviteEnvelope(m.body):null;
-      const friendInvite=incoming&&canReply&&typeof socialPartyInvite==='function'?socialPartyInvite(m.body):null;
-      const actionable=cpuInvite||friendInvite,joinW=actionable?Math.min(compact?70:92,Math.max(48,p.w*.25)):0,bodyW=p.w-18-(joinW?joinW+6:0);
+      const friendInvite=incoming&&canReply&&!handledInvite&&typeof socialPartyInvite==='function'?socialPartyInvite(m.body):null;
+      const actionable=cpuInvite||friendInvite,normalMessage=!cpuEnvelope&&!partyEnvelope,
+        joinW=actionable?Math.min(compact?70:92,Math.max(48,p.w*.25)):0,bodyW=p.w-18-(joinW?joinW+6:0),headerW=bodyW-(normalMessage?(tiny?42:90):0);
       ctx.fillStyle=incoming&&!m.read_at?'rgba(167,193,94,0.14)':i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
-      ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=incoming?'#a7c15e':'#7fd8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((incoming?'FROM ':'TO ')+'@'+person.handle,bodyW),p.x+9,y+3);
-      const label=partyEnvelope?(incoming?(friendInvite?'NEW · BETA · PARTY INVITE · PRESS JOIN':'NEW · BETA · PARTY INVITE · EXPIRED'):'NEW · BETA · PARTY INVITE SENT'):
-        cpuEnvelope?(incoming?(cpuInvite?(W<430?'NEW/BETA · STARTS':'NEW · BETA · CPU 2v2 GAME INVITE · STARTS WHEN ACCEPTED'):'NEW · BETA · CPU 2v2 INVITE · EXPIRED'):'NEW · BETA · CPU 2v2 INVITE SENT'):m.body;
+      ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=incoming?'#a7c15e':'#7fd8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((incoming?'FROM ':'TO ')+'@'+person.handle,headerW),p.x+9,y+3);
+      if(normalMessage){ctx.textAlign='right';ctx.fillStyle='#a7c15e';ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(tiny?'OPEN ›':'OPEN TO READ ›',p.x+p.w-9,y+3);ctx.textAlign='left';}
+      const label=partyEnvelope?(incoming?(handledInvite?'PARTY INVITE · DISMISSED':friendInvite?'NEW · BETA · PARTY INVITE · PRESS JOIN':'NEW · BETA · PARTY INVITE · EXPIRED'):'NEW · BETA · PARTY INVITE SENT'):
+        cpuEnvelope?(incoming?(handledInvite?'CPU 2v2 INVITE · DISMISSED':cpuInvite?(W<430?'NEW/BETA · STARTS':'NEW · BETA · CPU 2v2 GAME INVITE · STARTS WHEN ACCEPTED'):'NEW · BETA · CPU 2v2 INVITE · EXPIRED'):'NEW · BETA · CPU 2v2 INVITE SENT'):m.body;
       ctx.fillStyle='#cdd6b0';ctx.font=(actionable&&W<430?6:tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(label,bodyW),p.x+9,y+(tiny?13:compact?17:22));
-      if(cpuInvite)drawSocialButton('cpu_invite_play','START',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{invite:{...cpuInvite,senderId:String(other)}});
-      else if(friendInvite)drawSocialButton('party_invite_join','JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{invite:{...friendInvite,senderId:String(other)}});
-      else if(canReply&&!cpuEnvelope&&!partyEnvelope)socialRects.push({id:'dm_reply',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,userId:String(other),handle:person.handle});
+      if(cpuInvite)drawSocialButton('cpu_invite_play','START',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{invite:{...cpuInvite,senderId:String(other)},messageKey});
+      else if(friendInvite)drawSocialButton('party_invite_join','JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{invite:{...friendInvite,senderId:String(other)},messageKey});
+      else if(!cpuEnvelope&&!partyEnvelope)socialRects.push({id:'inbox_message_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,messageKey});
     }
-    const footerGap=compact?5:8,count=pages>1?3:2,bw=(p.w-12-footerGap*(count-1))/count;
+    const canLoadOlder=!!(authUser&&typeof socialNotificationHasMore!=='undefined'&&socialNotificationHasMore),
+      loadingOlder=!!(typeof socialNotificationOlderOp!=='undefined'&&socialNotificationOlderOp),
+      footerGap=compact?5:8,count=pages>1?3:2,bw=(p.w-12-footerGap*(count-1))/count;
     if(!authUser)drawSocialButton('signin','SIGN IN',p.x+6,footerY,bw,footerH,col,true);
     else if(dmReady)drawSocialButton('dm_new','NEW MESSAGE',p.x+6,footerY,bw,footerH,col,true);
     else drawSocialButton('social_retry',dmMissing?'RETRY MESSAGES':'LOADING MESSAGES',p.x+6,footerY,bw,footerH,col,dmMissing);
     if(pages>1){
       drawSocialButton('dm_prev','‹ '+(socialMessagePage+1)+'/'+pages,p.x+6+bw+footerGap,footerY,bw,footerH,'#8a9268',socialMessagePage>0);
-      drawSocialButton('dm_next',(socialMessagePage+1)+'/'+pages+' ›',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',socialMessagePage<pages-1);
-    }else drawSocialButton('inbox_refresh','REFRESH',p.x+6+bw+footerGap,footerY,bw,footerH,'#8a9268',true);
+      if(socialMessagePage<pages-1)drawSocialButton('dm_next',(socialMessagePage+1)+'/'+pages+' ›',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',true);
+      else if(canLoadOlder)drawSocialButton('inbox_load_older',loadingOlder?'LOADING...':'LOAD OLDER ›',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',!loadingOlder);
+      else drawSocialButton('dm_next',(socialMessagePage+1)+'/'+pages+' ›',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',false);
+    }else drawSocialButton(canLoadOlder?'inbox_load_older':'inbox_refresh',loadingOlder?'LOADING...':canLoadOlder?'LOAD OLDER':'REFRESH',p.x+6+bw+footerGap,footerY,bw,footerH,'#8a9268',!loadingOlder);
   }
 
   {
@@ -2737,6 +2863,7 @@ function drawHub(){
     ctx.fillText(fitLine(a.title,cardW-12),x+cardW/2,y+cardH/2-(cardH<38?5:8));
     ctx.fillStyle=a.enabled?(hot?'#25291d':'#8a9268'):'#555550'; ctx.font='700 '+(cardW<170?7:9)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(a.sub,cardW-12),x+cardW/2,y+cardH/2+(cardH<38?8:12));
+    if(a.id==='social'&&typeof socialHasUnreadActivity==='function'&&socialHasUnreadActivity())drawSocialAttentionBadge(r);
     ctx.textBaseline='top';
   }
 
@@ -3313,6 +3440,9 @@ function drawSlider(id,label,val,x,y,w){
 }
 function drawMenu(){
   const inRun = state!=='select';
+  const rankedCpuForfeit=!!(inRun&&authUser&&typeof botLadderMatchForfeitEligible==='function'&&
+    ((typeof isBotArena==='function'&&isBotArena()&&botLadderMatchForfeitEligible(arena))||
+     (typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()&&botLadderMatchForfeitEligible(partyCpuMatch))));
   ctx.fillStyle='rgba(8,9,5,0.78)'; ctx.fillRect(0,0,W,H);
   const compact=H<430,pw=Math.min(340,W-16),buttonH=compact?34:44,buttonGap=compact?5:8,
     buttonCount=inRun?4:3,titleZone=compact?42:58,sliderZone=compact?74:102,bottomZone=compact?18:28,
@@ -3331,7 +3461,7 @@ function drawMenu(){
   drawMenuBtn('resume','CLOSE',px+sidePad,by,bw,buttonH);by+=buttonH+buttonGap;
   drawMenuBtn('account',authUser?'ACCOUNT SETTINGS':'SIGN IN / ACCOUNT',px+sidePad,by,bw,buttonH);by+=buttonH+buttonGap;
   if(inRun){
-    drawMenuBtn('exit','EXIT TO MENU',px+sidePad,by,bw,buttonH);by+=buttonH+buttonGap;
+    drawMenuBtn('exit',rankedCpuForfeit?'EXIT · COUNTS AS LADDER LOSS':'EXIT TO MENU',px+sidePad,by,bw,buttonH);by+=buttonH+buttonGap;
     drawMenuBtn('report','\u26A0 REPORT PROBLEM',px+sidePad,by,bw,buttonH);by+=buttonH;
   } else {
     drawMenuBtn('report','\u26A0 REPORT PROBLEM',px+sidePad,by,bw,buttonH);by+=buttonH;

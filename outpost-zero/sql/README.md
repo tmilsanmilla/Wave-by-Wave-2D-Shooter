@@ -116,8 +116,9 @@ into the SQL Editor.
 
 ## Administration
 
-Administration has two independent migrations. Run the file for the feature
-you are deploying; Administration `02` does **not** require Administration `01`.
+Administration has three migrations. Administration `01` and `02` are
+independent; Administration `03` deliberately requires both of them plus
+Social `01` because it unifies their safe events in one private Inbox.
 
 ### Temporary gifts and the private LOG
 
@@ -221,6 +222,79 @@ new post says it is awaiting approval), and once as creator/main (the permitted
 roster actions work; approve the draft and confirm the same update appears on
 Home and in Inbox).
 
+### Unified private notification Inbox
+
+After Social `01` and Administration `01` + `02` are installed, paste and run
+this entire file in the Supabase SQL Editor:
+
+1. `administration/03-notification-inbox.sql`
+
+If you already ran Administration `01` and `02`, this is the **only** new SQL
+paste. Add/run `03`; do not replace or append to `01` or `02`, and do not rerun
+Social `01` through `06`. If either Administration prerequisite was never run,
+run the missing prerequisite first and then run `03`. A clear prerequisite
+error means the earlier file is missing; it does not mean to paste the files
+together. Administration `03` is safe to rerun and preserves every existing
+notification and read receipt.
+
+If the last SQL you actually applied was Social `05` and you have not installed
+these later features yet, run these four whole files **one at a time**, in this
+order: Social `06`, Administration `01`, Administration `02`, Administration
+`03`. For each step, create a new SQL Editor query, paste the entire file, and
+press Run; add/run each file rather than replacing or appending to an older
+file. Do not rerun Social `01` through `05` and do not rerun Leaderboards `01`.
+Administration `01` first needs the game's original `admins`, `profiles`,
+`scores`, `bans`, `ban_appeals`, and `player_requests` tables plus its original
+`admin_edit_player(target_email, patch)` RPC; if Supabase reports one missing,
+install that original administration schema before continuing. If you already
+ran any file in the four-step list successfully, do not repeat it—continue with
+the next missing file.
+
+What Administration `03` does, concretely:
+
+- Creates a forced-RLS notification table and per-account read-receipt table
+  with no direct browser policies or table grants. Players list and mark only
+  notifications addressed to their signed-in Auth account, plus shared global
+  updates. The API returns opaque text keys such as `n_42`, never an Auth UUID,
+  account email, internal actor/source ID, or JavaScript-unsafe bigint.
+- Lets only the server-verified creator or a main admin send a message to one
+  chosen public username. The browser cannot choose an author label, role,
+  target account ID, email, timestamp, or read owner. Operation UUIDs make an
+  exact retry return the first result; changing the payload with the same UUID
+  fails. Rolling sender, per-recipient, and incoming limits prevent staff-message
+  floods even when two admins send concurrently.
+- Converts successful Administration `01` audit events into atomic recipient
+  notices for applied bans, lifted bans, temporary/permanent weapon grants or
+  removals, score changes, currency changes, and upgrade changes. The mutation,
+  audit row, and notice either all commit or all roll back. Player-facing text
+  never copies private audit notes, emails, or UUIDs.
+- Converts each newly approved Administration `02` banner into one global Inbox
+  row plus separate per-player read receipts; it does not copy the message into
+  every account. Its allowlisted `banner:<id>` reference lets the signed-in UI
+  suppress the duplicate legacy banner card while Home continues using the
+  canonical banner. Deleting that update hides its Inbox row while retaining a
+  private rate-limit tombstone, so delete/repost cannot bypass the update cap.
+  The summary RPC also returns an opaque `feed_revision`; it changes when a
+  visible notice is added or a banner is removed, so the client can discard
+  stale cached pages and make a deleted update disappear without exposing the
+  hidden tombstone.
+- Adds a server-bound friend-request notice for the invited player. Acceptance
+  creates one source-idempotent congratulations notice for each participant,
+  using only the counterpart's chosen public username. Existing Friends lists
+  remain the authority for the current relationship state.
+- Uses source-unique triggers for audit, update, and friendship events, so a
+  retry or repeated trigger installation cannot duplicate an event. Read marks
+  are recipient-bound and idempotent. Global updates are limited to five per
+  ten minutes and thirty per day; targeted messages are limited to twelve per
+  ten minutes, sixty per day, four per recipient per hour, and thirty incoming
+  per recipient per hour.
+
+Deploy the matching game JavaScript at the same time, then hard-refresh or sign
+out/in. Until Administration `03` is installed, the game keeps the prior safe
+banner, Friends, direct-message, and Party-invite views; it hides the targeted
+staff-message composer and never falls back to inserting a notification or
+private message directly.
+
 ## AI bot ladder
 
 The tactical bot brain is shared by every player, while signed-in players have
@@ -229,7 +303,7 @@ Medium, Hard, and Impossible. Guests play Beginner without creating database
 state. Normal completed AI matches update only the signed-in account; creator
 and main-admin comparison tests never update the ladder.
 
-Run these independent feature scripts in order:
+For a brand-new AI feature install, run these independent scripts in order:
 
 1. `ai/01-global-training.sql` — private per-account ladder, exact-once match
    receipts, RLS, narrow read/submit RPCs, and API grants
@@ -238,9 +312,23 @@ Run these independent feature scripts in order:
 3. `ai/03-game-training.sql` — privacy-limited completed-match training
    summaries, exact-once offline retries, and creator/main-admin aggregates
 
-If Social was the last feature you installed, do not rerun its four files for
-this change; paste and run the AI scripts instead. If you already ran AI 01 and
-AI 02, paste and run only AI 03 next.
+If Social was the last feature you installed, do not rerun or replace any
+Social file for this change; use separate SQL Editor queries for the AI files.
+If AI 01 and AI 02 were already installed but AI 03 was not, AI 03 remains the
+next script for match-evidence summaries. The ladder correction immediately
+below is separate and still requires the updated AI 01 rerun.
+
+For the August 27 CPU-ladder correctness update, paste and run the **entire
+updated `ai/01-global-training.sql` file again**, even if AI 01 was installed
+before. Open a new SQL Editor query, paste that whole file by itself, and press
+Run. This is an in-place rerun: do not replace a table, do not erase ladder
+rows, and do not append the SQL to another file. AI 01 is independent of every
+Social and Administration migration, so none of those files should be rerun
+for this correction. The AI 01 rerun preserves every account and receipt,
+updates the result RPC, and repairs the old Impossible win-streak value `3` to
+the completed/reset value `0` with a newer revision. It also enforces that both
+stored streak counters are always `0`, `1`, or `2`. AI 02 and AI 03 do not need
+to be rerun for this ladder-only correction.
 
 The historical AI 01 filename is retained for ladder compatibility. All three
 AI scripts are rerunnable and do not delete profile data.
@@ -259,6 +347,15 @@ revision inside the transaction. The server remains canonical. The browser
 keeps only owner-scoped unsynced match receipts plus an advisory ladder cache
 so a reload or temporary outage cannot erase a result; neither is copied into
 the general profile JSON.
+
+The player-facing `SCORE` is the SQL `progress` field: each win adds one score,
+score 10 or a third consecutive win promotes to the next tier, and promotion
+resets score plus both streak counters. Every third consecutive loss removes
+one score; at score zero it demotes one tier and resumes at score nine, while
+Beginner zero is the floor. Impossible is the ceiling at score 10, but its win
+streak still cycles `0, 1, 2, 0` on every third win instead of getting stuck.
+Only CPU 1v1 and the fully local one-player-plus-ally-CPU 2v2 update this
+ladder. Invite-a-friend and Party CPU 2v2 matches are deliberately unranked.
 
 AI 02 is separate because model history is global while ladder progress is
 private per account. Every release maps to an allowlisted behavior snapshot

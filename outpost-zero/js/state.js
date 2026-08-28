@@ -38,6 +38,8 @@ function freshArena(status){
     mapVoteAcks:new Set(),mapVoteRevealUntil:0,mapVoteSyncAt:0,mapVoteStartPending:false,
     detonatedTnt:new Set(),tntDamage:new Map(),tntFx:[],portalLocks:{},pendingHazards:new Map(),hazardReceipts:new Map(),hazardArbitrations:new Map(),localKoCause:null,
     syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),pendingUnscopedHits:new Set(),
-    shotSeq:0,seenShots:new Set(),remoteShots:[],rematchVotes:new Set(),savedUtility:undefined};
+    shotSeq:0,seenShots:new Set(),remoteShots:[],fireworkSeq:0,remoteFireworkHighestSeq:0,
+    seenFireworks:new Set(),remoteFireworks:[],remoteFireworkFx:[],
+    rematchVotes:new Set(),savedUtility:undefined};
 }
 arena=freshArena('Sign in, choose a loadout, then enter Casual 1v1.');

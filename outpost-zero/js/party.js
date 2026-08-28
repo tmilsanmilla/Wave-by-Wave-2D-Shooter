@@ -125,9 +125,15 @@ function partySessionIdentity(chosenName){
 function partyPrepareForAuthChange(nextUserId){
   const next=String(nextUserId||''),changed=partyAuthOwnerId!==next;
   if(!changed)return false;
-  const hadParty=!!(party&&(party.channel||party.accepted||party.self)),cpuOrigin=!!(party&&party.cpuIntent)||
-    !!(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen());
-  if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())partyCpuAbort(party&&party.directCpu?'2v2 CPU game ended because the account changed.':'Party CPU match ended because the account changed.',true);
+  const localCpu=typeof isLocalCpu2v2==='function'&&isLocalCpu2v2(),
+    hadParty=!!(party&&(party.channel||party.accepted||party.self)),cpuOrigin=localCpu||!!(party&&party.cpuIntent)||
+      !!(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen());
+  // Local CPU 2v2 owns a ranked, owner-frozen ladder match but no Party
+  // transport. Its lifecycle records an eligible started-match forfeit once,
+  // keeps completed durable work on the original owner, leaves pre-fight setup
+  // neutral, and lands auth changes on Offline CPU instead of the Party page.
+  if(localCpu)offlineCpu2v2Leave('LOCAL CPU 2v2 ENDED BECAUSE THE ACCOUNT CHANGED.',false);
+  else if(typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen())partyCpuAbort(party&&party.directCpu?'2v2 CPU game ended because the account changed.':'Party CPU match ended because the account changed.',true);
   const old=party;if(typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(old);
   if(typeof partyFriendInviteFormOwnerId!=='undefined'&&partyFriendInviteFormOwnerId&&typeof formOpen!=='undefined'&&formOpen&&typeof closeForm==='function')closeForm();
   if(typeof partyFriendInviteFormOwnerId!=='undefined')partyFriendInviteFormOwnerId='';
@@ -1081,7 +1087,9 @@ function offlineCpu2v2BeginRound(){
 function offlineCpu2v2RoundTick(){
   if(!isLocalCpu2v2()||!arena.active)return;
   if(partyCpuMatch.phase==='countdown'&&now>=partyCpuMatch.roundStartAt){
-    partyCpuMatch.phase='fight';arena.phase='fight';waveMsg='FIGHT';waveMsgT=now+800;
+    partyCpuMatch.phase='fight';arena.phase='fight';
+    if(typeof markBotLadderMatchStarted==='function')markBotLadderMatchStarted(partyCpuMatch);
+    waveMsg='FIGHT';waveMsgT=now+800;
   }
   if(partyCpuMatch.phase==='fight'&&now>=partyCpuMatch.roundEndAt){
     const alliesHp=partyCpuActors('A').reduce((total,a)=>total+a.hp,0),cpusHp=partyCpuActors('B').reduce((total,a)=>total+a.hp,0);
@@ -1687,12 +1695,14 @@ function partyTick(clock){
   }
 }
 function flushLayoutDraftOnExit(){ if(layoutDirty) persistLayoutDraft(); }
-addEventListener('pagehide',()=>{
+addEventListener('pagehide',event=>{
   flushLayoutDraftOnExit();
+  try{if((!event||event.persisted!==true)&&typeof handleBotLadderPageExit==='function')handleBotLadderPageExit(event);}catch(e){}
   try{ if(typeof arenaForfeitOnPageExit==='function') arenaForfeitOnPageExit(); }catch(e){}
 });
-addEventListener('beforeunload',()=>{
+addEventListener('beforeunload',event=>{
   flushLayoutDraftOnExit();
+  try{if(typeof handleBotLadderPageExit==='function')handleBotLadderPageExit(event);}catch(e){}
   try{ if(typeof arenaForfeitOnPageExit==='function') arenaForfeitOnPageExit(); }catch(e){}
   try{ if(party&&party.channel) partySend('leave',{}); }catch(e){}
 });

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OUTPOST ZERO — Tactical 2D Shooter</title>
-<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260827-party-online-invites">
+<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260827-touch-aim-joystick">
 </head>
 <body>
 <canvas id="c" tabindex="-1"></canvas>
@@ -147,6 +147,8 @@
   <div id="msgbox">
     <h2>✉ MESSAGE</h2>
     <div id="msgto"></div>
+    <label id="msgsubjectlabel" class="sr-only" for="msgsubject">Message subject</label>
+    <input id="msgsubject" type="text" maxlength="80" placeholder="SUBJECT" autocomplete="off" hidden>
     <textarea id="msgmsg" maxlength="500" placeholder="write your message..."></textarea>
     <button id="msgsend" class="btn">SEND</button>
     <button id="msgcancel" class="btn">CANCEL</button>
@@ -217,34 +219,34 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./outpost-zero/js/networking.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/core.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/audio.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/weapons.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/economy-state.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/layout.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/progression.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/administration.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/persistence.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/world.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/enemies.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/state.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/party-state.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/social.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/cpu-state.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/upgrades.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/admin-ui.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/abilities.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/input.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/gameplay.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/ai.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/ai-training.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/online.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/party.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/combat.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/rendering.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/ui.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/loop.js?v=20260827-party-online-invites"></script>
-<script src="./outpost-zero/js/bootstrap.js?v=20260827-party-online-invites"></script>
+<script src="./outpost-zero/js/networking.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/core.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/audio.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/weapons.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/economy-state.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/layout.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/progression.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/administration.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/persistence.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/world.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/enemies.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/state.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/party-state.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/social.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/cpu-state.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/upgrades.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/admin-ui.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/abilities.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/input.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/gameplay.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/ai.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/ai-training.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/online.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/party.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/combat.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/rendering.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/ui.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/loop.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/bootstrap.js?v=20260827-touch-aim-joystick"></script>
 </body>
 </html>

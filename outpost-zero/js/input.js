@@ -8,9 +8,34 @@ let menuRects={}, dragSlider=null, menuOpen=false, gearRect={x:-99,y:-99,w:0,h:0
 // replaying the automatic-fire intervals that elapsed while the button was up.
 let mouseFireCadence=false;
 function resetFireCadence(){ mouseFireCadence=false; touchFireCadence=false; }
+function toggleMenuFromInput(){
+  // Opening an overlay while a CPU start/rematch is awaiting cloud state is a
+  // route-away intent. Cancel first so closing the overlay before the response
+  // cannot let an older callback launch behind the player's current screen.
+  if(!menuOpen&&state==='select'){
+    if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();
+    else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
+  }
+  // A pause opened by keyboard, mouse, or a second touch must retire any
+  // currently held touch contacts. Otherwise closing it while the original
+  // finger is still down resumes stale movement/fire. This deliberately keeps
+  // keyboard/mouse cadence and weapon gimmicks intact across an ordinary pause.
+  if(!menuOpen&&state==='play'&&typeof resetHeldTouchContacts==='function')resetHeldTouchContacts();
+  menuOpen=!menuOpen;sfx('swap');
+}
 function activateOfflineCpuAction(rect){
   if(!rect||rect.enabled===false){sfx('dry');return false;}
   const id=String(rect.id||'');offlineCpuFocusId=id;
+  const rankedCpuAction=id==='cpu_start_1v1'||id==='cpu_local_2v2',signedIn=typeof authUser!=='undefined'&&!!authUser,
+    resultPending=typeof botLadderHasPendingResult==='function'&&botLadderHasPendingResult(),
+    secureReady=typeof botLadderSecureMatchReady!=='function'||botLadderSecureMatchReady();
+  // Rectangles describe the last rendered frame. Recheck live state so an
+  // account sync/conflict or unsaved result arriving before click/Enter cannot
+  // route a signed-in player into a ranked loadout through a stale button.
+  if(rankedCpuAction&&signedIn&&
+     (typeof botLadderReadyForMatch!=='function'||!botLadderReadyForMatch()||resultPending||!secureReady)){
+    sfx('dry');return false;
+  }
   if(id==='cpu_root_1v1'){offlineCpuView='1v1';offlineCpuInfoKey='';offlineCpuFocusId='cpu_start_1v1';sfx('swap');}
   else if(id==='cpu_root_2v2'){offlineCpuView='2v2';offlineCpuInfoKey='';offlineCpuFocusId='cpu_local_2v2';sfx('swap');}
   else if(id==='cpu_start_1v1')chooseGameMode('ai1v1','offlinecpu');
@@ -79,7 +104,7 @@ addEventListener('keydown', e=>{
   if(k==='v' && state==='upgrade'){ powerMenuOpen=true; sfx('swap'); return; }
 
   if(k==='escape' && state==='select'){ navigateSelectBack(); return; }
-  if(k==='p' || k==='escape'){ menuOpen=!menuOpen; sfx('swap'); return; }
+  if(k==='p' || k==='escape'){ toggleMenuFromInput(); return; }
   if(menuOpen) return;
 
   if(state==='select'){
@@ -163,7 +188,7 @@ cv.addEventListener('mousedown', e=>{
     if(respawnPromptT){ respawnPromptClick(); return; }        // modal
     if(powerMenuOpen){ powerMenuClick(); return; }
     if(mouse.x>=gearRect.x && mouse.x<=gearRect.x+gearRect.w && mouse.y>=gearRect.y && mouse.y<=gearRect.y+gearRect.h){
-      menuOpen=!menuOpen; sfx('swap'); return;
+      toggleMenuFromInput(); return;
     }
     if(menuOpen){ menuClick(); return; }
     if(layoutMode && state==='select' && selPage==='hub'){ layoutMouseDown(); return; }
@@ -197,24 +222,66 @@ cv.addEventListener('contextmenu', e=> e.preventDefault());
 /* ---------------- touch controls (twin-stick) ---------------- */
 const touchUI = ('ontouchstart' in window) || (navigator.maxTouchPoints>0);
 const STICK_R=60;
+const MOVE_STICK_HIT_R=STICK_R+18;
 const sticks={ move:{id:null,cx:0,cy:0,dx:0,dy:0}, aim:{id:null,cx:0,cy:0,dx:0,dy:0} };
-let touchButtons=[], touchWeaponSelectorBounds=null, pressedBtn=null, menuTouchId=null;
+let touchButtons=[], touchWeaponSelectorBounds=null, pressedBtn=null, pressedBtnTouchId=null, menuTouchId=null;
 let peScrollTouchId=null,peScrollTouchStartX=0,peScrollTouchStartY=0,peScrollTouchLastY=0,peScrollTouchMoved=false,peScrollTouchKind='';
 let tapShootUntil=0, tapAimX=0, tapAimY=0, aimStickId=null, touchUtilityUsed=false, touchFireCadence=false;
+function touchMoveStickCenter(){
+  // This is the same fixed point painted by drawHUD. Keeping the hit target
+  // anchored is important: a field touch aimed at a lower-left enemy must not
+  // turn into a floating movement stick at the enemy's screen position.
+  const inset=STICK_R+8;
+  const xMax=Math.max(inset,W-inset),yMax=Math.max(inset,H-inset);
+  return {x:Math.max(inset,Math.min(110,xMax)),y:Math.max(inset,Math.min(H-120,yMax))};
+}
+function touchPointClaimsMoveStick(x,y){
+  const c=touchMoveStickCenter(),dx=x-c.x,dy=y-c.y;
+  return dx*dx+dy*dy<=MOVE_STICK_HIT_R*MOVE_STICK_HIT_R;
+}
+function updateMoveStickTouch(t){
+  const st=sticks.move;
+  let dx=px(t.clientX)-st.cx,dy=t.clientY-st.cy;
+  const m=Math.hypot(dx,dy);
+  if(m>STICK_R){dx*=STICK_R/m;dy*=STICK_R/m;}
+  st.dx=dx;st.dy=dy;
+}
+function touchInputHasOwner(){
+  return sticks.move.id!==null||aimStickId!==null||pressedBtnTouchId!==null||
+    menuTouchId!==null||peScrollTouchId!==null;
+}
+function resetHeldTouchContacts(clearGeometry=false){
+  const ownsMouse=menuTouchId!==null||peScrollTouchId!==null;
+  pressedBtn=null;pressedBtnTouchId=null;menuTouchId=null;aimStickId=null;
+  touchUtilityUsed=false;tapShootUntil=0;touchFireCadence=false;
+  peScrollTouchId=null;peScrollTouchMoved=false;peScrollTouchKind='';
+  for(const stick of [sticks.move,sticks.aim]){stick.id=null;stick.dx=0;stick.dy=0;}
+  if(ownsMouse){mouse.down=false;dragSlider=null;}
+  if(clearGeometry){touchButtons=[];touchWeaponSelectorBounds=null;}
+}
 function resetHeldGameplayInput(){
   // A click/touch/Enter used to launch a mode must never become gameplay input.
   // Fullscreen changes can swallow the matching release event, so clear every
   // held source explicitly instead of waiting for mouseup/touchend/keyup.
   for(const k in keys) keys[k]=false;
   mouse.down=false; dragSlider=null;
-  pressedBtn=null; menuTouchId=null; aimStickId=null; touchUtilityUsed=false; tapShootUntil=0;
-  peScrollTouchId=null; peScrollTouchMoved=false;peScrollTouchKind='';
+  // Production uses the narrow shared touch boundary. The fallback keeps this
+  // reset safe when a single mode embeds/tests it without the surrounding
+  // touch section.
+  if(typeof resetHeldTouchContacts==='function')resetHeldTouchContacts(true);
+  else{
+    pressedBtn=null;pressedBtnTouchId=null;menuTouchId=null;aimStickId=null;
+    touchUtilityUsed=false;tapShootUntil=0;touchFireCadence=false;
+    peScrollTouchId=null;peScrollTouchMoved=false;peScrollTouchKind='';
+    for(const stick of [sticks.move,sticks.aim]){stick.id=null;stick.dx=0;stick.dy=0;}
+    touchButtons=[];touchWeaponSelectorBounds=null;
+  }
   resetFireCadence();
-  for(const stick of [sticks.move,sticks.aim]){ stick.id=null; stick.dx=0; stick.dy=0; }
+  if(typeof cancelFanTheHammer==='function')cancelFanTheHammer();
   aiming=false; rmbAim=false;
   fireSuppressT=Math.max(fireSuppressT,now+250);
 }
-function buttonAt(x,y){
+function buttonAt(x,y,exactOnly=false){
   // Prefer the exact visible target. Weapon slots are rectangular while the
   // action controls are circular, so an overlapping magnetic margin must
   // never turn a deliberate numbered-slot tap into another action.
@@ -223,6 +290,7 @@ function buttonAt(x,y){
       if(x>=b.x&&x<=b.x+b.w&&y>=b.y&&y<=b.y+b.h) return b;
     } else if((x-b.x)*(x-b.x)+(y-b.y)*(y-b.y)<=b.r*b.r) return b;
   }
+  if(exactOnly)return null;
   // Magnet: snap to the nearest button just outside its visible edge, so a
   // hurried tap is still usable without creating overlapping visible buttons.
   let best=null, bd=1e9;
@@ -266,7 +334,7 @@ cv.addEventListener('touchstart', e=>{
     if(respawnPromptT){ mouse.x=x; mouse.y=y; respawnPromptClick(); continue; }
     if(powerMenuOpen){ mouse.x=x; mouse.y=y; powerMenuClick(); continue; }
     if(x>=gearRect.x&&x<=gearRect.x+gearRect.w&&y>=gearRect.y&&y<=gearRect.y+gearRect.h){
-      menuOpen=!menuOpen; sfx('swap'); continue;
+      toggleMenuFromInput(); continue;
     }
     const scrollModal=typeof topModal==='function'?topModal():null;
     const scoreScroll=scrollModal&&scrollModal.k==='scores'&&playerEditScrollContains(x,y);
@@ -281,6 +349,7 @@ cv.addEventListener('touchstart', e=>{
     }
     if(peScrollTouchId!==null&&scrollModal&&scrollModal.k===peScrollTouchKind) continue;
     if(state!=='play' || menuOpen){
+      if(menuTouchId!==null)continue;
       mouse.x=x; mouse.y=y; mouse.down=true; menuTouchId=t.identifier;
       if(menuOpen) menuClick();
       else if(state==='select') clickSelect();
@@ -288,14 +357,34 @@ cv.addEventListener('touchstart', e=>{
       else if(state==='over') startGame();
       continue;
     }
-    const b=buttonAt(x,y);
-    if(b){ pressedBtn=b.key; doButton(b.key); continue; }
-    // left-bottom quadrant drives the movement joystick
-    if(x < W*0.42 && y > H*0.45 && sticks.move.id===null){
-      sticks.move.id=t.identifier; sticks.move.cx=x; sticks.move.cy=y; sticks.move.dx=0; sticks.move.dy=0;
+    // An exact painted button remains stronger than every forgiving control
+    // margin, including the movement stick's slightly enlarged hit target.
+    const exactButton=buttonAt(x,y,true);
+    if(exactButton){
+      if(pressedBtnTouchId===null){pressedBtn=exactButton.key;pressedBtnTouchId=t.identifier;}
+      doButton(exactButton.key);continue;
+    }
+    // Only the visible, fixed bottom-left control owns movement. The old
+    // quadrant-wide target captured ordinary lower-left aim touches and then
+    // moved the joystick underneath them. Resolve this before the buttons'
+    // forgiving magnetic margins so the visible stick always keeps its area.
+    if(touchPointClaimsMoveStick(x,y)){
+      if(sticks.move.id===null){
+        const c=touchMoveStickCenter();
+        sticks.move.id=t.identifier;sticks.move.cx=c.x;sticks.move.cy=c.y;
+        updateMoveStickTouch(t);
+      }
       continue;
     }
+    const b=buttonAt(x,y);
+    if(b){
+      if(pressedBtnTouchId===null){pressedBtn=b.key;pressedBtnTouchId=t.identifier;}
+      doButton(b.key);continue;
+    }
     // anywhere else on the field: tap to aim + shoot there
+    // One pointer owns aim until its own end/cancel. A second field finger
+    // cannot steal it, so movement + aim remains stable under multi-touch.
+    if(aimStickId!==null)continue;
     const wp=screenToWorld(x,y);
     tapAimX=wp.x; tapAimY=wp.y;
     mouse.x=x; mouse.y=y;
@@ -338,10 +427,7 @@ cv.addEventListener('touchmove', e=>{
     }
     const st=sticks.move;
     if(st.id===t.identifier){
-      let dx=px(t.clientX)-st.cx, dy=t.clientY-st.cy;
-      const m=Math.hypot(dx,dy);
-      if(m>STICK_R){ dx*=STICK_R/m; dy*=STICK_R/m; }
-      st.dx=dx; st.dy=dy;
+      updateMoveStickTouch(t);
     }
   }
 },{passive:false});
@@ -358,17 +444,30 @@ function touchEnd(e,cancelled){
       continue;
     }
     if(t.identifier===menuTouchId){ menuTouchId=null; mouse.down=false; dragSlider=null; }
+    if(t.identifier===pressedBtnTouchId){pressedBtnTouchId=null;pressedBtn=null;}
     if(t.identifier===aimStickId){ aimStickId=null; touchUtilityUsed=false; touchFireCadence=false; tapShootUntil=0; }
     if(sticks.move.id===t.identifier){ sticks.move.id=null; sticks.move.dx=0; sticks.move.dy=0; }
   }
-  pressedBtn=null;
 }
 cv.addEventListener('touchend',e=>touchEnd(e,false),{passive:false});
 cv.addEventListener('touchcancel',e=>touchEnd(e,true),{passive:false});
+// Rotation/resizing changes the fixed control's geometry. Release ownership
+// instead of applying a stale center to the next move event. Visibility loss
+// covers mobile app switching where the browser may omit touchcancel.
+function resetTouchInputForViewportChange(){
+  if(!touchUI)return;
+  if(touchInputHasOwner())resetHeldGameplayInput();
+  else{touchButtons=[];touchWeaponSelectorBounds=null;}
+}
+addEventListener('resize',resetTouchInputForViewportChange);
+addEventListener('orientationchange',resetTouchInputForViewportChange);
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden&&touchInputHasOwner())resetHeldGameplayInput();
+});
 addEventListener('blur', ()=>{
   const localArena=isBotArena()||(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2());
   if(state==='play'&&(practiceMode!=='arena'||localArena)) menuOpen=true;
-  if(practiceMode==='arena'&&!localArena) for(const k in keys) keys[k]=false;
+  resetHeldGameplayInput();
 });
 
 function pickWeapon(k){
@@ -434,6 +533,10 @@ function clickSelect(){
   if(signUpPromptOpen){ signUpPromptClick(); return; }
   const accountRect=accountBtnRect||signBtnRect;
   if(accountRect&&inR(accountRect)&&!adminPanelOpen&&!updatesOpen&&!adminsOpen&&!msgsOpen&&!auditOpen&&!archOpen&&!storageOpen&&!scoresOpen&&!detailKey){
+    if(state==='select'){
+      if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();
+      else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
+    }
     activateAccountTrigger();sfx('swap');return;
   }
   // ADMIN / UPDATES live beside the gear, so they work from any select page
@@ -551,7 +654,8 @@ function clickSelect(){
       else if(r.id==='social_view_friends'){ socialView='friends'; sfx('swap'); }
       else if(r.id==='social_view_inbox'){ socialView='inbox'; sfx('swap'); }
       else if(r.id==='social_retry') fetchSocial(true);
-      else if(r.id==='inbox_refresh'){ if(typeof fetchBanners==='function')fetchBanners(); if(authUser){fetchSocial(true);if(typeof socialPollPartyInvites==='function')void socialPollPartyInvites(true);} sfx('swap'); }
+      else if(r.id==='inbox_refresh'){ if(typeof fetchBanners==='function')fetchBanners(); if(authUser){fetchSocial(true);if(typeof socialPollPartyInvites==='function')void socialPollPartyInvites(true);if(typeof socialPollNotifications==='function')void socialPollNotifications(true);} sfx('swap'); }
+      else if(r.id==='inbox_load_older'&&typeof socialLoadOlderNotifications==='function'){void socialLoadOlderNotifications();sfx('swap');}
       else if(r.id==='friend_add') socialPromptAddFriend();
       else if(r.id==='friend_accept') socialAcceptFriend(r.rowId);
       else if(r.id==='friend_block') socialBlockFriend(r.rowId);
@@ -561,9 +665,15 @@ function clickSelect(){
       else if(r.id==='friend_bucket_prev'&&socialFriendPages[r.section]!==undefined){ socialFriendPages[r.section]=Math.max(0,socialFriendPages[r.section]-1); sfx('swap'); }
       else if(r.id==='friend_bucket_next'&&socialFriendPages[r.section]!==undefined){ socialFriendPages[r.section]++; sfx('swap'); }
       else if(r.id==='official_update_open'&&typeof openReader==='function'){ openReader('OFFICIAL UPDATE',String(r.meta||'OUTPOST ZERO · OFFICIAL'),String(r.body||''),'public'); sfx('swap'); }
+      else if(r.id==='inbox_notice_open'&&typeof socialOpenNotification==='function'){ socialOpenNotification(r.noticeKey); sfx('swap'); }
+      else if(r.id==='inbox_message_open'&&typeof socialOpenInboxMessage==='function'){ socialOpenInboxMessage(r.messageKey); sfx('swap'); }
       else if(r.id==='friend_message'||r.id==='dm_reply') openSocialMessageCompose(r.userId,r.handle);
-      else if(r.id==='cpu_invite_play'&&typeof partyJoinCpuInvite==='function') partyJoinCpuInvite(r.invite);
-      else if(r.id==='party_invite_join'&&typeof partyJoinFriendInvite==='function') partyJoinFriendInvite(r.invite);
+      else if(r.id==='cpu_invite_play'&&typeof partyJoinCpuInvite==='function'){
+        const joined=partyJoinCpuInvite(r.invite);if(joined&&typeof socialPrivateMessageByUiKey==='function'&&typeof socialHandleLegacyInvite==='function')socialHandleLegacyInvite(socialPrivateMessageByUiKey(r.messageKey));
+      }
+      else if(r.id==='party_invite_join'&&typeof partyJoinFriendInvite==='function'){
+        const joined=partyJoinFriendInvite(r.invite);if(joined&&typeof socialPrivateMessageByUiKey==='function'&&typeof socialHandleLegacyInvite==='function')socialHandleLegacyInvite(socialPrivateMessageByUiKey(r.messageKey));
+      }
       else if(r.id==='cloud_party_invite_accept'&&typeof socialClaimAndJoinPartyInvite==='function') void socialClaimAndJoinPartyInvite(r.inviteKey);
       else if(r.id==='cpu_direct_return'){selPage='offlinecpu';offlineCpuView='2v2';offlineCpuInfoKey='';sfx('swap');}
       else if(r.id==='dm_new') socialPromptMessage();
@@ -639,7 +749,14 @@ function clickSelect(){
   }
   if(selPage==='loadout'){
     if(inR(backRect)){ navigateSelectBack(); return; }
-    for(const c of catBtns) if(inR(c)){ selPage=c.cat; sfx('swap'); return; }
+    for(const c of catBtns) if(inR(c)){
+      // A signed-in CPU deploy may still be awaiting its canonical ladder/model
+      // read. Opening the editor is a new launch intent; invalidate the old
+      // callback so returning here cannot auto-deploy a changed loadout.
+      if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();
+      else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
+      selPage=c.cat; sfx('swap'); return;
+    }
     if(inR(deployRect)){ launchSelectedMode(); return; }
     return;
   }

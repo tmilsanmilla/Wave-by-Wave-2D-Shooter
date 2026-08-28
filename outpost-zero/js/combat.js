@@ -321,8 +321,12 @@ function tryFire(carryCadence=false){
     const a=Math.atan2(tdy,tdx);
     const flight=480;                                    // fixed fuse: same detonation time near or far
     const spd=(tdist/flight)*16;                         // scale speed so it always arrives in `flight` ms
-    grenades.push({x:player.x, y:player.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd,
-                   t:now+flight, firework:true, tx, ty});
+    const fireworkShot={x:player.x, y:player.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd,
+                        t:now+flight, firework:true, tx, ty};
+    grenades.push(fireworkShot);
+    // Online damage stays sender-authoritative. This separate packet only lets
+    // the opponent simulate the already-fired firecracker as a harmless cue.
+    if(typeof arenaBroadcastFirework==='function')arenaBroadcastFirework(player.cur,fireworkShot);
     player.flash=now+55; sfx('shoot',w,player.cur);
     return true;
   }
@@ -334,10 +338,11 @@ function tryFire(carryCadence=false){
   player.lastShot=shotStamp;
   weaponLastShotAt[shotWeapon]=shotStamp;
   player.mags[shotWeapon]--; if(tutorialOn) tutFired++;
-  // Aimed Python fire starts one six-round, ammo-honest fan. Follow-ups use
-  // the same real firing path, but cannot recursively start another volley.
+  // An aimed Python trigger empties exactly the magazine that was loaded when
+  // the fan began. Follow-ups use the same real firing path, but ammo added
+  // later cannot extend the captured volley or recursively start another one.
   if(startsFan){
-    fanShots=Math.max(0,Math.floor(+w.fanExtraShots||5));
+    fanShots=Math.max(0,Math.floor(+player.mags[shotWeapon]||0));
     fanNextT=now+(+w.fanGapMs||115);
     fanBurstUntil=now+(+w.fanLockMs||900);
   }
@@ -434,7 +439,8 @@ function update(dtms){
       player.lastShot = now - rw.fireRate*perks.rate*wm('revolver').rate;   // bypass the slow hammer
       if(tryFire()){
         fanShots=Math.max(0,fanShots-1);
-        fanNextT=now+(+rw.fanGapMs||115);
+        if(fanShots>0)fanNextT=now+(+rw.fanGapMs||115);
+        else cancelFanTheHammer();
       } else cancelFanTheHammer();
     } else cancelFanTheHammer();
   }
@@ -767,6 +773,8 @@ function update(dtms){
     recordWaveCoinReward();
     bossBounty = wave%10===0;
     upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
+    cancelFanTheHammer();
+    if(typeof resetHeldTouchContacts==='function')resetHeldTouchContacts();
     state='upgrade'; sfx('wave');
   } else if(!practiceMode && !enemies.length){
     if(wave>=1 && !upgradeOffered){
@@ -774,6 +782,8 @@ function update(dtms){
       recordWaveCoinReward(); // bank each clear; pay the whole bank exactly every fifth wave
       bossBounty = wave%10===0;   // weapon-mod level every 10 waves
       upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
+      cancelFanTheHammer();
+      if(typeof resetHeldTouchContacts==='function')resetHeldTouchContacts();
       state='upgrade'; sfx('wave');
     } else {
       betweenTimer-=dtms;
@@ -1179,6 +1189,7 @@ function update(dtms){
             if(awardedGems>0) addGems(awardedGems);
             waveMsg='\uD83C\uDF81 '+modTxt+'+'+awardedGems+' \uD83D\uDC8E  +'+coinDrop+' \uD83E\uDE99'; waveMsgT=now+2600;
           }
+          if(typeof resetHeldTouchContacts==='function')resetHeldTouchContacts();
           chestRewardOpen={coins:coinDrop,gems:awardedGems,mod:modName,trickle,end:trickle.start+trickle.dur};
         }
         burst(p.x,p.y,'#ffd24d',18,5); sfx('pickup');
@@ -1214,6 +1225,7 @@ function hurtPlayer(dmg){
     }
     // a RESPAWN powerup in stock (and unused this game) -> offer the prompt instead of dying
     if((powerStock.respawn||0)>0 && (powerUsed.respawn||0) < powerupMax('respawn')){
+      if(typeof resetHeldTouchContacts==='function')resetHeldTouchContacts();
       player.hp=0; state='play'; menuOpen=true; respawnPromptT=1;   // freeze via a prompt
       sfx('die');
       return;

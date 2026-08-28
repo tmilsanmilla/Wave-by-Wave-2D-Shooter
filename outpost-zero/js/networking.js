@@ -120,6 +120,7 @@ async function initAuth(){
       const initialUser=data.session?data.session.user:null,initialPreviousUserId=authUser?String(authUser.id||''):'',
         initialNextUserId=initialUser?String(initialUser.id||''):'';
       if(initialPreviousUserId!==initialNextUserId){
+        if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange(initialNextUserId);
         if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange(initialNextUserId);
         if(typeof closeAccountMenu==='function')closeAccountMenu(true);
         if(typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
@@ -147,6 +148,7 @@ async function initAuth(){
         const previousAuthUserId=authUser?String(authUser.id||''):'',nextAuthUser=sess?sess.user:null,
           nextAuthUserId=nextAuthUser?String(nextAuthUser.id||''):'';
         if(previousAuthUserId!==nextAuthUserId){
+          if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange(nextAuthUserId);
           if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange(nextAuthUserId);
           if(typeof closeAccountMenu==='function')closeAccountMenu(true);
           if(typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
@@ -389,6 +391,7 @@ async function cancelPasswordRecoverySession(){
   try{const result=await sb.auth.signOut();if(result&&result.error)console.warn('recovery sign-out failed; clearing this screen locally',result.error);}
   catch(error){console.warn('recovery sign-out failed; clearing this screen locally',error);}
   if(authUser&&typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
+  if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange('');
   if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange('');
   if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange('');
   authUser=null;authProfileRequestVersion++;postUsernameGateUserId='';prepareLocalGuestAfterAuthLoss();
@@ -548,6 +551,7 @@ async function toggleAuth(options){
     if(signOutError)console.warn('cloud sign-out failed; clearing this screen locally',signOutError);
     if(authUser&&String(authUser.id||'')!==liveUserId){closeAccountMenu(true);return true;}
     if(authUser&&typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
+    if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange('');
     if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange('');
     if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange('');
     authUser=null;authProfileRequestVersion++;postUsernameGateUserId='';
