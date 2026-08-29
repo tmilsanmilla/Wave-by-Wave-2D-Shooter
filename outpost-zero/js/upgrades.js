@@ -59,6 +59,23 @@ for(const c of TIER_CHAINS) for(let tier=1;tier<=3;tier++){
   UPGRADES.push({n,base:c.n,tier,d:c.ds[tier-1],f:c.fs[tier-1],once:true,
                  req:tier>1?c.n+' '+ROMAN[tier-1]:null});
 }
+// Once every named path is complete, Endless must still offer a real choice.
+// These repeat forever, but clamp their multipliers so an exceptionally long
+// run cannot overflow a stat or drive a firing interval to zero.
+const LATE_RUN_UPGRADES=Object.freeze([
+  Object.freeze({n:'ENDLESS CALIBRATION',d:'+5% weapon damage',lateRun:true,
+    f:()=>{perks.dmg=Math.min(1000000,Math.max(1,+perks.dmg||1)*1.05);}}),
+  Object.freeze({n:'ENDLESS CYCLING',d:'+3% fire rate',lateRun:true,
+    f:()=>{perks.rate=Math.max(0.08,Math.min(1,+perks.rate||1)*0.97);}}),
+  Object.freeze({n:'ENDLESS MAGAZINES',d:'+5% magazine size',lateRun:true,
+    f:()=>{perks.mag=Math.min(1000,Math.max(1,+perks.mag||1)*1.05);}}),
+  Object.freeze({n:'ENDLESS ARMOR',d:'+15 maximum HP and heal 15 HP',lateRun:true,
+    f:()=>{
+      const before=Math.max(1,+perks.maxhp||100);
+      perks.maxhp=Math.min(1000000,before+15);
+      if(typeof player!=='undefined'&&player)player.hp=Math.min(perks.maxhp,Math.max(0,+player.hp||0)+(perks.maxhp-before));
+    }}),
+]);
 function rollUpgrades(){
   const out=[];
   if(bossBounty){
@@ -70,7 +87,7 @@ function rollUpgrades(){
   }
   const pool=UPGRADES.filter(u => (!u.req || perkCounts[u.req]) && !(u.once && perkCounts[u.n]));
   while(out.length<4 && pool.length) out.push(pool.splice((Math.random()*pool.length)|0,1)[0]);
-  return out;
+  return out.length?out:LATE_RUN_UPGRADES.slice();
 }
 function chooseUpgrade(i){
   const u=upgradeChoices[i]; if(!u) return;
@@ -95,6 +112,7 @@ function clickUpgrade(){
 }
 function doDash(){
   if(!perks.dash || state!=='play' || now<dashReadyT) return;
+  if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
   let dx=0,dy=0;
   if(keys['w'])dy--; if(keys['s'])dy++; if(keys['a'])dx--; if(keys['d'])dx++;
   if(!dx&&!dy){ const a=aimAngle(); dx=Math.cos(a); dy=Math.sin(a); }
@@ -121,6 +139,7 @@ function menuClick(){
     if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()){ offlineCpu2v2Leave('Left Offline 2v2.',false); sfx('swap'); return; }
     if(isBotArena()){ leaveArena('Left Offline 1v1.',false); sfx('swap'); return; }
     if(practiceMode==='arena'){ leaveArena('You left the Arena.',true); sfx('swap'); return; }
+    if(typeof persistNormalEndlessScoreOnExit==='function')persistNormalEndlessScoreOnExit();
     const returnPage=tutorialOn?'howto':practiceMode?(soloPractice?(practiceReturnPage||'practice'):'practice'):'hub';
     menuOpen=false; state='select'; selPage=returnPage; practiceMode=null; tutorialTeardown(); restoreTryLoadout(); aiming=false; rmbAim=false; sfx('swap'); return;
   }

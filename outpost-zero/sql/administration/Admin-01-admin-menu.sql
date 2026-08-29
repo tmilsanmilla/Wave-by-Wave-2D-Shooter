@@ -1,18 +1,130 @@
--- OUTPOST ZERO / ADMINISTRATION / 01: TEMPORARY WEAPON GRANTS + AUDIT LOG
--- Requires the game's existing Auth, admins, profiles, scores, bans,
--- player_requests, ban_appeals, and admin_edit_player RPC. Paste this whole
--- file into the Supabase SQL Editor.
--- It is safe to run again: existing grants and audit history are preserved.
---
--- Security boundary:
---   * creator/main status is resolved from auth.uid() and server-owned rows;
---     no RPC accepts an actor id, actor email, role, or target user id.
---   * temporary grants never modify profiles.data.owned (permanent ownership).
---   * every admin mutation and its audit entry commit in one transaction.
---   * tables have forced RLS and no browser table privileges; narrow RPCs are
---     the only browser API.
+-- OUTPOST ZERO / ADMIN 01: ADMIN MENU
+-- Self-contained Admin Menu storage, audited actions, username tools, grants,
+-- bans, appeals, requests, and the permanent creator/main audit LOG.
+-- Run after Social 01 and the base profiles/scores tables. Safe to rerun.
 
 begin;
+
+-- Core rows required by the Admin Menu. Existing rows are never replaced.
+create table if not exists public.admins(
+  email text primary key,
+  role text not null check(lower(btrim(role)) in ('main','co','tester')),
+  created_at timestamptz default now()
+);
+alter table public.admins enable row level security;
+alter table public.admins force row level security;
+revoke all on table public.admins from public,anon,authenticated;
+
+-- The creator is pinned to an Auth UUID, not an email. On the first run only,
+-- resolve that UUID from the creator's public username. The saved UUID remains
+-- authoritative if the creator later changes either username or login email.
+create table if not exists public.outpost_zero_admin_config(
+  singleton boolean primary key default true check(singleton),
+  creator_user_id uuid not null unique references auth.users(id) on delete restrict,
+  seeded_at timestamptz not null default clock_timestamp()
+);
+alter table public.outpost_zero_admin_config enable row level security;
+alter table public.outpost_zero_admin_config force row level security;
+revoke all on table public.outpost_zero_admin_config from public,anon,authenticated;
+
+do $creator_seed$
+declare v_creator uuid;
+begin
+  if not exists(select 1 from public.outpost_zero_admin_config where singleton) then
+    select sp.user_id into v_creator
+    from public.social_profiles sp
+    where sp.handle_key='tmilsanmilla'
+      and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
+    order by sp.created_at asc limit 1;
+    if v_creator is null then
+      raise exception 'Set the creator public username to tmilsanmilla, then rerun Admin 01'
+        using errcode='P0001';
+    end if;
+    insert into public.outpost_zero_admin_config(singleton,creator_user_id)
+    values(true,v_creator) on conflict(singleton) do nothing;
+  end if;
+end;
+$creator_seed$;
+
+create or replace function public._outpost_zero_creator_user_id()
+returns uuid
+language sql
+stable
+security definer
+set search_path=pg_catalog,public
+as $function$
+  select c.creator_user_id from public.outpost_zero_admin_config c
+  where c.singleton limit 1
+$function$;
+revoke all on function public._outpost_zero_creator_user_id()
+  from public,anon,authenticated;
+
+create table if not exists public.bans(
+  id bigint generated always as identity primary key,
+  user_id uuid references auth.users(id) on delete cascade,
+  device_id text,
+  until timestamptz,
+  note text,
+  scopes jsonb not null default '["account"]'::jsonb,
+  banned_by text,
+  created_at timestamptz default now(),
+  user_email text,
+  check(jsonb_typeof(scopes)='array'),
+  check(note is null or char_length(note)<=600)
+);
+
+create table if not exists public.player_requests(
+  id bigint generated always as identity primary key,
+  created_at timestamptz default now(),
+  requested_by text not null,
+  target_email text not null,
+  patch jsonb not null,
+  status text not null default 'pending' check(status in ('pending','approved','rejected','failed')),
+  decided_by text,
+  decided_at timestamptz,
+  operation_id uuid,
+  requester_user_id uuid references auth.users(id) on delete set null
+);
+
+-- Older installs created PostgreSQL's default constraint without `failed`,
+-- which made a rejected permanent edit roll back the intended failure record.
+alter table public.player_requests drop constraint if exists player_requests_status_check;
+alter table public.player_requests add constraint player_requests_status_check
+  check(status in ('pending','approved','rejected','failed'));
+
+create table if not exists public.ban_appeals(
+  id bigint generated always as identity primary key,
+  created_at timestamptz default now(),
+  player_email text not null,
+  message text not null check(char_length(message) between 1 and 600),
+  status text not null default 'open' check(status in ('open','lifted','denied')),
+  decided_by text,
+  operation_id uuid,
+  requester_user_id uuid references auth.users(id) on delete set null
+);
+
+alter table public.bans add column if not exists user_email text;
+update public.bans b set user_email=lower(btrim(u.email))
+from auth.users u where b.user_id=u.id and b.user_email is null;
+
+alter table public.bans enable row level security;
+alter table public.bans force row level security;
+alter table public.player_requests enable row level security;
+alter table public.player_requests force row level security;
+alter table public.ban_appeals enable row level security;
+alter table public.ban_appeals force row level security;
+
+-- Remove every legacy direct policy. Narrow SECURITY DEFINER RPCs below are
+-- the only supported browser boundary for bans, requests, and appeals.
+do $policies$
+declare item record;
+begin
+  for item in select schemaname,tablename,policyname from pg_policies
+    where schemaname='public' and tablename in ('bans','player_requests','ban_appeals')
+  loop execute format('drop policy %I on %I.%I',item.policyname,item.schemaname,item.tablename);end loop;
+end;
+$policies$;
+revoke all on table public.bans,public.player_requests,public.ban_appeals from public,anon,authenticated;
 
 -- Active rows grant temporary access. Expired rows intentionally remain as
 -- harmless history until they are replaced by a later grant. Every effective
@@ -156,7 +268,7 @@ begin
     return '';
   end if;
 
-  if v_email = 'tmilsanmilla@gmail.com' then
+  if v_user_id = public._outpost_zero_creator_user_id() then
     return 'creator';
   end if;
 
@@ -269,6 +381,91 @@ revoke all on function public._outpost_zero_is_admin_main()
   from public, anon, authenticated;
 revoke all on function public._outpost_zero_write_admin_audit(uuid, text, text, jsonb, uuid)
   from public, anon, authenticated;
+
+-- Compatibility implementations used only by the audited Admin 01 wrapper.
+-- They independently check the caller and are never browser-executable.
+create or replace function public.admin_role()
+returns text language sql stable security definer set search_path=pg_catalog,public
+as $function$ select public._outpost_zero_admin_role() $function$;
+
+create or replace function public.admin_get_player(target_email text)
+returns table(score int,gems int,coins int,owned jsonb,pow jsonb,ban jsonb)
+language plpgsql stable security definer set search_path=pg_catalog,public
+as $function$
+declare uid uuid;profile_data jsonb;
+begin
+  if public._outpost_zero_admin_role() not in ('creator','main','co') then
+    raise exception using errcode='42501',message='ADMIN_ACCESS_REQUIRED';
+  end if;
+  select u.id into uid from auth.users u where lower(btrim(u.email))=lower(btrim(target_email)) limit 1;
+  if uid is null then return;end if;
+  select coalesce(p.data,'{}'::jsonb) into profile_data from public.profiles p where p.user_id=uid;
+  profile_data:=coalesce(profile_data,'{}'::jsonb);
+  return query select
+    coalesce((select s.score from public.scores s where s.user_id=uid and s.game='outpost-zero'),0)::int,
+    case when coalesce(profile_data->>'gems','') ~ '^[0-9]+$' then (profile_data->>'gems')::int else 0 end,
+    case when coalesce(profile_data->>'coins','') ~ '^[0-9]+$' then (profile_data->>'coins')::int else 0 end,
+    case when jsonb_typeof(profile_data->'owned')='object' then profile_data->'owned' else '{}'::jsonb end,
+    case when jsonb_typeof(profile_data->'pow')='object' then profile_data->'pow' else '{}'::jsonb end,
+    (select jsonb_build_object('until',b.until,'note',b.note,'scopes',b.scopes,'created_at',b.created_at)
+       from public.bans b where b.user_id=uid and (b.until is null or b.until>statement_timestamp()) order by b.id desc limit 1);
+end;
+$function$;
+
+create or replace function public.admin_edit_player(target_email text,patch jsonb)
+returns boolean language plpgsql security definer set search_path=pg_catalog,public
+as $function$
+declare uid uuid;profile_data jsonb;item text;ban_value text;scope_value jsonb;device_value text;actor_role text:=public._outpost_zero_admin_role();
+begin
+  if actor_role not in ('creator','main') then raise exception using errcode='42501',message='MAIN_ADMIN_ACCESS_REQUIRED';end if;
+  if jsonb_typeof(coalesce(patch,'{}'::jsonb))<>'object' then raise exception using errcode='22023',message='PATCH_OBJECT_REQUIRED';end if;
+  select u.id into uid from auth.users u where lower(btrim(u.email))=lower(btrim(target_email)) limit 1;
+  if uid is null then return false;end if;
+  if uid=auth.uid() and patch ? 'ban' and coalesce(patch->>'ban','')<>'unban' then
+    raise exception using errcode='22023',message='SELF_BAN_FORBIDDEN';
+  end if;
+  if patch ? 'score' then
+    insert into public.scores(user_id,game,name,score) values(uid,'outpost-zero','PLAYER',greatest(0,least(99999999,(patch->>'score')::int)))
+    on conflict(user_id,game) do update set score=excluded.score,updated_at=now();
+  end if;
+  if patch ?| array['gems','coins','grant','revoke','pow'] then
+    insert into public.profiles(user_id,data) values(uid,'{}'::jsonb) on conflict(user_id) do nothing;
+    select coalesce(p.data,'{}'::jsonb) into profile_data from public.profiles p where p.user_id=uid for update;
+    if patch ? 'gems' then profile_data:=jsonb_set(profile_data,'{gems}',to_jsonb(greatest(0,(patch->>'gems')::int)));end if;
+    if patch ? 'coins' then profile_data:=jsonb_set(profile_data,'{coins}',to_jsonb(greatest(0,(patch->>'coins')::int)));end if;
+    if patch ? 'pow' then profile_data:=jsonb_set(profile_data,'{pow}',patch->'pow');end if;
+    if jsonb_typeof(profile_data->'owned')<>'object' then profile_data:=jsonb_set(profile_data,'{owned}','{}'::jsonb);end if;
+    for item in select jsonb_array_elements_text(coalesce(patch->'grant','[]'::jsonb)) loop
+      profile_data:=jsonb_set(profile_data,array['owned',item],'true'::jsonb);
+    end loop;
+    for item in select jsonb_array_elements_text(coalesce(patch->'revoke','[]'::jsonb)) loop
+      profile_data:=jsonb_set(profile_data,'{owned}',(profile_data->'owned')-item);
+    end loop;
+    update public.profiles set data=profile_data,updated_at=now() where user_id=uid;
+  end if;
+  ban_value:=patch->>'ban';
+  if ban_value is not null then
+    scope_value:=coalesce(patch->'scopes','["account"]'::jsonb);
+    if jsonb_typeof(scope_value)<>'array' then raise exception using errcode='22023',message='BAN_SCOPES_ARRAY_REQUIRED';end if;
+    select p.data->>'device' into device_value from public.profiles p where p.user_id=uid;
+    delete from public.bans b where b.user_id=uid or (device_value is not null and b.device_id=device_value);
+    if ban_value<>'unban' then
+      insert into public.bans(user_id,user_email,device_id,until,note,scopes,banned_by)
+      values(case when scope_value ? 'device' and not(scope_value ? 'account') and not(scope_value ? 'leaderboard') then null else uid end,
+        lower(btrim(target_email)),case when scope_value ? 'device' then device_value end,
+        case when ban_value='perm' then null else statement_timestamp()+((ban_value)::int||' days')::interval end,
+        nullif(btrim(coalesce(patch->>'note','')),''),scope_value,
+        (select lower(btrim(u.email)) from auth.users u where u.id=auth.uid()));
+    end if;
+  end if;
+  return true;
+end;
+$function$;
+
+revoke all on function public.admin_role() from public,anon;
+grant execute on function public.admin_role() to authenticated;
+revoke all on function public.admin_get_player(text) from public,anon,authenticated;
+revoke all on function public.admin_edit_player(text,jsonb) from public,anon,authenticated;
 
 -- Signed-in players can read only their own active temporary grants. Returning
 -- server_now lets the client build a monotonic in-session countdown without
@@ -1063,31 +1260,9 @@ begin
     return false;
   end if;
 
-  -- Creator approval is a server policy, not a UI convention. Main admins may
-  -- apply a ban or unban immediately, but score/currency/upgrades/permanent
-  -- ownership always go through player_requests and creator resolution. This
-  -- also blocks a main admin from bypassing approval through DevTools.
-  if v_actor_role = 'main' and (
-      not (p_patch ? 'ban')
-      or exists (
-        select 1 from jsonb_object_keys(p_patch) as keys(k)
-        where k not in ('ban', 'scopes', 'note')
-      )) then
-    perform public._outpost_zero_write_admin_audit(
-      v_target_user_id, 'player.edit', 'rejected',
-      jsonb_build_object(
-        'operation', 'player_edit',
-        'request_fingerprint', v_request_fingerprint,
-        'accepted', false,
-        'fields', to_jsonb(v_patch_keys),
-        'reason', 'creator_approval_required'
-      ),
-      p_operation_id
-    );
-    return false;
-  end if;
-
-  if v_target_email = 'tmilsanmilla@gmail.com'
+  -- Creator and Main admins share permanent edit authority. The protected
+  -- creator UUID still cannot be banned by either role.
+  if v_target_user_id = public._outpost_zero_creator_user_id()
      and p_patch ? 'ban' and p_patch ->> 'ban' <> 'unban' then
     perform public._outpost_zero_write_admin_audit(
       v_target_user_id, 'ban.apply', 'rejected',
@@ -1298,7 +1473,7 @@ end;
 $function$;
 
 -- Main admins submit proposed permanent edits without forging requested_by.
--- Approval remains creator-only, matching the existing moderation workflow.
+-- Creator and Main admins may review legacy pending requests.
 create or replace function public.submit_outpost_zero_player_request(
   p_target_email text,
   p_patch jsonb,
@@ -1485,8 +1660,8 @@ declare
   v_prior public.outpost_zero_admin_audit%rowtype;
   v_final_status text;
 begin
-  if public._outpost_zero_admin_role() <> 'creator' then
-    raise exception 'creator access required' using errcode = '42501';
+  if public._outpost_zero_admin_role() not in ('creator','main') then
+    raise exception 'creator or main-admin access required' using errcode = '42501';
   end if;
   if p_operation_id is null then
     raise exception 'operation id is required' using errcode = '22004';
@@ -1648,7 +1823,7 @@ begin
 
   -- The fixed creator account is not bannable even if an obsolete device row
   -- happens to reference the same installation id.
-  if v_email = 'tmilsanmilla@gmail.com' then
+  if v_user_id = public._outpost_zero_creator_user_id() then
     return;
   end if;
   if v_email is null and v_device = '' then
@@ -1656,7 +1831,8 @@ begin
   end if;
 
   return query
-  select b.until, b.note::text, b.scopes::text[]
+  select b.until, b.note::text,
+         coalesce(array(select jsonb_array_elements_text(b.scopes)),array['account']::text[])
   from public.bans as b
   where (b.until is null or b.until > clock_timestamp())
     and (
@@ -1694,7 +1870,8 @@ begin
   end if;
   return query
   select b.user_email::text, b.device_id::text, b.until, b.note::text,
-         b.scopes::text[], b.banned_by::text, b.created_at
+         coalesce(array(select jsonb_array_elements_text(b.scopes)),array['account']::text[]),
+         b.banned_by::text, b.created_at
   from public.bans as b
   where b.until is null or b.until > clock_timestamp()
   order by b.created_at desc
@@ -2057,31 +2234,13 @@ revoke all on function public.list_outpost_zero_admin_audit(bigint, integer)
 
 grant execute on function public.get_my_outpost_zero_weapon_grants()
   to authenticated;
-grant execute on function public.admin_list_outpost_zero_weapon_grants(text)
-  to authenticated;
-grant execute on function public.admin_set_outpost_zero_weapon_grant(text, text, integer, text, uuid)
-  to authenticated;
-grant execute on function public.admin_revoke_outpost_zero_weapon_grant(text, text, text, uuid)
-  to authenticated;
-grant execute on function public.outpost_zero_admin_edit_player(text, jsonb, uuid)
-  to authenticated;
-grant execute on function public.submit_outpost_zero_player_request(text, jsonb, uuid)
-  to authenticated;
-grant execute on function public.list_outpost_zero_player_requests(integer)
-  to authenticated;
 grant execute on function public.resolve_outpost_zero_player_request(bigint, text, uuid)
   to authenticated;
 grant execute on function public.get_my_outpost_zero_ban(text)
   to anon, authenticated;
-grant execute on function public.list_outpost_zero_bans(integer)
-  to authenticated;
 grant execute on function public.submit_outpost_zero_ban_appeal(text, uuid)
   to authenticated;
-grant execute on function public.list_outpost_zero_ban_appeals(integer)
-  to authenticated;
 grant execute on function public.resolve_outpost_zero_ban_appeal(bigint, text, uuid)
-  to authenticated;
-grant execute on function public.list_outpost_zero_admin_audit(bigint, integer)
   to authenticated;
 
 -- Close the bypass after the audited wrapper exists. The wrapper owner can
@@ -2117,5 +2276,508 @@ begin
   end if;
 end;
 $block$;
+
+-- Username-addressed wrappers: private Auth emails never cross the browser boundary.
+do $preflight$
+begin
+  if to_regclass('public.social_profiles') is null then
+    raise exception 'Admin 01 requires Social 01 (social_profiles)';
+  end if;
+  if to_regprocedure('public.admin_get_player(text)') is null
+     or to_regprocedure('public.outpost_zero_admin_edit_player(text,jsonb,uuid)') is null
+     or to_regprocedure('public.admin_list_outpost_zero_weapon_grants(text)') is null
+     or to_regprocedure('public.admin_set_outpost_zero_weapon_grant(text,text,integer,text,uuid)') is null
+     or to_regprocedure('public.admin_revoke_outpost_zero_weapon_grant(text,text,text,uuid)') is null
+     or to_regprocedure('public.submit_outpost_zero_player_request(text,jsonb,uuid)') is null then
+    raise exception 'Admin 01 base installation failed';
+  end if;
+end;
+$preflight$;
+
+create or replace function public._outpost_zero_target_email_for_username(
+  p_target_username text
+)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_key text := lower(btrim(coalesce(p_target_username, '')));
+  v_email text;
+begin
+  if public._outpost_zero_admin_role() not in ('creator', 'main', 'co') then
+    raise exception 'admin access required' using errcode = '42501';
+  end if;
+  if v_key !~ '^[a-z0-9_]{3,32}$' then
+    return null;
+  end if;
+  select lower(btrim(u.email))
+    into v_email
+  from public.social_profiles as sp
+  join auth.users as u on u.id = sp.user_id
+  where sp.handle_key = v_key
+  limit 1;
+  return v_email;
+end;
+$function$;
+
+revoke all on function public._outpost_zero_target_email_for_username(text)
+  from public, anon, authenticated;
+
+create or replace function public.outpost_zero_admin_get_player_by_username(
+  p_target_username text
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_email text := public._outpost_zero_target_email_for_username(p_target_username);
+  v_result jsonb;
+begin
+  if v_email is null then return null; end if;
+  select to_jsonb(row_value) into v_result
+  from public.admin_get_player(v_email) as row_value
+  limit 1;
+  -- Older admin_get_player versions may include their lookup key. Strip every
+  -- common email field before PostgREST serializes the private player record.
+  return coalesce(v_result,'{}'::jsonb)-'email'-'target_email'-'user_email';
+end;
+$function$;
+
+-- The first preview returned granted_by_email from the private compatibility
+-- function. Drop that browser signature before replacing it with a username-
+-- only result; Postgres cannot rename a TABLE return column in-place.
+drop function if exists public.admin_list_outpost_zero_weapon_grants_by_username(text);
+create function public.admin_list_outpost_zero_weapon_grants_by_username(
+  p_target_username text
+)
+returns table (
+  weapon_key text,
+  granted_at timestamptz,
+  expires_at timestamptz,
+  granted_by_username text,
+  server_now timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_email text := public._outpost_zero_target_email_for_username(p_target_username);
+  v_target_user_id uuid;
+  v_now timestamptz := clock_timestamp();
+begin
+  if not public._outpost_zero_is_admin_main() then
+    raise exception 'creator or main-admin access required' using errcode = '42501';
+  end if;
+  if v_email is null then return; end if;
+  select u.id into v_target_user_id from auth.users u
+  where lower(btrim(u.email))=v_email limit 1;
+  return query
+  select g.weapon_key,g.granted_at,g.expires_at,
+         coalesce(sp.handle,'STAFF')::text,v_now
+  from public.outpost_zero_weapon_grants g
+  left join public.social_profiles sp on sp.user_id=g.granted_by
+    and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
+    and sp.handle_key not in ('username_not_set','usernamenotset')
+    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
+    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
+  where g.target_user_id=v_target_user_id and g.expires_at>v_now
+  order by g.expires_at,g.weapon_key;
+end;
+$function$;
+
+create or replace function public.admin_set_outpost_zero_weapon_grant_by_username(
+  p_target_username text,
+  p_weapon_key text,
+  p_duration_minutes integer,
+  p_note text,
+  p_operation_id uuid
+)
+returns table (accepted boolean, reason text, weapon_key text, expires_at timestamptz)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_email text := public._outpost_zero_target_email_for_username(p_target_username);
+begin
+  if v_email is null then
+    return query select false, 'target_not_found'::text, lower(btrim(coalesce(p_weapon_key,''))), null::timestamptz;
+    return;
+  end if;
+  return query select * from public.admin_set_outpost_zero_weapon_grant(
+    v_email,p_weapon_key,p_duration_minutes,p_note,p_operation_id
+  );
+end;
+$function$;
+
+create or replace function public.admin_revoke_outpost_zero_weapon_grant_by_username(
+  p_target_username text,
+  p_weapon_key text,
+  p_note text,
+  p_operation_id uuid
+)
+returns table (accepted boolean, reason text, weapon_key text, expires_at timestamptz)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_email text := public._outpost_zero_target_email_for_username(p_target_username);
+begin
+  if v_email is null then
+    return query select false, 'target_not_found'::text, lower(btrim(coalesce(p_weapon_key,''))), null::timestamptz;
+    return;
+  end if;
+  return query select * from public.admin_revoke_outpost_zero_weapon_grant(
+    v_email,p_weapon_key,p_note,p_operation_id
+  );
+end;
+$function$;
+
+create or replace function public.outpost_zero_admin_edit_player_by_username(
+  p_target_username text,
+  p_patch jsonb,
+  p_operation_id uuid
+)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_email text := public._outpost_zero_target_email_for_username(p_target_username);
+begin
+  if v_email is null then return false; end if;
+  return public.outpost_zero_admin_edit_player(v_email,p_patch,p_operation_id);
+end;
+$function$;
+
+create or replace function public.submit_outpost_zero_player_request_by_username(
+  p_target_username text,
+  p_patch jsonb,
+  p_operation_id uuid
+)
+returns table (accepted boolean, request_id bigint, status text, reason text)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_email text := public._outpost_zero_target_email_for_username(p_target_username);
+begin
+  if v_email is null then
+    return query select false, null::bigint, 'rejected'::text, 'target_not_found'::text;
+    return;
+  end if;
+  return query select * from public.submit_outpost_zero_player_request(v_email,p_patch,p_operation_id);
+end;
+$function$;
+
+create or replace function public.list_outpost_zero_player_requests_by_username(
+  p_limit integer default 20
+)
+returns table (
+  id bigint,
+  requested_by text,
+  target_username text,
+  patch jsonb,
+  status text,
+  created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+begin
+  if not public._outpost_zero_is_admin_main() then
+    raise exception 'creator or main-admin access required' using errcode = '42501';
+  end if;
+  return query
+  select r.id::bigint,
+         coalesce(requester.handle, 'STAFF')::text,
+         coalesce(target.handle, 'UNKNOWN PLAYER')::text,
+         r.patch::jsonb, r.status::text, r.created_at
+  from public.player_requests as r
+  left join auth.users as target_user
+    on lower(btrim(target_user.email)) = lower(btrim(r.target_email))
+  left join public.social_profiles as target on target.user_id = target_user.id
+    and target.handle ~ '^[A-Za-z0-9_]{3,32}$'
+    and target.handle_key not in ('username_not_set','usernamenotset')
+    and target.handle_key <> 'op_'||left(replace(target.user_id::text,'-',''),20)
+    and target.handle_key <> 'op_'||left(replace(target.user_id::text,'-',''),8)
+  left join public.social_profiles as requester on requester.user_id = r.requester_user_id
+    and requester.handle ~ '^[A-Za-z0-9_]{3,32}$'
+    and requester.handle_key not in ('username_not_set','usernamenotset')
+    and requester.handle_key <> 'op_'||left(replace(requester.user_id::text,'-',''),20)
+    and requester.handle_key <> 'op_'||left(replace(requester.user_id::text,'-',''),8)
+  where r.status = 'pending'
+  order by r.id desc
+  limit least(greatest(coalesce(p_limit,20),1),50);
+end;
+$function$;
+
+revoke all on function public.outpost_zero_admin_get_player_by_username(text) from public, anon, authenticated;
+revoke all on function public.admin_list_outpost_zero_weapon_grants_by_username(text) from public, anon, authenticated;
+revoke all on function public.admin_set_outpost_zero_weapon_grant_by_username(text,text,integer,text,uuid) from public, anon, authenticated;
+revoke all on function public.admin_revoke_outpost_zero_weapon_grant_by_username(text,text,text,uuid) from public, anon, authenticated;
+revoke all on function public.outpost_zero_admin_edit_player_by_username(text,jsonb,uuid) from public, anon, authenticated;
+revoke all on function public.submit_outpost_zero_player_request_by_username(text,jsonb,uuid) from public, anon, authenticated;
+revoke all on function public.list_outpost_zero_player_requests_by_username(integer) from public, anon, authenticated;
+
+grant execute on function public.outpost_zero_admin_get_player_by_username(text) to authenticated;
+grant execute on function public.admin_list_outpost_zero_weapon_grants_by_username(text) to authenticated;
+grant execute on function public.admin_set_outpost_zero_weapon_grant_by_username(text,text,integer,text,uuid) to authenticated;
+grant execute on function public.admin_revoke_outpost_zero_weapon_grant_by_username(text,text,text,uuid) to authenticated;
+grant execute on function public.outpost_zero_admin_edit_player_by_username(text,jsonb,uuid) to authenticated;
+grant execute on function public.submit_outpost_zero_player_request_by_username(text,jsonb,uuid) to authenticated;
+grant execute on function public.list_outpost_zero_player_requests_by_username(integer) to authenticated;
+
+-- Browser-safe moderation feeds. Private Auth emails remain useful internal
+-- compatibility keys, but neither an admin RPC nor Realtime may serialize
+-- them. Public usernames are resolved on the server and opaque row IDs are
+-- used for exact actions when a historical account has no username.
+create or replace function public._outpost_zero_public_username(p_user_id uuid)
+returns text
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+  select sp.handle::text from public.social_profiles sp
+  where sp.user_id=p_user_id
+    and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
+    and sp.handle_key not in ('username_not_set','usernamenotset')
+    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
+    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
+  limit 1
+$function$;
+
+create or replace function public.list_outpost_zero_bans_by_username(p_limit integer default 40)
+returns table(
+  ban_id bigint,target_username text,until timestamptz,note text,scopes text[],
+  banned_by_username text,created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+begin
+  if public._outpost_zero_admin_role() not in ('creator','main') then
+    raise exception 'creator or main-admin access required' using errcode='42501';
+  end if;
+  return query
+  select b.id::bigint,
+         coalesce(public._outpost_zero_public_username(coalesce(b.user_id,target_user.id)),'UNKNOWN PLAYER')::text,
+         b.until,b.note::text,
+         coalesce(array(select jsonb_array_elements_text(b.scopes)),array['account']::text[]),
+         coalesce(public._outpost_zero_public_username(actor_user.id),'STAFF')::text,
+         b.created_at
+  from public.bans b
+  left join auth.users target_user on lower(btrim(target_user.email))=lower(btrim(b.user_email))
+  left join auth.users actor_user on lower(btrim(actor_user.email))=lower(btrim(b.banned_by))
+  where b.until is null or b.until>clock_timestamp()
+  order by b.created_at desc
+  limit least(greatest(coalesce(p_limit,40),1),100);
+end;
+$function$;
+
+create or replace function public.unban_outpost_zero_ban(
+  p_ban_id bigint,p_operation_id uuid
+)
+returns boolean
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_actor uuid:=auth.uid();v_ban public.bans%rowtype;v_target uuid;
+  v_prior public.outpost_zero_admin_audit%rowtype;
+begin
+  if not public._outpost_zero_is_admin_main() then
+    raise exception 'creator or main-admin access required' using errcode='42501';
+  end if;
+  if p_ban_id is null or p_ban_id<=0 or p_operation_id is null then
+    raise exception 'ban id and operation id are required' using errcode='22023';
+  end if;
+  select a.* into v_prior from public.outpost_zero_admin_audit a
+  where a.actor_user_id=v_actor and a.operation_id=p_operation_id;
+  if found then
+    return v_prior.action='ban.unban'
+      and coalesce(v_prior.details->>'ban_id','')=p_ban_id::text
+      and v_prior.result in ('applied','no_change');
+  end if;
+  select b.* into v_ban from public.bans b where b.id=p_ban_id for update;
+  if found then
+    v_target:=v_ban.user_id;
+    if v_target is null then
+      select u.id into v_target from auth.users u
+      where lower(btrim(u.email))=lower(btrim(v_ban.user_email)) limit 1;
+    end if;
+    delete from public.bans b where b.id=p_ban_id;
+    perform public._outpost_zero_write_admin_audit(
+      v_target,'ban.unban','applied',
+      jsonb_build_object('ban_id',p_ban_id,'reason','revoked'),p_operation_id
+    );
+    return true;
+  end if;
+  perform public._outpost_zero_write_admin_audit(
+    null,'ban.unban','no_change',
+    jsonb_build_object('ban_id',p_ban_id,'reason','not_active'),p_operation_id
+  );
+  return true;
+end;
+$function$;
+
+create or replace function public.list_outpost_zero_ban_appeals_by_username(p_limit integer default 40)
+returns table(id bigint,player_username text,message text,status text,created_at timestamptz)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+begin
+  if public._outpost_zero_admin_role() not in ('creator','main') then
+    raise exception 'creator or main-admin access required' using errcode='42501';
+  end if;
+  return query
+  select a.id::bigint,
+         coalesce(public._outpost_zero_public_username(coalesce(a.requester_user_id,u.id)),'UNKNOWN PLAYER')::text,
+         a.message::text,a.status::text,a.created_at
+  from public.ban_appeals a
+  left join auth.users u on lower(btrim(u.email))=lower(btrim(a.player_email))
+  order by a.id desc
+  limit least(greatest(coalesce(p_limit,40),1),100);
+end;
+$function$;
+
+-- Recursively remove legacy email-shaped detail keys before the LOG crosses
+-- PostgREST. This protects old audit rows as well as current actions.
+create or replace function public._outpost_zero_scrub_private_admin_json(p_value jsonb)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare v_result jsonb;
+begin
+  if p_value is null then return null;end if;
+  if jsonb_typeof(p_value)='object' then
+    select coalesce(jsonb_object_agg(e.key,public._outpost_zero_scrub_private_admin_json(e.value)),'{}'::jsonb)
+      into v_result from jsonb_each(p_value) e
+      where lower(e.key) not like '%email%';
+    return v_result;
+  elsif jsonb_typeof(p_value)='array' then
+    select coalesce(jsonb_agg(public._outpost_zero_scrub_private_admin_json(e.value)),'[]'::jsonb)
+      into v_result from jsonb_array_elements(p_value) e(value);
+    return v_result;
+  end if;
+  return p_value;
+end;
+$function$;
+
+create or replace function public.list_outpost_zero_admin_audit_by_username(
+  p_before_event_id bigint default null,p_limit integer default 25
+)
+returns table(
+  event_id bigint,actor_username text,actor_role text,target_username text,
+  action text,result text,details jsonb,created_at timestamptz
+)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare v_limit integer:=least(greatest(coalesce(p_limit,25),1),50);
+begin
+  if not public._outpost_zero_is_admin_main() then
+    raise exception 'creator or main-admin access required' using errcode='42501';
+  end if;
+  return query
+  select a.event_id,
+         coalesce(public._outpost_zero_public_username(a.actor_user_id),
+           case a.actor_role when 'creator' then 'CREATOR' when 'main' then 'MAIN ADMIN'
+             when 'co' then 'CO-ADMIN' else 'PLAYER' end)::text,
+         a.actor_role::text,
+         case when a.target_user_id is null then 'SYSTEM'
+           else coalesce(public._outpost_zero_public_username(a.target_user_id),'UNKNOWN PLAYER') end::text,
+         a.action::text,a.result::text,
+         public._outpost_zero_scrub_private_admin_json(a.details),a.created_at
+  from public.outpost_zero_admin_audit a
+  where p_before_event_id is null or a.event_id<p_before_event_id
+  order by a.event_id desc limit v_limit;
+end;
+$function$;
+
+-- Retire every email-addressed/listing boundary. The username wrappers above
+-- remain SECURITY DEFINER so they can call these internal implementations,
+-- but modified clients cannot call them directly or enumerate private keys.
+revoke all on function public.admin_list_outpost_zero_weapon_grants(text) from public,anon,authenticated;
+revoke all on function public.admin_set_outpost_zero_weapon_grant(text,text,integer,text,uuid) from public,anon,authenticated;
+revoke all on function public.admin_revoke_outpost_zero_weapon_grant(text,text,text,uuid) from public,anon,authenticated;
+revoke all on function public.outpost_zero_admin_edit_player(text,jsonb,uuid) from public,anon,authenticated;
+revoke all on function public.submit_outpost_zero_player_request(text,jsonb,uuid) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_player_requests(integer) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_bans(integer) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_ban_appeals(integer) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_admin_audit(bigint,integer) from public,anon,authenticated;
+revoke all on function public._outpost_zero_public_username(uuid) from public,anon,authenticated;
+revoke all on function public._outpost_zero_scrub_private_admin_json(jsonb) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_bans_by_username(integer) from public,anon,authenticated;
+revoke all on function public.unban_outpost_zero_ban(bigint,uuid) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_ban_appeals_by_username(integer) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_admin_audit_by_username(bigint,integer) from public,anon,authenticated;
+
+grant execute on function public.list_outpost_zero_bans_by_username(integer) to authenticated;
+grant execute on function public.unban_outpost_zero_ban(bigint,uuid) to authenticated;
+grant execute on function public.list_outpost_zero_ban_appeals_by_username(integer) to authenticated;
+grant execute on function public.list_outpost_zero_admin_audit_by_username(bigint,integer) to authenticated;
+
+-- REALTIME OWNERSHIP
+-- Admin Menu storage is private RPC-only state. Explicitly remove every table
+-- owned by this section from the publication in case the legacy miscellaneous
+-- Realtime query exposed one of them. Admin 02 separately publishes only the
+-- public banner feed; Admin 03 owns the protected Inbox/Reports feeds.
+do $realtime$
+declare relation_name text;
+begin
+  foreach relation_name in array array[
+    'admins',
+    'bans',
+    'player_requests',
+    'ban_appeals',
+    'outpost_zero_weapon_grants',
+    'outpost_zero_admin_audit'
+  ] loop
+    if exists (
+      select 1
+      from pg_catalog.pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = relation_name
+    ) then
+      execute format(
+        'alter publication supabase_realtime drop table public.%I',
+        relation_name
+      );
+    end if;
+  end loop;
+end;
+$realtime$;
 
 commit;

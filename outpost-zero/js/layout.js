@@ -137,7 +137,8 @@ function drawLayoutOverlay(){
 }
 function layoutMouseDown(){
   // tools first: a block sitting under the toolbar must not swallow the click
-  for(const r of layoutRects){
+  for(let i=layoutRects.length-1;i>=0;i--){
+    const r=layoutRects[i];
     if(!r.tool) continue;
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       const id=String(r.id);
@@ -153,7 +154,11 @@ function layoutMouseDown(){
       return true;
     }
   }
-  for(const r of layoutRects){
+  // Match canvas paint order: when two moved sections overlap, the block
+  // drawn last is the visible one and must receive the drag. Forward order
+  // made an older hidden rectangle silently capture the press instead.
+  for(let i=layoutRects.length-1;i>=0;i--){
+    const r=layoutRects[i];
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       if(r.tool){
         const id=String(r.id).slice(3);
@@ -183,4 +188,10 @@ function layoutMouseMove(){
   layout[id]={dx:Math.round(mouse.x-layoutDrag.ox), dy:Math.round(mouse.y-layoutDrag.oy), col:cur.col||null};
   layoutDirty=true;
 }
-function layoutMouseUp(){ layoutDrag=null; }
+function layoutMouseUp(){
+  // A completed drag is valuable editor work. Flush it at the interaction
+  // boundary as well as from the frame timer so a quick DONE/tab-close cannot
+  // lose the last movement.
+  if(layoutDrag&&layoutDirty) persistLayoutDraft();
+  layoutDrag=null;
+}

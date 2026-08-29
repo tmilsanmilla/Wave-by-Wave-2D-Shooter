@@ -165,7 +165,11 @@ function drawArenaOpponentWorld(){
   ctx.fillStyle=showOpponentHitFlash&&now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   ctx.strokeStyle='#ff8b80'; ctx.lineWidth=2/zoom; ctx.stroke();
   const wk=WEAPONS[e.cur]||WEAPONS.ar, len=Math.min(38,wk.len||24);
-  if(wk.melee){
+  const remoteUtility=e.utilityOut&&e.loadout&&typeof casualArenaUtilityKey==='function'
+    ?casualArenaUtilityKey(e.loadout.utility,false):'';
+  if(remoteUtility){
+    ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawUtilIcon(14,0,remoteUtility,'#ff8bc2',.8);ctx.restore();
+  }else if(wk.melee){
     ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,true,false);ctx.restore();
   }else{
     ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
@@ -385,7 +389,9 @@ function drawWorld(){
   }
   // grenades
   for(const g of grenades){
-    ctx.fillStyle='#3a4a2c';
+    // Hostile utility uses a red body, but never a ring/halo (the projectile
+    // itself is the cue, consistent with hostile bullets).
+    ctx.fillStyle=g.remoteUtility?'#7a302c':'#3a4a2c';
     ctx.beginPath(); ctx.arc(g.x,g.y,7,0,TAU); ctx.fill();
     const fl=(g.t-now)/700;
     ctx.fillStyle = ((now>>7)&1) ? '#e8b658' : '#d05548';
@@ -511,6 +517,10 @@ function drawWorld(){
 
   // player
   const w=WEAPONS[player.cur], ang=aimAngle();
+  if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){
+    ctx.strokeStyle='rgba(191,239,255,0.92)';ctx.lineWidth=4/zoom;ctx.beginPath();
+    ctx.arc(player.x,player.y,player.r+12+Math.sin(now*.012)*2,0,TAU);ctx.stroke();
+  }
   if(now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS){ // Twin Sai parry remains visibly active
     const remain=clamp((parryUntil-now)/TWIN_SAI_PARRY_MS,0,1);
     ctx.strokeStyle='rgba(191,232,255,'+(0.45+remain*0.45)+')';
@@ -733,6 +743,10 @@ function drawHUD(){
     const hudMapId=typeof activeArenaMapId==='function'?activeArenaMapId():(arena.mapId||'arena');
     ctx.textAlign='center';ctx.fillStyle='#8a9268';ctx.font='700 '+(W<360?8:10)+'px ui-monospace,Consolas,monospace';
     ctx.fillText('MAP \u00b7 '+arenaMapName(hudMapId),W/2,pad+50);ctx.textAlign='left';
+    if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){
+      ctx.textAlign='center';ctx.fillStyle='#bfefff';ctx.font='700 11px ui-monospace,Consolas,monospace';
+      ctx.fillText('FROZEN '+Math.max(0,(arena.utilityFrozenUntil-now)/1000).toFixed(1)+'s \u00b7 FIRST HIT THAWS',W/2,pad+66);ctx.textAlign='left';
+    }
   } else {
     ctx.fillStyle='#e8b658'; ctx.font='700 22px ui-monospace,Consolas,monospace';
     ctx.fillText('SCORE '+score, pad, pad);

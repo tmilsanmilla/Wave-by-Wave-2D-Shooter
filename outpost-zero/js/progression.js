@@ -124,13 +124,95 @@ async function processReferral(){
     clearPendingReferral(ref);
   }catch(e){ console.warn('referral claim failed',e); }
 }
-// WHEEL SPIN: one every 20 minutes spent anywhere on the site, claimed by hand
-const WHEEL=[{t:'6 \uD83D\uDC8E', gems:3*WHEEL_GEM_SCALE, coins:0},
-             {t:'30 \uD83E\uDE99', gems:0, coins:30},
-             {t:'10 \uD83D\uDC8E', gems:5*WHEEL_GEM_SCALE, coins:0},
-             {t:'60 \uD83E\uDE99', gems:0, coins:60}];
+// WHEEL SPIN: one every 20 focused minutes, claimed by hand. Completing more
+// timers in the same reward day raises the NEXT earned spin to +50%, then 2x.
+// A click never raises the tier: only foreground timer completion does.
+const WHEEL_BASE=Object.freeze([
+  Object.freeze({gems:4*WHEEL_GEM_SCALE, coins:0}),
+  Object.freeze({gems:0, coins:40}),
+  Object.freeze({gems:6*WHEEL_GEM_SCALE, coins:0}),
+  Object.freeze({gems:0, coins:80}),
+]);
+const WHEEL_TIER_MULTIPLIERS=Object.freeze([1,1.5,2]);
+const WHEEL_MAX_TIER=WHEEL_TIER_MULTIPLIERS.length;
+const WHEEL_ACTIVE_TICK_CAP_MS=1000;
+const WHEEL_ENGAGEMENT_STORAGE_PREFIX='oz_wheel_engagement_v1:';
+const WHEEL=WHEEL_BASE.map(r=>({t:'',gems:r.gems,coins:r.coins}));
 const WHEEL_MS=20*60*1000;
 let wheelReady=0, wheelAcc=0, wheelOpen=false, wheelBtnRect=null, wheelRects=[];
+let wheelEarnedDay='',wheelEarnedToday=0,wheelReadyTier=1,wheelSpinReward=null,wheelCheckpointMinute=0;
+function wheelTierNumber(value=wheelReadyTier){
+  return clamp(Math.floor(+value||1),1,WHEEL_MAX_TIER);
+}
+function wheelTierMultiplier(value=wheelReadyTier){
+  return WHEEL_TIER_MULTIPLIERS[wheelTierNumber(value)-1];
+}
+function wheelRewardText(reward,tier=wheelReadyTier){
+  const amount=reward.gems||reward.coins||0,icon=reward.gems?'\uD83D\uDC8E':'\uD83E\uDE99',mul=wheelTierMultiplier(tier);
+  return amount+' '+icon+(mul>1?' '+mul+'\u00d7':'');
+}
+function wheelScaledReward(base,tier=wheelReadyTier){
+  const mul=wheelTierMultiplier(tier);
+  return {gems:Math.round((base.gems||0)*mul),coins:Math.round((base.coins||0)*mul),tier:wheelTierNumber(tier)};
+}
+function refreshWheelRewards(tier=wheelReadyTier){
+  for(let i=0;i<WHEEL.length;i++){
+    const reward=wheelScaledReward(WHEEL_BASE[i],tier);
+    WHEEL[i].gems=reward.gems;WHEEL[i].coins=reward.coins;WHEEL[i].tier=reward.tier;
+    WHEEL[i].t=wheelRewardText(reward,tier);
+  }
+}
+function wheelEngagementStorageKey(owner=typeof profileOwnerUserId==='undefined'?null:profileOwnerUserId){
+  const raw=owner==null?'guest':String(owner),safe=raw.replace(/[^A-Za-z0-9_-]/g,'').slice(0,80);
+  return WHEEL_ENGAGEMENT_STORAGE_PREFIX+(safe||'guest');
+}
+function wheelEngagementSnapshot(){
+  return {day:String(wheelEarnedDay||''),earned:clamp(Math.floor(+wheelEarnedToday||0),0,WHEEL_MAX_TIER),tier:wheelTierNumber()};
+}
+function saveWheelEngagementLocal(owner){
+  try{ localStorage.setItem(wheelEngagementStorageKey(owner),JSON.stringify(wheelEngagementSnapshot()));return true; }
+  catch(e){return false;}
+}
+function loadWheelEngagementLocal(owner){
+  try{
+    const raw=localStorage.getItem(wheelEngagementStorageKey(owner));
+    if(!raw)return null;
+    const value=JSON.parse(raw);
+    return value&&typeof value==='object'?value:null;
+  }catch(e){return null;}
+}
+function applyWheelEngagementSnapshot(value){
+  value=value&&typeof value==='object'?value:{};
+  wheelEarnedDay=typeof value.day==='string'?value.day:'';
+  wheelEarnedToday=clamp(Math.floor(+value.earned||0),0,WHEEL_MAX_TIER);
+  wheelReadyTier=wheelTierNumber(value.tier);
+  normalizeWheelEngagement();
+}
+function resetWheelEngagement(){
+  wheelEarnedDay='';wheelEarnedToday=0;wheelReadyTier=1;wheelSpinReward=null;wheelCheckpointMinute=0;
+  wheelSpinning=false;wheelOpen=false;wheelResult=-1;
+  refreshWheelRewards();
+}
+function normalizeWheelEngagement(){
+  const day=todayIndex(),preserveRevealedSpin=wheelOpen&&(wheelSpinning||wheelResult>=0);
+  if(wheelEarnedDay!==day){
+    wheelEarnedDay=day;wheelEarnedToday=0;
+    // A spin already earned yesterday keeps the multiplier it advertised.
+    // Once it is gone, today's first completed timer starts again at tier 1.
+    if(wheelReady<1&&!preserveRevealedSpin)wheelReadyTier=1;
+  }
+  wheelEarnedToday=clamp(Math.floor(+wheelEarnedToday||0),0,WHEEL_MAX_TIER);
+  if(wheelReady<1&&!preserveRevealedSpin&&wheelEarnedToday===0)wheelReadyTier=1;
+  wheelReadyTier=wheelTierNumber(wheelReadyTier);
+  if(!preserveRevealedSpin)refreshWheelRewards(wheelReadyTier);
+}
+function wheelForegroundActive(){
+  if(typeof document==='undefined')return true;
+  if(document.visibilityState==='hidden')return false;
+  if(typeof document.hasFocus==='function'&&!document.hasFocus())return false;
+  return true;
+}
+refreshWheelRewards();
 function countdownText(ms){
   const sec=Math.max(0,Math.ceil(ms/1000)), m=Math.floor(sec/60), s=sec%60;
   return String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
@@ -242,9 +324,8 @@ async function redeemPromo(){
 async function fetchPromos(){
   if(!sb || !isMainAdmin()) return;
   try{
-    const { data } = await sb.from('promo_codes')
-      .select('code,gems,coins,uses_max,uses_count,expires_at,active,created_by')
-      .order('code',{ascending:true}).limit(40);
+    const {data,error}=await sb.rpc('list_outpost_zero_promo_codes');
+    if(error)throw error;
     promoList=data||[];
   }catch(e){ promoList=[]; }
 }
@@ -256,7 +337,6 @@ const PROMO_FIELDS=(pc)=>[
   {id:'code',  label:'CODE',       type:'text', upper:true, value:pc?pc.code:'', placeholder:'LAUNCH25'},
   {id:'gems',  label:'GEMS',       min:0, max:99999,  value:pc?pc.gems:0},
   {id:'coins', label:'COINS',      min:0, max:999999, value:pc?pc.coins:0},
-  {id:'uses',  label:'MAX USES (0 = unlimited)', min:0, max:999999, value:pc?pc.uses_max:1},
   {id:'days',  label:'DAYS VALID (0 = never expires)', min:0, max:3650,
    value:pc? (pc.expires_at? Math.max(0,Math.ceil((Date.parse(pc.expires_at)-Date.now())/86400000)) : 0) : 0},
 ];
@@ -264,7 +344,7 @@ function createPromo(){
   if(!isMainAdmin()) return;
   openForm({
     title:'\uD83C\uDF81 NEW PROMO CODE',
-    hint:'letters, numbers, - and _ \u00b7 3 to 24 characters \u00b7 codes default to a single use',
+    hint:'every signed-in account may redeem once \u00b7 total redemptions default to unlimited',
     fields:PROMO_FIELDS(null),
     saveLabel:'CREATE',
     onSave:(v)=>savePromoForm(v, null)
@@ -274,84 +354,97 @@ function editPromo(pc){
   if(!isMainAdmin()) return;
   openForm({
     title:'\u270E '+pc.code,
-    hint:'change anything here \u00b7 the code itself stays the same',
+    hint:'every signed-in account may redeem this code exactly once',
     fields:PROMO_FIELDS(pc).map(f=> f.id==='code' ? Object.assign({},f,{readonly:true}) : f),
     saveLabel:'SAVE',
     onSave:(v)=>savePromoForm(v, pc)
   });
 }
 async function savePromoForm(v, pc){
-  const code=String(v.code||'').trim().toUpperCase();
-  if(!/^[A-Z0-9_-]{3,24}$/.test(code)){ formError('code must be 3-24 letters, numbers, - or _'); return; }
+  const code=String(v.code||'').trim().toUpperCase(),minimum=pc?3:6;
+  if(!new RegExp('^[A-Z0-9_-]{'+minimum+',24}$').test(code)){ formError('code must be '+minimum+'-24 letters, numbers, - or _'); return; }
   const g=v.gems||0, c=v.coins||0;
   if(!g && !c){ formError('give at least some gems or coins'); return; }
-  const u=(v.uses===null||v.uses===undefined)?1:v.uses;
   const d=v.days||0;
   const exp = d>0 ? new Date(Date.now()+d*86400000).toISOString() : null;
   if(!sb){ formError('preview build \u2014 works on the live site'); return; }
   formError('saving...');
   try{
-    if(pc){
-      const { error } = await sb.from('promo_codes')
-        .update({gems:g, coins:c, uses_max:u, expires_at:exp}).eq('code', pc.code);
-      if(error) throw error;
-    } else {
-      const { error } = await sb.from('promo_codes').insert(
-        {code, gems:g, coins:c, uses_max:u, uses_count:0, expires_at:exp, active:true, created_by:adminEmail()});
-      if(error) throw error;                        // surfaced, not swallowed
-    }
+    const {data,error}=await sb.rpc('save_outpost_zero_promo_code',{
+      p_code:pc?pc.code:code,p_gems:g,p_coins:c,p_uses_max:0,p_expires_at:exp
+    });
+    if(error||data!==true)throw error||new Error('promo was not saved');
     closeForm(); fetchPromos(); sfx('pickup');
   }catch(err){
     const m=String((err&&err.message)||err||'');
     formError(/duplicate|unique/i.test(m) ? 'that code already exists'
             : /permission|policy|row-level/i.test(m) ? 'not allowed \u2014 check your admin rank'
             : /relation|does not exist|could not find the table|schema cache|PGRST205/i.test(m)
-                ? 'the promo_codes table has not been created yet \u2014 run the promo SQL in Supabase'
+                ? 'promo codes are not installed yet \u2014 run Admin 02 Admins in Supabase'
             : ('could not save \u2014 '+m.slice(0,60)));
   }
 }
 async function expirePromo(pc){
   if(!isMainAdmin() || !sb) return;
-  try{ await sb.from('promo_codes').update({active:false, expires_at:new Date().toISOString()}).eq('code',pc.code); }catch(e){}
+  try{ await sb.rpc('set_outpost_zero_promo_active',{p_code:pc.code,p_active:false}); }catch(e){}
   fetchPromos();
 }
 async function revivePromo(pc){
   if(!isMainAdmin() || !sb) return;
-  try{ await sb.from('promo_codes').update({active:true, expires_at:null}).eq('code',pc.code); }catch(e){}
+  try{ await sb.rpc('set_outpost_zero_promo_active',{p_code:pc.code,p_active:true}); }catch(e){}
   fetchPromos();
 }
 async function removePromo(pc){
   if(!isMainAdmin() || !sb) return;
-  try{ await sb.from('promo_codes').delete().eq('code',pc.code); }catch(e){}
+  try{ await sb.rpc('delete_outpost_zero_promo_code',{p_code:pc.code}); }catch(e){}
   fetchPromos();
 }
 function promoExpired(pc){
-  return !pc.active || (pc.expires_at && Date.parse(pc.expires_at)<Date.now())
-      || (pc.uses_max>0 && pc.uses_count>=pc.uses_max);
+  return !pc.active || (pc.expires_at && Date.parse(pc.expires_at)<Date.now());
 }
 let wheelSpinning=false, wheelStart=0, wheelDur=0, wheelTarget=0, wheelAngle=0, wheelResult=-1;
 function wheelTick(dtms){
   if(sb && !authUser) return;                      // rewards are sign-in only, like everything else
+  normalizeWheelEngagement();
   if(wheelReady>0){ wheelReady=1; wheelAcc=0; return; } // only one spin may be held at a time
-  wheelAcc+=Math.max(0,dtms);                      // menus, armory, play, and open modals all count
-  if(wheelAcc>=WHEEL_MS){ wheelAcc=0; wheelReady=1; }
+  if(!wheelForegroundActive())return;
+  // A suspended background tab can resume with a huge requestAnimationFrame
+  // gap. At most one real foreground second is credited by any one frame.
+  wheelAcc+=clamp(+dtms||0,0,WHEEL_ACTIVE_TICK_CAP_MS);
+  const minute=Math.floor(wheelAcc/60000);
+  if(minute>wheelCheckpointMinute){
+    wheelCheckpointMinute=minute;saveWheelEngagementLocal();
+    if(typeof saveMetaLocal==='function')saveMetaLocal();
+  }
+  if(wheelAcc>=WHEEL_MS){
+    wheelAcc=0;wheelCheckpointMinute=0;
+    wheelEarnedToday=Math.min(WHEEL_MAX_TIER,wheelEarnedToday+1);
+    wheelReadyTier=wheelEarnedToday;wheelReady=1;refreshWheelRewards();
+    saveWheelEngagementLocal();
+    if(typeof saveMeta==='function')saveMeta();
+  }
 }
 function openWheel(){
   if(wheelReady<1||testMode){ sfx('dry'); return; }
   wheelOpen=true; wheelSpinning=false; wheelResult=-1; wheelAngle=0;
 }
-function closeWheel(){ if(wheelSpinning) return; wheelOpen=false; }
+function closeWheel(){ if(wheelSpinning) return; wheelOpen=false;wheelSpinReward=null; }
 function spinWheel(){
   if(wheelSpinning || wheelResult>=0 || wheelReady<1 || testMode) return;
-  wheelReady--;
   wheelTarget=Math.floor(Math.random()*WHEEL.length);
+  wheelSpinReward=wheelScaledReward(WHEEL_BASE[wheelTarget],wheelReadyTier);
+  wheelReady=0;                                    // consume before animation: reload cannot reroll a held spin
+  // Credit before the cosmetic spin begins. If the tab closes during the
+  // 2.6-second animation, the earned reward is already in the synchronous
+  // local snapshot instead of being silently lost.
+  if(wheelSpinReward.coins) addCoins(wheelSpinReward.coins);
+  if(wheelSpinReward.gems) addGems(wheelSpinReward.gems);
   wheelSpinning=true; wheelStart=now; wheelDur=2600;
+  saveWheelEngagementLocal();
+  if(typeof saveMeta==='function')saveMeta();
   sfx('swap');
 }
 function wheelSettle(){
-  const r=WHEEL[wheelTarget];
-  if(r.coins) addCoins(r.coins);
-  if(r.gems) addGems(r.gems);
   wheelResult=wheelTarget; wheelSpinning=false;
   saveMeta(); sfx('pickup');
 }

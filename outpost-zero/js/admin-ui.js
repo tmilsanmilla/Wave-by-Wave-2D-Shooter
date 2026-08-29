@@ -1,6 +1,13 @@
 "use strict";
 
-let feedXRects=[];
+// Admin Inbox pages are workspaces, not pop-up cards. Keep only a thin safe
+// edge so Messages, Reports, Log, Archive, and their reader use the canvas.
+function adminInboxBounds(){
+  const edge=Math.max(2,Math.min(6,Math.floor(Math.min(W,H)/20)));
+  return {pw:Math.max(1,W-edge*2),ph:Math.max(1,H-edge*2),px:edge,py:edge};
+}
+
+let feedXRects=[],feedReadRects=[];
 async function deleteBanner(id){                     // mains: pull a post off everyone's feed (no archive)
   if(!isMainAdmin()) return;
   if(!sb){ const i=banners.findIndex(b=>b.id===id); if(i>=0) banners.splice(i,1); return; }
@@ -13,7 +20,7 @@ async function deleteBanner(id){                     // mains: pull a post off e
 }
 function drawHubPosts(topY, maxBottom){
   // UPDATES board: newest first, capped at 5 posts / 10 lines, each post wraps to two lines max
-  bannerXRect=null; feedXRects=[];
+  bannerXRect=null; feedXRects=[];feedReadRects=[];
   if(!banners.length) return topY;
   const bw=Math.min(560,W-56), bx=W/2-bw/2+offX('posts');
   topY += offY('posts');
@@ -26,7 +33,7 @@ function drawHubPosts(topY, maxBottom){
   let usedLines=0, usedH=0;
   for(const b of banners){
     if(items.length>=5 || usedLines>=10) break;
-    const msg=String(b.message||'');
+    const msg=String(b.heading||b.message||'');
     let lines=[msg.slice(0,maxCh)];
     if(msg.length>maxCh && usedLines+2<=10) lines.push(msg.slice(maxCh,maxCh*2-1)+(msg.length>maxCh*2-1?'\u2026':''));
     const h=6+lines.length*lineH+3;
@@ -53,6 +60,7 @@ function drawHubPosts(topY, maxBottom){
     const it=items[i];
     ctx.fillStyle= i%2 ? 'rgba(0,0,0,0.16)' : 'rgba(0,0,0,0.26)';
     ctx.fillRect(bx+6, ry, bw-12, it.h-3);
+    feedReadRects.push({x:bx+6,y:ry,w:bw-12-xw,h:it.h-3,b:it.b});
     ctx.fillStyle='#e8d9a8'; ctx.font='11px ui-monospace,Consolas,monospace';
     ctx.fillText('\u2022 '+it.lines[0], bx+14, ry+3+lineH/2+2);
     if(it.lines[1]){
@@ -89,7 +97,7 @@ function enforceReaderAccess(){if(readerOpen&&!readerAccessAllowed()){clearReade
 function openReader(title, meta, body, access='public',action=null){
   readerOpen=true; readerTitle=String(title||''); readerMeta=String(meta||'');
   readerBody=String(body||''); readerScroll=0;readerAccess=['admin','main'].includes(access)?access:'public';
-  const choices=Array.isArray(action)?action:[action];readerActions=choices.filter(item=>item&&typeof item.run==='function').slice(0,2)
+  const choices=Array.isArray(action)?action:[action];readerActions=choices.filter(item=>item&&typeof item.run==='function').slice(0,4)
     .map(item=>({label:String(item.label||'OPEN').slice(0,20),owner:String(item.owner||''),run:item.run}));
 }
 function readerLines(maxW){
@@ -130,7 +138,9 @@ function readerLines(maxW){
 function drawReader(){
   if(!enforceReaderAccess())return;
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
-  const pw=Math.min(520,W-24), ph=Math.min(460,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  const privateInboxReader=readerAccess==='admin'||readerAccess==='main';
+  const bounds=privateInboxReader?adminInboxBounds():{pw:Math.min(520,W-24),ph:Math.min(460,H-24),px:W/2-Math.min(520,W-24)/2,py:H/2-Math.min(460,H-24)/2};
+  const {pw,ph,px,py}=bounds;
   ctx.fillStyle='#0a0c0e'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
@@ -139,7 +149,17 @@ function drawReader(){
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(readerMeta, pw-24), W/2, py+40);
   readerRects=[];
-  const footerButtonH=44,x0=px+18, top=py+56, bottom=py+ph-footerButtonH-12, lh=15;
+  // A player profile can expose Message, Add Friend, Block, and Report. Lay
+  // those controls out as a compact grid instead of silently dropping all but
+  // the first two or squeezing six buttons into an unreadable single row.
+  const optionalReaderActions=typeof readerActions!=='undefined'&&Array.isArray(readerActions)?readerActions:
+    (typeof readerAction!=='undefined'&&readerAction?[readerAction]:[]);
+  const actions=optionalReaderActions.map((action,index)=>['action:'+index,action.label,index===2?'#e06b58':index?'#e8b658':'#bfa8ff'])
+    .concat([['copy','COPY TEXT','#a7c15e'],['close','CLOSE','#7fd8ff']]);
+  const buttonGap=8,rowGap=6,buttonCols=Math.max(1,Math.min(actions.length,pw<420?2:3)),
+    buttonRows=Math.ceil(actions.length/buttonCols),buttonH=34,
+    footerH=buttonRows*buttonH+(buttonRows-1)*rowGap,
+    x0=px+18, top=py+56, bottom=py+ph-footerH-14, lh=15;
   ctx.font='11px ui-monospace,Consolas,monospace';
   // measure once with the arrow gutter reserved, so the two can never collide
   const gutter=58;
@@ -173,23 +193,21 @@ function drawReader(){
     ctx.textAlign='right'; ctx.fillStyle='#6b7455'; ctx.font='8px ui-monospace,Consolas,monospace';
     ctx.fillText((readerScroll+1)+'-'+Math.min(lines.length,readerScroll+fit)+' of '+lines.length, px+pw-14, bottom+12);
   }
-  // Keep the reader independently renderable for older cached clients and
-  // isolated UI checks that predate the multi-action profile reader.
-  const optionalReaderActions=typeof readerActions!=='undefined'&&Array.isArray(readerActions)?readerActions:
-    (typeof readerAction!=='undefined'&&readerAction?[readerAction]:[]);
-  const actions=optionalReaderActions.map((action,index)=>['action:'+index,action.label,index?'#e8b658':'#bfa8ff'])
-    .concat([['copy','COPY TEXT','#a7c15e'],['close','CLOSE','#7fd8ff']]),gap=8,
-    cbw=Math.min(130,(pw-40-gap*(actions.length-1))/actions.length), cbh=footerButtonH, cby=py+ph-cbh-6;
-  const button=(id,label,bx,col)=>{
-    readerRects.push({x:bx,y:cby,w:cbw,h:cbh,id});
-    const hv=mouse.x>=bx&&mouse.x<=bx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
-    ctx.fillStyle=hv?col:'rgba(127,216,255,0.14)'; ctx.fillRect(bx,cby,cbw,cbh);
-    ctx.strokeStyle=col; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,cby+0.5,cbw,cbh);
+  const cbw=Math.min(150,(pw-36-buttonGap*(buttonCols-1))/buttonCols),firstY=py+ph-footerH-6;
+  const button=(id,label,bx,by,col)=>{
+    readerRects.push({x:bx,y:by,w:cbw,h:buttonH,id});
+    const hv=mouse.x>=bx&&mouse.x<=bx+cbw&&mouse.y>=by&&mouse.y<=by+buttonH;
+    ctx.fillStyle=hv?col:'rgba(127,216,255,0.14)'; ctx.fillRect(bx,by,cbw,buttonH);
+    ctx.strokeStyle=col; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,by+0.5,cbw,buttonH);
     ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=hv?'#101208':'#bfe8ff';
-    ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(label,bx+cbw/2,cby+cbh/2);
+    ctx.font='700 10px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(label,cbw-8),bx+cbw/2,by+buttonH/2);
   };
-  const first=W/2-(cbw*actions.length+gap*(actions.length-1))/2;
-  actions.forEach((item,index)=>button(item[0],item[1],first+index*(cbw+gap),item[2]));
+  actions.forEach((item,index)=>{
+    const row=Math.floor(index/buttonCols),col=index%buttonCols,
+      rowCount=Math.min(buttonCols,actions.length-row*buttonCols),rowW=cbw*rowCount+buttonGap*(rowCount-1),
+      rowX=W/2-rowW/2;
+    button(item[0],item[1],rowX+col*(cbw+buttonGap),firstY+row*(buttonH+rowGap),item[2]);
+  });
   ctx.textAlign='left'; ctx.textBaseline='top';
 }
 async function copyReaderText(){
@@ -223,8 +241,8 @@ function drawInboxTabs(px,py,pw,y,rects){
   if(isMainAdmin()) TABS.push(['log','\uD83D\uDCDC ADMIN AUDIT LOG']);
   if(isAdmin())     TABS.push(['archive','\uD83D\uDDC3 ARCHIVE']);
   if(TABS.length<2) return y;                       // nothing to switch between
-  const tw=Math.min(160,(pw-40)/TABS.length), th=22;
-  let tx=W/2-(TABS.length*tw+8*(TABS.length-1))/2;
+  const gap=pw<500?4:8,tw=Math.max(1,(pw-32-gap*(TABS.length-1))/TABS.length),th=pw<500?26:32;
+  let tx=px+16;
   for(const [id,lbl] of TABS){
     rects.push({x:tx,y,w:tw,h:th,id:'itab:'+id});
     const on=inboxTab===id;
@@ -232,10 +250,10 @@ function drawInboxTabs(px,py,pw,y,rects){
     ctx.fillStyle= on?'#7fd8ff':hv?'rgba(127,216,255,0.2)':'rgba(0,0,0,0.35)'; ctx.fillRect(tx,y,tw,th);
     ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(tx+0.5,y+0.5,tw,th);
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle= on?'#101208':'#bfe8ff'; ctx.font='700 9px ui-monospace,Consolas,monospace';
+    ctx.fillStyle= on?'#101208':'#bfe8ff'; ctx.font='700 '+(pw<500?8:10)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(lbl,tw-6), tx+tw/2, y+th/2);
     ctx.textBaseline='alphabetic';
-    tx+=tw+8;
+    tx+=tw+gap;
   }
   return y+th+10;
 }
@@ -255,7 +273,7 @@ function inboxTabClick(id){
 function drawUpdates(){
   if(!canAccessReports()){updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
-  const pw=Math.min(460,W-30), ph=Math.min(520,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  const {pw,ph,px,py}=adminInboxBounds();
   const compactReports=ph<420;
   ctx.fillStyle='#080c0e'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
@@ -266,14 +284,17 @@ function drawUpdates(){
   ctx.fillText(sb?'staff reports first, then player reports':'reports live on the deployed site \u2014 preview shows none', W/2, py+42);
   updatesRects=[];
   const x0=px+18, rw=pw-36; let y=drawInboxTabs(px,py,pw,py+52,updatesRects);
-  const section=(title,rows,tint)=>{
+  const section=(title,rows,tint,key)=>{
+    const pageSize=compactReports?1:Math.max(3,Math.floor((ph-260)/70)),totalPages=Math.max(1,Math.ceil(rows.length/pageSize));
+    reportFeedPages[key]=Math.max(0,Math.min(totalPages-1,Math.floor(+reportFeedPages[key]||0)));
+    const page=reportFeedPages[key],shown=rows.slice(page*pageSize,(page+1)*pageSize);
     ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText(title, x0, y+8); y+=14;
+    ctx.fillText(title+(totalPages>1?'  \u00b7 PAGE '+(page+1)+'/'+totalPages:''), x0, y+8); y+=14;
     if(!rows.length){
       ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
       ctx.fillText('nothing here yet', x0+4, y+8); y+=18; return;
     }
-    for(const r of rows.slice(0,compactReports?1:3)){
+    for(const r of shown){
       const h=compactReports?27:30, rbw=52;
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
       ctx.strokeStyle=tint; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
@@ -299,26 +320,38 @@ function drawUpdates(){
         updatesRects.push({x:bx3,y:y+5,w:rbw,h:h-10,id:'rd2:'+(r.id!=null?r.id:'x'),
                            read:{t:String(r.name||'report'), m:when, b:msg}});
       }
-      if(r.id!=null){                                // RESOLVE: clears it from this feed into the archive
+      if(r.id!=null){                                // RESOLVE: saves first, then moves into the archive
         const bx2=x0+rw-rbw-4;
-        updatesRects.push({x:bx2,y:y+5,w:rbw,h:h-10,id:'rs:'+r.id});
-        const hv=mouse.x>=bx2&&mouse.x<=bx2+rbw&&mouse.y>=y+5&&mouse.y<=y+h-5;
+        const saving=reportResolveBusy.has(+r.id);
+        if(!saving)updatesRects.push({x:bx2,y:y+5,w:rbw,h:h-10,id:'rs:'+r.id});
+        const hv=!saving&&mouse.x>=bx2&&mouse.x<=bx2+rbw&&mouse.y>=y+5&&mouse.y<=y+h-5;
         ctx.fillStyle=hv?'rgba(167,193,94,0.34)':'rgba(167,193,94,0.16)'; ctx.fillRect(bx2,y+5,rbw,h-10);
         ctx.strokeStyle='#a7c15e'; ctx.strokeRect(bx2+0.5,y+5.5,rbw,h-10);
         ctx.textAlign='center'; ctx.font='700 7px ui-monospace,Consolas,monospace';
-        ctx.fillStyle='#cfe0a8'; ctx.fillText('RESOLVE', bx2+rbw/2, y+h/2);
+        ctx.fillStyle='#cfe0a8'; ctx.fillText(saving?'SAVING\u2026':'RESOLVE', bx2+rbw/2, y+h/2);
         ctx.textAlign='left';
       }
       ctx.textBaseline='alphabetic';
       y+=h+5;
     }
+    if(totalPages>1){
+      const navW=60,navH=16,gap=6,nx=x0+rw-navW*2-gap;
+      for(const [id,bx,label,enabled] of [['rp:'+key+':prev',nx,'\u25c0 PREV',page>0],['rp:'+key+':next',nx+navW+gap,'NEXT \u25b6',page<totalPages-1]]){
+        if(enabled)updatesRects.push({x:bx,y,w:navW,h:navH,id});
+        const hv=enabled&&mouse.x>=bx&&mouse.x<=bx+navW&&mouse.y>=y&&mouse.y<=y+navH;
+        ctx.fillStyle=hv?'rgba(127,216,255,.25)':'rgba(255,255,255,.04)';ctx.fillRect(bx,y,navW,navH);ctx.strokeStyle=enabled?'#7fd8ff':'#42463b';ctx.strokeRect(bx+.5,y+.5,navW,navH);
+        ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=enabled?'#bfe8ff':'#5a5648';ctx.font='700 7px ui-monospace,Consolas,monospace';ctx.fillText(label,bx+navW/2,y+navH/2);
+      }
+      ctx.textAlign='left';ctx.textBaseline='alphabetic';y+=navH+3;
+    }
     y+=4;
   };
-  section('\u26A0 STAFF REPORTS'+(updatesFeed.staff.length?' ('+updatesFeed.staff.length+')':''), updatesFeed.staff, '#e0a8a0');
-  section('\uD83D\uDC65 PLAYER REPORTS'+(updatesFeed.player.length?' ('+updatesFeed.player.length+')':''), updatesFeed.player, '#8a9268');
-  const copyY=py+ph-70,copyH=24,copyGap=6,modeW=70,copyW=rw-modeW*2-copyGap*2;
-  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle=/FAILED|COULD NOT|MUST/.test(reportCopyStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(reportCopyStatus||'COPY AN EXPLICIT, READABLE REPORT EXPORT',rw),W/2,copyY-5);
+  section('\u26A0 STAFF REPORTS'+(updatesFeed.staff.length?' ('+updatesFeed.staff.length+')':''), updatesFeed.staff, '#e0a8a0','staff');
+  section('\uD83D\uDC65 PLAYER REPORTS'+(updatesFeed.player.length?' ('+updatesFeed.player.length+')':''), updatesFeed.player, '#8a9268','player');
+  const copyY=py+ph-78,copyH=30,copyGap=8,modeW=Math.min(120,Math.max(70,rw*.16)),copyW=rw-modeW*2-copyGap*2;
+  const visibleReportStatus=reportLoadStatus||reportCopyStatus;
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle=/FAILED|COULD NOT|MUST/.test(visibleReportStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine(visibleReportStatus||'COPY AN EXPLICIT, READABLE REPORT EXPORT',rw),W/2,copyY-5);
   const copyButtons=[
     {id:'report_copy_all',x:x0,w:modeW,label:'ALL',col:'#7fd8ff',active:reportCopyMode==='all',enabled:!reportCopyBusy},
     {id:'report_copy_custom',x:x0+modeW+copyGap,w:modeW,label:'CUSTOM',col:'#e8b658',active:reportCopyMode==='custom',enabled:!reportCopyBusy},
@@ -329,7 +362,7 @@ function drawUpdates(){
     ctx.fillStyle=b.active?b.col:hv?b.col:'rgba(255,255,255,.06)';ctx.fillRect(b.x,copyY,b.w,copyH);ctx.strokeStyle=b.col;ctx.strokeRect(b.x+.5,copyY+.5,b.w,copyH);
     ctx.fillStyle=b.active||hv?'#101208':'#cdd6b0';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.textBaseline='middle';ctx.fillText(fitLine(b.label,b.w-6),b.x+b.w/2,copyY+copyH/2);
   }
-  const bw2=110, bh2=26, gap2=10;
+  const bw2=Math.min(150,Math.max(110,rw*.2)), bh2=32, gap2=10;
   const rx=W/2-bw2-gap2/2, cx=W/2+gap2/2, byy=py+ph-34;
   updatesRects.push({x:rx,y:byy,w:bw2,h:bh2,id:'refresh'});
   updatesRects.push({x:cx,y:byy,w:bw2,h:bh2,id:'close'});
@@ -353,6 +386,7 @@ function updatesClick(){
       else if(r.id==='report_copy_all'){chooseReportCopyAll();sfx('aim');}
       else if(r.id==='report_copy_custom'){if(chooseReportCopyCustom())sfx('aim');}
       else if(r.id==='report_copy'){void copyOutpostZeroReports();}
+      else if(String(r.id).indexOf('rp:')===0){const [,key,dir]=String(r.id).split(':');if(reportFeedPages[key]!=null)reportFeedPages[key]=Math.max(0,reportFeedPages[key]+(dir==='next'?1:-1));sfx('aim');}
       else if(String(r.id).indexOf('rs:')===0){ resolveReport(+String(r.id).slice(3)); sfx('pickup'); }
       else if(r.read){ openReader(r.read.t, r.read.m, r.read.b,'main'); sfx('swap'); }
       return;
@@ -362,22 +396,22 @@ function updatesClick(){
 function drawArchive(){
   if(!isAdmin()){archOpen=false;adminMsgs=[];updatesResolved=[];return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
-  const pw=Math.min(480,W-24), ph=Math.min(480,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  const {pw,ph,px,py}=adminInboxBounds();
   ctx.fillStyle='#0c0b07'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#e8b658'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   ctx.fillStyle='#e8d9a8'; ctx.font='700 17px ui-monospace,Consolas,monospace';
   ctx.fillText('\u2709 INBOX \u00b7 ARCHIVE', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText('read messages land here after 7 days \u00b7 resolved reports too', W/2, py+42);
+  ctx.fillText('read messages land here after 7 days \u00b7 resolved reports stay saved', W/2, py+42);
   archRects=[];
   const inboxY=drawInboxTabs(px,py,pw,py+50,archRects);
   const x0=px+16, rw=pw-32;
-  let y=inboxY;
+  let y=inboxY,resolvedPageSize=1;
   // sub-sections: old messages | resolved reports (reports only for mains)
   if(!isMainAdmin()) archTab='msgs';
   const tabs=[['msgs','OLD MESSAGES']].concat(isMainAdmin()?[['reports','RESOLVED REPORTS']]:[]);
-  const tw=Math.min(150,(rw-8)/2), th=20;
+  const tw=Math.min(220,(rw-10)/2), th=28;
   let tx=W/2 - (tabs.length*tw + (tabs.length-1)*8)/2;
   for(const [id,lbl] of tabs){
     archRects.push({x:tx,y,w:tw,h:th,id:'tab:'+id});
@@ -393,22 +427,21 @@ function drawArchive(){
     tx+=tw+8;
   }
   y+=th+10;
-  const me=adminEmail();
   if(archTab==='msgs'){
     const list=adminMsgs.filter(msgArchived);
     if(!list.length){
       ctx.textAlign='center'; ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
       ctx.fillText('nothing archived yet', W/2, y+14);
     }
-    for(const m of list.slice(0,9)){
-      const h=34;
+    const h=38,maxRows=Math.max(1,Math.floor((py+ph-52-y)/(h+5)));
+    for(const m of list.slice(0,maxRows)){
       if(y+h>py+ph-46) break;
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
       ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
       ctx.textAlign='left'; ctx.textBaseline='middle';
       ctx.fillStyle='#8a9268'; ctx.font='700 8px ui-monospace,Consolas,monospace';
       const when=String(m.created_at||'').slice(5,16).replace('T',' ');
-      ctx.fillText(String(m.from_email||'?').slice(0,24)+' \u2192 '+String(m.to_email||'?').slice(0,24)+(when?'  \u00b7 '+when:''), x0+8, y+10);
+      ctx.fillText(('@'+String(m.from_username||'STAFF')).slice(0,24)+' \u2192 '+('@'+String(m.to_username||'STAFF')).slice(0,24)+(when?'  \u00b7 '+when:''), x0+8, y+10);
       ctx.fillStyle='#a9b28f'; ctx.font='9px ui-monospace,Consolas,monospace';
       ctx.fillText(String(m.message||'').slice(0, Math.floor((rw-16)/5.6)), x0+8, y+24);
       ctx.textBaseline='alphabetic';
@@ -416,11 +449,13 @@ function drawArchive(){
     }
   } else {
     const list=updatesResolved;
+    if(reportLoadStatus){ctx.textAlign='center';ctx.fillStyle=/FAILED|COULD NOT/.test(reportLoadStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(reportLoadStatus,rw),W/2,y+8);y+=14;}
+    const pageSize=resolvedPageSize=Math.max(1,Math.floor((py+ph-56-y)/35)),totalPages=Math.max(1,Math.ceil(list.length/pageSize));reportArchivePage=Math.max(0,Math.min(totalPages-1,Math.floor(+reportArchivePage||0)));
     if(!list.length){
       ctx.textAlign='center'; ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
       ctx.fillText('no resolved reports yet', W/2, y+14);
     }
-    for(const r of list.slice(0,9)){
+    for(const r of list.slice(reportArchivePage*pageSize,(reportArchivePage+1)*pageSize)){
       const h=30;
       if(y+h>py+ph-46) break;
       const staff=(r.meta&&r.meta.staff) || String(r.message||'').indexOf('[STAFF]')===0;
@@ -434,8 +469,17 @@ function drawArchive(){
       ctx.textBaseline='alphabetic';
       y+=h+5;
     }
+    if(totalPages>1){
+      const navY=py+ph-39,navW=88,navH=31;
+      for(const [id,bx,label,enabled] of [['reports_prev',x0, '\u25c0 PREV',reportArchivePage>0],['reports_next',x0+rw-navW,'NEXT \u25b6',reportArchivePage<totalPages-1]]){
+        if(enabled)archRects.push({x:bx,y:navY,w:navW,h:navH,id});const hv=enabled&&mouse.x>=bx&&mouse.x<=bx+navW&&mouse.y>=navY&&mouse.y<=navY+navH;
+        ctx.fillStyle=hv?'rgba(232,182,88,.24)':'rgba(255,255,255,.04)';ctx.fillRect(bx,navY,navW,navH);ctx.strokeStyle=enabled?'#e8b658':'#42463b';ctx.strokeRect(bx+.5,navY+.5,navW,navH);ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=enabled?'#e8d9a8':'#5a5648';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(label,bx+navW/2,navY+navH/2);
+      }
+      ctx.fillStyle='#8a9268';ctx.fillText('PAGE '+(reportArchivePage+1)+'/'+totalPages,W/2,navY-4);ctx.textBaseline='alphabetic';
+    }
   }
-  const cbw=140, cbh=28, cbx=W/2-cbw/2, cby=py+ph-36;
+  const reportsPaged=archTab==='reports'&&updatesResolved.length>resolvedPageSize;
+  const cbw=reportsPaged?120:170, cbh=34, cbx=W/2-cbw/2, cby=py+ph-40;
   archRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
   const chv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
   ctx.fillStyle=chv?'#e8b658':'rgba(232,182,88,0.14)'; ctx.fillRect(cbx,cby,cbw,cbh);
@@ -457,12 +501,14 @@ function archClick(){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       const id=String(r.id||'');
       if(id==='close'){ archOpen=false; sfx('swap'); return; }
-      if(id.indexOf('tab:')===0){ archTab=id.slice(4); sfx('aim'); return; }
+      if(id.indexOf('tab:')===0){ archTab=id.slice(4);reportArchivePage=0;sfx('aim'); return; }
+      if(id==='reports_prev'){reportArchivePage=Math.max(0,reportArchivePage-1);sfx('aim');return;}
+      if(id==='reports_next'){reportArchivePage++;sfx('aim');return;}
       return;
     }
   }
 }
-let storageTab='storage';
+let storageTab='storage',storagePage=0;
 let weaponEditOpen=false, weaponEditKey=null, weaponEditDraft=null, weaponEditRects=[], weaponDefs={}, weaponDefsLoaded=false, weaponDefsRequestVersion=0;
 // the numeric fields an admin may tune, with sane bounds
 const WFIELDS=[
@@ -647,7 +693,7 @@ async function saveWeaponEdit(){
   if(nextSeason) d.published=false;
   const stats={};
   for(const f of WFIELDS) if(typeof d[f.k]==='number') stats[f.k]=d[f.k];
-  const row={key:k, stats, price:null, published:nextSeason?false:!!d.published, updated_by:adminEmail()};
+  const row={key:k,stats,price:null,published:nextSeason?false:!!d.published,updated_by:adminSelfUsername||myRank().toUpperCase()||'STAFF'};
   $('formstatus').textContent='saving...';
   try{
     if(sb){
@@ -773,7 +819,7 @@ function weaponEditClick(){
   }
 }
 function drawStorage(){
-  if(!isMainAdmin()){storageOpen=false;return;}
+  if(!canViewWeaponStorage()){storageOpen=false;return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
   const pw=Math.min(500,W-24), ph=Math.min(500,H-24), px=W/2-pw/2, py=H/2-ph/2;
   ctx.fillStyle='#0a0a0e'; ctx.fillRect(px,py,pw,ph);
@@ -814,14 +860,16 @@ function drawStorage(){
   }
   y+=th+10;
 
+  const selected=storageTab==='published'?pubList:stoList,
+    pageSize=Math.max(1,Math.floor((py+ph-96-y)/30)),pageCount=Math.max(1,Math.ceil(selected.length/pageSize));
+  storagePage=Math.max(0,Math.min(pageCount-1,Math.floor(+storagePage||0)));
   const section=(list, tint)=>{
     if(!list.length){
       ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
       ctx.fillText('nothing here', x0+4, y+8); y+=18; return;
     }
-    for(const r of list){
+    for(const r of list.slice(storagePage*pageSize,(storagePage+1)*pageSize)){
       const h=26, bw2=46;
-      if(y+h>py+ph-52) break;
       ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(x0,y,rw,h);
       ctx.strokeStyle=tint; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
       ctx.textAlign='left'; ctx.textBaseline='middle';
@@ -852,6 +900,16 @@ function drawStorage(){
   section(storageTab==='published' ? pubList : stoList,
           storageTab==='published' ? '#a7c15e' : '#bfa8ff');
 
+  const navY=py+ph-70,navH=24,navGap=8,navW=Math.min(92,(rw-navGap)/2),navX=W/2-navW-navGap/2;
+  for(const [id,label,bx,enabled] of [['prev','‹ PREV',navX,storagePage>0],['next','NEXT ›',navX+navW+navGap,storagePage<pageCount-1]]){
+    if(enabled)storageRects.push({x:bx,y:navY,w:navW,h:navH,id});
+    const hv=enabled&&mouse.x>=bx&&mouse.x<=bx+navW&&mouse.y>=navY&&mouse.y<=navY+navH;
+    ctx.fillStyle=hv?'rgba(191,168,255,.34)':'rgba(255,255,255,.05)';ctx.fillRect(bx,navY,navW,navH);
+    ctx.strokeStyle=enabled?'#bfa8ff':'#42463b';ctx.strokeRect(bx+.5,navY+.5,navW,navH);
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=enabled?'#d8c8ff':'#5a5648';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(label,bx+navW/2,navY+navH/2);
+  }
+  ctx.fillStyle='#8a9268';ctx.font='7px ui-monospace,Consolas,monospace';ctx.fillText('PAGE '+(storagePage+1)+' / '+pageCount,W/2,navY-4);
+
   const cbw=140, cbh=28, cbx=W/2-cbw/2, cby=py+ph-36;
   storageRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
   const chv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
@@ -867,7 +925,9 @@ function storageClick(){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       const id=String(r.id||'');
       if(id==='close'){ storageOpen=false; adminPanelOpen=true; sfx('swap'); return; }
-      if(id.indexOf('tab:')===0){ storageTab=id.slice(4); sfx('aim'); return; }
+      if(id.indexOf('tab:')===0){ storageTab=id.slice(4);storagePage=0;sfx('aim'); return; }
+      if(id==='prev'){storagePage=Math.max(0,storagePage-1);sfx('aim');return;}
+      if(id==='next'){storagePage++;sfx('aim');return;}
       if(id.indexOf('edit:')===0){
         if(!isMainAdmin()){ sfx('dry'); return; }
         openWeaponEdit(id.slice(5)); sfx('swap'); return;   // straight to the edit page
@@ -918,7 +978,7 @@ function drawPromoAdmin(){
     const bits=[];
     if(pc.gems) bits.push(pc.gems+' \uD83D\uDC8E');
     if(pc.coins) bits.push(pc.coins+' \uD83E\uDE99');
-    bits.push(pc.uses_max>0 ? (pc.uses_count+'/'+pc.uses_max+' used') : (pc.uses_count+' used'));
+    bits.push(pc.uses_count+' ACCOUNTS \u00b7 EACH ONCE');
     bits.push(dead?'EXPIRED':(pc.expires_at?('until '+String(pc.expires_at).slice(0,10)):'no expiry'));
     ctx.fillText(fitLine(bits.join('  \u00b7  '), rw-actW-20), x0+8, y+28);
     // actions
@@ -1115,7 +1175,7 @@ function drawPlayers(){
         ctx.fillText(fitLine('@'+String(r.target_username||'unknown'), rw-2*bw2-24), x0+8, y+9);
         ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
         ctx.fillText(fitLine(patchSummary(r.patch)+'  by '+String(r.requested_by||'?'), rw-2*bw2-24), x0+8, y+20);
-        if(isCreator()){
+        if(isMainAdmin()){
           const ax=x0+rw-2*bw2-8, rx=x0+rw-bw2-4,busy=scoreRequestDecisionBusy.has(String(r.id));
           if(!busy){playersRects.push({x:ax,y:y+4,w:bw2,h:h-8,id:'ok:'+r.id});playersRects.push({x:rx,y:y+4,w:bw2,h:h-8,id:'no:'+r.id});}
           ctx.fillStyle='rgba(167,193,94,0.25)'; ctx.fillRect(ax,y+4,bw2,h-8);
@@ -1138,17 +1198,17 @@ function drawPlayers(){
       ctx.strokeStyle='#d05548'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
       ctx.textAlign='left'; ctx.textBaseline='middle';
       ctx.fillStyle='#e0a8a0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-      const who=b.user_email||('device '+String(b.device_id||'').slice(0,10));
+      const who='@'+String(b.target_username||'UNKNOWN PLAYER');
       ctx.fillText(fitLine(who, rw-bw2-100), x0+8, y+10);
       ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
       const scopes=Array.isArray(b.scopes)?b.scopes.join('+'):'account';
       ctx.fillText(fitLine('['+scopes+'] '+(b.until?('until '+String(b.until).slice(0,10)):'permanent')+
-                           '  by '+String(b.banned_by||'?'), rw-bw2-24), x0+8, y+21);
+                           '  by @'+String(b.banned_by_username||'STAFF'), rw-bw2-24), x0+8, y+21);
       ctx.fillStyle='#6b7455';
       ctx.fillText(fitLine(b.note||'', rw-bw2-24), x0+8, y+31);
       if(canBan()){
-        const ux=x0+rw-bw2-6,key=String(b.user_email||'').toLowerCase(),busy=playerBanActionBusy.has(key);
-        if(!busy)playersRects.push({x:ux,y:y+7,w:bw2,h:h-14,id:'unban:'+(b.user_email||'')});
+        const ux=x0+rw-bw2-6,key=String(b.ban_id||''),busy=playerBanActionBusy.has(key);
+        if(!busy&&/^\d+$/.test(key))playersRects.push({x:ux,y:y+7,w:bw2,h:h-14,id:'unban:'+key});
         const hv=mouse.x>=ux&&mouse.x<=ux+bw2&&mouse.y>=y+7&&mouse.y<=y+h-7;
         ctx.fillStyle=hv?'rgba(167,193,94,0.34)':'rgba(167,193,94,0.16)'; ctx.fillRect(ux,y+7,bw2,h-14);
         ctx.strokeStyle='#a7c15e'; ctx.strokeRect(ux+0.5,y+7.5,bw2,h-14);
@@ -1167,7 +1227,7 @@ function drawPlayers(){
       ctx.strokeStyle= open?'#e8b658':'#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
       ctx.textAlign='left'; ctx.textBaseline='middle';
       ctx.fillStyle= open?'#e8d9a8':'#8a9268'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine(String(a.player_email||'?')+'  \u00b7  '+String(a.created_at||'').slice(5,16).replace('T',' '), rw-2*bw2-24), x0+8, y+11);
+      ctx.fillText(fitLine('@'+String(a.player_username||'UNKNOWN PLAYER')+'  \u00b7  '+String(a.created_at||'').slice(5,16).replace('T',' '), rw-2*bw2-24), x0+8, y+11);
       ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
       wrapTextClamped(String(a.message||''), x0+8, y+24, rw-2*bw2-24, 11, 2);
       if(open && canBan()){
@@ -1213,7 +1273,7 @@ function playersClick(){
       if(id.indexOf('tab:')===0){ playersTab=id.slice(4); sfx('aim'); return; }
       if(id==='go_lookup'){ playersOpen=false; scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; resetPlayerEditScroll(); openScoreEdit(); sfx('swap'); return; }
       if(id==='go_ban'){ if(!canBan()){ sfx('dry'); return; } playersOpen=false; scoresOpen=true; peMode='ban'; openScoreEdit(); sfx('swap'); return; }
-      if(id.indexOf('unban:')===0){ const em=id.slice(6); if(em && canBan()) void unbanPlayerFromList(em); sfx('pickup'); return; }
+      if(id.indexOf('unban:')===0){const banId=id.slice(6);if(banId&&canBan())void unbanPlayerFromList(banId);sfx('pickup');return;}
       if(id.indexOf('apok:')===0){ const a=appealList.find(x=>String(x.id)===id.slice(5));
         if(a && canBan()) resolveAppeal(a.id,'lift'); sfx('pickup'); return; }
       if(id.indexOf('apno:')===0){ const a=appealList.find(x=>String(x.id)===id.slice(5));
@@ -1237,7 +1297,7 @@ function drawScores(){
   ctx.fillText(canEditPlayer()?'\u270E PLAYER EDIT':'\uD83D\uDD0D PLAYER LOOKUP', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(isCreator()?'CREATOR \u00b7 changes apply immediately'
-                      : isMainAdmin()?'MAIN ADMIN \u00b7 changes need the creator\u2019s approval'
+                      : isMainAdmin()?'MAIN ADMIN \u00b7 changes apply immediately'
                       : canSeeStats()?'CO-ADMIN \u00b7 full stats, view only'
                       :'anyone can look up a player\u2019s score', pw-24), W/2, py+42);
   scoresRects=[];
@@ -1290,7 +1350,7 @@ function drawScores(){
     y+=4;
     if(!canEditPlayer()) return peFooter(px,py,pw,ph);
     ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText(isCreator()?('PENDING REQUESTS'+(scoreReqs.length?' ('+scoreReqs.length+')':'')):'YOUR PENDING REQUESTS', x0, y+8);
+    ctx.fillText('PENDING REQUESTS'+(scoreReqs.length?' ('+scoreReqs.length+')':''), x0, y+8);
     y+=14;
     if(!scoreReqs.length){
       ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
@@ -1302,12 +1362,12 @@ function drawScores(){
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
       ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
       ctx.textAlign='left'; ctx.textBaseline='middle';
-      const room=isCreator()? rw-2*bw2-24 : rw-24;
+      const room=isMainAdmin()? rw-2*bw2-24 : rw-24;
       ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
       ctx.fillText(fitLine('@'+String(r.target_username||'unknown'), room), x0+8, y+11);
       ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
       ctx.fillText(fitLine(patchSummary(r.patch)+'   by '+String(r.requested_by||'?'), room), x0+8, y+23);
-      if(isCreator()){
+      if(isMainAdmin()){
         const ax2=x0+rw-2*bw2-8, rx2=x0+rw-bw2-4,busy=scoreRequestDecisionBusy.has(String(r.id));
         if(!busy){scoresRects.push({x:ax2,y:y+5,w:bw2,h:h-10,id:'ok:'+r.id});scoresRects.push({x:rx2,y:y+5,w:bw2,h:h-10,id:'no:'+r.id});}
         ctx.fillStyle='rgba(167,193,94,0.25)'; ctx.fillRect(ax2,y+5,bw2,h-10);
@@ -1532,7 +1592,7 @@ function drawScores(){
 function peFooter(px,py,pw,ph){
   const fb=[];
   if(peStep==='panel' && canEditLoadedPlayer())
-    fb.push([peBusy?'busy':'apply',peBusy?'WORKING\u2026':peDirty()?(isCreator()?'APPLY':(pePermanentDirty()?'APPLY / REQUEST':'APPLY')):'NO CHANGES',peBusy?'#5a5648':peDirty()?'#a7c15e':'#5a5648']);
+    fb.push([peBusy?'busy':'apply',peBusy?'WORKING\u2026':peDirty()?'APPLY':'NO CHANGES',peBusy?'#5a5648':peDirty()?'#a7c15e':'#5a5648']);
   if(!peBusy){
     if(peStep!=='choose') fb.push(['back','\u2039 BACK','#7fd8ff']);
     fb.push(['close','CLOSE','#d05548']);
@@ -1619,12 +1679,11 @@ function drawAdminsMenu(){
   let y=py+56;
   // header
   ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-  ctx.fillText('EMAIL', x0+6, y+8);
+  ctx.fillText('USERNAME', x0+6, y+8);
   ctx.fillText('RANK', x0+Math.floor(rw*0.46), y+8);
   ctx.textAlign='right'; ctx.fillText('ACTIONS', x0+rw-6, y+8);
   y+=14;
   const roster=adminRoster().slice(0,8);
-  const me=adminEmail();
   for(const row of roster){
     const h=26, bw2=44, bg=4;
     ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
@@ -1632,17 +1691,17 @@ function drawAdminsMenu(){
     ctx.textAlign='left'; ctx.textBaseline='middle';
     // email
     ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
-    const canPromote=(row.rank==='tester'||row.rank==='co')&&canManageAdmins(),canDemote=(row.rank==='co'&&canManageAdmins())||(row.rank==='main'&&isCreator()),
-      canKick=(row.rank==='tester'||row.rank==='co')&&canManageAdmins()||row.rank==='main'&&isCreator(),nAct=(row.email===me?0:1)+(canPromote?1:0)+(canDemote?1:0)+(canKick?1:0);
+    const canPromote=(row.rank==='tester'&&canManageAdmins())||(row.rank==='co'&&isCreator()),canDemote=(row.rank==='co'&&canManageAdmins())||(row.rank==='main'&&isCreator()),
+      canKick=(row.rank==='tester'||row.rank==='co')&&canManageAdmins()||row.rank==='main'&&isCreator(),nAct=(row.isSelf?0:1)+(canPromote?1:0)+(canDemote?1:0)+(canKick?1:0);
     const actW=nAct*(bw2+bg);
     const rankW=Math.min(84, Math.max(26, rw-actW-120));
     const rankX=x0+rw-actW-rankW-4;
-    ctx.fillText(fitLine(row.email, Math.max(40, rankX-x0-12)), x0+6, y+h/2);
+    ctx.fillText(fitLine('@'+row.username, Math.max(40, rankX-x0-12)), x0+6, y+h/2);
     // rank
-    const rl = row.rank==='creator' ? (row.email===me?'CREATOR (ME)':'CREATOR') : row.rank==='main' ? 'MAIN ADMIN' : row.rank==='co'?'CO-ADMIN':'TESTER';
+    const rl = row.rank==='creator' ? (row.isSelf?'CREATOR (ME)':'CREATOR') : row.rank==='main' ? 'MAIN ADMIN' : row.rank==='co'?'CO-ADMIN':'TESTER';
     ctx.fillStyle= row.rank==='creator' ? '#e8b658' : row.rank==='main' ? '#e0a8a0' : row.rank==='co'?'#a7c15e':'#7fd8ff';
     ctx.font='700 8px ui-monospace,Consolas,monospace';
-    const rlShort = rankW<60 ? (row.rank==='creator'?(row.email===me?'ME':'CR'):row.rank==='main'?'MAIN':row.rank==='co'?'CO':'TEST') : rl;
+    const rlShort = rankW<60 ? (row.rank==='creator'?(row.isSelf?'ME':'CR'):row.rank==='main'?'MAIN':row.rank==='co'?'CO':'TEST') : rl;
     ctx.fillText(fitLine(rlShort, rankW), rankX, y+h/2);
     // actions, right-aligned: [MESSAGE] [PROMOTE] [KICK]
     let ax=x0+rw-4;
@@ -1657,10 +1716,10 @@ function drawAdminsMenu(){
       ctx.textAlign='left';
       ax=bx2-bg;
     };
-    if(canKick) act('ak:'+row.email,'KICK','#d05548',['rgba(208,85,72,0.18)','rgba(208,85,72,0.36)'],'#e0a8a0');
-    if(canDemote) act('ad:'+row.email,'DEMOTE','#7fd8ff',['rgba(127,216,255,0.14)','rgba(127,216,255,0.32)'],'#bfe8ff');
-    if(canPromote) act('ap:'+row.email,'PROMOTE','#e8b658',['rgba(232,182,88,0.16)','rgba(232,182,88,0.34)'],'#e8d9a8');
-    if(row.email!==me) act('am:'+row.email,'MESSAGE','#a7c15e',['rgba(167,193,94,0.16)','rgba(167,193,94,0.34)'],'#cfe0a8');
+    if(canKick) act('ak:'+row.username,'KICK','#d05548',['rgba(208,85,72,0.18)','rgba(208,85,72,0.36)'],'#e0a8a0');
+    if(canDemote) act('ad:'+row.username,'DEMOTE','#7fd8ff',['rgba(127,216,255,0.14)','rgba(127,216,255,0.32)'],'#bfe8ff');
+    if(canPromote) act('ap:'+row.username,'PROMOTE','#e8b658',['rgba(232,182,88,0.16)','rgba(232,182,88,0.34)'],'#e8d9a8');
+    if(!row.isSelf) act('am:'+row.username,'MESSAGE','#a7c15e',['rgba(167,193,94,0.16)','rgba(167,193,94,0.34)'],'#cfe0a8');
     ctx.textBaseline='alphabetic';
     y+=h+5;
   }
@@ -1712,7 +1771,7 @@ function drawWeaponSuggestions(){
     ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(255,255,255,.055)';ctx.fillRect(x0,y,rw,h);ctx.strokeStyle='#566047';ctx.strokeRect(x0+.5,y+.5,rw,h);
     ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.weapon_key||'WEAPON').toUpperCase()+' · '+String(row.author_role||'STAFF').toUpperCase(),contentW-8),x0+7,y+5);
     ctx.fillStyle='#cdd6b0';ctx.font='8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.suggestion||''),contentW-8),x0+7,y+20);
-    ctx.fillStyle='#777f68';ctx.font='7px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.author_email||'')+' · '+String(row.created_at||'').slice(0,16).replace('T',' '),contentW-8),x0+7,y+36);
+    ctx.fillStyle='#777f68';ctx.font='7px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('@'+String(row.author_username||'STAFF')+' · '+String(row.created_at||'').slice(0,16).replace('T',' '),contentW-8),x0+7,y+36);
     const bx=x0+rw-buttonsW-4,by=y+9,bh=h-18,defs=[['ws_read','READ','#7fd8ff'],['ws_approve','OK','#a7c15e'],['ws_reject','NO','#d05548']];
     defs.forEach((def,i)=>{const x=bx+i*(buttonW+4),enabled=!weaponSuggestionBusy;weaponSuggestionsRects.push({x,y:by,w:buttonW,h:bh,id:def[0],suggestionId:row.id,row,enabled});const hv=enabled&&mouse.x>=x&&mouse.x<=x+buttonW&&mouse.y>=by&&mouse.y<=by+bh;
       ctx.fillStyle=hv?def[2]:'rgba(255,255,255,.05)';ctx.fillRect(x,by,buttonW,bh);ctx.strokeStyle=def[2];ctx.strokeRect(x+.5,by+.5,buttonW,bh);ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=hv?'#101208':'#d9dec9';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(def[1],x+buttonW/2,by+bh/2);});
@@ -1735,10 +1794,67 @@ function weaponSuggestionsClick(){
     if(r.id==='ws_reject'){void reviewWeaponSuggestion(r.suggestionId,'rejected');return;}
   }
 }
+function drawAdminRequests(){
+  if(!isMainAdmin()){requestsOpen=false;return;}
+  ctx.fillStyle='rgba(4,6,3,.97)';ctx.fillRect(0,0,W,H);
+  const {pw,ph,px,py}=adminInboxBounds(),tiny=ph<420||pw<520;
+  ctx.fillStyle='#0b0c0e';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#e8b658';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#ffe0a0';ctx.font='700 '+(tiny?14:18)+'px ui-monospace,Consolas,monospace';ctx.fillText('REQUESTS',W/2,py+(tiny?21:28));
+  ctx.fillStyle='#8a9268';ctx.font=(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('PLAYER EDITS · UPDATE APPROVALS · WEAPON SUGGESTIONS · BAN APPEALS',pw-20),W/2,py+(tiny?36:45));
+  requestsRects=[];const rows=adminRequestRows(),x0=px+(tiny?7:16),rw=pw-(tiny?14:32),top=py+(tiny?48:58),footerY=py+ph-(tiny?31:40),
+    rowH=tiny?47:58,gap=tiny?3:5,pageSize=Math.max(1,Math.floor((footerY-top-8)/(rowH+gap))),pages=Math.max(1,Math.ceil(rows.length/pageSize));
+  requestsPage=Math.max(0,Math.min(pages-1,Math.floor(+requestsPage||0)));
+  const shown=rows.slice(requestsPage*pageSize,(requestsPage+1)*pageSize),typeText={player:'PLAYER EDIT',update:'OFFICIAL UPDATE',weapon:'WEAPON EDIT',appeal:'BAN APPEAL'};
+  if(!shown.length){ctx.fillStyle='#5a5648';ctx.font='10px ui-monospace,Consolas,monospace';ctx.fillText(requestsBusy?'LOADING…':'NO REQUESTS WAITING',W/2,top+40);}
+  shown.forEach((item,index)=>{
+    const row=item.row||{},y=top+index*(rowH+gap),buttonW=tiny?42:58,buttonGap=4,actionSpan=buttonW*3+buttonGap*2,contentW=rw-actionSpan-18,
+      title=item.kind==='player'?'@'+String(row.target_username||'UNKNOWN'):
+        item.kind==='update'?String(row.heading||row.message||'UPDATE'):
+        item.kind==='weapon'?String(row.weapon_key||'WEAPON').toUpperCase():'@'+String(row.player_username||'UNKNOWN'),
+      body=item.kind==='player'?patchSummary(row.patch)+' · by @'+String(row.requested_by||'?'):
+        item.kind==='update'?String(row.details||row.message||'')+' · by '+String(row.author||'STAFF'):
+        item.kind==='weapon'?String(row.suggestion||'')+' · by @'+String(row.author_username||'STAFF'):
+        String(row.message||'');
+    ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(232,182,88,.07)';ctx.fillRect(x0,y,rw,rowH);ctx.strokeStyle='#65552f';ctx.strokeRect(x0+.5,y+.5,rw,rowH);
+    ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(typeText[item.kind]+' · '+fitLine(title,contentW-90),x0+7,y+6);
+    ctx.fillStyle='#cdd6b0';ctx.font=(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';wrapTextClamped(body,x0+7,y+(tiny?19:23),contentW-8,tiny?9:11,tiny?2:3);
+    const defs=[['read','READ','#7fd8ff'],['approve',item.kind==='appeal'?'LIFT':'APPROVE','#a7c15e'],['reject',item.kind==='appeal'?'DENY':'REJECT','#d05548']],bx0=x0+rw-actionSpan-7;
+    defs.forEach((def,i)=>{const bx=bx0+i*(buttonW+buttonGap),busy=requestsBusy||weaponSuggestionBusy||scoreRequestDecisionBusy.has(String(row.id))||appealDecisionBusy.has(String(row.id));
+      requestsRects.push({x:bx,y:y+6,w:buttonW,h:rowH-12,id:def[0],item,enabled:def[0]==='read'||!busy});const hot=!busy&&mouse.x>=bx&&mouse.x<=bx+buttonW&&mouse.y>=y+6&&mouse.y<=y+rowH-6;
+      ctx.fillStyle=hot?def[2]:'rgba(0,0,0,.35)';ctx.fillRect(bx,y+6,buttonW,rowH-12);ctx.strokeStyle=def[2];ctx.strokeRect(bx+.5,y+6.5,buttonW,rowH-12);ctx.fillStyle=hot?'#101208':busy&&def[0]!=='read'?'#5a5648':def[2];ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 '+(tiny?6:7)+'px ui-monospace,Consolas,monospace';ctx.fillText(def[1],bx+buttonW/2,y+rowH/2);
+    });
+  });
+  const defs=[['prev','‹ PREV',requestsPage>0,'#8a9268'],['refresh',requestsBusy?'LOADING…':'↻ REFRESH',!requestsBusy,'#7fd8ff'],['next','NEXT ›',requestsPage<pages-1,'#8a9268'],['close','CLOSE',true,'#d05548']],fg=5,fw=(rw-fg*(defs.length-1))/defs.length,fh=tiny?24:30;
+  defs.forEach((def,i)=>{const x=x0+i*(fw+fg),enabled=def[2];requestsRects.push({x,y:footerY,w:fw,h:fh,id:def[0],enabled});const hot=enabled&&mouse.x>=x&&mouse.x<=x+fw&&mouse.y>=footerY&&mouse.y<=footerY+fh;ctx.fillStyle=hot?def[3]:'rgba(255,255,255,.05)';ctx.fillRect(x,footerY,fw,fh);ctx.strokeStyle=enabled?def[3]:'#42463b';ctx.strokeRect(x+.5,footerY+.5,fw,fh);ctx.fillStyle=hot?'#101208':enabled?'#cdd6b0':'#5a5648';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 '+(tiny?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(def[1],x+fw/2,footerY+fh/2);});
+  ctx.fillStyle='#8a9268';ctx.font='7px ui-monospace,Consolas,monospace';ctx.fillText((requestsStatus||rows.length+' PENDING')+' · PAGE '+(requestsPage+1)+'/'+pages,W/2,footerY-5);ctx.textAlign='left';ctx.textBaseline='alphabetic';
+}
+function adminRequestsClick(){
+  if(!isMainAdmin()){requestsOpen=false;return;}
+  for(const hit of requestsRects){
+    if(mouse.x<hit.x||mouse.x>hit.x+hit.w||mouse.y<hit.y||mouse.y>hit.y+hit.h)continue;
+    if(hit.enabled===false){sfx('dry');return;}
+    if(hit.id==='close'){requestsOpen=false;adminPanelOpen=true;sfx('swap');return;}
+    if(hit.id==='prev'){requestsPage=Math.max(0,requestsPage-1);sfx('aim');return;}
+    if(hit.id==='next'){requestsPage++;sfx('aim');return;}
+    if(hit.id==='refresh'){void refreshAdminRequests();sfx('aim');return;}
+    const item=hit.item||{},row=item.row||{};
+    if(hit.id==='read'){
+      const title=item.kind==='update'?String(row.heading||row.message||'OFFICIAL UPDATE'):item.kind==='weapon'?String(row.weapon_key||'WEAPON').toUpperCase():item.kind==='appeal'?'BAN APPEAL · @'+String(row.player_username||'PLAYER'):'PLAYER EDIT · @'+String(row.target_username||'PLAYER'),
+        body=item.kind==='update'?String(row.details||row.message||''):item.kind==='weapon'?String(row.suggestion||''):item.kind==='appeal'?String(row.message||''):patchSummary(row.patch);
+      openReader(title,String(row.created_at||''),body,'main');sfx('swap');return;
+    }
+    let action=null;
+    if(item.kind==='player')action=hit.id==='approve'?approveScoreReq(row):rejectScoreReq(row);
+    else if(item.kind==='update')action=hit.id==='approve'?approveBanner(row.id):rejectBanner(row.id);
+    else if(item.kind==='weapon')action=reviewWeaponSuggestion(row.id,hit.id==='approve'?'approved':'rejected');
+    else if(item.kind==='appeal')action=resolveAppeal(row.id,hit.id==='approve'?'lift':'deny');
+    if(action)void Promise.resolve(action).then(()=>{requestsStatus=adminRequestRows().length+' PENDING REQUESTS';});return;
+  }
+}
 function drawMsgs(){
   if(!isAdmin()){msgsOpen=false;adminMsgs=[];unreadMsgs=0;return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
-  const pw=Math.min(480,W-24), ph=Math.min(480,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  const {pw,ph,px,py}=adminInboxBounds();
   ctx.fillStyle='#0a0c07'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#a7c15e'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
@@ -1760,30 +1876,29 @@ function drawMsgs(){
     ctx.textBaseline='alphabetic'; ctx.textAlign='left';
     y+=cbh+10;
   }
-  const me=adminEmail();
   const inboxList=adminMsgs.filter(m=>!msgArchived(m));
   if(!inboxList.length){
     ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
     ctx.fillText('no messages yet', W/2, y+14);
   }
-  for(const m of inboxList.slice(0,9)){
-    const h=34;
+  const h=38,maxRows=Math.max(1,Math.floor((py+ph-54-y)/(h+5)));
+  for(const m of inboxList.slice(0,maxRows)){
     if(y+h>py+ph-46) break;
-    const unread = m.to_email===me && !m.read;
+    const unread=m.is_incoming&&!m.read;
     ctx.fillStyle= unread ? 'rgba(167,193,94,0.14)' : 'rgba(0,0,0,0.35)';
     ctx.fillRect(x0,y,rw,h);
     ctx.strokeStyle= unread ? '#a7c15e' : '#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
     ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.fillStyle= unread ? '#cfe0a8' : '#8a9268'; ctx.font='700 8px ui-monospace,Consolas,monospace';
     const when=String(m.created_at||'').slice(5,16).replace('T',' ');
-    ctx.fillText(fitLine((unread?'\u25CF ':'')+String(m.from_email||'?')+' \u2192 '+String(m.to_email||'?')+(when?'  \u00b7 '+when:''), rw-120), x0+8, y+10);
+    ctx.fillText(fitLine((unread?'\u25CF ':'')+'@'+String(m.from_username||'STAFF')+' \u2192 @'+String(m.to_username||'STAFF')+(when?'  \u00b7 '+when:''), rw-120), x0+8, y+10);
     ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
-    const abw = m.to_email===me ? 50 : 0;
+    const abw=m.is_incoming?50:0;
     const body=String(m.message||'');
     ctx.fillText(fitLine(body, rw-24-abw-52), x0+8, y+24);
     // row + READ open the whole message
     msgsRects.push({x:x0,y,w:rw-abw-56,h,id:'rd',
-                    read:{t:String(m.from_email||'?'), m:when, b:body}});
+                    read:{t:'@'+String(m.from_username||'STAFF'), m:when, b:body}});
     {
       const rbw=48, bx3=x0+rw-abw-rbw-6;
       const hv3=mouse.x>=bx3&&mouse.x<=bx3+rbw&&mouse.y>=y+6&&mouse.y<=y+h-6;
@@ -1793,9 +1908,9 @@ function drawMsgs(){
       ctx.fillStyle='#bfe8ff'; ctx.fillText('READ', bx3+rbw/2, y+h/2);
       ctx.textAlign='left';
       msgsRects.push({x:bx3,y:y+6,w:rbw,h:h-12,id:'rd2',
-                      read:{t:String(m.from_email||'?'), m:when, b:body}});
+                      read:{t:'@'+String(m.from_username||'STAFF'), m:when, b:body}});
     }
-    if(m.to_email===me){                             // ARCHIVE now instead of waiting the 7 days
+    if(m.is_incoming){                               // ARCHIVE now instead of waiting the 7 days
       const bx2=x0+rw-abw-4;
       msgsRects.push({x:bx2,y:y+7,w:abw,h:h-14,id:'ar:'+m.id});
       const hv=mouse.x>=bx2&&mouse.x<=bx2+abw&&mouse.y>=y+7&&mouse.y<=y+h-7;
@@ -1808,8 +1923,8 @@ function drawMsgs(){
     ctx.textBaseline='alphabetic';
     y+=h+5;
   }
-  const bw2=110, bh2=26, gap2=10;
-  const rx=W/2-bw2-gap2/2, cx2=W/2+gap2/2, byy=py+ph-34;
+  const gap2=10,bw2=(rw-gap2)/2,bh2=34;
+  const rx=x0,cx2=x0+bw2+gap2,byy=py+ph-40;
   msgsRects.push({x:rx,y:byy,w:bw2,h:bh2,id:'refresh'});
   msgsRects.push({x:cx2,y:byy,w:bw2,h:bh2,id:'close'});
   for(const [bx2,lbl,st] of [[rx,'\u21BB REFRESH','#a7c15e'],[cx2,'CLOSE','#d05548']]){
@@ -1841,7 +1956,7 @@ function msgsClick(){
 function drawAdminAuditLog(){
   if(!isMainAdmin()){auditOpen=false;inboxTab='msgs';return;}
   ctx.fillStyle='rgba(4,6,3,0.97)';ctx.fillRect(0,0,W,H);
-  const tiny=W<520||H<480,pw=Math.min(760,W-16),ph=Math.min(610,H-12),px=W/2-pw/2,py=H/2-ph/2;
+  const tiny=W<520||H<480,{pw,ph,px,py}=adminInboxBounds();
   ctx.fillStyle='#080c0e';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#7fd8ff';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
   ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#bfe8ff';ctx.font='700 '+(tiny?15:18)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('\u2709 INBOX \u00b7 ADMIN LOG',W/2,py+25);
@@ -1875,7 +1990,7 @@ function drawAdminAuditLog(){
     ctx.fillStyle='rgba(0,0,0,.34)';ctx.fillRect(x0,y,rw,rowH);ctx.strokeStyle='#4a5960';ctx.strokeRect(x0+.5,y+.5,rw,rowH);
     ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=col;ctx.font='700 '+(tiny?7:8)+'px ui-monospace,Consolas,monospace';
     let when=row.createdAt;try{when=new Date(row.createdAt).toLocaleString();}catch(error){}
-    ctx.fillText(fitLine(adminAuditLabelize(row.action)+' \u00b7 '+String(when).replace(' GMT',''),rw-14),x0+7,y+10);
+    ctx.fillText(fitLine(adminAuditActionTitle(row.action)+' \u00b7 '+String(when).replace(' GMT',''),rw-14),x0+7,y+10);
     ctx.fillStyle='#cdd6b0';ctx.font=(tiny?7:9)+'px ui-monospace,Consolas,monospace';
     const targetLabel=(row.actor||'?')+' \u2192 '+(row.target||'GLOBAL');
     ctx.fillText(fitLine(targetLabel,rw-72),x0+7,y+25);
@@ -1919,7 +2034,7 @@ function adminAuditClick(){
     if(r.id==='refresh'){void fetchAdminAuditLog(true);sfx('swap');return;}
     if(r.id==='older'){void adminAuditOlder();sfx('aim');return;}
     if(r.id==='newer'){adminAuditNewer();sfx('aim');return;}
-    if(r.row){openReader(r.row.action.toUpperCase(),r.row.createdAt,adminAuditDetailsText(r.row),'main');sfx('swap');return;}
+    if(r.row){openReader(adminAuditActionTitle(r.row.action).toUpperCase(),r.row.createdAt,adminAuditDetailsText(r.row),'main');sfx('swap');return;}
   }
 }
 function drawAiLearning(){
@@ -2055,36 +2170,7 @@ function drawAdminPanel(){
   if(canViewWeaponStorage())actionBtn('storage', isMainAdmin() ? '\u2699 WEAPON EDITOR \u2014 stats \u00b7 price \u00b7 publish'
                                      : '\u2699 WEAPON EDITOR \u2014 view every weapon');
   if(canSuggestWeaponEdits())actionBtn('suggest_weapon','\u270E SUGGEST WEAPON EDIT \u2014 sends to mains');
-  if(canReviewWeaponSuggestions())actionBtn('weapon_suggestions','\uD83D\uDCCB WEAPON SUGGESTIONS \u2014 review tester + co ideas');
-
-  if(isMainAdmin()){
-    // pending co-admin posts: approve or reject, right here in the admin menu
-    label('PENDING POSTS'+(pendingBanners.length?' ('+pendingBanners.length+')':''));
-    if(!pendingBanners.length){
-      ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
-      ctx.textAlign='left'; ctx.fillText('nothing awaiting approval', x0+4, y+8); y+=18;
-    }
-    for(const b of pendingBanners.slice(0,compactAdmin?1:2)){
-      const h=compactAdmin?18:22;
-      const bw2=52;
-      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
-      ctx.strokeStyle='#5a5648'; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
-      ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
-      ctx.fillText(String(b.message||'').slice(0, Math.floor((rw-2*bw2-30)/5.6)), x0+8, y+h/2);
-      const ax2=x0+rw-2*bw2-6, rx2=x0+rw-bw2-2;
-      adminPanelRects.push({x:ax2,y:y+2,w:bw2,h:h-4,id:'appr:'+b.id});
-      adminPanelRects.push({x:rx2,y:y+2,w:bw2,h:h-4,id:'rej:'+b.id});
-      ctx.fillStyle='rgba(167,193,94,0.25)'; ctx.fillRect(ax2,y+2,bw2,h-4);
-      ctx.strokeStyle='#a7c15e'; ctx.strokeRect(ax2+0.5,y+2.5,bw2,h-4);
-      ctx.fillStyle='rgba(208,85,72,0.25)'; ctx.fillRect(rx2,y+2,bw2,h-4);
-      ctx.strokeStyle='#d05548'; ctx.strokeRect(rx2+0.5,y+2.5,bw2,h-4);
-      ctx.textAlign='center'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-      ctx.fillStyle='#cfe0a8'; ctx.fillText('APPROVE', ax2+bw2/2, y+h/2);
-      ctx.fillStyle='#e0a8a0'; ctx.fillText('REJECT',  rx2+bw2/2, y+h/2);
-      ctx.textBaseline='alphabetic'; y+=h+5;
-    }
-  }
+  if(isMainAdmin())actionBtn('requests','\uD83D\uDCCB REQUESTS \u2014 edits \u00b7 updates \u00b7 weapons \u00b7 appeals');
 
   const cbw=140, cbh=compactAdmin?24:28, cbx=W/2-cbw/2, cby=py+ph-cbh-8;
   adminPanelRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
@@ -2112,6 +2198,7 @@ function adminPanelClick(){
       if(id==='testmode'){ setTestMode(!testMode); sfx('swap'); return; }
       if(id==='storage'){ if(!canViewWeaponStorage()){sfx('dry');return;}adminPanelOpen=false; storageOpen=true; sfx('swap'); return; }
       if(id==='suggest_weapon'){openWeaponSuggestionForm();sfx('swap');return;}
+      if(id==='requests'){openAdminRequests();sfx('swap');return;}
       if(id==='weapon_suggestions'){if(!canReviewWeaponSuggestions()){sfx('dry');return;}adminPanelOpen=false;weaponSuggestionsOpen=true;void fetchWeaponSuggestions();sfx('swap');return;}
       if(id.indexOf('appr:')===0){ approveBanner(+id.slice(5)); sfx('pickup'); return; }
       if(id.indexOf('rej:')===0){ rejectBanner(+id.slice(4)); sfx('dry'); return; }

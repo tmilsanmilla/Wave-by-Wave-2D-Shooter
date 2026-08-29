@@ -181,8 +181,12 @@ as $$
 declare actor uuid := auth.uid();
 begin
   if tg_op = 'INSERT' then
-    if new.requester_id is distinct from actor or new.status <> 'pending' or new.blocked_by is not null then
-      raise exception 'friend requests must start pending and be created by the requester';
+    if new.requester_id is distinct from actor
+       or not (
+         (new.status = 'pending' and new.blocked_by is null)
+         or (new.status = 'blocked' and new.blocked_by = actor)
+       ) then
+      raise exception 'relationships must be a requester-created friend request or self-owned block';
     end if;
     new.created_at := now();
     new.updated_at := new.created_at;
@@ -529,6 +533,85 @@ begin
   recipient_username := v_target_username;
   created_at := v_created;
   server_now := v_now;
+  return next;
+end;
+$$;
+
+-- Block or unblock any account by its public username. This covers profiles
+-- that are not already friends without ever accepting an Auth email or UUID
+-- from the browser. Blocking removes the prior pending/accepted relationship;
+-- unblocking removes only a block created by the caller.
+create or replace function public.set_outpost_zero_player_block(
+  p_target_username text,
+  p_blocked boolean
+)
+returns table (
+  target_username text,
+  blocked boolean
+)
+language plpgsql
+security invoker
+set search_path = pg_catalog, public
+as $$
+declare
+  v_actor uuid := auth.uid();
+  v_handle_key text := lower(regexp_replace(btrim(coalesce(p_target_username, '')), '^@', ''));
+  v_target uuid;
+  v_target_handle text;
+  v_row public.friendships%rowtype;
+begin
+  if v_actor is null then
+    raise exception using errcode = '42501', message = 'AUTHENTICATION_REQUIRED';
+  end if;
+  if p_blocked is null or v_handle_key !~ '^[a-z0-9_]{3,32}$' then
+    raise exception using errcode = '22023', message = 'INVALID_BLOCK_REQUEST';
+  end if;
+
+  select p.user_id, p.handle into v_target, v_target_handle
+  from public.social_profiles p
+  where p.handle_key = v_handle_key
+  limit 1;
+  if v_target is null or v_target = v_actor then
+    raise exception using errcode = '22023', message = 'BLOCK_TARGET_UNAVAILABLE';
+  end if;
+
+  perform pg_catalog.pg_advisory_xact_lock(
+    pg_catalog.hashtextextended(
+      'oz-player-block:' || least(v_actor::text, v_target::text) || ':' || greatest(v_actor::text, v_target::text),
+      0
+    )
+  );
+  select f.* into v_row
+  from public.friendships f
+  where (f.requester_id = v_actor and f.addressee_id = v_target)
+     or (f.requester_id = v_target and f.addressee_id = v_actor)
+  for update;
+
+  if p_blocked then
+    if v_row.id is null then
+      -- Direct browser inserts are still pending-only under Social 04 RLS.
+      -- This reviewed privileged RPC path creates the final block directly,
+      -- so the friend-request notification trigger never sees a fake request.
+      insert into public.friendships(requester_id, addressee_id, status, blocked_by)
+      values (v_actor, v_target, 'blocked', v_actor)
+      returning * into v_row;
+    elsif v_row.status = 'blocked' and v_row.blocked_by <> v_actor then
+      raise exception using errcode = '42501', message = 'BLOCKED_BY_OTHER_PLAYER';
+    end if;
+    if v_row.status <> 'blocked' then
+      update public.friendships f
+      set status = 'blocked', blocked_by = v_actor
+      where f.id = v_row.id;
+    end if;
+  elsif v_row.id is not null then
+    if v_row.status <> 'blocked' or v_row.blocked_by <> v_actor then
+      raise exception using errcode = '42501', message = 'BLOCK_NOT_OWNED_BY_CALLER';
+    end if;
+    delete from public.friendships f where f.id = v_row.id;
+  end if;
+
+  target_username := v_target_handle;
+  blocked := p_blocked;
   return next;
 end;
 $$;

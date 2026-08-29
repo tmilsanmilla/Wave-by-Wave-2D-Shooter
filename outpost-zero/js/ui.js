@@ -326,6 +326,7 @@ let howToRects=[];
 let tutorialOn=false, tutStep=0, tutDone=false, tutStartPos=null, tutFired=0, tutKilled=0,
     tutReloaded=false, tutReloadCount=0, tutSwapped=false, tutSwapCount=0,
     tutMeleeUsed=false, tutMeleeUseCount=0, tutMeleeSwingCount=0,
+    tutScopeSeen=false, tutScopeHeldMs=0, tutScopeLastT=0, tutUtilityEquipCount=0, tutUtilityUseCount=0,
     tutAmmoCollected=0, tutMedCollected=0, tutMedUsed=0, tutMoveDistance=0,
     tutLastPos=null, tutAimTargets=new Set(), tutRects=[], tutStepT=0, tutStepBase={},
     tutorialLoadoutBackup=null;
@@ -338,6 +339,10 @@ const TUT_STEPS=[
    how:'point the crosshair at three different outlined targets',
    why:'Mouse aims freely. On touch, press and drag on the battlefield.',
    watch:'targets aimed at: {n}/3'},
+  {id:'scope', title:'AIM / SCOPE YOUR PRIMARY',
+   how:'hold right mouse or press E  \u00b7  touch: tap the crosshair button',
+   why:'With a gun out, RMB scopes. G casts a utility, so quick-cast never steals scope.',
+   watch:'scope held: {scope}'},
   {id:'shoot', title:'MAGAZINE AMMO',
    how:'fire 12 rounds into the targets',
    why:'HUD: left number = rounds in the magazine; right number = finite reserve ammo.',
@@ -362,10 +367,14 @@ const TUT_STEPS=[
    how:'aim, fire, reload, and keep moving',
    why:'Put the controls together. Range targets respawn after three seconds.',
    watch:'targets eliminated: {n}/3'},
-  {id:'melee', title:'USE YOUR MELEE ABILITY',
-   how:'press F  \u00b7  or E with melee equipped  \u00b7  touch: tap the fist',
-   why:'Melee abilities need the right range and may have a cooldown. A target is close now.',
-   watch:'successful melee abilities: {n}/1'},
+  {id:'melee', title:'QUICK MELEE',
+   how:'press F from any weapon  \u00b7  touch: tap the fist',
+   why:'Quick melee briefly uses your equipped melee ability, then returns to your current weapon.',
+   watch:'successful quick melees: {n}/1'},
+  {id:'utility', title:'EQUIP AND USE A UTILITY',
+   how:'press 4 to equip the grenade, then RMB  \u00b7  G quick-casts it from any weapon',
+   why:'RMB uses a utility only while it is visibly in hand. Casual online 1v1 allows utilities; CPU and ranked modes do not.',
+   watch:'equipped: {equipped}  \u00b7  cast: {cast}'},
   {id:'med-pickup', title:'STORE A DROPPED MEDKIT',
    how:'walk over the outlined white-and-red medkit',
    why:'Dropped medkits go into your stash, even at full health. The stash holds up to five.',
@@ -377,7 +386,8 @@ const TUT_STEPS=[
 ];
 function tutorialCounterSnapshot(){
   return {fired:tutFired,killed:tutKilled,reloads:tutReloadCount,swaps:tutSwapCount,
-    melee:tutMeleeUseCount,swings:tutMeleeSwingCount,ammo:tutAmmoCollected,
+    melee:tutMeleeUseCount,swings:tutMeleeSwingCount,utilityEquip:tutUtilityEquipCount,
+    utilityUse:tutUtilityUseCount,ammo:tutAmmoCollected,
     med:tutMedCollected,medUsed:tutMedUsed};
 }
 function tutorialDelta(key){ return Math.max(0,(tutorialCounterSnapshot()[key]||0)-(tutStepBase[key]||0)); }
@@ -385,6 +395,8 @@ function tutorialRecordReloadCompleted(){ if(!tutorialOn) return; tutReloaded=tr
 function tutorialRecordWeaponSwitch(){ if(!tutorialOn) return; tutSwapped=true; tutSwapCount++; }
 function tutorialRecordMeleeSwing(){ if(tutorialOn) tutMeleeSwingCount++; }
 function tutorialRecordMeleeAbility(){ if(!tutorialOn) return; tutMeleeUsed=true; tutMeleeUseCount++; }
+function tutorialRecordUtilityEquipped(){ if(tutorialOn) tutUtilityEquipCount++; }
+function tutorialRecordUtilityUsed(){ if(tutorialOn) tutUtilityUseCount++; }
 function tutorialRecordAmmoCollected(){ if(tutorialOn) tutAmmoCollected++; }
 function tutorialRecordMedkitCollected(){ if(tutorialOn) tutMedCollected++; }
 function tutorialRecordMedkitUsed(){ if(tutorialOn) tutMedUsed++; }
@@ -392,6 +404,7 @@ function tutorialRestoreLoadout(){
   if(!tutorialLoadoutBackup) return;
   loadout={primary:tutorialLoadoutBackup.primary,secondary:tutorialLoadoutBackup.secondary,
     melee:tutorialLoadoutBackup.melee,utility:tutorialLoadoutBackup.utility};
+  utilityOut=false;aiming=false;rmbAim=false;
   tutorialLoadoutBackup=null;
   if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
 }
@@ -419,8 +432,16 @@ function tutorialBeginStep(){
   tutStepT=now; tutStepBase=tutorialCounterSnapshot();
   const st=TUT_STEPS[tutStep]; if(!st) return;
   if(st.id==='aim') tutAimTargets=new Set();
+  if(st.id==='scope'){
+    tutScopeSeen=false;tutScopeHeldMs=0;tutScopeLastT=now;utilityOut=false;aiming=false;rmbAim=false;
+    if(loadout.primary&&WEAPONS[loadout.primary])switchWeapon(loadout.primary);
+  }
   if(st.id==='ammo') tutorialSpawnPickup('ammo');
   if(st.id==='melee') tutorialPlaceAbilityTarget();
+  if(st.id==='utility'){
+    utilityOut=false;aiming=false;rmbAim=false;
+    if(typeof utilReadyT!=='undefined')utilReadyT=0;
+  }
   if(st.id==='med-pickup') tutorialSpawnPickup('med');
   if(st.id==='med-use') player.hp=Math.min(player.hp,perks.maxhp*0.55);
 }
@@ -442,12 +463,13 @@ function startTutorial(){
   const trainingPrimary=typeof WEAPONS!=='undefined'&&WEAPONS.smg?'smg':loadout.primary;
   const trainingSecondary=typeof WEAPONS!=='undefined'&&WEAPONS.m9?'m9':loadout.secondary;
   const trainingMelee=typeof WEAPONS!=='undefined'&&WEAPONS.knife?'knife':loadout.melee;
-  const trainingUtility=typeof UTILITIES==='undefined'||UTILITIES.medkit?'medkit':loadout.utility;
+  const trainingUtility=typeof UTILITIES!=='undefined'&&UTILITIES.grenade?'grenade':loadout.utility;
   loadout={primary:trainingPrimary,secondary:trainingSecondary,melee:trainingMelee,utility:trainingUtility};
   startPractice('range');
   tutorialOn=true; tutStep=0; tutDone=false; tutStepT=now;
   tutFired=0; tutKilled=0; tutReloaded=false; tutReloadCount=0; tutSwapped=false; tutSwapCount=0;
   tutMeleeUsed=false; tutMeleeUseCount=0; tutMeleeSwingCount=0; tutAmmoCollected=0;
+  tutScopeSeen=false;tutScopeHeldMs=0;tutScopeLastT=now;tutUtilityEquipCount=0;tutUtilityUseCount=0;
   tutMedCollected=0; tutMedUsed=0; tutMoveDistance=0; tutAimTargets=new Set();
   tutStartPos={x:player.x,y:player.y};
   tutLastPos={x:player.x,y:player.y};
@@ -492,6 +514,7 @@ function tutStepDone(){
   switch(st.id){
     case 'move':        return tutMoved()>=90;
     case 'aim':         return tutAimTargets.size>=3;
+    case 'scope':       return tutScopeSeen;
     case 'shoot':       return tutorialDelta('fired')>=12;
     case 'reload':      return tutorialDelta('reloads')>=1;
     case 'shoot-again': return tutorialDelta('fired')>=12&&tutorialDelta('reloads')>=1;
@@ -499,6 +522,7 @@ function tutStepDone(){
     case 'swap':        return tutorialDelta('swaps')>=3;
     case 'kill':        return tutorialDelta('killed')>=3;
     case 'melee':       return tutorialDelta('melee')>=1;
+    case 'utility':     return tutorialDelta('utilityEquip')>=1&&tutorialDelta('utilityUse')>=1;
     case 'med-pickup':  return tutorialDelta('med')>=1;
     case 'med-use':     return tutorialDelta('medUsed')>=1;
   }
@@ -508,17 +532,22 @@ function tutProgressText(){
   const st=TUT_STEPS[tutStep]; if(!st) return '';
   const n = st.id==='move' ? Math.min(90,tutMoved())
           : st.id==='aim' ? Math.min(3,tutAimTargets.size)
+          : st.id==='scope' ? (tutScopeSeen?1:0)
           : st.id==='shoot' ? Math.min(12,tutorialDelta('fired'))
           : st.id==='reload' ? Math.min(1,tutorialDelta('reloads'))
           : st.id==='ammo' ? Math.min(1,tutorialDelta('ammo'))
           : st.id==='swap' ? Math.min(3,tutorialDelta('swaps'))
           : st.id==='kill' ? Math.min(3,tutorialDelta('killed'))
           : st.id==='melee' ? Math.min(1,tutorialDelta('melee'))
+          : st.id==='utility' ? Math.min(1,tutorialDelta('utilityUse'))
           : st.id==='med-pickup' ? Math.min(1,tutorialDelta('med'))
           : st.id==='med-use' ? Math.min(1,tutorialDelta('medUsed')) : 0;
   return st.watch.replace('{n}',n)
     .replace('{shots}',Math.min(12,tutorialDelta('fired')))
-    .replace('{reloads}',Math.min(1,tutorialDelta('reloads')));
+    .replace('{reloads}',Math.min(1,tutorialDelta('reloads')))
+    .replace('{scope}',(Math.min(600,tutScopeHeldMs)/1000).toFixed(1)+'s / 0.6s')
+    .replace('{equipped}',tutorialDelta('utilityEquip')>=1?'YES':'NO')
+    .replace('{cast}',tutorialDelta('utilityUse')>=1?'YES':'NO');
 }
 function tutorialAdvanceStep(){
   tutStep++;
@@ -529,6 +558,11 @@ function tutorialUpdate(){
   if(!tutorialOn || tutDone) return;
   tutorialTrackMovement();
   tutorialTrackAim();
+  if(TUT_STEPS[tutStep]&&TUT_STEPS[tutStep].id==='scope'){
+    const elapsed=clamp(now-tutScopeLastT,0,100);tutScopeLastT=now;
+    if(aiming)tutScopeHeldMs+=elapsed;else tutScopeHeldMs=0;
+    if(tutScopeHeldMs>=600)tutScopeSeen=true;
+  }
   if(tutStepDone()) tutorialAdvanceStep();
 }
 function drawTutorialOverlay(){
@@ -686,13 +720,17 @@ function drawTutorial(){
   const L=[
     ['MOVE','WASD keys \u00b7 touch: left joystick'],
     ['SHOOT','left mouse \u00b7 touch: tap / hold the field'],
-    ['AIM / SCOPE','hold right mouse or E (guns)'],
+    ['AIM / SCOPE','hold right mouse or press E with a gun \u00b7 touch: crosshair button'],
     ['RELOAD','R \u00b7 touch: reload button'],
     ['SWAP WEAPON','1-4 or Q \u00b7 touch: top-left 1-4 slots'],
-    ['MELEE ABILITY','E/F with melee out \u00b7 F anytime \u00b7 or right-click'],
-    ['UTILITY','G = quick cast \u00b7 right-click while equipped \u00b7 4 = equip'],
+    ['QUICK MELEE','F anytime \u00b7 E/RMB with melee out \u00b7 touch: fist button'],
+    ['UTILITY','G quick-casts \u00b7 4 equips \u00b7 RMB uses it while visible \u00b7 Casual 1v1 yes; CPU/Ranked no'],
     ['AMMO','magazine / reserve is limited \u00b7 walk over gold ammo crates to refill reserves'],
     ['MEDKITS','drop every '+MED_DROP_KILLS_BASE+' campaign kills \u00b7 walk over to stash (max 5) \u00b7 H / touch MED'],
+    ['GEMS \uD83D\uDC8E','unlock published weapons in the Shop \u00b7 earn them from tasks, streaks, chests, and the wheel'],
+    ['COINS \uD83E\uDE99','buy colors, equip animations, and pre-run power-ups in the Shop'],
+    ['ANIMATIONS','cosmetic weapon-draw flourishes only \u00b7 they never change weapon strength'],
+    ['POWER-UPS','pre-buy with coins \u00b7 open POWERUPS on an upgrade screen (or press V) to use stock'],
     ['WAVES','clear a wave \u2192 choose an upgrade'],
     ['MOD LEVELS','every 10th wave offers ONLY weapon mods'],
     ['WARLORDS','every 5th wave \u2014 they trickle in, not all at once'],
@@ -705,7 +743,8 @@ function drawTutorial(){
   const y0=H*0.045+44, lh=Math.min(24,(H-y0-90)/L.length);
   // narrow screens: shrink the type and give each column a real share of the width
   const narrow=W<620;
-  const fs=narrow ? Math.max(7, Math.min(12, Math.floor(W/34))) : 12;
+  const widthFs=narrow?Math.min(12,Math.floor(W/34)):12;
+  const fs=Math.max(7,Math.min(widthFs,Math.floor(lh*0.82)));
   ctx.font=fs+'px ui-monospace,Consolas,monospace';
   const split=narrow ? Math.round(W*0.34) : W/2;      // label column ends here
   const labW=split-10, valW=W-split-10;
@@ -980,7 +1019,7 @@ function drawShopPowerups(cw, y){
   const x=W/2-cw/2, ch=58, gap=10;
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('pre-buy consumables to carry into a run \u00b7 use them mid-game from the POWERUPS menu', W-24), W/2, y);
+  ctx.fillText(fitLine('pre-buy consumables \u00b7 use them from POWERUPS on an upgrade screen (V)', W-24), W/2, y);
   y+=14;
   for(const pu of POWERUPS){
     ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(x,y,cw,ch);
@@ -1238,7 +1277,8 @@ function drawArena(){
   ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,ly+0.5,pw,lh);
   ctx.textAlign='left'; ctx.fillStyle=cpuTeamMode?'#bfa8ff':botMode?'#7fd8ff':authUser?'#a7c15e':'#d05548'; ctx.font='700 '+(tiny?9:10)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(localMode?'\u25CF LOCAL PLAYER \u00b7 ONE DEVICE ONLY':authUser?('\u25CF '+displayName(authUser)):'\u25CF SIGN IN REQUIRED',px+10,ly+(tiny?12:18));
-  const names=arenaLoadoutReady()?[loadout.primary,loadout.secondary,loadout.melee].map(k=>WEAPONS[k].name).join('  \u00b7  '):'Choose PRIMARY + SIDEARM + MELEE on the loadout screen';
+  const names=arenaLoadoutReady()?[loadout.primary,loadout.secondary,loadout.melee,loadout.utility]
+    .filter(Boolean).map(k=>(WEAPONS[k]||UTILITIES[k]).name).join('  \u00b7  '):'Choose PRIMARY + SIDEARM + MELEE on the loadout screen';
   ctx.fillStyle=arenaLoadoutReady()?'#cdd6b0':'#d0a548'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(names,pw-20),px+10,ly+(tiny?29:43)); ctx.textAlign='center';
 
@@ -1563,7 +1603,6 @@ function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=
   if(!partyAllowsQueue(pendingGameMode)) return false;
   if(pendingGameMode==='arena'){
     if(!onlinePlayReady()){ chooseGameMode('arena'); return false; }
-    loadout.utility=null;
     if(!arenaQuickMatch()) return false;
     sfx('swap'); return true;
   }
@@ -2140,9 +2179,9 @@ function drawSocial(){
         const stamp=Date.parse(value||'');if(!Number.isFinite(stamp))return 'OUTPOST ZERO · OFFICIAL';
         const date=new Date(stamp);try{return 'POSTED '+date.toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(error){return 'POSTED '+date.toISOString().slice(0,16).replace('T',' ')+' UTC';}
       };
-      const official=section==='inbox'?(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.message||'').trim()&&
+      const official=section==='inbox'?(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.heading||row.message||'').trim()&&
           !(typeof socialOfficialBannerAlreadyNotified==='function'&&socialOfficialBannerAlreadyNotified(row)))
-        .map(row=>({kind:'official',id:row.id,body:String(row.message||''),meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)})):[];
+        .map(row=>({kind:'official',id:row.id,title:String(row.heading||row.message||'OFFICIAL UPDATE'),body:String(row.details||row.message||''),meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)})):[];
       const notices=section==='inbox'?(authUser&&typeof socialNotifications!=='undefined'&&Array.isArray(socialNotifications)?socialNotifications:[])
         .map(notice=>({kind:'notification',notice,sortAt:+notice.createdAt||0})):[];
       const cloudInvites=section==='inbox'?(authUser&&typeof socialPartyInvites!=='undefined'&&Array.isArray(socialPartyInvites)?socialPartyInvites:[])
@@ -2187,7 +2226,7 @@ function drawSocial(){
         }
         if(item.kind==='official'){
           ctx.fillStyle='rgba(232,182,88,.11)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText('OFFICIAL UPDATE',p.x+9,y+3);
-          ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(item.body,p.w-18),p.x+9,y+(tiny?14:compact?19:25));socialRects.push({id:'official_update_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,body:item.body,meta:item.meta,updateId:item.id});continue;
+          ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(item.title,p.w-18),p.x+9,y+(tiny?14:compact?19:25));socialRects.push({id:'official_update_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,title:item.title,body:item.body,meta:item.meta,updateId:item.id});continue;
         }
         if(item.kind==='cloud_party_invite'){
           const invite=item.invite,cpu=invite&&invite.kind==='cpu2v2',live=invite&&invite.expiresAt>(typeof socialPartyInviteServerNow==='function'?socialPartyInviteServerNow():Date.now()),joinW=live?Math.min(compact?64:88,p.w*.24):0,bodyW=p.w-18-(joinW?joinW+6:0);
@@ -2522,7 +2561,7 @@ function drawParty(){
 function drawLoadout(){
   selBg(); catBtns=[];
   const arenaMode=pendingGameMode==='arena', ai1v1Mode=pendingGameMode==='ai1v1', ai2v2Mode=pendingGameMode==='ai2v2', aiMode=ai1v1Mode||ai2v2Mode,
-    partyCpuMode=pendingGameMode==='partycpu2v2', practiceSetup=pendingGameMode==='practice', duelMode=arenaMode||aiMode||partyCpuMode,
+    partyCpuMode=pendingGameMode==='partycpu2v2', practiceSetup=pendingGameMode==='practice',
     practiceLabel={range:'SHOOTING RANGE',dps:'DPS DUMMY',tracking:'TRACKING DUMMY',boss:'WARLORD PRACTICE'}[pendingPractice]||'PRACTICE';
   const queueNoticeActive=modeBoardNotice&&now<modeBoardNoticeT;
   const modeCol=arenaMode?'#d05548':partyCpuMode?'#bfa8ff':aiMode?'#7fd8ff':practiceSetup?'#a7c15e':'#e8b658';
@@ -2538,7 +2577,7 @@ function drawLoadout(){
                    practiceSetup?'OFFLINE \u00b7 PRACTICE \u00b7 '+practiceLabel+' \u00b7 NO SCORE OR REWARDS':
                           'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 ENDLESS \u00b7 UTILITY OPTIONAL';
   ctx.fillText(fitLine(queueNoticeActive?modeBoardNotice:betaLoadout?loadoutSub:('AUTO-SAVED FOR EVERY MODE \u00b7 '+loadoutSub),W-24),W/2,H*0.035+40);
-  const rows=duelMode?CATS.slice(0,3):CATS;
+  const rows=(aiMode||partyCpuMode)?CATS.slice(0,3):CATS;
   const bw=Math.min(540,W-40), x0=W/2-bw/2, gap=H<600?9:14;
   const top=H*0.035+68, footer=112;
   const rowH=clamp(Math.floor((H-top-footer-gap*(rows.length-1))/rows.length),H<420?32:H<500?40:48,78);
@@ -2945,7 +2984,10 @@ function drawHub(){
   ctx.textAlign='center'; ctx.textBaseline='top';
   const homeBoardsY=Math.min(maxBoardsY,Math.max(preferredBoardsY,boardBottom+boardActionGap));
   const homeBoardsW=Math.min(560,W-24), homeBoardsX=W/2-homeBoardsW/2;
-  drawHomeLeaderboards(homeBoardsX,homeBoardsY,homeBoardsW,homeBoardsH);
+  const movedBoardsX=homeBoardsX+offX('board'), movedBoardsY=homeBoardsY+offY('board');
+  boardPanelRect={x:movedBoardsX,y:movedBoardsY,w:homeBoardsW,h:homeBoardsH};
+  layoutBlock('board',movedBoardsX,movedBoardsY,homeBoardsW,homeBoardsH);
+  withBlockColour('board',()=>drawHomeLeaderboards(movedBoardsX,movedBoardsY,homeBoardsW,homeBoardsH));
   const actionTop=homeBoardsY+homeBoardsH+boardActionGap;
   const groupW=Math.min(560,W-24), groupX=W/2-groupW/2;
   const topCols=3, topCardW=(groupW-actionGap*(topCols-1))/topCols;
@@ -3119,7 +3161,9 @@ function drawCategory(cat){
   selBg();
   const slot=slotFor(cat), col=ROLECOL[cat];
   const entry=CATS.find(c=>c[0]===cat);
-  const list=entry[2](), temps=entry[3]();
+  const casualUtility=cat==='UTILITY'&&pendingGameMode==='arena'&&typeof CASUAL_ARENA_UTILITY_KEYS!=='undefined';
+  const list=entry[2]().filter(k=>!casualUtility||CASUAL_ARENA_UTILITY_KEYS.includes(k)),
+    temps=entry[3]().filter(k=>!casualUtility||CASUAL_ARENA_UTILITY_KEYS.includes(k));
 
   ctx.textAlign='center';
   ctx.fillStyle=col; ctx.font='700 '+(H<760?24:30)+'px ui-monospace,Consolas,monospace';
@@ -3766,7 +3810,7 @@ function drawSignUpPrompt(){
     ['\uD83D\uDC8E','earn gems and coins as you play'],
     ['\uD83C\uDFC6','get your score on the global leaderboard'],
     ['\uD83D\uDD25','claim gems every day \u00b7 day 7 pays the biggest bonus'],
-    ['\uD83C\uDFA1','a free wheel spin every 20 minutes'],
+    ['\uD83C\uDFA1','a free spin every 20 focused minutes \u00b7 later spins today pay up to 2\u00d7'],
     ['\uD83D\uDCBE','your weapons and progress follow you to any device'],
   ];
   for(const [icon,txt] of perks){
@@ -3921,14 +3965,14 @@ async function fetchPlayersData(){
   if(!sb || !canUsePlayerTools()) return;
   const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   try{
-    const b=await sb.rpc('list_outpost_zero_bans',{p_limit:40});
+    const b=await sb.rpc('list_outpost_zero_bans_by_username',{p_limit:40});
     if(b.error)throw b.error;
     if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
     banList=b.data||[];
   }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId))banList=[]; }
   if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
   try{
-    const a=await sb.rpc('list_outpost_zero_ban_appeals',{p_limit:40});
+    const a=await sb.rpc('list_outpost_zero_ban_appeals_by_username',{p_limit:40});
     if(a.error)throw a.error;
     if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
     appealList=a.data||[];
@@ -3970,10 +4014,10 @@ async function resolveAppeal(id, status){
   try{ await adminReceiptRpc('resolve_outpost_zero_ban_appeal',{p_appeal_id:id,p_decision:decision},operationId); }
   catch(e){}finally{await fetchPlayersData();appealDecisionBusy.delete(key);}
 }
-async function unbanPlayerFromList(email){
-  const key=String(email||'').trim().toLowerCase();if(!key||!canBan()||!sb||playerBanActionBusy.has(key))return false;
+async function unbanPlayerFromList(banId){
+  const key=String(banId||'');if(!/^\d+$/.test(key)||!canBan()||!sb||playerBanActionBusy.has(key))return false;
   playerBanActionBusy.add(key);const operationId=adminOperationUuid();
-  try{await applyPlayerEdit(key,{ban:'unban'},operationId);await fetchPlayersData();return true;}
+  try{const result=await sb.rpc('unban_outpost_zero_ban',{p_ban_id:+key,p_operation_id:operationId});if(result.error||result.data!==true)throw result.error||new Error('not changed');await fetchPlayersData();return true;}
   catch(error){return false;}finally{playerBanActionBusy.delete(key);}
 }
 function drawCurrencyHUD(){

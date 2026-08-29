@@ -227,6 +227,16 @@ function resetWeaponGimmickState(){
   weaponLastShotAt=Object.create(null);
   cancelFanTheHammer(true);
 }
+// A voluntary return to the menu is still a completed Endless attempt. Save it
+// before menuClick clears the run. Every non-ranked context is rejected here;
+// submitScore repeats the same server-side-boundary guards as defense in depth.
+function persistNormalEndlessScoreOnExit(){
+  if(!['play','upgrade'].includes(state)||practiceMode||testMode||unrankedRun||adminUsed)return false;
+  hiScore=Math.max(Math.max(0,+hiScore||0),Math.max(0,+score||0));
+  if(typeof saveMeta==='function')saveMeta();
+  if(typeof submitScore==='function'&&hiScore>0)void submitScore(hiScore);
+  return true;
+}
 function startGame(){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
   const selected=[loadout.primary,loadout.secondary,loadout.melee,loadout.utility].filter(Boolean);

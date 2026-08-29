@@ -1049,6 +1049,8 @@ function partyCpuMakeBot(id,team,x,y,startAt){
     aiSeed:seed,aiRng:seed,aiTracks:{},aiRole:team==='A'?'guardian':(String(id).endsWith('1')?'anchor':'flanker'),
     aiTactic:'hold',aiTacticUntil:startAt,targetId:'',targetLockUntil:0,targetThinkAt:startAt,tntThinkAt:startAt,tntPlan:null,
     aiStuckTicks:0,aiStuckUntil:0,aiFailedMoveX:0,aiFailedMoveY:0,aiNavPath:[],aiNavUntil:0,aiUsingPortal:false,
+    aiHitResponseUntil:0,aiMotionWindowAt:startAt,aiMotionAnchorX:x,aiMotionAnchorY:y,
+    aiMotionTravel:0,aiMotionReversals:0,aiMotionDx:0,aiMotionDy:0,aiMotionSampleAt:startAt,
     aiPeekPhase:'',aiPeekTargetId:'',aiPeekUntil:0,aiPeekCooldownUntil:0,aiPeekWasHidden:undefined,
     aiPeekExposedAt:0,aiPeekWindowUntil:0,aiPeekPunishScore:0,aiPrefirePressureUntil:0,
     aiTrainingTntAvoided:new Set(),aiTrainingWallAt:0,
@@ -1490,8 +1492,7 @@ function partyCpuStepShots(dtms){
             }
             if(target.team==='B'&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(target,'bot_damage_taken',dealt);
             partyCpuRecordThreat(b.ownerId,target.team,dealt,partyCpuAiClock());
-            target.lastAttackerId=b.ownerId;target.underFireUntil=partyCpuAiClock()+900;
-            if(typeof cpuAiRegisterPeekPunishment==='function')cpuAiRegisterPeekPunishment(target,partyCpuAiClock());
+            target.lastAttackerId=b.ownerId;cpuAiRegisterIncomingHit(target,partyCpuAiClock());
             if(b.reflected&&String(b.ownerId||'')===String(cpuTeamLocalId()||''))addDamageNumber(target,dealt,true);
             dead=true;partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();break;
           }
@@ -1700,8 +1701,7 @@ function cpuTeamApplyBotHit(target,dmg,attackerId=cpuTeamLocalId(),kind='shot',h
   const hit=clamp(+dmg||0,0,PARTY_CPU_HP);if(!hit)return false;
   const before=Math.max(0,+target.hp||0),dealt=Math.min(before,hit);
   if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(target,'bot_damage_taken',dealt);
-  target.hp=Math.max(0,target.hp-hit);target.lastAttackerId=String(attackerId||'');target.underFireUntil=partyCpuAiClock()+900;
-  if(typeof cpuAiRegisterPeekPunishment==='function')cpuAiRegisterPeekPunishment(target,partyCpuAiClock());
+  target.hp=Math.max(0,target.hp-hit);target.lastAttackerId=String(attackerId||'');cpuAiRegisterIncomingHit(target,partyCpuAiClock());
   partyCpuRecordThreat(attackerId,target.team,hit,partyCpuAiClock());
   partyCpuConfirmUnscopedKill({from:String(attackerId||''),kind,id:String(hitId||'')},target,before);
   partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();return true;
@@ -1712,8 +1712,7 @@ function partyCpuHostApplyHit(p){
   const target=partyCpuMatch.bots.find(b=>b.id===String(p.targetId||'')&&b.team==='B'&&b.hp>0);const dmg=clamp(+p.dmg||0,0,PARTY_CPU_HP);if(!target||!dmg)return false;
   partyCpuMatch.seenHits.add(id);if(partyCpuMatch.seenHits.size>500)partyCpuMatch.seenHits=new Set([...partyCpuMatch.seenHits].slice(-250));
   const before=Math.max(0,+target.hp||0);
-  target.hp=Math.max(0,target.hp-dmg);target.lastAttackerId=String(p.from||'');target.underFireUntil=partyCpuAiClock()+900;
-  if(typeof cpuAiRegisterPeekPunishment==='function')cpuAiRegisterPeekPunishment(target,partyCpuAiClock());
+  target.hp=Math.max(0,target.hp-dmg);target.lastAttackerId=String(p.from||'');cpuAiRegisterIncomingHit(target,partyCpuAiClock());
   partyCpuRecordThreat(p.from,target.team,dmg,partyCpuAiClock());
   partyCpuConfirmUnscopedKill(p,target,before);
   partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();return true;

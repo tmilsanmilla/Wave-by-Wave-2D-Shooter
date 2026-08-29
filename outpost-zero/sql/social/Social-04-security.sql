@@ -171,6 +171,7 @@ alter function public.list_my_outpost_zero_private_conversation_states() securit
 alter function public.set_my_outpost_zero_private_conversation_state(uuid, text) security definer;
 alter function public.archive_my_outpost_zero_private_conversation_overflow() security definer;
 alter function public.send_outpost_zero_private_message(text, text) security definer;
+alter function public.set_outpost_zero_player_block(text, boolean) security definer;
 
 revoke all on function public.social_profiles_normalize() from public, anon, authenticated;
 revoke all on function public.social_create_profile_for_user() from public, anon, authenticated;
@@ -213,10 +214,12 @@ revoke all on function public.list_my_outpost_zero_private_conversation_states()
 revoke all on function public.set_my_outpost_zero_private_conversation_state(uuid, text) from public, anon, authenticated;
 revoke all on function public.archive_my_outpost_zero_private_conversation_overflow() from public, anon, authenticated;
 revoke all on function public.send_outpost_zero_private_message(text, text) from public, anon, authenticated;
+revoke all on function public.set_outpost_zero_player_block(text, boolean) from public, anon, authenticated;
 grant execute on function public.list_my_outpost_zero_private_conversation_states() to authenticated;
 grant execute on function public.set_my_outpost_zero_private_conversation_state(uuid, text) to authenticated;
 grant execute on function public.archive_my_outpost_zero_private_conversation_overflow() to authenticated;
 grant execute on function public.send_outpost_zero_private_message(text, text) to authenticated;
+grant execute on function public.set_outpost_zero_player_block(text, boolean) to authenticated;
 
 -- REALTIME PUBLICATION
 -- These are refresh hints only. The policies above still decide which rows a

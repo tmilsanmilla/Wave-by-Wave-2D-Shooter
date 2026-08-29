@@ -1075,6 +1075,20 @@ function socialPerson(userId){
     : String(p.handle||'NEW OPERATOR');
   return {handle:username,display:username};
 }
+async function socialSetPlayerBlocked(username,blocked){
+  const clean=partyCleanName(username);
+  if(!sb||!authUser||!clean){socialStatus='SIGN IN AND CHOOSE A VALID PLAYER';sfx('dry');return false;}
+  try{
+    const result=await sb.rpc('set_outpost_zero_player_block',{p_target_username:clean,p_blocked:!!blocked});
+    if(result&&result.error)throw result.error;
+    clearReaderState();
+    socialStatus=blocked?'@'+clean+' BLOCKED \u00b7 MESSAGES AND INVITES STOPPED':'@'+clean+' UNBLOCKED';
+    await fetchSocial(true);sfx(blocked?'dry':'swap');return true;
+  }catch(error){
+    socialStatus=socialSetupMissing(error)?'RERUN SOCIAL 01 AND SOCIAL 04 TO ENABLE PROFILE BLOCKING':'COULD NOT CHANGE THAT BLOCK';
+    sfx('dry');return false;
+  }
+}
 async function socialOpenPlayerProfile(userId,handle=''){
   let id=String(userId||''),profile=id&&socialProfiles[id]||null,key=socialHandleKey(handle||profile&&profile.handle),found=!!profile,highScore=null;
   if(sb&&key){
@@ -1084,6 +1098,7 @@ async function socialOpenPlayerProfile(userId,handle=''){
   const username=partyCleanName(profile&&profile.handle||handle)||'UNKNOWN OPERATOR';
   if(!username||username==='UNKNOWN OPERATOR'){socialStatus='THAT PLAYER PROFILE IS UNAVAILABLE';sfx('dry');return false;}
   const mine=!!(authUser&&id&&id===String(authUser.id||'')),friend=id?socialFriendshipWith(id):null,
+    blockedByMe=!!(friend&&friend.status==='blocked'&&String(friend.blocked_by||'')===String(authUser&&authUser.id||'')),
     relationship=mine?'THIS IS YOU':friend&&friend.status==='accepted'?'CURRENT FRIEND':friend&&friend.status==='pending'?'FRIEND REQUEST PENDING':friend&&friend.status==='blocked'?'BLOCKED':'NOT CURRENTLY FRIENDS',
     hosting=typeof publicPartyRows!=='undefined'&&publicPartyRows.some(row=>socialHandleKey(row.host)===socialHandleKey(username));
   const body=['@'+username,'',found?relationship:'PARTY GUEST · NO ACCOUNT PROFILE FOUND',...(highScore==null?[]:['ENDLESS HIGH SCORE · '+highScore]),hosting?'HOSTING A PUBLIC PARTY NOW':'NO PUBLIC PARTY LISTED','',
@@ -1093,6 +1108,8 @@ async function socialOpenPlayerProfile(userId,handle=''){
   if(!mine&&id&&authUser&&!friend)actions.push({label:'ADD FRIEND',owner,run:()=>{
     clearReaderState();openForm({title:'ADD @'+username,hint:'Send a friend request to this player?',saveLabel:'SEND REQUEST',fields:[],onSave:()=>socialSendFriendRequest(username)});
   }});
+  if(!mine&&id&&authUser)actions.push({label:blockedByMe?'UNBLOCK':'BLOCK',owner,run:()=>{void socialSetPlayerBlocked(username,!blockedByMe);}});
+  if(!mine&&id&&authUser)actions.push({label:'REPORT',owner,run:()=>{clearReaderState();if(typeof openReportForUsername==='function')openReportForUsername(username);}});
   if(typeof openReader==='function'){openReader('PLAYER PROFILE','@'+username+' · PUBLIC',body,'public',actions);sfx('swap');return true;}
   return false;
 }

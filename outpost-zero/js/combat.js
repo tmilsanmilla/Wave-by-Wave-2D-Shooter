@@ -5,6 +5,7 @@ function switchWeapon(k){
   if(!k || !WEAPONS[k]) return;                       // sparse single-item Practice loadouts have empty hotkeys
   if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
   if(state!=='play') return;
+  if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
   if(typeof isLocked==='function'&&isLocked(k)){
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
     cancelFanTheHammer();sfx('dry');return;
@@ -129,6 +130,8 @@ function meleeSwing(w, mul, flurryGenerated=false){
 }
 function equipUtility(){
   if(state!=='play' || !loadout.utility) return;
+  if((typeof arenaUtilityUseAllowed==='function'&&!arenaUtilityUseAllowed())||
+     (typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){sfx('dry');return;}
   if(typeof isLocked==='function'&&isLocked(loadout.utility)){
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
   }
@@ -136,6 +139,7 @@ function equipUtility(){
   cancelFanTheHammer();
   utilityOut=true;
   player.equipEnd=now+EQUIP_WAIT; aiming=false; rmbAim=false;
+  if(tutorialOn&&typeof tutorialRecordUtilityEquipped==='function')tutorialRecordUtilityEquipped();
   sfx('swap');
 }
 function cancelMedHeal(){
@@ -191,19 +195,27 @@ function medFinish(){         // spend the ready charge: quick-heal start or lon
   medKillCharge=0;
 }
 function medQuick(){          // E / G: the fast heal, 5% over 1s
+  if((typeof arenaUtilityUseAllowed==='function'&&!arenaUtilityUseAllowed())||
+     (typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){sfx('dry');return;}
   const why=medBlocked(); if(why){ medDeny(why); return; }
   medFinish();                // it grants health immediately over time, so cancellation cannot refund the charge
   medChanHeal=now+1000; medHealPct=0.05;
+  if(typeof arenaBroadcastUtility==='function')arenaBroadcastUtility('medkit',{action:'quick'});
   sfx('aim');
 }
 function medChannelStart(){   // equipped LMB: repeated held/touch events do not toggle it back off
   if(medChan) return;
+  if((typeof arenaUtilityUseAllowed==='function'&&!arenaUtilityUseAllowed())||
+     (typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){sfx('dry');return;}
   const why=medBlocked(); if(why){ medDeny(why); return; }
   medChan=now;
+  if(typeof arenaBroadcastUtility==='function')arenaBroadcastUtility('medkit',{action:'channel'});
   waveMsg='\u2695 FIELD MEDKIT \u2014 healing'; waveMsgT=now+1000;
 }
 function utilQuick(){         // G (or E/LMB-tap when equipped): instant cast at the crosshair
   if(state!=='play' || !loadout.utility) return;
+  if((typeof arenaUtilityUseAllowed==='function'&&!arenaUtilityUseAllowed())||
+     (typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){sfx('dry');return;}
   if(typeof isLocked==='function'&&isLocked(loadout.utility)){
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
   }
@@ -211,17 +223,25 @@ function utilQuick(){         // G (or E/LMB-tap when equipped): instant cast at
   utilCast(loadout.utility);
 }
 function utilCast(u){
+  if((typeof arenaUtilityUseAllowed==='function'&&!arenaUtilityUseAllowed())||
+     (typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){sfx('dry');return;}
   if(typeof isLocked==='function'&&isLocked(u)){
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
   }
   if(now < utilReadyT){ sfx('dry'); return; }
   if(u==='grenade'){
     const a=aimAngle();
-    grenades.push({x:player.x,y:player.y,vx:Math.cos(a)*14,vy:Math.sin(a)*14,t:now+950});
+    const thrown={x:player.x,y:player.y,vx:Math.cos(a)*14,vy:Math.sin(a)*14,t:now+950,
+      arenaUtility:typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()};
+    grenades.push(thrown);
+    if(thrown.arenaUtility&&typeof arenaBroadcastUtility==='function')
+      arenaBroadcastUtility('grenade',{x:thrown.x,y:thrown.y,angle:a});
     utilReadyT=now+utilityCdOf('grenade'); sfx('swap');
+    if(tutorialOn&&typeof tutorialRecordUtilityUsed==='function')tutorialRecordUtilityUsed();
   } else if(u==='freezer'){
     const sw=swayScreen();
     const t=screenToWorld(mouse.x+sw.x, mouse.y+sw.y);      // freeze lands at the crosshair
+    const bounds=activeArenaBounds();t.x=clamp(t.x,bounds.left,bounds.right);t.y=clamp(t.y,bounds.top,bounds.bottom);
     const R=WEAPONS.chainsaw.range*2;                        // 2x chainsaw attack range
     freezeFx.push({x:t.x, y:t.y, r:R, t:now});               // visual ring
     for(const e of enemies){
@@ -230,6 +250,7 @@ function utilCast(u){
         burst(e.x,e.y,'#9fe6ff',6,3);
       }
     }
+    if(typeof arenaBroadcastUtility==='function')arenaBroadcastUtility('freezer',{x:t.x,y:t.y});
     utilReadyT=now+utilityCdOf('freezer'); sfx('pickup');      // 25s recharge
   } else if(u==='portal'){
     // ENDER PEARL: hurl a warp pearl toward the crosshair; you teleport to wherever it lands
@@ -247,16 +268,20 @@ function utilCast(u){
     const a=aimAngle();
     // launch it out ahead of you so the swarm it lures gathers away from your position
     const sx=player.x+Math.cos(a)*90, sy=player.y+Math.sin(a)*90;
-    const ball={x:sx,y:sy,vx:Math.cos(a)*6,vy:Math.sin(a)*6,life:3000,hitT:0,taunt:750};
+    const ball={x:sx,y:sy,vx:Math.cos(a)*6,vy:Math.sin(a)*6,life:3000,hitT:0,taunt:750,
+      arenaUtility:typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()};
     clampProjectileToArena(ball,9); balls.push(ball);
+    if(ball.arenaUtility&&typeof arenaBroadcastUtility==='function')ball.utilitySeed=arenaBroadcastUtility('redball',ball)||'';
     utilReadyT=now+utilityCdOf('redball'); sfx('swap');
   } else if(u==='beachball'){
     const a=aimAngle();
     const sx=player.x+Math.cos(a)*80, sy=player.y+Math.sin(a)*80;
     // flaming repel-ball: lives 3s, splits into 2 every 1s, 3 generations
     const ball={x:sx,y:sy,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:3000,hitT:0,
-                flee:true, fire:true, dmg:8, gen:0, splitT:now+1000};
+                flee:true, fire:true, dmg:8, gen:0, splitT:now+1000,
+                arenaUtility:typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()};
     clampProjectileToArena(ball,11); balls.push(ball);
+    if(ball.arenaUtility&&typeof arenaBroadcastUtility==='function')ball.utilitySeed=arenaBroadcastUtility('beachball',ball)||'';
     utilReadyT=now+utilityCdOf('beachball'); sfx('swap');
   }
 }
@@ -271,6 +296,7 @@ function quickMelee(){
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
   }
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
+  if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
   cancelMedHeal();
   cancelFanTheHammer();
   const stowedUtility=utilityOut;
@@ -286,6 +312,7 @@ function quickMelee(){
 }
 
 function startReload(){
+  if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
   if(typeof isLocked==='function'&&isLocked(player.cur)){
     if(typeof dropExpiredTemporaryLoadout==='function')dropExpiredTemporaryLoadout([player.cur]);
     sfx('dry');return;
@@ -304,6 +331,7 @@ function startReload(){
 function tryFire(carryCadence=false){
   if(state!=='play' || now<fireSuppressT) return false;
   if(practiceMode==='arena' && !arenaCanAct()) return false;
+  if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())return false;
   if(typeof isLocked==='function'&&isLocked(player.cur)){
     if(typeof dropExpiredTemporaryLoadout==='function')dropExpiredTemporaryLoadout([player.cur]);
     resetFireCadence();sfx('dry');return false;
@@ -495,7 +523,7 @@ function update(dtms){
     if(typeof moveActorSwept==='function') moved=moveActorSwept(player,dx,dy);
     else { player.x+=dx;player.y+=dy; }
     if(!moved) player.dashUntil=now;                 // Scythe and other dashes stop at the first wall
-  } else if(mx||my){
+  } else if((mx||my)&&!(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){
     const m=Math.max(1,Math.hypot(mx,my));
     const surgeMul = now<surgeT ? 1.3 : 1;
     const healMul = (medChan||medChanHeal) ? 0.9 : 1;
@@ -615,7 +643,14 @@ function update(dtms){
           if(e.hp<=0) killEnemy(j);
         }
       }
-      if(fw&&typeof isCpuTeamArena==='function'&&isCpuTeamArena()&&arenaCanAct()){
+      if(!fw&&g.arenaUtility&&!g.remoteUtility&&typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()&&arenaCanAct()&&arena.opponent){
+        const d2g=dist2(arena.opponent.x,arena.opponent.y,g.x,g.y),clear=typeof losBlocked!=='function'||
+          !losBlocked(g.x,g.y,arena.opponent.x,arena.opponent.y);
+        if(clear&&d2g<rad*rad){
+          const falloff=Math.max(0,1-Math.sqrt(d2g)/(rad*1.3));
+          arenaHitOpponent(300*falloff,'utility_grenade');
+        }
+      } else if(fw&&typeof isCpuTeamArena==='function'&&isCpuTeamArena()&&arenaCanAct()){
         for(const target of partyCpuMatch.bots.filter(b=>b.team==='B'&&b.hp>0)){
           const d2g=dist2(target.x,target.y,g.x,g.y);
           if(d2g<rad*rad){
@@ -683,13 +718,23 @@ function update(dtms){
         break;
       }
     }
+    if(now>=b.hitT&&b.arenaUtility&&!b.remoteUtility&&typeof isCasualOnlineArena==='function'&&
+       isCasualOnlineArena()&&arenaCanAct()&&arena.opponent&&
+       dist2(arena.opponent.x,arena.opponent.y,b.x,b.y)<(arena.opponent.r+br)*(arena.opponent.r+br)){
+      arenaHitOpponent((b.dmg||8)*perks.dmg,b.fire?'utility_beachball':'utility_redball');
+      b.hitT=now+280;burst(b.x,b.y,b.fire?'#ff6a2c':'#d05548',3,2);
+    }
     // beachball splitting: every 1s spawn 2 halved children, 3 generations, 1s life each after split
     if(b.fire && b.splitT && now>=b.splitT && (b.gen||0)<3){
       for(let k=0;k<2;k++){
-        const a=Math.random()*TAU;
+        const seed=b.arenaUtility&&typeof arenaMapHash==='function'
+          ?arenaMapHash(String(b.utilitySeed||'utility')+':'+(b.gen||0)+':'+k):0;
+        const a=b.arenaUtility?(seed/4294967296)*TAU:Math.random()*TAU;
         const child={x:b.x,y:b.y,vx:Math.cos(a)*5,vy:Math.sin(a)*5,life:1000,hitT:0,
                      flee:true,fire:true,dmg:(b.dmg||8)/2,gen:(b.gen||0)+1,
-                     splitT:(b.gen||0)+1<3 ? now+1000 : 0};
+                     splitT:(b.gen||0)+1<3 ? now+1000 : 0,
+                     arenaUtility:!!b.arenaUtility,remoteUtility:!!b.remoteUtility,hostile:!!b.hostile,
+                     utilitySeed:String(b.utilitySeed||'')+':'+(b.gen||0)+':'+k};
         clampProjectileToArena(child,Math.max(6,11-child.gen*2)); balls.push(child);
       }
       burst(b.x,b.y,'#ffb84d',10,5);

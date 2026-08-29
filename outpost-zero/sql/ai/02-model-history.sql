@@ -93,11 +93,10 @@ revoke all on table public.outpost_zero_bot_model_state from public, anon, authe
 revoke all on table public.outpost_zero_bot_model_audit from public, anon, authenticated;
 revoke all on sequence public.outpost_zero_bot_model_audit_event_id_seq from public, anon, authenticated;
 
--- UI-side admin checks are not a security boundary. This private helper reads
--- the email from Supabase's signed JWT and accepts only the fixed creator or an
--- existing public.admins row whose role is main. Dynamic SQL keeps this script
--- installable before the optional admins table exists; in that case only the
--- creator can activate models.
+-- UI-side admin checks are not a security boundary. Prefer the consolidated
+-- Admin 01 role helper when it is installed; otherwise allow an existing Main
+-- row only. Dynamic SQL keeps this skipped/optional script installable without
+-- embedding or returning anybody's private login email.
 create or replace function public._outpost_zero_is_main_admin()
 returns boolean
 language plpgsql
@@ -113,8 +112,11 @@ begin
     return false;
   end if;
 
-  if v_email = 'tmilsanmilla@gmail.com' then
-    return true;
+  if to_regprocedure('public._outpost_zero_admin_role()') is not null then
+    execute
+      'select public._outpost_zero_admin_role() in (''creator'', ''main'')'
+      into v_allowed;
+    return coalesce(v_allowed, false);
   end if;
 
   if to_regclass('public.admins') is null then
@@ -211,7 +213,6 @@ set search_path = pg_catalog, public
 as $function$
 declare
   v_user_id uuid := auth.uid();
-  v_email text := lower(btrim(coalesce(auth.jwt() ->> 'email', '')));
   v_model_id text := lower(btrim(coalesce(p_model_id, '')));
   v_state public.outpost_zero_bot_model_state%rowtype;
   v_from_model_id text;
@@ -256,7 +257,7 @@ begin
     (revision, from_model_id, to_model_id, changed_by, changed_by_email, changed_at, action)
   values
     (v_state.revision, v_from_model_id, v_state.active_model_id,
-     v_user_id, v_email, v_now, 'activate');
+     v_user_id, null, v_now, 'activate');
 
   return query select v_state.active_model_id, v_state.revision,
     v_state.updated_at, true, 'activated'::text;

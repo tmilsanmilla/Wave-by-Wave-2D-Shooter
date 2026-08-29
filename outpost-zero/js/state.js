@@ -44,6 +44,7 @@ function freshArena(status){
     syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),pendingUnscopedHits:new Set(),
     shotSeq:0,seenShots:new Set(),remoteShots:[],meleeSeq:0,seenMelees:new Set(),fireworkSeq:0,remoteFireworkHighestSeq:0,
     seenFireworks:new Set(),remoteFireworks:[],remoteFireworkFx:[],
+    utilitySeq:0,seenUtilities:new Set(),remoteUtilityReadyAt:new Map(),utilityFrozenUntil:0,
     rematchVotes:new Set(),savedUtility:undefined};
 }
 arena=freshArena('Sign in, choose a loadout, then enter Casual 1v1.');

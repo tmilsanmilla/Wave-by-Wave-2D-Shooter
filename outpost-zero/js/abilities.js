@@ -3,6 +3,7 @@
 function meleeAbility(){
   if(state!=='play') return;
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
+  if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
   const k=player.cur;
   if(typeof isLocked==='function'&&isLocked(k)){
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;

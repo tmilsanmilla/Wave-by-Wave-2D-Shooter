@@ -21,10 +21,12 @@ function prepareAccountProgressForAuth(accountId=''){
   gemOwned={};cosmeticOwned={};cosmeticEquipped={};animOwned={};animEquipped={};powerStock={};
   tasksDate=todayIndex();dailyTasks=freshDailyTasks();streakDays=0;streakLongest=0;streakLastDay='';
   referralUsed=false;referralPaid=0;wheelReady=0;wheelAcc=0;
+  if(typeof resetWheelEngagement==='function')resetWheelEngagement();
   return true;
 }
 function metaPayload(){
   return {gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
+          wd:wheelEarnedDay, we:wheelEarnedToday, wt:wheelReadyTier,
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
           hi:hiScore, mv:musicVol, mt:typeof musicTrack==='string'?musicTrack:'calm', sv:sfxVol, onboardV:onboardingVersion, loadout:storedLastLoadout()};
@@ -245,7 +247,11 @@ function playableLastLoadout(candidate=lastLoadout){
   return result;
 }
 function modeAllowsUtility(mode){
-  return !['arena','arena2v2','ai1v1','ai2v2','partycpu2v2'].includes(String(mode||''));
+  // Signed-in Casual 1v1 is the one duel route that carries the optional
+  // utility slot. Ranked, CPU, and team duel routes remain weapon-only.
+  const key=String(mode||'').toLowerCase();
+  return !key.startsWith('ranked')&&
+    !['arena2v2','ai1v1','ai2v2','partycpu2v2','ranked','ranked1v1','ranked2v2'].includes(key);
 }
 function restoreLastLoadoutForMode(mode=pendingGameMode){
   loadout=playableLastLoadout(lastLoadout);
@@ -309,6 +315,12 @@ function applyProfile(m){
   try{ if(musicGain) musicGain.gain.value=musicVol*0.7; if(sfxGain) sfxGain.gain.value=sfxVol; }catch(e){}
   if(typeof m.wr==='number') wheelReady=m.wr>0?1:0;
   if(typeof m.wa==='number') wheelAcc=wheelReady?0:clamp(m.wa,0,WHEEL_MS-1);
+  if(typeof applyWheelEngagementSnapshot==='function'){
+    const cloudHasWheel=typeof m.wd==='string'||typeof m.we==='number'||typeof m.wt==='number';
+    if(cloudHasWheel)applyWheelEngagementSnapshot({day:m.wd,earned:m.we,tier:m.wt});
+    else normalizeWheelEngagement();
+    saveWheelEngagementLocal(profileOwnerUserId);
+  }
   referralUsed=!!m.refUsed;
   if(typeof m.stkMax==='number') streakLongest=Math.max(streakLongest,m.stkMax);
   referralPaid=Math.max(0,+m.refPaid||0);
@@ -380,6 +392,7 @@ async function fetchProfile(expectedUserId,requestVersion){
       gemOwned={};cosmeticOwned={};cosmeticEquipped={};animOwned={};animEquipped={};powerStock={};
       tasksDate=todayIndex();dailyTasks=freshDailyTasks();streakDays=0;streakLongest=0;streakLastDay='';
       referralUsed=false;referralPaid=0;wheelReady=0;wheelAcc=0;
+      if(typeof resetWheelEngagement==='function')resetWheelEngagement();
       lastLoadoutAccountId=userId; lastLoadout=storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
       if(canRestoreAccountLoadout()) restoreLastLoadoutForMode(pendingGameMode);
       saveMetaLocal();
@@ -423,6 +436,10 @@ function loadMeta(){
     streakDays=m.stk||0; streakLongest=m.stkMax||streakDays; streakLastDay=m.stkDay||'';
     referralUsed=!!m.refUsed; referralPaid=m.refPaid||0;
     wheelReady=m.wr>0?1:0; wheelAcc=wheelReady?0:clamp(m.wa||0,0,WHEEL_MS-1);
+    if(typeof applyWheelEngagementSnapshot==='function'){
+      applyWheelEngagementSnapshot(loadWheelEngagementLocal(profileOwnerUserId)||{day:m.wd,earned:m.we,tier:m.wt});
+      wheelCheckpointMinute=Math.floor(wheelAcc/60000);
+    }
     hiScore=m.hi||0;
     lastLoadoutAccountId='';
     lastLoadout=readLastLoadoutLocal('')||storedLastLoadout(SHARED_LOADOUT_DEFAULTS);

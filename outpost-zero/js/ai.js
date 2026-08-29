@@ -7,6 +7,8 @@ const BOT_AI=Object.freeze({weapon:'ar',damage:34,fireMs:245,reactionMs:575,move
 const CPU_AI_TNT_RETHINK_MS=200,CPU_AI_TNT_SCORE_MIN=45,CPU_AI_TNT_AVOID_PAD=42;
 const CPU_AI_MOVE_MIN_MS=550,CPU_AI_MOVE_MAX_MS=1300,CPU_AI_TRACK_JUMP=180;
 const CPU_AI_NAV_CLEARANCE=10,CPU_AI_NAV_STEP=12,CPU_AI_NAV_REUSE_MS=450,CPU_AI_STUCK_TICKS=3,CPU_AI_STUCK_RECOVERY_MS=900;
+const CPU_AI_HIT_RESPONSE_HOLD_MS=650,CPU_AI_OSCILLATION_WINDOW_MS=900,CPU_AI_OSCILLATION_REVERSALS=3,
+  CPU_AI_OSCILLATION_MIN_TRAVEL=24,CPU_AI_OSCILLATION_NET_RATIO=.42;
 
 /* Bot choices use a private round-seeded stream. Gameplay/VFX calls to
    Math.random can no longer change a bot's next dodge or shot, and every
@@ -205,16 +207,47 @@ function cpuAiFindPath(bot,goal,avoid=[],clock=0,allowPortals=true){
   const waypoint=nodes[pick],usesPortal=path.some(i=>nodes[i].portalId);
   return {x:waypoint.x,y:waypoint.y,path:path.map(i=>({x:nodes[i].x,y:nodes[i].y,key:nodes[i].key})),usesPortal,cost:dist[1]};
 }
+function cpuAiResetMotionWindow(bot,clock,x=bot&&bot.x,y=bot&&bot.y){
+  if(!bot)return;
+  bot.aiMotionWindowAt=clock;bot.aiMotionAnchorX=+x||0;bot.aiMotionAnchorY=+y||0;
+  bot.aiMotionTravel=0;bot.aiMotionReversals=0;bot.aiMotionDx=0;bot.aiMotionDy=0;bot.aiMotionSampleAt=clock;
+}
+function cpuAiStartMovementRecovery(bot,clock,failedX=bot&&bot.moveX,failedY=bot&&bot.moveY){
+  if(!bot)return false;
+  bot.aiStuckTicks=0;bot.aiStuckUntil=clock+CPU_AI_STUCK_RECOVERY_MS;
+  bot.aiFailedMoveX=+failedX||0;bot.aiFailedMoveY=+failedY||0;bot.aiSide=-(bot.aiSide||1);
+  bot.aiTactic='flank';bot.aiTacticUntil=clock;bot.aiNavPath=[];bot.aiNavUntil=0;bot.aiUsingPortal=false;
+  // A recovery is a short direction commitment, so more pellets from the same
+  // burst cannot immediately cancel it and start another left/right re-roll.
+  bot.aiHitResponseUntil=Math.max(+bot.aiHitResponseUntil||0,bot.aiStuckUntil);
+  if(typeof cpuAiClearPeek==='function')cpuAiClearPeek(bot,clock);
+  cpuAiResetMotionWindow(bot,clock,bot.x,bot.y);return true;
+}
 function cpuAiObserveMovement(bot,clock){
   if(!bot)return false;
   const oldX=Number.isFinite(+bot.lastThinkX)?+bot.lastThinkX:+bot.x||0,oldY=Number.isFinite(+bot.lastThinkY)?+bot.lastThinkY:+bot.y||0,
-    moved=Math.hypot((+bot.x||0)-oldX,(+bot.y||0)-oldY),trying=Math.hypot(+bot.moveX||0,+bot.moveY||0)>.25;
+    currentX=+bot.x||0,currentY=+bot.y||0,dx=currentX-oldX,dy=currentY-oldY,moved=Math.hypot(dx,dy),
+    trying=Math.hypot(+bot.moveX||0,+bot.moveY||0)>.25;
   bot.lastThinkX=bot.x;bot.lastThinkY=bot.y;
   if(trying&&moved<2)bot.aiStuckTicks=Math.max(0,Math.floor(+bot.aiStuckTicks||0))+1;else bot.aiStuckTicks=0;
-  if(bot.aiStuckTicks<CPU_AI_STUCK_TICKS)return false;
-  bot.aiStuckTicks=0;bot.aiStuckUntil=clock+CPU_AI_STUCK_RECOVERY_MS;
-  bot.aiFailedMoveX=+bot.moveX||0;bot.aiFailedMoveY=+bot.moveY||0;bot.aiSide=-(bot.aiSide||1);
-  bot.aiTactic='flank';bot.aiTacticUntil=clock;bot.aiNavPath=[];return true;
+
+  const invalidWindow=!Number.isFinite(+bot.aiMotionWindowAt)||clock<(+bot.aiMotionWindowAt||0)||clock-(+bot.aiMotionWindowAt||0)>CPU_AI_OSCILLATION_WINDOW_MS;
+  if(invalidWindow)cpuAiResetMotionWindow(bot,clock,oldX,oldY);
+  if(moved>=2){
+    const previousLength=Math.hypot(+bot.aiMotionDx||0,+bot.aiMotionDy||0),sampleGap=clock-(+bot.aiMotionSampleAt||clock);
+    if(previousLength>=2&&sampleGap>=0&&sampleGap<=CPU_AI_OSCILLATION_WINDOW_MS){
+      const dot=(dx*(+bot.aiMotionDx||0)+dy*(+bot.aiMotionDy||0))/(moved*previousLength);
+      if(dot<-.65)bot.aiMotionReversals=Math.max(0,Math.floor(+bot.aiMotionReversals||0))+1;
+    }
+    bot.aiMotionDx=dx;bot.aiMotionDy=dy;bot.aiMotionSampleAt=clock;
+    bot.aiMotionTravel=Math.max(0,+bot.aiMotionTravel||0)+moved;
+  }
+  const net=Math.hypot(currentX-(+bot.aiMotionAnchorX||0),currentY-(+bot.aiMotionAnchorY||0)),travel=Math.max(0,+bot.aiMotionTravel||0),
+    oscillating=clock<(+bot.underFireUntil||0)&&Math.max(0,Math.floor(+bot.aiMotionReversals||0))>=CPU_AI_OSCILLATION_REVERSALS&&
+      travel>=CPU_AI_OSCILLATION_MIN_TRAVEL&&net<=Math.max(18,travel*CPU_AI_OSCILLATION_NET_RATIO);
+  if(oscillating)return cpuAiStartMovementRecovery(bot,clock,dx,dy);
+  if(bot.aiStuckTicks>=CPU_AI_STUCK_TICKS)return cpuAiStartMovementRecovery(bot,clock,bot.moveX,bot.moveY);
+  return false;
 }
 function cpuAiPeekDuration(bot,min,max,variance=1){
   min=Math.max(0,+min||0);max=Math.max(min,+max||min);variance=clamp(+variance||0,0,1);
@@ -237,6 +270,21 @@ function cpuAiRegisterPeekPunishment(bot,clock){
   if(['commit','fake_out'].includes(bot.aiPeekPhase)&&Number.isFinite(+bot.aiPeekDirX)&&Number.isFinite(+bot.aiPeekDirY)){
     bot.aiPeekPhase='fake_back';bot.aiPeekUntil=clock+120;
   }
+  return true;
+}
+// One incoming burst gets one immediate tactical response. Further pellets
+// extend the pressure window but do not continuously randomize the bot's route.
+// A later, separate burst may trigger a fresh response normally.
+function cpuAiRegisterIncomingHit(bot,clock){
+  if(!bot)return false;
+  clock=Number.isFinite(+clock)?+clock:0;
+  bot.underFireUntil=Math.max(+bot.underFireUntil||0,clock+900);
+  cpuAiRegisterPeekPunishment(bot,clock);
+  const canReplan=clock>=(+bot.aiHitResponseUntil||0)&&clock>=(+bot.aiStuckUntil||0);
+  bot.aiHitResponseUntil=Math.max(+bot.aiHitResponseUntil||0,clock+CPU_AI_HIT_RESPONSE_HOLD_MS);
+  if(!canReplan)return false;
+  bot.aiTacticUntil=clock;
+  bot.thinkAt=Number.isFinite(+bot.thinkAt)?Math.min(+bot.thinkAt,clock):clock;
   return true;
 }
 function cpuAiPeekWithholdsFire(bot){
@@ -1285,6 +1333,8 @@ function arenaBotStartRound(){
     aimNoise:0,strafe:1,strafeUntil:now,
     reactionAt:arena.roundStartAt+tuning.reactionMs,moveX:0,moveY:0,lastThinkX:right.x,lastThinkY:right.y,
     aiStuckTicks:0,aiStuckUntil:0,aiFailedMoveX:0,aiFailedMoveY:0,aiNavPath:[],aiNavUntil:0,aiUsingPortal:false,
+    aiHitResponseUntil:0,aiMotionWindowAt:now,aiMotionAnchorX:right.x,aiMotionAnchorY:right.y,
+    aiMotionTravel:0,aiMotionReversals:0,aiMotionDx:0,aiMotionDy:0,aiMotionSampleAt:now,
     aiPeekPhase:'',aiPeekTargetId:'',aiPeekUntil:0,aiPeekCooldownUntil:0,aiPeekWasHidden:undefined,
     aiPeekExposedAt:0,aiPeekWindowUntil:0,aiPeekPunishScore:0,aiPrefirePressureUntil:0,
     aiTrainingTntAvoided:new Set(),aiTrainingWallAt:0,
@@ -1341,8 +1391,7 @@ function arenaHitOpponent(dmg,kind,meta){
   const before=Math.max(0,+arena.opponent.hp||0),dealt=Math.min(before,hit);
   if(typeof recordAiTrainingSignal==='function')recordAiTrainingSignal(arena,'bot_damage_taken',dealt);
   arena.opponent.hp=Math.max(0,arena.opponent.hp-hit);arena.opponent.hitT=now+90;
-  arena.opponent.underFireUntil=now+900;arena.opponent.aiTacticUntil=now;arena.opponent.thinkAt=now;
-  if(typeof cpuAiRegisterPeekPunishment==='function')cpuAiRegisterPeekPunishment(arena.opponent,now);
+  cpuAiRegisterIncomingHit(arena.opponent,now);
   addDamageNumber(arena.opponent,dealt,kind==='crit'||kind==='parry');
   if(arena.opponent.hp<=0){
     triggerUnscopedSniperKillCelebration(before,arena.opponent.hp,

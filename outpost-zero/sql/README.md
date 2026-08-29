@@ -94,6 +94,7 @@ of exposing account emails or trusting the name stored with a score. Run this
 after Social core has created and backfilled player usernames:
 
 1. `leaderboards/01-public-board.sql`
+2. `leaderboards/Leaderboards-03-security-realtime.sql`
 
 If you already finished the legacy Social `01` through `04`, run only this one Leaderboards
 script next. If `leaderboards/01-public-board.sql` is the last database script
@@ -107,7 +108,9 @@ legacy account-email JSON, rewrites old score aliases to Social usernames, and
 installs the narrow username/high-score player lookup used by public profiles.
 It also blocks old browser tabs from recreating those JSON rows and removes
 anonymous direct reads of the raw score table. Signed-in score saving and
-referrals retain their existing authenticated access and RLS checks.
+referrals retain authenticated access through the forced-RLS rules in
+Leaderboards 03. That file also owns the `scores` Realtime publication used to
+refresh live boards and referral claims.
 
 This script is rerunnable. It exposes only user ID, username, and score, and it
 hard-limits requests to the two public Outpost Zero boards and five rows.
@@ -121,6 +124,20 @@ non-identifying placeholder. The leaderboard RPC never selects from
 beginning with `outpost-zero`, so it does not rename rows belonging to another
 game that shares the table.
 
+## Weapons
+
+Run `weapons/Weapons-01-weapons.sql` after Admin 01. It owns both
+`weapon_prices` and `weapon_defs`: storage, forced RLS, narrow browser grants,
+creator/Main write policies, and Realtime publication for the game subscribers.
+This includes `weapon_defs`, which the old miscellaneous Realtime query omitted.
+Unpublished-weapon ownership remains enforced by the shipped game code.
+
+The saved `Realtime 01` query is now legacy only. Admin, Social, Leaderboards,
+and Weapons each own their own security and Realtime rules; do not rerun the
+miscellaneous query because its older Admin policies and raw `admins`
+publication would weaken the current perimeter. It may be deleted separately
+after the owning section queries have been verified in Supabase.
+
 ## Account password changes
 
 There is no password SQL file. Passwords belong to Supabase Auth, not a public
@@ -131,235 +148,59 @@ into the SQL Editor.
 
 ## Administration
 
-Administration now has one clean sequence: `01`, `02`, `03`, and `04`.
-There is no `02B` or `05`. Administration `02` owns secure updates and admin
-role controls. Administration `03` keeps its notification-Inbox number.
-Administration `04` merges username-based admin actions with Testers, weapon
-suggestions, demotion, and report copy.
+Administration is installed as exactly three rerunnable SQL files, one for
+each in-game section. Run them in this order after Social 01 and the base
+profiles/scores tables:
 
-For the current project state, Administration `01`, `02`, and `03` have already
-been run. Run `04` if its merged features are not installed yet. Every active
-file is rerunnable and preserves existing data.
-AI `02` and AI `03` are the migrations that were intentionally skipped; they
-are unrelated to this Administration sequence.
+1. `administration/Admin-01-admin-menu.sql`
+2. `administration/Admin-02-admins.sql`
+3. `administration/Admin-03-inbox.sql`
 
-Quick purpose guide:
-
-| File | What it adds | What it does not do |
+| File | Section | Purpose |
 | --- | --- | --- |
-| Administration `01` | Audited player edits, temporary weapon gifts, permanent gift/request approvals, ban/appeal handling, and the private creator/main LOG. | It does not publish Home updates or create the player notification Inbox. |
-| Administration `02` | Secure Home/global Inbox update publishing and server-authorized admin-role controls. | It does not enforce weapon publication or add Tester accounts. |
-| Administration `03` | The private player notification Inbox for updates, bans, gifts, and friend events, plus targeted creator/main messages. | It does not expose the private admin LOG or change staff ranks. |
-| Administration `04` | Username-based admin wrappers, Tester rank, Tester/Co-admin weapon suggestions, creator/main review, Promote/Demote, staff Inbox restrictions, and `COPY ALL`/`COPY X` reports. | It does not expose private Auth emails, change Social usernames, or automatically apply an approved weapon suggestion. |
+| Admin 01 | Admin Menu | Secure username-based player lookup/editing, temporary and permanent grants, bans, appeals, approval requests, and the append-only audit LOG. |
+| Admin 02 | Admins | Creator/Main/Co/Tester hierarchy, Add/Promote/Demote/Remove, Tester/Co weapon suggestions, heading/details global updates, and non-enumerable promo codes. |
+| Admin 03 | Inbox | Targeted player notifications, one-row global update notifications, staff messages, Archive/read state, Reports, report export, Realtime refresh hints, and LOG access through Admin 01. |
 
-### Temporary gifts and the private LOG
+All three files preserve existing rows and can be rerun. Each transaction
+creates its own required Admin tables before installing functions and security.
+Actor identity and roles are resolved from `auth.uid()` plus server-owned rows;
+the browser cannot claim an actor, role, account ID, private target email, or
+timestamp. Private tables use forced RLS and narrow column/RPC privileges.
 
-Run this after the project's existing administration tables/RPCs are installed:
+Admin 01 includes the former Appeals setup and the safe internal compatibility
+functions required by its audited wrapper. Private Auth email resolution occurs
+inside Postgres; the current game sends public usernames. On its first run,
+Admin 01 resolves public username `tmilsanmilla` once and pins that account's
+Auth UUID in a forced-RLS config row. Later username or login-email changes do
+not change the creator role, and clients cannot read the UUID. Creator and Main
+admins may apply permanent currency/score/ownership edits directly. Testers
+remain unable to call these legacy Admin Menu APIs.
 
-1. `administration/01-temporary-grants-and-audit.sql`
+Admin 02 owns the staff roster and update lifecycle. The fixed creator may
+manage every tier. Main admins may manage Co-admins and Testers but cannot
+alter the creator or another Main. Co-admin updates remain drafts until a
+creator/Main approves them. Approved updates are canonical `banners` rows;
+Admin 03 turns each into one shared Inbox notification instead of copying a
+row per player. Home/Inbox lists show the short heading and the full reader
+shows details. Every signed-in account may redeem each promo code once; their
+code catalog has
+no player-readable table policy.
 
-This is the only new SQL paste needed for temporary weapon gifts and the
-creator/main LOG. It requires the already-live `admins`, `profiles`, `scores`,
-`bans`, `ban_appeals`, and `player_requests` tables plus the existing
-`admin_edit_player(target_email, patch)` RPC. It does not replace those tables,
-does not alter permanent ownership, and is safe to run again. A rerun preserves
-all temporary grants, request/appeal rows, and append-only audit history.
+Admin 03 owns both notification surfaces inside the Inbox section. Player
+notifications use recipient-private/global rows and per-account read receipts.
+The staff Inbox uses `admin_msgs`; Testers may read/archive only their own
+messages, while only creator/Main may send. Signed-in reports use a
+server-attributed submission RPC; ordinary accounts have a transactional
+30-second limit while staff do not. Raw report rows have no browser access.
+Creator/Main list, resolve, and export only sanitized rows through bounded
+RPCs, and a recipient-private Realtime wakeup replaces publication of report
+contents. The LOG remains the append-only Admin 01 audit table and is exposed
+only through its bounded RPC. Realtime subscriptions are refresh hints; RLS
+and RPC checks remain authority.
 
-What Administration `01` does, concretely:
-
-- Creates a server-owned temporary-grant table for the nine `GEM_SHOP` weapon
-  keys. Creator/main admins choose 5 minutes through 365 days. Expiry is based
-  on the database clock and an expired row stops granting access even if no
-  cleanup job runs. Permanent `profiles.data.owned` values remain separate.
-- Makes grant/revoke/edit operations exact-once with caller-supplied operation
-  UUIDs. The UUID identifies a retry, never an account. Per-player/per-weapon
-  transaction locks prevent two requests from classifying or extending the
-  same missing grant concurrently.
-- Wraps the existing player editor, compares actual before/after profile,
-  leaderboard, and ban rows, and atomically records permanent gifts/revokes,
-  score, gems, coins, upgrades, bans, unbans, rejected edits, and no-change
-  retries. Actor identity and role are reread from Auth and `admins`; the
-  browser cannot supply them. Only the creator can apply permanent score,
-  currency, upgrade, or ownership edits. Main admins submit those through the
-  locked approval queue; they may directly apply only ban/unban patches.
-- Moves player-request submission/approval/rejection and ban-appeal
-  submission/lift/deny behind locked RPC transactions. An approved request or
-  lifted ban and its decision log either both commit or both roll back. Appeal
-  submission is limited to one open row and three submissions per account per
-  rolling day so changing operation UUIDs cannot flood the private LOG.
-- Exposes keyset-paginated audit rows only to the creator/main admins. Co-admins
-  retain view-only ban/appeal lists through narrow RPCs but cannot see the LOG
-  or mutate grants. Players can read only their own active grant keys/expiry;
-  ban enforcement uses an account-derived/bounded-device RPC instead of raw
-  reads of the bans table.
-- Forces RLS on the new tables, removes all direct browser table privileges,
-  retires direct access to legacy `player_log` and `admin_edit_player`, and
-  exposes only the documented RPCs. The old `player_log` table/rows are left in
-  place rather than deleted.
-
-Deploy the matching game JavaScript at the same time as this SQL. The migration
-intentionally revokes the old direct edit/request/appeal paths so an old tab
-cannot bypass the audit. After running it, sign out/in or hard-refresh before
-testing creator/main controls.
-
-### Administration 02 — secure updates and admin roles
-
-For creator/main updates to appear on both Home and in every player's Inbox,
-paste and run this entire file in the Supabase SQL Editor:
-
-1. `administration/02-secure-updates.sql`
-
-Administration `02` needs Administration `01` plus the already-live `banners`
-and `admins` tables and Supabase Auth. It replaces update/admin-role functions
-and policies in place while preserving existing updates and admin rows.
-
-What Administration `02` does, concretely:
-
-- Keeps one approved `banners` row as the canonical update. The same row is
-  shown on Home and in Inbox, so it does not copy one message into every user
-  account and cannot partially fan out.
-- Makes creator/main posts live immediately. Co-admin posts remain pending and
-  invisible to players until a creator or main admin approves them.
-- Derives the actor and role on the database server from the signed-in Auth
-  account and `admins`; the browser cannot claim a role, author email, approval
-  state, or timestamp. Stored authors are non-email labels such as `CREATOR` or
-  `MAIN ADMIN`, and legacy email authors are replaced with safe labels.
-- Hardens the existing `admins` table that supplies those roles: it removes old
-  policies and direct writes, hides the roster from ordinary players, lets a
-  co-admin see only their own row, and exposes server-authorized list/add,
-  promote, demote, and remove RPCs. The fixed creator can manage main/co admins;
-  a main admin can add/manage co-admins but cannot alter the creator or another
-  main admin. Administration `04` extends this safely with Tester and visible
-  Promote/Demote controls.
-  Raw admin rows are not published through Realtime; the client refreshes the
-  narrow roster RPC after authentication, when opening Admin tools, and on a
-  three-minute safety poll. A stale tab may briefly show an obsolete button,
-  but every action rereads the server role and fails immediately after removal.
-- Removes old banner policies and direct browser writes, then exposes narrow
-  post, approve, reject, delete, and bounded-list RPCs. Approved rows remain
-  RLS-readable for the public Home feed and Realtime; pending rows are visible
-  only to creator/main reviewers.
-- Lists approved and pending updates independently. Even if there are ten or
-  more newer drafts, they cannot consume the public feed limit and hide a live
-  update.
-
-Unpublished-weapon ownership and shop availability are enforced by the shipped
-game code, not by an Administration SQL migration. Administration `02` does not
-create weapon policies, strip ownership, or publish `weapon_defs` to Realtime.
-
-Deploy the matching JavaScript and run Administration `02` together because the
-migration intentionally closes the old direct `admins` and `banners` write
-paths. Then hard-refresh the game. Test once as a normal player (no admin roster
-and only approved updates), once as a co-admin (only their own role row and a
-new post says it is awaiting approval), and once as creator/main (the permitted
-roster actions work; approve the draft and confirm the same update appears on
-Home and in Inbox).
-
-### Unified private notification Inbox
-
-After Social `01` and Administration `01` + `02` are installed, paste and run
-this entire file in the Supabase SQL Editor:
-
-1. `administration/03-notification-inbox.sql`
-
-If you already ran Administration `01` and `02`, this is the **only** new SQL
-paste. Add/run `03`; do not replace or append to `01` or `02`, and do not rerun
-the installed Social files. If either Administration prerequisite was never run,
-run the missing prerequisite first and then run `03`. A clear prerequisite
-error means the earlier file is missing; it does not mean to paste the files
-together. Administration `03` is safe to rerun and preserves every existing
-notification and read receipt.
-
-If the last SQL you actually applied was legacy Social `05` and you have not installed
-these later features yet, run these six whole files **one at a time**, in this
-order: the updated Social `01`, Social `03`, Social `04`, Administration `01`,
-Administration `02`, Administration `03`. For each step, create a new SQL Editor query, paste the entire file, and
-press Run; add/run each file rather than replacing or appending to an older
-file. Do not rerun the username code now named Social `02` or Leaderboards `01`.
-Administration `01` first needs the game's original `admins`, `profiles`,
-`scores`, `bans`, `ban_appeals`, and `player_requests` tables plus its original
-`admin_edit_player(target_email, patch)` RPC; if Supabase reports one missing,
-install that original administration schema before continuing. If you already
-ran any file in the six-step list successfully, do not repeat it—continue with
-the next missing file.
-
-What Administration `03` does, concretely:
-
-- Creates a forced-RLS notification table and per-account read-receipt table
-  with no direct browser policies or table grants. Players list and mark only
-  notifications addressed to their signed-in Auth account, plus shared global
-  updates. The API returns opaque text keys such as `n_42`, never an Auth UUID,
-  account email, internal actor/source ID, or JavaScript-unsafe bigint.
-- Lets only the server-verified creator or a main admin send a message to one
-  chosen public username. The browser cannot choose an author label, role,
-  target account ID, email, timestamp, or read owner. Operation UUIDs make an
-  exact retry return the first result; changing the payload with the same UUID
-  fails. Rolling sender, per-recipient, and incoming limits prevent staff-message
-  floods even when two admins send concurrently.
-- Converts successful Administration `01` audit events into atomic recipient
-  notices for applied bans, lifted bans, temporary/permanent weapon grants or
-  removals, score changes, currency changes, and upgrade changes. The mutation,
-  audit row, and notice either all commit or all roll back. Player-facing text
-  never copies private audit notes, emails, or UUIDs.
-- Converts each newly approved Administration `02` banner into one global Inbox
-  row plus separate per-player read receipts; it does not copy the message into
-  every account. Its allowlisted `banner:<id>` reference lets the signed-in UI
-  suppress the duplicate legacy banner card while Home continues using the
-  canonical banner. Deleting that update hides its Inbox row while retaining a
-  private rate-limit tombstone, so delete/repost cannot bypass the update cap.
-  The summary RPC also returns an opaque `feed_revision`; it changes when a
-  visible notice is added or a banner is removed, so the client can discard
-  stale cached pages and make a deleted update disappear without exposing the
-  hidden tombstone.
-- Adds a server-bound friend-request notice for the invited player. Acceptance
-  creates one source-idempotent congratulations notice for each participant,
-  using only the counterpart's chosen public username. Existing Friends lists
-  remain the authority for the current relationship state.
-- Uses source-unique triggers for audit, update, and friendship events, so a
-  retry or repeated trigger installation cannot duplicate an event. Read marks
-  are recipient-bound and idempotent. Global updates are limited to five per
-  ten minutes and thirty per day; targeted messages are limited to twelve per
-  ten minutes, sixty per day, four per recipient per hour, and thirty incoming
-  per recipient per hour.
-
-Deploy the matching game JavaScript at the same time, then hard-refresh or sign
-out/in. Until Administration `03` is installed, the game keeps the prior safe
-banner, Friends, direct-message, and Party-invite views; it hides the targeted
-staff-message composer and never falls back to inserting a notification or
-private message directly.
-
-### Administration 04 — username actions, Testers, suggestions, and reports
-
-After Administration `01` and Social `01` are installed, run:
-
-1. `administration/04-username-actions-testers-and-reports.sql`
-
-Administration `04` lets creator/main admin lookup, edit, grant, revoke, and
-ban commands accept the player’s public username. The wrappers resolve the
-corresponding Auth email only inside a `SECURITY DEFINER` function and then
-call the existing audited Administration `01` RPCs. The browser never receives
-or submits the target player’s private email. Pending-request screens likewise
-return the target username instead of the target email. The same file adds a
-lowest `tester` staff tier. Testers can use Test
-Mode, read/archive only their own Admin Inbox messages, and submit a proposed
-weapon change. They cannot read reports or the audit
-log, look up private player data, post updates, manage staff, view unpublished
-weapons, edit weapons, or call the older Administration RPCs directly. The old
-admin authority helper deliberately continues to return no role for Testers;
-only the new narrow staff/suggestion/Inbox functions recognize them.
-
-Creator/main reviewers can read pending weapon suggestions and mark them
-approved or rejected. Approval records the review; it never changes live weapon
-stats automatically. The migration also changes Promote/Demote into the visible
-hierarchy `Main → Co-admin → Tester` while the creator remains fixed and only
-the creator can demote a Main. `COPY ALL`/`COPY X` uses a creator/main-only RPC
-that returns explicit report fields in newest-first order. Raw reports remain
-write-only to players and unreadable to Testers.
-
-Administration `03` owns player-facing notifications; Administration `04` owns
-the staff-only Admin Inbox permissions and role hierarchy. In this project,
-`03` was already installed. Run `04` as one whole SQL Editor query if these
-merged Administration features are not installed yet.
+The old Admin 04–08 and Appeals 01 snippets are superseded by these three files
+and must not be rerun after consolidation.
 
 ## AI bot ladder
 

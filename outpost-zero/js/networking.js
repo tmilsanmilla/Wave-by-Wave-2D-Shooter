@@ -260,9 +260,14 @@ function setupRealtime(){
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_defs'},   payload=>{
       rtBump();if(typeof applyWeaponDefRealtime==='function')applyWeaponDefRealtime(payload);fetchWeaponDefs();
     });
-    // admins only: roster changes, inbox, report feed
-    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admin_msgs'},    ()=>{ rtBump(); if(isAdmin()) fetchMsgs(); });
-    ch=ch.on('postgres_changes', {event:'INSERT', schema:'public', table:'reports'},  ()=>{ rtBump(); if(isMainAdmin()) fetchUpdatesFeed(); });
+    // Staff Inbox wakeups contain only this recipient's UUID, an opaque
+    // revision, and a timestamp. Message bodies/private Auth emails stay in
+    // RPC-only storage and never enter the Realtime publication.
+    ch=ch.on('postgres_changes',{event:'*',schema:'public',table:'outpost_zero_admin_msg_wakeups'},()=>{rtBump();if(isAdmin())fetchMsgs();});
+    // Reports themselves are RPC-only and never enter Realtime. This private
+    // reviewer wakeup contains only the signed-in reviewer's own UUID, an
+    // opaque revision, and a timestamp.
+    ch=ch.on('postgres_changes',{event:'*',schema:'public',table:'outpost_zero_report_wakeups'},()=>{rtBump();if(isMainAdmin())fetchUpdatesFeed();});
     ch.subscribe((st)=>{
       if(st==='SUBSCRIBED'){ rtStatus='live'; rtRetry=0; rtBump(); }
       else if(st==='CHANNEL_ERROR' || st==='TIMED_OUT' || st==='CLOSED'){
@@ -344,40 +349,55 @@ async function fetchBoard(){
   boardT=Date.now(); syncFallAccess();
   return anySuccess;
 }
-// ---- report a problem: small form -> Supabase 'reports' table (write-only) ----
-let reportOpen=false, lastReportT=0;
+// ---- report a problem: signed-in, server-attributed report RPC ----
+let reportOpen=false, lastReportT=0, reportTargetUsername='';
 function openStaffReport(){ if(!isCoAdmin()||isMainAdmin()){sfx('dry');return false;}staffReport=true; adminPanelOpen=false; openReport();return true; }
-function openReport(){
+function openReport(targetUsername=''){
+  const clean=String(targetUsername||'').trim().replace(/^@/,'');
+  reportTargetUsername=/^[A-Za-z0-9_]{3,32}$/.test(clean)?clean:'';
   reportOpen=true; menuOpen=false;
   $('repwrap').style.display='flex'; $('repstatus').textContent='';
+  const title=$('repbox')&&$('repbox').querySelector('h2'),hint=$('repbox')&&$('repbox').querySelector('p');
+  if(title)title.textContent=reportTargetUsername?'\u26A0 REPORT @'+reportTargetUsername.toUpperCase():'\u26A0 REPORT A PROBLEM';
+  if(hint)hint.textContent=reportTargetUsername
+    ? 'Describe what this player did. Their public username is attached automatically; private account details are never included.'
+    : 'What went wrong? Include the wave, weapon, and what you expected \u2014 it all helps.';
+  if(!authUser)$('repstatus').textContent='sign in to send a report';
   try{ $('repmsg').focus(); }catch(e){}
 }
-function closeReport(){ reportOpen=false; staffReport=false; $('repwrap').style.display='none'; }
+function openReportForUsername(username){staffReport=false;openReport(username);}
+function closeReport(){ reportOpen=false; staffReport=false; reportTargetUsername=''; $('repwrap').style.display='none'; }
 async function sendReport(){
   if(staffReport&&(!isCoAdmin()||isMainAdmin())){closeReport();return;}
+  if(!sb){ $('repstatus').textContent='preview build \u2014 reporting works on the live site'; return; }
+  if(!authUser){ $('repstatus').textContent='sign in to send a report'; return; }
   const msg=($('repmsg').value||'').trim();
   if(!msg){ $('repstatus').textContent='write a few words first'; return; }
-  if(Date.now()-lastReportT<30000){ $('repstatus').textContent='hold on \u2014 one report per 30s'; return; }
-  if(!sb){ $('repstatus').textContent='preview build \u2014 reporting works on the live site'; return; }
+  const staffActor=typeof isAdmin==='function'&&isAdmin();
+  if(!staffActor&&Date.now()-lastReportT<30000){ $('repstatus').textContent='hold on \u2014 one report per 30s'; return; }
   $('repstatus').textContent='sending...';
-  const meta={ wave, score, state, staff:staffReport, w:W, h:H,
+  const meta={ wave:Math.max(0,Math.min(999999999,Math.floor(+wave||0))),
+               score:Math.max(0,Math.min(Number.MAX_SAFE_INTEGER,Math.floor(+score||0))),
+               state:String(state||'select').replace(/[^A-Za-z0-9_-]/g,'').slice(0,32)||'select',w:W,h:H,
                dpr:(window.devicePixelRatio||1),
-               ua:String((typeof navigator!=='undefined'&&navigator.userAgent)||'').slice(0,160),
-               t:new Date().toISOString() };
+               ua:String((typeof navigator!=='undefined'&&navigator.userAgent)||'').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,160) };
+  if(reportTargetUsername)meta.category='player';
   try{
-    const { error } = await sb.from('reports').insert({
-      game:'outpost-zero',
-      name: staffReport ? ('CO-ADMIN '+(adminEmail()||'?')) : (authUser ? displayName(authUser) : 'anonymous'),
-      message: (staffReport?'[STAFF] ':'')+msg.slice(0,990),
-      meta
+    const { error } = await sb.rpc('submit_outpost_zero_report',{
+      p_message:msg.slice(0,1000),p_context:meta,p_reported_username:reportTargetUsername||null
     });
     if(error) throw error;
-    lastReportT=Date.now();
+    if(!staffActor)lastReportT=Date.now();
     $('repstatus').textContent='sent \u2014 thank you!';
     $('repmsg').value='';
     setTimeout(closeReport, 1200);
   }catch(err){
-    $('repstatus').textContent='could not send \u2014 try again in a bit';
+    const detail=[err&&err.message,err&&err.details,err&&err.hint].filter(Boolean).join(' ');
+    if(/REPORT_RATE_LIMIT/.test(detail))$('repstatus').textContent='hold on \u2014 one report per 30s';
+    else if(/REPORT_SIGN_IN_REQUIRED/.test(detail))$('repstatus').textContent='sign in to send a report';
+    else if(/REPORT_USERNAME_REQUIRED/.test(detail))$('repstatus').textContent='choose your username before reporting';
+    else if(/REPORTED_USERNAME_NOT_FOUND/.test(detail))$('repstatus').textContent='that username no longer exists';
+    else $('repstatus').textContent='could not send \u2014 try again in a bit';
   }
 }
 function prepareLocalGuestAfterAuthLoss(){

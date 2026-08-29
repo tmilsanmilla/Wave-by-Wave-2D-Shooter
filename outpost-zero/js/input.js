@@ -58,6 +58,7 @@ function typingInField(e){
 }
 function activateContextAction(){
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
+  if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
   // Arena does not simulate the two vaulted ranged specials, but melee
   // abilities use the normal Arena hit path and are valid once play starts.
   if(practiceMode==='arena'&&(player.cur==='warpwave'||player.cur==='timeturner')){ sfx('dry'); return; }
@@ -90,7 +91,7 @@ addEventListener('keydown', e=>{
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
   if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
   if(layoutMode && e.key==='Escape'){ layoutMode=false; layoutDrag=null; layoutPick=null; sfx('swap'); return; }
-  if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||weaponSuggestionsOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; weaponSuggestionsOpen=false; adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
+  if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||weaponSuggestionsOpen||requestsOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; weaponSuggestionsOpen=false;requestsOpen=false;adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
   if(['w','a','s','d',' '].includes(k)) e.preventDefault();
   keys[k]=true;
@@ -174,6 +175,10 @@ cv.addEventListener('wheel',e=>{
   if((scores?peScrollMax:auditScrollMax)>0)e.preventDefault();
 },{passive:false});
 cv.addEventListener('mousedown', e=>{
+  // A press can be the first pointer event after tab focus, a resize, or a
+  // keyboard-opened Layout Editor. Resolve this event's coordinates directly
+  // instead of dragging whichever block the last mousemove happened to touch.
+  mouse.x=px(e.clientX); mouse.y=e.clientY;
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     mouse.down=false; resetFireCadence(); e.preventDefault(); return;
   }
@@ -252,6 +257,7 @@ function touchInputHasOwner(){
 }
 function resetHeldTouchContacts(clearGeometry=false){
   const ownsMouse=menuTouchId!==null||peScrollTouchId!==null;
+  if(menuTouchId!==null&&typeof layoutMouseUp==='function')layoutMouseUp();
   pressedBtn=null;pressedBtnTouchId=null;menuTouchId=null;aimStickId=null;
   touchUtilityUsed=false;tapShootUntil=0;touchFireCadence=false;
   peScrollTouchId=null;peScrollTouchMoved=false;peScrollTouchKind='';
@@ -352,6 +358,7 @@ cv.addEventListener('touchstart', e=>{
       if(menuTouchId!==null)continue;
       mouse.x=x; mouse.y=y; mouse.down=true; menuTouchId=t.identifier;
       if(menuOpen) menuClick();
+      else if(state==='select'&&layoutMode&&selPage==='hub') layoutMouseDown();
       else if(state==='select') clickSelect();
       else if(state==='upgrade') clickUpgrade();
       else if(state==='over') startGame();
@@ -415,7 +422,8 @@ cv.addEventListener('touchmove', e=>{
     }
     if(t.identifier===menuTouchId){
       mouse.x=px(t.clientX); mouse.y=t.clientY;
-      if(dragSlider) setSliderFromMouse();
+      if(layoutMode&&state==='select'&&selPage==='hub') layoutMouseMove();
+      else if(dragSlider) setSliderFromMouse();
       continue;
     }
     if(t.identifier===aimStickId){
@@ -443,7 +451,7 @@ function touchEnd(e,cancelled){
       if(tap){ mouse.x=peScrollTouchStartX; mouse.y=peScrollTouchStartY; clickSelect(); }
       continue;
     }
-    if(t.identifier===menuTouchId){ menuTouchId=null; mouse.down=false; dragSlider=null; }
+    if(t.identifier===menuTouchId){ layoutMouseUp(); menuTouchId=null; mouse.down=false; dragSlider=null; }
     if(t.identifier===pressedBtnTouchId){pressedBtnTouchId=null;pressedBtn=null;}
     if(t.identifier===aimStickId){ aimStickId=null; touchUtilityUsed=false; touchFireCadence=false; tapShootUntil=0; }
     if(sticks.move.id===t.identifier){ sticks.move.id=null; sticks.move.dx=0; sticks.move.dy=0; }
@@ -473,6 +481,9 @@ addEventListener('blur', ()=>{
 function pickWeapon(k){
   if(isLocked(k)){ sfx('dry'); utilLockMsgT=now+2200; return; }
   if(UTILKEYS.includes(k) || TEMP_UTILITY.includes(k)){
+    if(pendingGameMode==='arena'&&typeof casualArenaUtilityKey==='function'&&casualArenaUtilityKey(k,true)!==k){
+      sfx('dry');utilLockMsgT=now+2200;return;
+    }
     loadout.utility = loadout.utility===k ? null : k;
     rememberLoadoutSlot('utility',loadout.utility);
     sfx('swap'); return;
@@ -490,6 +501,7 @@ const MODALS=[
   {k:'aiLearning', is:()=>aiLearningOpen, draw:()=>drawAiLearning(), click:()=>aiLearningClick()},
   {k:'updates',    is:()=>updatesOpen,     draw:()=>drawUpdates(),     click:()=>updatesClick()},
   {k:'admins',     is:()=>adminsOpen,      draw:()=>drawAdminsMenu(),  click:()=>adminsClick()},
+  {k:'requests',   is:()=>requestsOpen,    draw:()=>drawAdminRequests(),click:()=>adminRequestsClick()},
   {k:'weaponSuggestions',is:()=>weaponSuggestionsOpen,draw:()=>drawWeaponSuggestions(),click:()=>weaponSuggestionsClick()},
   {k:'msgs',       is:()=>msgsOpen,        draw:()=>{ if(composePickOpen) drawComposePick(); else drawMsgs(); },
                                            click:()=>msgsClick()},
@@ -541,7 +553,10 @@ function clickSelect(){
     activateAccountTrigger();sfx('swap');return;
   }
   // ADMIN / UPDATES live beside the gear, so they work from any select page
-  if(selPage==='hub'){ for(const xr of feedXRects){ if(inR(xr)){ deleteBanner(xr.id); sfx('dry'); return; } } }
+  if(selPage==='hub'){
+    for(const xr of feedXRects){ if(inR(xr)){ deleteBanner(xr.id); sfx('dry'); return; } }
+    for(const rr of (typeof feedReadRects!=='undefined'?feedReadRects:[])){if(inR(rr)){const b=rr.b||{};openReader(String(b.heading||b.message||'OFFICIAL UPDATE'),String(b.created_at||'OUTPOST ZERO · OFFICIAL'),String(b.details||b.message||''),'public');sfx('swap');return;}}
+  }
   if(isAdmin() && inR(adminHubBtnRect)){ adminPanelOpen=true; fetchAdmins(); fetchBanners(); sfx('swap'); return; }
   if(isMainAdmin() && inR(adminsHubBtnRect)){ adminsOpen=true; fetchAdmins(); sfx('swap'); return; }
   if(isAdmin() && inR(msgsHubBtnRect)){ inboxTab='msgs';msgsOpen=true; fetchMsgs().then(ok=>{if(ok)markMsgsRead();}); sfx('swap'); return; }
@@ -667,7 +682,7 @@ function clickSelect(){
       else if(r.id==='friend_next'){ socialFriendPage++; sfx('swap'); }
       else if(r.id==='friend_bucket_prev'&&socialFriendPages[r.section]!==undefined){ socialFriendPages[r.section]=Math.max(0,socialFriendPages[r.section]-1); sfx('swap'); }
       else if(r.id==='friend_bucket_next'&&socialFriendPages[r.section]!==undefined){ socialFriendPages[r.section]++; sfx('swap'); }
-      else if(r.id==='official_update_open'&&typeof openReader==='function'){ openReader('OFFICIAL UPDATE',String(r.meta||'OUTPOST ZERO · OFFICIAL'),String(r.body||''),'public'); sfx('swap'); }
+      else if(r.id==='official_update_open'&&typeof openReader==='function'){ openReader(String(r.title||'OFFICIAL UPDATE'),String(r.meta||'OUTPOST ZERO · OFFICIAL'),String(r.body||''),'public'); sfx('swap'); }
       else if(r.id==='inbox_notice_open'&&typeof socialOpenNotification==='function'){ socialOpenNotification(r.noticeKey); sfx('swap'); }
       else if(r.id==='inbox_section_inbox'){socialInboxSection='inbox';socialMessagePage=0;if(typeof socialClosePrivateConversation==='function')socialClosePrivateConversation();sfx('swap');}
       else if(r.id==='inbox_section_archive'){socialInboxSection='archive';socialMessagePage=0;if(typeof socialClosePrivateConversation==='function')socialClosePrivateConversation();sfx('swap');}

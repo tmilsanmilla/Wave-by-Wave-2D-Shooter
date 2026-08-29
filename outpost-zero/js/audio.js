@@ -2,7 +2,9 @@
 
 /* ---------------- audio (tiny synth) ---------------- */
 let AC = null, sfxGain = null, musicGain = null;
-let musicVol = 0.6, sfxVol = 0.8;
+// New players start at an even 50%. Saved local/cloud preferences still replace
+// these values during profile loading.
+let musicVol = 0.5, sfxVol = 0.5;
 const MUSIC_TRACKS=Object.freeze({
   calm:Object.freeze({id:'calm',name:'CALM',detail:'Original ambient electronic loop'}),
   energetic:Object.freeze({id:'energetic',name:'ENERGETIC',detail:'Original high-energy combat score'}),
