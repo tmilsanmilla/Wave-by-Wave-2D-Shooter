@@ -136,7 +136,7 @@ function weaponDetails(k){
               terafists:['E / F / MELEE RMB: FLURRY','1.6s punches \u00b7 lifesteal \u00b7 recharge with '+TERA_HITS_REQUIRED+' normal hits'],
               scythe:['E / F / MELEE RMB: DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 9.6s'],
               hammer:['E / F / MELEE RMB: SLAM','110 dmg \u00b7 radius 160 \u00b7 8s'],
-              twinsai:['E / F / MELEE RMB: PARRY','2.5s window \u00b7 next shot aims at crosshair \u00b7 120 dmg \u00b7 6.4s cd'],
+              twinsai:['E / F / MELEE RMB: PARRY','2.5s guard \u00b7 reflects every shot toward crosshair \u00b7 120 dmg \u00b7 6.4s cd'],
               bdaggers:['E / F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite']}[k];
     if(ab) rows.push(ab);
     return rows;

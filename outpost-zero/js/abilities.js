@@ -82,11 +82,13 @@ function meleeAbility(){
     }
     addShake(10); sfx('die');
     abilityCD[k]=now+abilityCdOf(k);
-  } else if(k==='twinsai'){                          // PARRY stance: reflect the next incoming shot
+  } else if(k==='twinsai'){                          // PARRY stance: reflect incoming shots for the full window
     if(!ready){ sfx('dry'); return; }
     activated=true;
-    parryUntil=now+TWIN_SAI_PARRY_MS; parrySeq++;    // sequence lets the Party host consume exactly one guard
-    player.swingT=now; player.swingA=0; player.swingArc=6.3; player.swingR=60; player.swingDur=200;
+    parryUntil=now+TWIN_SAI_PARRY_MS; parrySeq++;    // Party validates one timed activation per cooldown
+    // Keep the guard centered on the live crosshair instead of borrowing the
+    // chainsaw's full-circle swing animation.
+    player.swingT=now; player.swingA=aimAngle(); player.swingSide=1; player.swingArc=0.6; player.swingR=60; player.swingDur=160;
     for(let i=0;i<14;i++) particles.push({x:player.x,y:player.y,
       vx:Math.cos(i/14*TAU)*rand(1.5,4), vy:Math.sin(i/14*TAU)*rand(1.5,4),
       life:340,max:340,col:'#bfe8ff',size:2.6});

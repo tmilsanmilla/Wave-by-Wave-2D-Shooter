@@ -489,7 +489,7 @@ function drawWorld(){
   if(sw!==null){
     // sweep the blade through the swing arc: wind up behind, whip across, settle.
     const arc=player.swingArc||1.2;
-    const side=Math.sign(player.swingA - aimAngle()) || 1;   // which way this swing goes
+    const side=player.swingSide||Math.sign(player.swingA-aimAngle())||1; // which way this swing goes
     const ease=sw<0.25 ? -(sw/0.25)*0.35                     // short wind-up
                        : -0.35 + ((sw-0.25)/0.75)*1.35;      // then the sweep through
     const thrust=(player.swingArc<0.6);                      // knife-style stab, not a sweep
@@ -522,6 +522,20 @@ function drawWorld(){
       ctx.fillStyle='#a9c4d6';
       ctx.save(); ctx.translate(26,-7); ctx.rotate(0.5);
       ctx.fillRect(-5,-10,10,20); ctx.restore();                              // head
+    } else if(player.cur==='twinsai'){
+      // Two real forward-facing sai. The whole player weapon transform is
+      // already rotated to aimAngle(), so both points track the crosshair.
+      const guard=now<parryUntil?0.34:0;
+      for(const side of [-1,1]){
+        ctx.save();ctx.rotate(side*guard);ctx.translate(0,side*5);
+        ctx.strokeStyle='#3a4239';ctx.lineWidth=3.4;
+        ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(12,0);ctx.stroke();          // wrapped grip
+        ctx.fillStyle='#c9d6e2';
+        ctx.beginPath();ctx.moveTo(11,-2.5);ctx.lineTo(35,0);ctx.lineTo(11,2.5);ctx.closePath();ctx.fill();
+        ctx.strokeStyle='#8fb3c9';ctx.lineWidth=2.2;
+        ctx.beginPath();ctx.moveTo(13,0);ctx.lineTo(18,-6);ctx.moveTo(13,0);ctx.lineTo(18,6);ctx.stroke(); // side prongs
+        ctx.restore();
+      }
     } else {                                                                 // chainsaw
       ctx.fillStyle='#3a4a54'; ctx.fillRect(3,-4.5,11,9);                    // engine body
       ctx.fillStyle='#8fb3c9'; ctx.fillRect(14,-2.8,18,5.6);                 // bar

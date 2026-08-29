@@ -172,7 +172,8 @@ function arenaApplyMapVoteOpen(p){
   if(epoch>arena.matchEpoch){
     arena.matchEpoch=epoch; arena.round=0; arena.scores=Object.assign({},p.scores||{});
     arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
-    arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.hitSeq=0; arena.winRecorded=false;
+    arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();
+    arena.hitSeq=0; arena.sentHitKinds=new Map(); arena.winRecorded=false;
     arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
     arenaResetMapVote('arena');
   }
@@ -1051,7 +1052,8 @@ function arenaApplyRematchStart(p){
   if(!authUser||!arena.opponent||p.from!==arena.hostId||epoch<=arena.matchEpoch) return false;
   arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
-  arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.hitSeq=0; arena.pendingUnscopedHits=new Set();
+  arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();
+  arena.hitSeq=0; arena.sentHitKinds=new Map(); arena.pendingUnscopedHits=new Set();
   arena.seenShots=new Set(); arena.shotSeq=0; arena.remoteShots=[];
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.winRecorded=false;
@@ -1077,6 +1079,7 @@ function arenaApplyRoundStart(p){
   resetWeaponGimmickState();
   clearCameraShake();
   arena.round=p.round; arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=false;
+  arena.seenHits=new Set();arena.receivedHitKinds=new Map();arena.hitSeq=0;arena.sentHitKinds=new Map();
   arena.seenShots=new Set();arena.shotSeq=0;arena.remoteShots=[];
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.pendingUnscopedHits=new Set();
@@ -1175,26 +1178,64 @@ function arenaCelebrateConfirmedUnscopedKill(raw,killerId){
   return triggerUnscopedSniperKillCelebration(1,0,{weapon:'sniper',unscopedShot:true,
     confirmationId:'arena:'+arena.matchEpoch+':'+arena.round+':'+cause.killHitId});
 }
-function arenaSendHit(dmg,kind){
+function arenaRememberSentHit(id,kind){
+  if(!(arena.sentHitKinds instanceof Map))arena.sentHitKinds=new Map();
+  arena.sentHitKinds.set(String(id),String(kind||'shot'));
+  if(arena.sentHitKinds.size>500)arena.sentHitKinds=new Map([...arena.sentHitKinds].slice(-250));
+}
+function arenaRememberReceivedHit(id,kind){
+  if(!(arena.receivedHitKinds instanceof Map))arena.receivedHitKinds=new Map();
+  arena.receivedHitKinds.set(String(id),String(kind||'shot'));
+  if(arena.receivedHitKinds.size>500)arena.receivedHitKinds=new Map([...arena.receivedHitKinds].slice(-250));
+}
+function arenaIncomingParryValid(p){
+  if(!p||String(p.kind||'')!=='parry'||+p.parryDepth!==1||!Number.isSafeInteger(+p.parryDepth)||
+     +p.dmg!==Math.min(120,ARENA_HP))return false;
+  const root=String(p.rootHitId||'');
+  if(!root||root.length>120||!(arena.sentHitKinds instanceof Map)||!arena.sentHitKinds.has(root))return false;
+  return arena.sentHitKinds.get(root)!=='parry';          // a reflected bolt can never become a new reflection root
+}
+function arenaSendHit(dmg,kind,meta){
+  meta=meta||{};
   if(!arenaCanAct()||!arena.opponent) return;
-  const hit=clamp(dmg,1,ARENA_HP);
-  addDamageNumber(arena.opponent,hit,kind==='crit'||kind==='parry');
+  const hitKind=String(kind||'shot'),hit=hitKind==='parry'?Math.min(120,ARENA_HP):clamp(dmg,1,ARENA_HP);
+  let parryMeta=null;
+  if(hitKind==='parry'){
+    const root=String(meta&&meta.rootHitId||''),depth=+(meta&&meta.parryDepth);
+    // Only a real projectile spawned from a hit this client already consumed
+    // may create a reflected hit. This also fixes the reflection depth at one.
+    if(depth!==1||!Number.isSafeInteger(depth)||!root||root.length>120||
+       !(arena.seenHits instanceof Set)||!arena.seenHits.has(root)||
+       !(arena.receivedHitKinds instanceof Map)||!arena.receivedHitKinds.has(root)||
+       arena.receivedHitKinds.get(root)==='parry')return;
+    parryMeta={rootHitId:root,parryDepth:1};
+  }
+  addDamageNumber(arena.opponent,hit,hitKind==='crit'||hitKind==='parry');
   const id=authUser.id+':'+arena.round+':'+(++arena.hitSeq);
-  if(kind==='unscoped_sniper'){
+  if(hitKind==='unscoped_sniper'){
     if(!(arena.pendingUnscopedHits instanceof Set))arena.pendingUnscopedHits=new Set();
     arena.pendingUnscopedHits.add(id);
     if(arena.pendingUnscopedHits.size>64)arena.pendingUnscopedHits=new Set([...arena.pendingUnscopedHits].slice(-32));
   }
-  arenaSend('hit',{to:arena.opponent.id,id,dmg:hit,kind:kind||'shot'});
+  const packet=Object.assign({to:arena.opponent.id,id,dmg:hit,kind:hitKind},parryMeta||{});
+  arenaRememberSentHit(id,hitKind);arenaSend('hit',packet);
   return id;
 }
 function arenaTakeHit(p){
-  if(Math.floor(+p.epoch||0)!==arena.matchEpoch||p.round!==arena.round||!arenaCanAct()||arena.seenHits.has(p.id)) return;
-  arena.seenHits.add(p.id); if(arena.seenHits.size>500) arena.seenHits=new Set([...arena.seenHits].slice(-250));
+  const id=String(p&&p.id||'');
+  if(!id||id.length>120||Math.floor(+p.epoch||0)!==arena.matchEpoch||p.round!==arena.round||
+     !arenaCanAct()||arena.seenHits.has(id)) return;
+  arena.seenHits.add(id); if(arena.seenHits.size>500) arena.seenHits=new Set([...arena.seenHits].slice(-250));
   const dmg=clamp(+p.dmg||0,0,ARENA_HP); if(!dmg) return;
+  const reflected=String(p.kind||'')==='parry';
+  arenaRememberReceivedHit(id,reflected?'parry':String(p.kind||'shot'));
+  if(reflected&&!arenaIncomingParryValid(p))return;
   if(now<parryUntil){
-    parryUntil=0;
-    arenaSendHit(dmg,'parry');
+    // The stance guards every unique hit for its full 2.5 seconds. Ordinary
+    // shots become real, aimed projectiles, so a bad crosshair can miss. A
+    // depth-one reflection is absorbed here and never bounced a second time.
+    if(!reflected&&typeof spawnTwinSaiReflection==='function')
+      spawnTwinSaiReflection(player.x,player.y,120,{rootHitId:id,parryDepth:1,online:true});
     burst(player.x,player.y,'#bfe8ff',10,4); addShake(3); sfx('hit');
     waveMsg='TWIN SAI PARRY'; waveMsgT=now+900;
     return;

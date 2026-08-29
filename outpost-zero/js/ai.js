@@ -1241,11 +1241,11 @@ function arenaBotResolve(winnerId){
     sfx(winnerId===LOCAL_DUEL_PLAYER?'pickup':'die');
   }
 }
-function arenaHitOpponent(dmg,kind){
+function arenaHitOpponent(dmg,kind,meta){
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()) return;
   if(!isBotArena()){
     const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
-    arenaSendHit(hit,kind); return;
+    arenaSendHit(hit,kind,meta); return;
   }
   if(!arenaCanAct()||!arena.opponent||arena.roundResolved) return;
   const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
@@ -1264,7 +1264,7 @@ function arenaBotHitPlayer(dmg){
   if(!isBotArena()||!arenaCanAct()||arena.roundResolved) return;
   const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
   if(now<parryUntil){
-    parryUntil=0;arenaHitOpponent(120,'parry');
+    if(typeof spawnTwinSaiReflection==='function')spawnTwinSaiReflection(player.x,player.y,120);
     burst(player.x,player.y,'#bfe8ff',10,4);addShake(3);sfx('hit');
     waveMsg='TWIN SAI PARRY';waveMsgT=now+900;return;
   }

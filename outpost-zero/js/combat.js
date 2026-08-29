@@ -36,19 +36,35 @@ function cycleWeapon(){
   }
   if(loadout.melee&&WEAPONS[loadout.melee]) switchWeapon(loadout.melee);
 }
+function spawnTwinSaiReflection(x,y,damage=120,meta){
+  meta=meta||{};
+  // A parry is a real projectile, not guaranteed damage. Start it at the
+  // interception point and use the live crosshair so changing aim between
+  // incoming rounds changes each reflected round's path.
+  const target=screenToWorld(mouse.x,mouse.y),bounds=activeArenaBounds();
+  target.x=clamp(target.x,bounds.left+1,bounds.right-1);
+  target.y=clamp(target.y,bounds.top+1,bounds.bottom-1);
+  const a=Math.atan2(target.y-y,target.x-x),rootHitId=String(meta.rootHitId||'').slice(0,120);
+  const reflected={x,y,vx:Math.cos(a)*22,vy:Math.sin(a)*22,dmg:clamp(+damage||0,1,ARENA_HP),pierce:2,
+    life:900,rng:900,dist:0,fall:1,fg:4,col:'#bfe8ff',weapon:'twinsai',parryReflect:true,
+    parryRootHitId:rootHitId,parryDepth:1};
+  bullets.push(reflected);return reflected;
+}
 function meleeSwing(w, mul, flurryGenerated=false){
   if(player.equipEnd>now) return;                    // still drawing the weapon
   if(tutorialOn&&typeof tutorialRecordMeleeSwing==='function') tutorialRecordMeleeSwing();
   const arc=w.arc*wm(player.cur).arc;
   let base=aimAngle();
-  // combo weapons (daggers): alternate a left then a right slash, each offset half an arc
+  let swingSide=1;
+  // Combo weapons alternate the visible slash. Twin Sai collision stays
+  // centered on the crosshair; wide Burning Dagger swings keep their offset.
   if(w.combo){
-    const side = (comboStep%2===0) ? -1 : 1;
-    base += side*arc*0.5;
+    swingSide=(comboStep%2===0)?-1:1;
+    if(!w.sai)base+=swingSide*arc*0.5;
     comboStep++;
     comboNextT = (comboStep%2===1) ? now+110 : 0;   // queue the second half of the combo
   }
-  player.swingT=now; player.swingA=base; player.swingArc=arc; player.swingR=w.range;
+  player.swingT=now; player.swingA=base; player.swingSide=swingSide; player.swingArc=arc; player.swingR=w.range;
   player.swingDur=clamp(w.fireRate*0.55, 90, 260);   // faster weapons = snappier visible swing
   const targets=[];
   for(const e of enemies){
@@ -1057,7 +1073,9 @@ function update(dtms){
         const ar=arena.opponent.r||15, rr=ar+4+(b.fg||0);
         if(dist2(b.x,b.y,arena.opponent.x,arena.opponent.y)<rr*rr){
           const hdmg=b.dmg*dmgMul(b);
-          arenaHitOpponent(hdmg,b.weapon==='sniper'&&b.unscopedShot?'unscoped_sniper':'shot'); b.arenaHit=true;
+          const hitKind=b.parryReflect?'parry':(b.weapon==='sniper'&&b.unscopedShot?'unscoped_sniper':'shot');
+          const hitMeta=b.parryReflect?{rootHitId:b.parryRootHitId,parryDepth:b.parryDepth}:undefined;
+          arenaHitOpponent(hdmg,hitKind,hitMeta); b.arenaHit=true;
           burst(b.x,b.y,'#d05548',5,3); sfx('hit');
           if(b.pierce>0) b.pierce--; else dead=true;
           if(dead) break;
@@ -1126,17 +1144,9 @@ function update(dtms){
       }
       if(!b.h&&pointInRects(b.x,b.y)){ dead=true; break; }
       if(now<parryUntil&&dist2(b.x,b.y,player.x,player.y)<(player.r+42)*(player.r+42)){
-        // PARRY: aim from the intercept point to the live crosshair, so the
-        // reflected bolt goes exactly where the player is pointing.
-        const target=screenToWorld(mouse.x,mouse.y);
-        const reflectBounds=activeArenaBounds();
-        target.x=clamp(target.x,reflectBounds.left+1,reflectBounds.right-1);
-        target.y=clamp(target.y,reflectBounds.top+1,reflectBounds.bottom-1);
-        const a=Math.atan2(target.y-b.y,target.x-b.x);
-        bullets.push({x:b.x,y:b.y,vx:Math.cos(a)*22,vy:Math.sin(a)*22,dmg:120,pierce:2,
-                      life:900,rng:900,dist:0,fall:1,fg:4,col:'#bfe8ff'});
+        spawnTwinSaiReflection(b.x,b.y,120);
         burst(b.x,b.y,'#bfe8ff',10,4); sfx('hit'); addShake(3);
-        parryUntil=0; dead=true;                         // one reflect per activation
+        dead=true;                                      // the guard remains active for its full timed window
         break;
       }
       const shotR=3+(b.botArena?(b.fg||0):0);
