@@ -1230,8 +1230,8 @@ function arenaTakeHit(p){
   const reflected=String(p.kind||'')==='parry';
   arenaRememberReceivedHit(id,reflected?'parry':String(p.kind||'shot'));
   if(reflected&&!arenaIncomingParryValid(p))return;
-  if(now<parryUntil){
-    // The stance guards every unique hit for its full 2.5 seconds. Ordinary
+  if(now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS){
+    // The stance guards every unique hit for its full 1 second. Ordinary
     // shots become real, aimed projectiles, so a bad crosshair can miss. A
     // depth-one reflection is absorbed here and never bounced a second time.
     if(!reflected&&typeof spawnTwinSaiReflection==='function')

@@ -461,7 +461,7 @@ function drawWorld(){
 
   // player
   const w=WEAPONS[player.cur], ang=aimAngle();
-  if(now<parryUntil){                               // Twin Sai parry remains visibly active
+  if(now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS){ // Twin Sai parry remains visibly active
     const remain=clamp((parryUntil-now)/TWIN_SAI_PARRY_MS,0,1);
     ctx.strokeStyle='rgba(191,232,255,'+(0.45+remain*0.45)+')';
     ctx.lineWidth=3/zoom; ctx.beginPath();
@@ -525,7 +525,7 @@ function drawWorld(){
     } else if(player.cur==='twinsai'){
       // Two real forward-facing sai. The whole player weapon transform is
       // already rotated to aimAngle(), so both points track the crosshair.
-      const guard=now<parryUntil?0.34:0;
+      const guard=now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS?0.34:0;
       for(const side of [-1,1]){
         ctx.save();ctx.rotate(side*guard);ctx.translate(0,side*5);
         ctx.strokeStyle='#3a4239';ctx.lineWidth=3.4;
@@ -841,7 +841,7 @@ function drawHUD(){
       const req=teraHitsRequired(), left=Math.max(0,req-teraHitCharge);
       frac=clamp(teraHitCharge/req,0,1);
       lbl=left ? left+' HIT'+(left===1?'':'S') : 'FLURRY READY';
-    } else if(player.cur==='twinsai' && now<parryUntil){
+    } else if(player.cur==='twinsai' && now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS){
       const left=Math.max(0,parryUntil-now);
       frac=clamp(left/TWIN_SAI_PARRY_MS,0,1);
       lbl='PARRY '+(left/1000).toFixed(1)+'s';

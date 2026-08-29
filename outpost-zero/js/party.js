@@ -1292,9 +1292,9 @@ function partyCpuHostTryParry(target,shot){
   // cannot create another projectile or turn into delayed damage after expiry.
   if(partyCpuMatch.seenReflections.has(originalId))return true;
   const local=target.id===cpuTeamLocalId();
-  const active=local
-    ? now<parryUntil
-    : cpuTeamClock()<(target.parryUntil||0);
+  const nowMs=cpuTeamClock(), active=local
+    ? (now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS)
+    : (nowMs<(target.parryUntil||0)&&nowMs>=(target.parryUntil||0)-TWIN_SAI_PARRY_MS);
   if(!active) return false;
   const source=partyCpuMatch.bots.find(b=>b.id===String(shot.ownerId||'')&&b.team==='B');
   const interceptX=+shot.x,interceptY=+shot.y;

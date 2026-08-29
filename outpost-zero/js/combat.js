@@ -1143,7 +1143,8 @@ function update(dtms){
         dead=true; break;
       }
       if(!b.h&&pointInRects(b.x,b.y)){ dead=true; break; }
-      if(now<parryUntil&&dist2(b.x,b.y,player.x,player.y)<(player.r+42)*(player.r+42)){
+      if(now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS&&
+          dist2(b.x,b.y,player.x,player.y)<(player.r+42)*(player.r+42)){
         spawnTwinSaiReflection(b.x,b.y,120);
         burst(b.x,b.y,'#bfe8ff',10,4); sfx('hit'); addShake(3);
         dead=true;                                      // the guard remains active for its full timed window
