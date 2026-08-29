@@ -134,9 +134,10 @@ function setSliderFromMouse(){
   else { sfxVol=v; if(sfxGain) sfxGain.gain.value=v; }
   saveMeta();                                        // volumes follow the account too
 }
-// pull every vault weapon/utility into the live rosters so all categories show everything
+// Pull published vault gear into live rosters; next-season previews remain available to admins in Test Mode.
 function injectVault(){
   for(const k in VAULT_WEAPONS){
+    if(!FALL_KEYS.includes(k)&&!savedWeaponPublished(k))continue;
     if(!WEAPONS[k]) WEAPONS[k]=VAULT_WEAPONS[k];
     const slot=VAULT_SLOTS[k];
     const r = slot==='primary'?PRIMARIES : slot==='secondary'?SECONDARIES : slot==='melee'?MELEES : null;
@@ -144,6 +145,7 @@ function injectVault(){
     if(!WKEYS.includes(k)) WKEYS.push(k);
   }
   for(const k in VAULT_UTILITIES){
+    if(!FALL_KEYS.includes(k)&&!savedWeaponPublished(k))continue;
     if(!UTILITIES[k]) UTILITIES[k]=VAULT_UTILITIES[k];
     if(!UTILKEYS.includes(k)) UTILKEYS.push(k);
   }
@@ -151,10 +153,10 @@ function injectVault(){
 function setTestMode(on){
   if(on && !isAdmin()){ testMode=false; syncFallAccess(); sfx('dry'); return; }
   testMode=!!on;
-  if(testMode){ adminUsed=true; injectVault(); }     // admin-only: every weapon free and usable for testing
+  if(testMode){ adminUsed=true; injectVault(); }     // admin-only: published gear plus next-season previews
   else for(const k in VAULT_SLOTS)
     if(FALL_KEYS.includes(k) || !savedWeaponPublished(k)) unpublishVaultKey(k); // restore public roster
   syncFallAccess();
-  waveMsg='\uD83E\uDDEA TEST MODE '+(testMode?'ON \u2014 every weapon free':'OFF'); waveMsgT=now+1600;
+  waveMsg='\uD83E\uDDEA TEST MODE '+(testMode?'ON \u2014 published gear + season previews':'OFF'); waveMsgT=now+1600;
 }
 function isStorageKey(k){ return !!(VAULT_WEAPONS[k] || VAULT_UTILITIES[k]); }

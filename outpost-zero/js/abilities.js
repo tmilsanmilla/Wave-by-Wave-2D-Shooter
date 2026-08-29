@@ -4,6 +4,9 @@ function meleeAbility(){
   if(state!=='play') return;
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
   const k=player.cur;
+  if(typeof isLocked==='function'&&isLocked(k)){
+    if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
+  }
   const ready = now >= (abilityCD[k]||0);
   let activated=false;
   if(k==='scythe'){                                  // reaper dash: far, slow to restore

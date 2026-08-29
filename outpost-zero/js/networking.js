@@ -197,7 +197,7 @@ async function initAuth(){
         syncFallAccess();
         fetchAdmins(); fetchBanners(); fetchMsgs(); fetchPrices();
         profileLoaded=false;
-        fetchProfile(profileUserId,profileRequestVersion).then(async profileReady=>{ // wait for account progress first
+        Promise.resolve(fetchWeaponDefs()).then(()=>fetchProfile(profileUserId,profileRequestVersion)).then(async profileReady=>{ // publication authority, then account progress
           // Auth may change while the profile request is in flight. A response
           // for the previous account must never open rewards or onboarding for
           // the account that is signed in now.
@@ -208,7 +208,7 @@ async function initAuth(){
           if(profileRequestVersion!==authProfileRequestVersion||!authUser||String(authUser.id)!==profileUserId)return;
           continueAfterUsernameGate(profileUserId);
         });
-        fetchScoreReqs(); fetchMyBan(); fetchWeaponDefs(); fetchOwnBest();
+        fetchScoreReqs(); fetchMyBan(); fetchOwnBest();
         setupRealtime();                              // re-subscribe: RLS scope changes with the signed-in user
         if(authUser&&!recovering) beginUsernameClaimCheck();
         if(authUser) fetchSocial(true);
@@ -257,6 +257,9 @@ function setupRealtime(){
       if(authUser && changed==='outpost-zero-referral:'+authUser.id) payReferralClaims();
     });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_prices'}, ()=>{ rtBump(); fetchPrices(); });
+    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_defs'},   payload=>{
+      rtBump();if(typeof applyWeaponDefRealtime==='function')applyWeaponDefRealtime(payload);fetchWeaponDefs();
+    });
     // admins only: roster changes, inbox, report feed
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'admin_msgs'},    ()=>{ rtBump(); if(isAdmin()) fetchMsgs(); });
     ch=ch.on('postgres_changes', {event:'INSERT', schema:'public', table:'reports'},  ()=>{ rtBump(); if(isMainAdmin()) fetchUpdatesFeed(); });

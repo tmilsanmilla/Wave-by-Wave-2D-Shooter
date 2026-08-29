@@ -100,7 +100,7 @@ function normalizeOwnTemporaryWeaponGrants(rows){
   for(const row of Array.isArray(rows)?rows:[]){
     const key=String(row&&row.weapon_key||'').trim().toLowerCase(),expiry=Date.parse(row&&row.expires_at||''),server=Date.parse(row&&row.server_now||'');
     const remaining=expiry-server;
-    if(!GEM_SHOP.some(item=>item.key===key)||!Number.isFinite(expiry)||!Number.isFinite(server)||remaining<=0)continue;
+    if(!GEM_SHOP.some(item=>item.key===key)||!isWeaponPublished(key)||!Number.isFinite(expiry)||!Number.isFinite(server)||remaining<=0)continue;
     out[key]={expiresAt:new Date(expiry).toISOString(),deadline:receipt+remaining};
   }
   return out;
@@ -110,7 +110,8 @@ function syncTemporaryWeaponAccess(){
   for(const key of temporaryGrantKeys()){
     const deadline=+(temporaryWeaponGrants[key]&&temporaryWeaponGrants[key].deadline);
     if(!Number.isFinite(deadline)||deadline<=stamp){delete temporaryWeaponGrants[key];expired.push(key);continue;}
-    const item=GEM_SHOP.find(entry=>entry.key===key);if(item)gemUnlock(item);
+    const item=GEM_SHOP.find(entry=>entry.key===key);
+    if(item && isWeaponPublished(item.key)) gemUnlock(item);
   }
   if(expired.length)dropExpiredTemporaryLoadout(expired);
   return expired;
@@ -163,7 +164,10 @@ function temporaryWeaponLoadoutReady(){
 }
 function temporaryWeaponLoadoutGrantKeys(){
   const out=[];
-  for(const slot of LOADOUT_SLOTS){const key=loadout&&loadout[slot];if(key&&!gemOwned[key]&&temporarilyOwnsWeapon(key))out.push(key);}
+  for(const slot of LOADOUT_SLOTS){
+    const key=loadout&&loadout[slot];
+    if(key&&!gemOwned[key]&&temporarilyOwnsWeapon(key)&&!isLocked(key)) out.push(key);
+  }
   return out;
 }
 function verifyTemporaryWeaponLoadoutForLaunch(onVerified,onFailed){
@@ -177,7 +181,8 @@ function verifyTemporaryWeaponLoadoutForLaunch(onVerified,onFailed){
     if(temporaryWeaponLaunchVerification!==token)return;
     temporaryWeaponLaunchVerification=null;
     const same=ok&&authUser&&String(authUser.id||'')===userId&&version===authProfileRequestVersion&&
-      LOADOUT_SLOTS.map(slot=>loadout&&loadout[slot]||'').join('|')===kit&&keys.every(key=>temporarilyOwnsWeapon(key)||!!gemOwned[key]);
+      LOADOUT_SLOTS.map(slot=>loadout&&loadout[slot]||'').join('|')===kit&&
+      keys.every(key=>!isLocked(key)&&(temporarilyOwnsWeapon(key)||!!gemOwned[key]));
     if(same){if(typeof onVerified==='function')onVerified();}
     else{syncTemporaryWeaponAccess();dropUnownedFromLoadout();if(typeof onFailed==='function')onFailed();}
   });
@@ -187,6 +192,8 @@ const LOADOUT_SLOTS=['primary','secondary','melee','utility'];
 const GUEST_LOADOUT_STORAGE_KEY='oz_loadout_guest_v1',ACCOUNT_LOADOUT_STORAGE_PREFIX='oz_loadout_account_v1:';
 function storedLoadoutSlot(key){
   if(typeof key!=='string'||!key) return null;
+  if(typeof WEAPON_EDITOR_SLOTS==='object'&&Object.prototype.hasOwnProperty.call(WEAPON_EDITOR_SLOTS,key))
+    return WEAPON_EDITOR_SLOTS[key];
   if(PRIMARIES.includes(key)||TEMP_PRIMARY.includes(key)||VAULT_SLOTS[key]==='primary') return 'primary';
   if(SECONDARIES.includes(key)||TEMP_SECONDARY.includes(key)||VAULT_SLOTS[key]==='secondary') return 'secondary';
   if(MELEES.includes(key)||TEMP_MELEE.includes(key)||VAULT_SLOTS[key]==='melee') return 'melee';
@@ -219,11 +226,21 @@ function usableLastLoadoutKey(key,slot){
   if(!key||storedLoadoutSlot(key)!==slot||isLocked(key)) return false;
   return slot==='utility'?!!UTILITIES[key]:!!WEAPONS[key];
 }
+function availableLoadoutFallback(slot){
+  const preferred=SHARED_LOADOUT_DEFAULTS[slot];
+  if(preferred&&usableLastLoadoutKey(preferred,slot))return preferred;
+  const pool=slot==='primary'?[...PRIMARIES,...TEMP_PRIMARY]:
+    slot==='secondary'?[...SECONDARIES,...TEMP_SECONDARY]:
+    slot==='melee'?[...MELEES,...TEMP_MELEE]:
+    slot==='utility'?[...UTILKEYS,...TEMP_UTILITY]:[];
+  return pool.find(key=>usableLastLoadoutKey(key,slot))||null;
+}
 function playableLastLoadout(candidate=lastLoadout){
   const saved=storedLastLoadout(candidate), result={};
   for(const slot of LOADOUT_SLOTS){
     const key=saved[slot];
-    result[slot]=key==null?null:(usableLastLoadoutKey(key,slot)?key:SHARED_LOADOUT_DEFAULTS[slot]);
+    const fallback=typeof availableLoadoutFallback==='function'?availableLoadoutFallback(slot):SHARED_LOADOUT_DEFAULTS[slot];
+    result[slot]=key==null?null:(usableLastLoadoutKey(key,slot)?key:fallback);
   }
   return result;
 }
@@ -245,7 +262,7 @@ function prepareLastLoadoutForAccount(accountId=''){
 }
 function rememberLoadoutSlot(slot,value){
   if(!LOADOUT_SLOTS.includes(slot)) return false;
-  if(value!=null&&storedLoadoutSlot(value)!==slot) return false;
+  if(value!=null&&(storedLoadoutSlot(value)!==slot||isLocked(value))) return false;
   lastLoadout=storedLastLoadout(Object.assign({},lastLoadout,{[slot]:value==null?null:value}));
   saveMeta();
   return true;
@@ -257,7 +274,7 @@ function canRestoreAccountLoadout(){
     !(typeof soloPractice!=='undefined'&&soloPractice)&&!(typeof tryLoadoutBackup!=='undefined'&&tryLoadoutBackup);
 }
 function applyProfile(m){
-  if(!m) return;
+  if(!m) return false;
   profileOwnerUserId=authUser?String(authUser.id||''):profileOwnerUserId;
   // the account is the source of truth for what you own: a purchase made elsewhere arrives,
   // and an item an admin removed actually goes away (a union here would ignore every revoke)
@@ -306,13 +323,14 @@ function applyProfile(m){
   normalizeDailyRewards();
   for(const k in animEquipped){ const id=animEquipped[k];
     if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }
-  syncOwnedWeapons();                                 // otherwise a synced purchase has no card
   lastLoadoutAccountId=authUser?String(authUser.id||''):'';
   // A profile without this field predates shared loadouts. Give that account
   // clean defaults; never adopt another account's or the guest's device kit.
   lastLoadout=m.loadout&&typeof m.loadout==='object'
     ?storedLastLoadout(m.loadout):storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
+  const unpublishedPurged=syncOwnedWeapons();          // purge storage-only items before restoring or exposing them
   if(canRestoreAccountLoadout()) restoreLastLoadoutForMode(pendingGameMode);
+  return unpublishedPurged;
 }
 // an older account may have a leaderboard score but no saved profile yet
 async function fetchOwnBest(){
@@ -346,10 +364,10 @@ async function fetchProfile(expectedUserId,requestVersion){
       // players. Migrate them as already seen instead of surprising everyone
       // with a first-login tutorial after an update.
       onboardingVersion=hasOnboarding ? Math.max(0,Math.floor(Number(data.data.onboardV))) : ONBOARDING_VERSION;
-      applyProfile(data.data); profileLoaded=true; saveMetaLocal();
+      const unpublishedPurged=applyProfile(data.data); profileLoaded=true; saveMetaLocal();
       if(onboardingVersion<ONBOARDING_VERSION) firstAccountTutorialUserId=userId;
       else if(firstAccountTutorialUserId===userId) firstAccountTutorialUserId='';
-      if(migrateGems||resetGems||!hasOnboarding||removeLegacyBotTrain||!hasLoadout) await saveProfile(true); // persist all migration markers
+      if(migrateGems||resetGems||!hasOnboarding||removeLegacyBotTrain||!hasLoadout||unpublishedPurged) await saveProfile(true); // persist all migration markers
     }
     else {                                            // a new account never inherits another account's device gems
       onboardingVersion=0;
@@ -421,8 +439,8 @@ function loadMeta(){
     saveMeta();
   }
   normalizeDailyRewards();
-  saveMetaLocal();                                  // persist the reset marker and reward normalization
-  syncOwnedWeapons();
+  syncOwnedWeapons();                               // clean the local cache; authoritative cloud data is applied after publication sync
+  saveMetaLocal();                                  // persist reset, reward normalization, and ownership cleanup
   restoreLastLoadoutForMode(pendingGameMode);
 }
 function dropUnownedFromLoadout(){                    // a removed weapon must leave your hands too
@@ -433,9 +451,89 @@ function dropUnownedFromLoadout(){                    // a removed weapon must l
   for(const k in animEquipped){ const id=animEquipped[k];
     if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }
 }
-function syncOwnedWeapons(){                          // owned shop weapons must exist in the rosters
-  for(const it of GEM_SHOP) if(gemOwned[it.key]) gemUnlock(it);
+function syncOwnedWeapons(purge=true){                 // owned, published shop weapons must exist in the rosters
+  const publicationReady=typeof weaponDefsLoaded!=='boolean'||weaponDefsLoaded||
+    (typeof sb!=='undefined'&&!sb);
+  const unpublishedPurged=purge&&publicationReady?purgeUnpublishedWeaponState():false;
+  for(const it of GEM_SHOP){
+    if(gemOwned[it.key] && isWeaponPublished(it.key)) gemUnlock(it);
+  }
   syncTemporaryWeaponAccess();
+  return unpublishedPurged;
+}
+function isWeaponPublished(k){
+  if(typeof sb!=='undefined'&&sb&&typeof weaponDefsLoaded==='boolean'&&!weaponDefsLoaded)return false;
+  if(typeof savedWeaponPublished==='function') return !!savedWeaponPublished(k);
+  if(typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)) return false;
+  if(typeof VAULT_ACTIVE!=='undefined' && Object.prototype.hasOwnProperty.call(VAULT_ACTIVE,k)) return !!VAULT_ACTIVE[k];
+  return !!((typeof WEAPONS!=='undefined'&&WEAPONS[k])||(typeof UTILITIES!=='undefined'&&UTILITIES[k]));
+}
+// A stored weapon is not an entitlement. Publication is the hard boundary:
+// legacy profile flags, temporary gifts, remembered kits, and a weapon held
+// during a live unpublish are all revoked together.
+function purgeUnpublishedWeaponState(keys){
+  const candidates=Array.isArray(keys)?keys:[
+    ...Object.keys(typeof WEAPON_EDITOR_SLOTS==='object'?WEAPON_EDITOR_SLOTS:{}),
+    ...Object.keys(gemOwned||{}),...Object.keys(temporaryWeaponGrants||{}),
+    ...LOADOUT_SLOTS.map(slot=>loadout&&loadout[slot]),
+    ...LOADOUT_SLOTS.map(slot=>lastLoadout&&lastLoadout[slot]),
+    typeof player!=='undefined'&&player?player.cur:null,
+  ];
+  const unpublished=new Set(candidates.filter(k=>k&&!isWeaponPublished(k)));
+  const blocked=new Set([...unpublished].filter(k=>
+    !(typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)&&typeof fallEligible==='function'&&fallEligible())));
+  if(!unpublished.size)return false;
+  let changed=false,liveChanged=false,savedChanged=false,currentBlocked=false;
+  for(const key of unpublished){
+    if(gemOwned&&gemOwned[key]){delete gemOwned[key];changed=true;}
+    if(temporaryWeaponGrants&&temporaryWeaponGrants[key]){delete temporaryWeaponGrants[key];changed=true;}
+  }
+  for(const key of blocked){
+    if(typeof player!=='undefined'&&player&&player.cur===key)currentBlocked=true;
+  }
+  if(!blocked.size)return changed;                   // authorized next-season preview; never a permanent entitlement
+  // Stop delayed actions that would otherwise keep healing or dealing damage
+  // after their source item was unpublished during a live game.
+  if(blocked.has('medkit')&&typeof cancelMedHeal==='function')cancelMedHeal();
+  if(blocked.has('revolver')&&typeof cancelFanTheHammer==='function')cancelFanTheHammer(true);
+  if(blocked.has('bdaggers')&&typeof daggersOut!=='undefined')daggersOut=null;
+  if(blocked.has('terafists')&&typeof fistFlurryUntil!=='undefined')fistFlurryUntil=0;
+  if(blocked.has('twinsai')&&typeof parryUntil!=='undefined'){
+    parryUntil=0;if(typeof parrySeq!=='undefined')parrySeq++;
+  }
+  if(blocked.has('chainsaw')&&typeof sawChargeUntil!=='undefined'){
+    sawChargeUntil=0;if(typeof sawChargeTick!=='undefined')sawChargeTick=0;
+  }
+  if(blocked.has('scythe')&&typeof player!=='undefined'&&player){player.dashUntil=0;player.dashSpd=14;}
+  if(typeof loadout!=='undefined'&&loadout)for(const slot of LOADOUT_SLOTS){
+    const key=loadout[slot];
+    if(key&&blocked.has(key)){
+      loadout[slot]=null;liveChanged=true;
+      if(slot==='utility'&&typeof utilityOut!=='undefined')utilityOut=false;
+    }
+  }
+  if(typeof lastLoadout!=='undefined'&&lastLoadout)for(const slot of LOADOUT_SLOTS){
+    if(lastLoadout[slot]&&blocked.has(lastLoadout[slot])){
+      lastLoadout[slot]=typeof availableLoadoutFallback==='function'?availableLoadoutFallback(slot):SHARED_LOADOUT_DEFAULTS[slot];
+      savedChanged=true;changed=true;
+    }
+  }
+  if(currentBlocked&&typeof player!=='undefined'&&player){
+    if(typeof cancelFanTheHammer==='function')cancelFanTheHammer();
+    let next=LOADOUT_SLOTS.slice(0,3).map(slot=>loadout&&loadout[slot]).find(key=>key&&WEAPONS[key]&&!isLocked(key));
+    if(!next){
+      for(const slot of LOADOUT_SLOTS.slice(0,3)){
+        const fallback=typeof availableLoadoutFallback==='function'?availableLoadoutFallback(slot):SHARED_LOADOUT_DEFAULTS[slot];
+        if(fallback){next=fallback;if(typeof loadout!=='undefined'&&loadout){loadout[slot]=fallback;liveChanged=true;}break;}
+      }
+    }
+    if(next&&typeof state!=='undefined'&&state==='play'&&typeof switchWeapon==='function'&&loadout&&
+       [loadout.primary,loadout.secondary,loadout.melee].includes(next))switchWeapon(next);
+    else player.cur=next||'smg';                     // visual fallback stays attack-locked if every slot is unpublished
+  }
+  if(savedChanged&&typeof persistLastLoadoutLocal==='function')persistLastLoadoutLocal();
+  if((liveChanged||savedChanged)&&canRestoreAccountLoadout())restoreLastLoadoutForMode(pendingGameMode);
+  return changed||liveChanged||savedChanged||currentBlocked;
 }
 function gemUnlock(it){
   if(it.slot==='utility'){
@@ -494,9 +592,11 @@ function syncFallAccess(){
   }
 }
 function buyGem(it){
-  if(gemOwned[it.key]){ sfx('dry'); return; }
-  if(gems<it.cost){ sfx('dry'); return; }
-  gems-=it.cost; gemOwned[it.key]=true; gemUnlock(it); saveMeta(); sfx('pickup');
+  const item=GEM_SHOP.find(entry=>entry.key===String(it&&it.key||''));
+  if(!item||!isWeaponPublished(item.key)){sfx('dry');return false;}
+  if(gemOwned[item.key]){ sfx('dry'); return false; }
+  if(gems<item.cost){ sfx('dry'); return false; }
+  gems-=item.cost; gemOwned[item.key]=true; gemUnlock(item); saveMeta(); sfx('pickup'); return true;
 }
 function addCoins(n){ if(sb && !authUser) return; coins+=n; saveMeta(); }   // coins are sign-in only
 function gemRewardsEnabled(){ return !testMode && (!sb||!!authUser); }
@@ -537,8 +637,9 @@ const LOCKED_KEYS = ['fireworks','solarrifle','bdaggers','beachball'];   // seas
 const TEMP_KEYS = ['flamethrower','fireworks','bdaggers','beachball'];  // Summer Flaming Update
 function isLocked(k){
   if(FALL_KEYS.includes(k)) return !fallEligible();  // unreleased: admins in Test Mode only
+  if(typeof isWeaponPublished==='function'&&!isWeaponPublished(k)) return true; // publication outranks ownership, offline preview, and Test Mode
   if(!sb) return false;                              // preview/offline: everything open
-  if(testMode) return false;                         // TEST MODE: every weapon free + usable
+  if(testMode) return false;                         // TEST MODE: published shop gear is free; unpublished gear stays locked
   if(GEM_SHOP.some(it=>it.key===k)) return !gemOwned[k]&&!temporarilyOwnsWeapon(k); // timed gifts never enter gemOwned
   return !authUser && LOCKED_KEYS.includes(k);       // seasonal weapons: sign-in only; utilities free
 }

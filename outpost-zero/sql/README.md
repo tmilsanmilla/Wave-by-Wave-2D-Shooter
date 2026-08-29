@@ -116,9 +116,10 @@ into the SQL Editor.
 
 ## Administration
 
-Administration has three migrations. Administration `01` and `02` are
+Administration has four migrations. Administration `01` and `02` are
 independent; Administration `03` deliberately requires both of them plus
 Social `01` because it unifies their safe events in one private Inbox.
+Administration `04` is the final weapon-publication enforcement layer.
 
 ### Temporary gifts and the private LOG
 
@@ -294,6 +295,28 @@ out/in. Until Administration `03` is installed, the game keeps the prior safe
 banner, Friends, direct-message, and Party-invite views; it hides the targeted
 staff-message composer and never falls back to inserting a notification or
 private message directly.
+
+### Unpublished weapon enforcement
+
+After Administration `01`, `02`, and `03` are installed, paste and run this
+entire file in a new Supabase SQL Editor query:
+
+1. `administration/04-unpublished-weapon-enforcement.sql`
+
+Administration `04` is rerunnable. It makes the saved weapon-editor publish
+flag authoritative for permanent ownership and temporary gifts. ARC Railgun
+defaults to private, so the migration removes any old Railgun ownership/grants
+unless its `weapon_defs` row explicitly says `published = true`. New profile
+writes, admin grants, temporary gifts, stale browser tabs, and direct RPC
+retries cannot add an unpublished weapon back. Unpublishing a weapon also
+cleans existing profile ownership and temporary grants in the same database
+transaction, while publishing it permits future purchases or grants.
+
+The migration adds `weapon_defs` to Supabase Realtime so open games receive
+publish changes immediately. It does not delete weapon definitions or refund
+currency; it removes access only. If Administration `01` and `02` are the last
+files you ran, run the whole `03` file first, then run the whole `04` file in a
+separate query. Do not paste either file into an older migration.
 
 ## AI bot ladder
 

@@ -5,7 +5,29 @@
    intentionally CASUAL: ranked ratings need a trusted game server, not a
    browser that can be edited by either player. */
 const ARENA_FORFEIT_GRACE_MS=5000;
-function arenaLoadoutReady(){ return !!(loadout.primary&&loadout.secondary&&loadout.melee); }
+function arenaLoadoutReady(){
+  return ['primary','secondary','melee'].every(slot=>{
+    const key=loadout&&loadout[slot];
+    const exactSlot=typeof storedLoadoutSlot!=='function'||storedLoadoutSlot(key)===slot;
+    return !!(key&&WEAPONS[key]&&exactSlot&&
+      (typeof isLocked!=='function'||!isLocked(key)));
+  });
+}
+function arenaRemoteLoadout(raw){
+  const result={};
+  for(const slot of ['primary','secondary','melee']){
+    const key=String(raw&&raw[slot]||'');
+    if(!key||!WEAPONS[key]||(typeof storedLoadoutSlot==='function'&&storedLoadoutSlot(key)!==slot)||
+       (typeof isWeaponPublished==='function'&&!isWeaponPublished(key)))return null;
+    result[slot]=key;
+  }
+  return result;
+}
+function remoteCarriedWeapon(loadout,key){
+  key=String(key||'');
+  return !!(WEAPONS[key]&&(typeof isWeaponPublished!=='function'||isWeaponPublished(key))&&loadout&&
+    [loadout.primary,loadout.secondary,loadout.melee].some(value=>String(value||'')===key));
+}
 function arenaGuard(){
   if(!sb||!authUser){
     arenaAuthPending=true; $('aguest').style.display='none';
@@ -253,7 +275,7 @@ const REMOTE_FIREWORK_QUEUE_MAX=24, REMOTE_FIREWORK_FX_MAX=32, REMOTE_FIREWORK_S
 const REMOTE_FIREWORK_FUSE_MS=480, REMOTE_FIREWORK_FX_MS=650;
 function remoteShotWeaponOwned(loadout,weaponId){
   const id=String(weaponId||''),w=WEAPONS[id];
-  if(!w||w.melee||w.firework||!loadout) return false;
+  if(!w||w.melee||w.firework||!loadout||(typeof isWeaponPublished==='function'&&!isWeaponPublished(id))) return false;
   return [loadout.primary,loadout.secondary].some(k=>String(k||'')===id);
 }
 function remoteShotIdValid(id,owner,epoch,round){
@@ -274,7 +296,8 @@ function remoteShotRemember(seen,id){
 }
 function remoteFireworkWeaponOwned(loadout,weaponId){
   const id=String(weaponId||''),w=WEAPONS[id];
-  return !!(id==='fireworks'&&w&&w.firework&&!w.melee&&loadout&&
+  return !!(id==='fireworks'&&w&&w.firework&&!w.melee&&
+    (typeof isWeaponPublished!=='function'||isWeaponPublished(id))&&loadout&&
     [loadout.primary,loadout.secondary].some(k=>String(k||'')===id));
 }
 function remoteFireworkIdValid(id,owner,epoch,round){
@@ -520,6 +543,7 @@ function arenaApplyForfeitResult(p){
     reason:String(p.reason||'disconnect').slice(0,24)};
   if(winner===me&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(); }
   if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
+  if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
   practiceMode=null; state='select'; selPage='arena'; menuOpen=false; aiming=false; rmbAim=false;
   resetHeldGameplayInput();
   resetWeaponGimmickState();
@@ -674,8 +698,9 @@ function arenaHazardSyncTick(clock=Date.now()){
   }
 }
 function arenaOwnPresence(){
+  const valid=arenaLoadoutReady();
   return {id:authUser.id,name:displayName(authUser),joined:arena.joinedAt||Date.now(),host:!!arena.wantsHost,
-          ready:!!arena.localReady,primary:loadout.primary,secondary:loadout.secondary,melee:loadout.melee};
+          ready:valid&&!!arena.localReady,primary:valid?loadout.primary:'',secondary:valid?loadout.secondary:'',melee:valid?loadout.melee:''};
 }
 function arenaRefreshUsername(){
   if(!authUser||!arena) return false;
@@ -870,15 +895,17 @@ function arenaMatchPresenceSync(ch){
   }
   if(!om){ arena.status=arena.mode==='queue'?'Waiting for matched player to connect...':'Share room code '+arena.room+' with your friend.'; return; }
   if(arena.networkHold) arenaClearDisconnectHold(true);
-  arena.opponent=Object.assign(oldOpp||{x:WORLD.w/2+380,y:WORLD.h/2,tx:WORLD.w/2+380,ty:WORLD.h/2,angle:Math.PI,hp:ARENA_HP,cur:om.primary||'ar',lastSeen:Date.now()},
-                               {id:om.id,name:om.name||'opponent',loadout:{primary:om.primary,secondary:om.secondary,melee:om.melee}});
+  const remoteKit=typeof arenaRemoteLoadout==='function'?arenaRemoteLoadout(om):
+    {primary:om.primary,secondary:om.secondary,melee:om.melee};
+  arena.opponent=Object.assign(oldOpp||{x:WORLD.w/2+380,y:WORLD.h/2,tx:WORLD.w/2+380,ty:WORLD.h/2,angle:Math.PI,hp:ARENA_HP,cur:remoteKit&&remoteKit.primary||'ar',lastSeen:Date.now()},
+                               {id:om.id,name:om.name||'opponent',loadout:remoteKit||{primary:'ar',secondary:'m9',melee:'knife'},remoteLoadoutValid:!!remoteKit});
   // Stay visible in the quick queue until both confirmed IDs have actually
   // arrived in the match room. This closes the one-sided transition race.
   if(arena.mode==='queue'&&arena.expectedIds&&arena.expectedIds.every(id=>chosen.some(x=>String(x.id)===String(id)))&&arena.queueChannel){
     arenaDropChannel(arena.queueChannel); arena.queueChannel=null;
   }
   arena.hostId=(chosen.find(x=>x.host)||chosen.slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))[0]).id;
-  arena.remoteReady=!!om.ready;
+  arena.remoteReady=!!om.ready&&!!remoteKit;
   if(!['match_end','map_vote','map_reveal'].includes(arena.phase)) arena.phase=arena.active?arena.phase:'lobby';
   if(arena.phase==='match_end'&&arena.forfeitPacket&&String(arena.forfeitPacket.winner)===String(authUser.id))
     arenaSend('forfeit_result',arena.forfeitPacket);
@@ -974,7 +1001,11 @@ function arenaReceive(event,p){
     const ty=clamp(Number.isFinite(+p.y)?+p.y:r.ty,bounds.top+margin,bounds.bottom-margin);
     if(portalSeq>oldPortalSeq||Math.hypot(tx-r.x,ty-r.y)>180){ r.x=tx; r.y=ty; }
     r.tx=tx; r.ty=ty; r.portalSeq=portalSeq;
-    r.angle=Number.isFinite(+p.angle)?+p.angle:r.angle; r.cur=WEAPONS[p.cur]?p.cur:r.cur;
+    r.angle=Number.isFinite(+p.angle)?+p.angle:r.angle;
+    const carried=typeof remoteCarriedWeapon==='function'
+      ?remoteCarriedWeapon(r.loadout,p.cur)
+      :!!WEAPONS[p.cur];
+    r.cur=carried?p.cur:r.cur;
     r.hp=clamp(+p.hp||0,0,ARENA_HP); r.lastSeen=Date.now();
     if(authUser.id===arena.hostId&&r.hp<=0){
       if(arenaHazardCauseValid(p)) arenaHostRecordHazardHp(p.hazardEventId,p.hazardTntId,r.id,0);
@@ -1031,6 +1062,10 @@ function arenaApplyRematchStart(p){
 }
 function arenaApplyRoundStart(p){
   if(!p||!arena.opponent) return;
+  if(!arenaLoadoutReady()||arena.opponent.remoteLoadoutValid===false||
+     (typeof arenaRemoteLoadout==='function'&&!arenaRemoteLoadout(arena.opponent.loadout))){
+    leaveArena('A selected weapon is no longer published or available.',true);return false;
+  }
   const epoch=Math.floor(+p.epoch||0);
   if(epoch>arena.matchEpoch) arenaApplyRematchStart(p); // also recovers if rematch_start arrives late
   if(epoch!==arena.matchEpoch||p.round<=arena.round) return;
@@ -1051,7 +1086,8 @@ function arenaApplyRoundStart(p){
   arena.roundStartAt=Date.now()+startDelay; arena.roundEndAt=arena.roundStartAt+ARENA_ROUND_MS; arena.nextRoundAt=0; arena.phase='countdown';
   if(!arena.active){
     arena.savedUtility=loadout.utility; loadout.utility=null;
-    startGame(); practiceMode='arena'; arena.active=true;
+    if(startGame()===false){leaveArena('A selected weapon is no longer available.',true);return false;}
+    practiceMode='arena'; arena.active=true;
   }
   perks.maxhp=ARENA_HP; player.hp=ARENA_HP; player.hurtCd=0; player.hurtFlash=0;
   bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; damageNumbers=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[];
@@ -1210,6 +1246,7 @@ function arenaApplyRoundResult(p){
     arena.phase='match_end'; arena.active=false; arena.rematchVotes=new Set();
     if(p.winner===authUser.id&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(); }
     if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
+    if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
     practiceMode=null; state='select'; selPage='arena'; menuOpen=false;
     arena.status=p.winner===authUser.id?'MATCH WON!':'MATCH LOST.'; sfx(p.winner===authUser.id?'pickup':'die');
   } else {
@@ -1257,6 +1294,7 @@ function leaveArena(status,toHub){
   if(aiLearningSavedLoadout) loadout={primary:aiLearningSavedLoadout.primary||null,
     secondary:aiLearningSavedLoadout.secondary||null,melee:aiLearningSavedLoadout.melee||null,
     utility:aiLearningSavedLoadout.utility||null};
+  if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
   if(practiceMode==='arena'){
     practiceMode=null;
     enemies=[]; bullets=[]; ebullets=[]; pickups=[]; damageNumbers=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[]; splitBalls=[];

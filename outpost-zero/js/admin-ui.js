@@ -441,7 +441,7 @@ function archClick(){
   }
 }
 let storageTab='storage';
-let weaponEditOpen=false, weaponEditKey=null, weaponEditDraft=null, weaponEditRects=[], weaponDefs={};
+let weaponEditOpen=false, weaponEditKey=null, weaponEditDraft=null, weaponEditRects=[], weaponDefs={}, weaponDefsLoaded=false, weaponDefsRequestVersion=0;
 // the numeric fields an admin may tune, with sane bounds
 const WFIELDS=[
   {k:'dmg',      label:'DAMAGE',        min:1,   max:9999},
@@ -462,25 +462,80 @@ for(const k of TEMP_SECONDARY) WEAPON_EDITOR_SLOTS[k]='secondary';
 for(const k of TEMP_MELEE) WEAPON_EDITOR_SLOTS[k]='melee';
 for(const k of TEMP_UTILITY) WEAPON_EDITOR_SLOTS[k]='utility';
 for(const k in VAULT_SLOTS) WEAPON_EDITOR_SLOTS[k]=VAULT_SLOTS[k];
+const WEAPON_EDITOR_ROSTERS={};
+for(const k of PRIMARIES)WEAPON_EDITOR_ROSTERS[k]=PRIMARIES;
+for(const k of SECONDARIES)WEAPON_EDITOR_ROSTERS[k]=SECONDARIES;
+for(const k of MELEES)WEAPON_EDITOR_ROSTERS[k]=MELEES;
+for(const k of UTILKEYS)WEAPON_EDITOR_ROSTERS[k]=UTILKEYS;
+for(const k of TEMP_PRIMARY)WEAPON_EDITOR_ROSTERS[k]=TEMP_PRIMARY;
+for(const k of TEMP_SECONDARY)WEAPON_EDITOR_ROSTERS[k]=TEMP_SECONDARY;
+for(const k of TEMP_MELEE)WEAPON_EDITOR_ROSTERS[k]=TEMP_MELEE;
+for(const k of TEMP_UTILITY)WEAPON_EDITOR_ROSTERS[k]=TEMP_UTILITY;
+for(const k in VAULT_SLOTS)if(!WEAPON_EDITOR_ROSTERS[k]){
+  const slot=VAULT_SLOTS[k];
+  WEAPON_EDITOR_ROSTERS[k]=slot==='primary'?PRIMARIES:slot==='secondary'?SECONDARIES:slot==='melee'?MELEES:UTILKEYS;
+}
+const WEAPON_PUBLISHED_DEFAULTS={};
+for(const k in WEAPON_EDITOR_SLOTS){
+  WEAPON_PUBLISHED_DEFAULTS[k]=FALL_KEYS.includes(k)?false:
+    (Object.prototype.hasOwnProperty.call(VAULT_ACTIVE,k)?!!VAULT_ACTIVE[k]:true);
+}
 function savedWeaponPublished(k){
+  if(!Object.prototype.hasOwnProperty.call(WEAPON_EDITOR_SLOTS,k)) return false;
   if(FALL_KEYS.includes(k)) return false;            // next season cannot be made public from saved data
   if(weaponDefs[k] && typeof weaponDefs[k].published==='boolean') return weaponDefs[k].published;
-  if(VAULT_ACTIVE.hasOwnProperty(k)) return !!VAULT_ACTIVE[k];
-  return true;                                       // built-in weapons start published unless an admin saves otherwise
+  if(typeof WEAPON_PUBLISHED_DEFAULTS==='object'&&Object.prototype.hasOwnProperty.call(WEAPON_PUBLISHED_DEFAULTS,k))
+    return !!WEAPON_PUBLISHED_DEFAULTS[k];           // immutable source default; deleted cloud rows cannot leave stale access
+  if(Object.prototype.hasOwnProperty.call(VAULT_ACTIVE,k))return !!VAULT_ACTIVE[k];
+  return true;
 }
 function weaponIsPublished(k){ return savedWeaponPublished(k); } // Test Mode never changes saved publish state
 function weaponDefOf(k){ return WEAPONS[k] || VAULT_WEAPONS[k] || UTILITIES[k] || VAULT_UTILITIES[k] || null; }
 function weaponPrice(k){ const it=GEM_SHOP.find(i=>i.key===k); return it? it.cost : null; }
 async function fetchWeaponDefs(){
-  if(!sb) return;
+  if(!sb) return false;
+  const requestVersion=++weaponDefsRequestVersion;
   try{
-    const { data } = await sb.from('weapon_defs').select('key,stats,price,published').limit(80);
+    const { data,error } = await sb.from('weapon_defs').select('key,stats,price,published').limit(80);
+    if(error) throw error;
+    if(requestVersion!==weaponDefsRequestVersion)return null;
     weaponDefs={};
-    for(const r of (data||[])){
-      weaponDefs[r.key]=r;
+    weaponDefsLoaded=true;
+    for(const raw of (data||[])){
+      const key=String(raw&&raw.key||'').trim().toLowerCase();
+      if(!key||weaponDefs[key])continue;
+      const r=Object.assign({},raw,{key});
+      weaponDefs[key]=r;
       applyWeaponDef(r);
     }
-  }catch(e){}
+    reconcileWeaponPublication();
+    if(typeof syncOwnedWeapons==='function')syncOwnedWeapons();
+    if(typeof canRestoreAccountLoadout==='function'&&canRestoreAccountLoadout()&&typeof restoreLastLoadoutForMode==='function')
+      restoreLastLoadoutForMode(typeof pendingGameMode==='undefined'?null:pendingGameMode);
+    return true;
+  }catch(e){return requestVersion===weaponDefsRequestVersion?false:null;}
+}
+function applyWeaponDefRealtime(payload){
+  const event=String(payload&&payload.eventType||'').toUpperCase(),raw=event==='DELETE'?payload&&payload.old:payload&&payload.new;
+  const key=String(raw&&raw.key||'').trim().toLowerCase();
+  if(!key||!Object.prototype.hasOwnProperty.call(WEAPON_EDITOR_SLOTS,key))return false;
+  weaponDefsRequestVersion++;                        // an older snapshot may never overwrite this newer event
+  if(event==='DELETE')delete weaponDefs[key];
+  else{
+    const row=Object.assign({},weaponDefs[key]||{},raw,{key});
+    if(typeof row.published!=='boolean')return false;
+    weaponDefs[key]=row;applyWeaponDef(row);
+  }
+  if(event==='DELETE')reconcileWeaponPublication();
+  return true;
+}
+function reconcileWeaponPublication(){
+  for(const k in WEAPON_EDITOR_SLOTS){
+    if(FALL_KEYS.includes(k)){
+      if(fallEligible())publishVaultKey(k);else unpublishVaultKey(k);
+    }else if(savedWeaponPublished(k))publishVaultKey(k);
+    else unpublishVaultKey(k);
+  }
 }
 function applyWeaponDef(r){
   const def=weaponDefOf(r.key); if(!def) return;
@@ -492,12 +547,9 @@ function applyWeaponDef(r){
     if(!staleSniperDefault)def[f.k]=r.stats[f.k];
   }
   if(FALL_KEYS.includes(r.key)){
-    VAULT_ACTIVE[r.key]=false;                       // ignore stale/accidental public publish records
-    unpublishVaultKey(r.key);
-    if(fallEligible()) publishVaultKey(r.key);
+    if(fallEligible())publishVaultKey(r.key);else unpublishVaultKey(r.key);
     return;
   }
-  if(VAULT_ACTIVE.hasOwnProperty(r.key)) VAULT_ACTIVE[r.key]=!!r.published;
   if(r.published) publishVaultKey(r.key); else unpublishVaultKey(r.key);
 }
 function publishVaultKey(k){
@@ -505,17 +557,26 @@ function publishVaultKey(k){
   const slot=WEAPON_EDITOR_SLOTS[k];
   if(VAULT_WEAPONS[k] && !WEAPONS[k]) WEAPONS[k]=VAULT_WEAPONS[k];
   if(VAULT_UTILITIES[k] && !UTILITIES[k]) UTILITIES[k]=VAULT_UTILITIES[k];
-  const r = slot==='primary'?PRIMARIES : slot==='secondary'?SECONDARIES : slot==='melee'?MELEES : null;
+  const r=typeof WEAPON_EDITOR_ROSTERS==='object'?(WEAPON_EDITOR_ROSTERS[k]||null):
+    (slot==='primary'?PRIMARIES:slot==='secondary'?SECONDARIES:slot==='melee'?MELEES:null);
   if(r && !r.includes(k)) r.push(k);
-  if(!r && VAULT_UTILITIES[k] && !UTILKEYS.includes(k)) UTILKEYS.push(k);
   if(WEAPONS[k] && !WKEYS.includes(k)) WKEYS.push(k);
 }
 function unpublishVaultKey(k){
-  for(const arr of [PRIMARIES,SECONDARIES,MELEES,UTILKEYS,WKEYS]){
-    const i=arr.indexOf(k); if(i>=0) arr.splice(i,1);
+  const rosters=[PRIMARIES,SECONDARIES,MELEES,UTILKEYS,WKEYS];
+  if(typeof TEMP_PRIMARY!=='undefined')rosters.push(TEMP_PRIMARY);
+  if(typeof TEMP_SECONDARY!=='undefined')rosters.push(TEMP_SECONDARY);
+  if(typeof TEMP_MELEE!=='undefined')rosters.push(TEMP_MELEE);
+  if(typeof TEMP_UTILITY!=='undefined')rosters.push(TEMP_UTILITY);
+  for(const arr of rosters){
+    let i;while((i=arr.indexOf(k))>=0)arr.splice(i,1);
   }
-  for(const slot of ['primary','secondary','melee','utility'])
-    if(loadout[slot]===k) loadout[slot]=null;
+  // Pulling a weapon back into storage revokes legacy ownership, remembered
+  // loadouts, and temporary access immediately. The profile save prevents a
+  // second device from restoring the old entitlement on its next sync.
+  if(typeof purgeUnpublishedWeaponState==='function'&&purgeUnpublishedWeaponState([k])){
+    if(typeof saveMeta==='function')saveMeta();
+  }
 }
 function openWeaponEdit(k){
   weaponEditKey=k; storageOpen=false; weaponEditOpen=false;
@@ -572,8 +633,18 @@ async function saveWeaponEdit(){
       if(error) throw error;
       if(typeof d.price==='number' && d.price!==weaponPrice(k)) await saveGemPrice(k,d.price);
     } else if(typeof d.price==='number' && d.price!==weaponPrice(k)) setGemPrice(k,d.price);
-    weaponDefs[k]=row;
-    applyWeaponDef(row);                              // change live state only after the save succeeds
+    if(sb){
+      const refreshed=await fetchWeaponDefs();
+      if(refreshed===false){                          // the write succeeded; use it locally until polling recovers
+        weaponDefsRequestVersion++;
+        weaponDefs[k]=row;
+        applyWeaponDef(row);
+      }
+    }else{
+      weaponDefsRequestVersion++;
+      weaponDefs[k]=row;
+      applyWeaponDef(row);
+    }
     weaponEditOpen=false; closeForm(); weaponEditKey=null; weaponEditDraft=null; storageOpen=true;
     storageTab = row.published ? 'published' : 'storage';
     sfx('pickup');

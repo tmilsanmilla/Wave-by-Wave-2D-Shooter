@@ -71,7 +71,7 @@ function frame(){
       if(rtStatus==='down' && rtRetryT && Date.now()>rtRetryT){ rtRetryT=0; setupRealtime(); }
       const every = rtStatus==='live' ? 180000 : 30000;     // 3 min when live, 30s when it isn't
       if(Date.now()-boardT > every){
-        boardT=Date.now(); fetchBoard(); fetchBanners(); fetchPrices(); if(authUser) fetchAdmins(); if(isAdmin()) fetchMsgs();
+        boardT=Date.now(); fetchBoard(); fetchBanners(); fetchPrices(); fetchWeaponDefs(); if(authUser) fetchAdmins(); if(isAdmin()) fetchMsgs();
       }
     }
     drawSelect();

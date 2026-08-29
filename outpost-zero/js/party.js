@@ -843,11 +843,14 @@ function partyToggleLock(){
    Party 2v2 stays on the existing Party channel and requires exactly two
    humans on Team A. Offline 2v2 has one local human plus an ally CPU. Both
    modes face two authority-simulated Team B CPUs through the neutral core. */
-function partyCpuKit(raw){
+function partyCpuKit(raw,requireLocalAccess=false){
   const primary=String(raw&&raw.primary||''), secondary=String(raw&&raw.secondary||''), melee=String(raw&&raw.melee||'');
+  const keys=[primary,secondary,melee];
+  if(keys.some(key=>typeof isWeaponPublished==='function'&&!isWeaponPublished(key)))return null;
   const publicShopPrimary=typeof GEM_SHOP!=='undefined'&&GEM_SHOP.some(it=>it.key===primary&&it.slot==='primary')&&!!WEAPONS[primary];
   if(!(PRIMARIES.concat(TEMP_PRIMARY).includes(primary)||publicShopPrimary)||
      !SECONDARIES.concat(TEMP_SECONDARY).includes(secondary)||!MELEES.concat(TEMP_MELEE).includes(melee)) return null;
+  if(requireLocalAccess&&typeof isLocked==='function'&&keys.some(key=>isLocked(key)))return null;
   return {primary,secondary,melee,utility:null};
 }
 function partyDirectCpuMaybePrepare(){
@@ -908,8 +911,8 @@ function partyCpuApplyPrepare(p){
   restoreLastLoadoutForMode(PARTY_CPU_MODE);
   if(direct){
     loadout.utility=null;
-    if(!partyCpuKit(loadout))loadout={primary:SHARED_LOADOUT_DEFAULTS.primary,secondary:SHARED_LOADOUT_DEFAULTS.secondary,melee:SHARED_LOADOUT_DEFAULTS.melee,utility:null};
-    if(!partyCpuKit(loadout)){partyCpuAbort('NO PLAYABLE LOADOUT WAS AVAILABLE.',true);return false;}
+    if(!partyCpuKit(loadout,true))loadout={primary:SHARED_LOADOUT_DEFAULTS.primary,secondary:SHARED_LOADOUT_DEFAULTS.secondary,melee:SHARED_LOADOUT_DEFAULTS.melee,utility:null};
+    if(!partyCpuKit(loadout,true)){partyCpuAbort('NO PLAYABLE LOADOUT WAS AVAILABLE.',true);return false;}
     party.status='LOADOUT READY · STARTING 2v2 VS CPUs';return partyCpuSubmitLoadout();
   }
   selPage='loadout';party.status='Choose three weapons for 2v2 vs CPUs. Utilities and rewards are disabled.';sfx('swap');
@@ -919,7 +922,7 @@ function partyCpuSubmitLoadout(){
   if(!partyCpuSessionOpen()||!party.self||!partyCpuMatch.humanIds.includes(party.self.id)) return false;
   if(!partyRequirePlayers()) { partyCpuAbort('YOU NEED AT LEAST 2 PLAYERS IN THE PARTY TO DO THAT',true); return false; }
   if(party.members.length!==2){ partyCpuAbort('THE PARTY IS TOO BIG FOR THIS QUEUE',true); sfx('dry'); return false; }
-  const kit=partyCpuKit(loadout); if(!kit){ pracNeedMsgT=now+1600; sfx('dry'); return false; }
+  const kit=partyCpuKit(loadout,true); if(!kit){ pracNeedMsgT=now+1600; sfx('dry'); return false; }
   partyCpuMatch.localLoadout=kit; partyCpuMatch.loadouts[party.self.id]=kit; partyCpuMatch.ready[party.self.id]=true;
   partyCpuMatch.phase='waiting'; party.status=party.directCpu?'LOADOUT READY · CONNECTING BOTH PLAYERS':'Loadout ready. Waiting for the rest of the party...';
   const readyPacket={matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,loadout:kit};
@@ -966,13 +969,13 @@ function cpuTeamBeginRound(options){
   const selectedMap=typeof arenaMapValid==='function'&&arenaMapValid(options.mapId)?String(options.mapId):'arena';
   const localId=cpuTeamLocalId(); if(!localId) return false;
   const kits={};
-  for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(options.kits&&options.kits[id]); if(!kit)return false;kits[id]=kit; }
+  for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(options.kits&&options.kits[id],id===localId); if(!kit)return false;kits[id]=kit; }
   const mine=kits[localId]; if(!mine)return false;
   resetHeldGameplayInput();
   resetWeaponGimmickState();
   partyCpuMatch.loadouts=kits;partyCpuMatch.localLoadout=mine;
   loadout={primary:mine.primary,secondary:mine.secondary,melee:mine.melee,utility:null};
-  startGame();
+  if(startGame()===false)return false;
   practiceMode='arena';arena=freshArena(options.status||'2v2 vs CPUs');arena.mode=options.mode;arena.active=true;arena.phase='countdown';
   arena.botDifficulty=options.mode==='ai2v2'?clamp(Math.floor(+partyCpuMatch.botDifficulty||0),0,4):2;
   arena.botModelId=options.mode==='ai2v2'?partyCpuMatch.botModelId:'';
@@ -1062,7 +1065,7 @@ function startOfflineCpu2v2(options={}){
     if(arena)arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'Resolve the pending CPU ladder result before starting.';
     sfx('dry');return false;
   }
-  const mine=partyCpuKit(loadout);if(!mine){pracNeedMsgT=now+1600;sfx('dry');return false;}
+  const mine=partyCpuKit(loadout,true);if(!mine){pracNeedMsgT=now+1600;sfx('dry');return false;}
   if(partyCpuSessionOpen()){
     arena.status='Finish or leave the current CPU team match first.';sfx('dry');return false;
   }
@@ -1140,6 +1143,7 @@ function offlineCpu2v2Leave(status,toHub=false){
   daggersOut=null;comboStep=0;comboNextT=0;parryUntil=0;parrySeq=0;fistFlurryUntil=0;sawChargeUntil=0;
   partyCpuMatch=freshPartyCpuMatch();arena=freshArena(status||'Offline 2v2 vs CPUs ready.');
   if(saved)loadout={primary:saved.primary||null,secondary:saved.secondary||null,melee:saved.melee||null,utility:saved.utility||null};
+  if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
   pendingGameMode=null;modeBoardMode=toHub?null:'endless';state='select';selPage=toHub?'hub':'offlinecpu';menuOpen=false;aiming=false;rmbAim=false;resetHeldGameplayInput();
   return true;
 }
@@ -1426,7 +1430,10 @@ function partyCpuApplyPlayerState(p){
   if(!partyCpuEnvelope(p,false)||p.round!==partyCpuMatch.round||!partyCpuMatch.humanIds.includes(String(p.from||''))) return false;
   const h=partyCpuMatch.humans[p.from]; if(!h||p.from===party.self.id) return false;
   if(Number.isFinite(+p.x))h.tx=clamp(+p.x,40,WORLD.w-40); if(Number.isFinite(+p.y))h.ty=clamp(+p.y,40,WORLD.h-40);
-  if(Number.isFinite(+p.angle))h.angle=+p.angle; if(WEAPONS[p.cur])h.cur=p.cur;
+  if(Number.isFinite(+p.angle))h.angle=+p.angle;
+  const kit=partyCpuMatch.loadouts&&partyCpuMatch.loadouts[p.from],remoteKey=String(p.cur||'');
+  if(kit&&WEAPONS[remoteKey]&&[kit.primary,kit.secondary,kit.melee].includes(remoteKey)&&
+     (typeof isWeaponPublished!=='function'||isWeaponPublished(remoteKey)))h.cur=remoteKey;
   const seq=clamp(Math.floor(+p.parrySeq||0),0,1000000000);
   if(seq>h.parrySeq){
     h.parrySeq=seq;
@@ -1468,7 +1475,7 @@ function partyCpuApplyBotSnapshot(p){
   for(const raw of p.bots.slice(0,3)){
     const b=partyCpuMatch.bots.find(x=>x.id===String(raw.id||'')); if(!b)continue;
     if(Number.isFinite(+raw.x))b.tx=clamp(+raw.x,40,WORLD.w-40);if(Number.isFinite(+raw.y))b.ty=clamp(+raw.y,40,WORLD.h-40);
-    if(Number.isFinite(+raw.angle))b.angle=+raw.angle;if(WEAPONS[raw.cur])b.cur=raw.cur;
+    if(Number.isFinite(+raw.angle))b.angle=+raw.angle;if(raw.cur==='ar')b.cur='ar';
     b.hp=Math.min(b.hp,clamp(+raw.hp||0,0,PARTY_CPU_HP));b.flash=Math.max(0,+raw.flash||0);
   }
   if(p.humanHp&&Object.prototype.hasOwnProperty.call(p.humanHp,party.self.id)&&Number.isFinite(+p.humanHp[party.self.id])){
@@ -1625,6 +1632,7 @@ function partyCpuReturnToLobby(message){
   }
   partyCpuMatch=freshPartyCpuMatch();arena=freshArena(direct?'2v2 vs CPUs ready.':'Party 2v2 vs CPUs ready.');pendingGameMode=null;modeBoardMode=null;
   if(saved)loadout={primary:saved.primary||null,secondary:saved.secondary||null,melee:saved.melee||null,utility:saved.utility||null};
+  if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
   if(was){state='select';selPage=direct?'offlinecpu':'party';if(direct){offlineCpuView='2v2';offlineCpuInfoKey='';}menuOpen=false;aiming=false;rmbAim=false;resetHeldGameplayInput();}
   const result=(trainingNotice?trainingNotice+' · ':'')+String(message||'');if(message)party.status=result;
   // Keep the private transport alive through the host's 350/950ms result or

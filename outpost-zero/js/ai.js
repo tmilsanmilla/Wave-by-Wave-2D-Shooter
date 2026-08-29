@@ -1128,6 +1128,10 @@ function cancelBotLadderLaunch(){botLadderLaunchVersion++;botLadderLaunchPending
 function startBotArena(options){
   options=options&&typeof options==='object'?options:{};
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
+  if(typeof arenaLoadoutReady==='function'&&!arenaLoadoutReady()){
+    if(arena)arena.status='Pick three published weapons you can use before starting.';
+    if(typeof sfx==='function')sfx('dry');return false;
+  }
   const adminTest=options.adminTest===true&&typeof isMainAdmin==='function'&&isMainAdmin();
   if(!adminTest&&options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai1v1',()=>startBotArena(Object.assign({},options,{ladderReady:true}))))return true;
@@ -1158,7 +1162,7 @@ function startBotArena(options){
   arena.opponent={id:LOCAL_DUEL_BOT,name:'OUTPOST BOT',r:15,hp:ARENA_HP,
     loadout:{primary:'ar',secondary:'m9',melee:'knife'},cur:'ar',
     x:1520,y:900,tx:1520,ty:900,angle:Math.PI};
-  startGame();
+  if(startGame()===false){leaveArena('A selected weapon is no longer available.',false);return false;}
   practiceMode='arena'; arena.active=true;
   if(typeof arenaStartMapVote==='function') arenaStartMapVote();
   else arenaBotStartRound();

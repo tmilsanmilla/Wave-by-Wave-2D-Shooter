@@ -187,7 +187,7 @@ async function confirmAiLearningModelRestore(modelId){
     aiLearningNotice='Bring Back Model failed · '+String(e&&e.message||'model service unavailable');sfx('dry');return false;
   }finally{aiLearningRestoreBusyId='';}
 }
-const PE_ITEMS=()=>GEM_SHOP.map(it=>it.key);          // everything ownable
+const PE_ITEMS=()=>GEM_SHOP.filter(it=>typeof isWeaponPublished!=='function'||isWeaponPublished(it.key)).map(it=>it.key);
 function normalizedPlayerTempGrants(value){
   const out={};
   const put=(key,entry)=>{

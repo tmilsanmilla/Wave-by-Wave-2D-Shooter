@@ -200,6 +200,17 @@ function resetWeaponGimmickState(){
 }
 function startGame(){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
+  const selected=[loadout.primary,loadout.secondary,loadout.melee,loadout.utility].filter(Boolean);
+  // Practice may loan a published shop weapon without granting ownership. All
+  // real matches require every selected item to remain authorized at the last
+  // possible boundary before player.cur is assigned.
+  if(soloPractice){
+    const storageOnly=selected.some(k=>!isWeaponPublished(k)&&
+      !(typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)&&typeof fallEligible==='function'&&fallEligible()));
+    if(storageOnly){sfx('dry');return false;}
+  }else if(selected.some(k=>isLocked(k))){
+    dropUnownedFromLoadout();sfx('dry');return false;
+  }
   resetHeldGameplayInput();
   resetWeaponGimmickState();
   clearCameraShake();
@@ -382,7 +393,10 @@ function practicePickClick(){
 }
 function tryWeaponOnRange(k, mode){
   const w=WEAPONS[k]||VAULT_WEAPONS[k], isUtil=UTILKEYS.includes(k)||TEMP_UTILITY.includes(k)||VAULT_UTILITIES[k];
-  if(!w && !isUtil) return;
+  const adminSeasonPreview=typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)&&
+    typeof fallEligible==='function'&&fallEligible();
+  const published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
+  if((!w&&!isUtil)||(!published&&!adminSeasonPreview)){sfx('dry');return false;}
   tryLoadoutBackup={primary:loadout.primary, secondary:loadout.secondary, melee:loadout.melee, utility:loadout.utility};
   tryBorrowedWeaponKey=null; tryBorrowedUtilityKey=null;
   if(!WEAPONS[k] && VAULT_WEAPONS[k]){ WEAPONS[k]=VAULT_WEAPONS[k]; tryBorrowedWeaponKey=k; } // borrow it for the range only
@@ -399,7 +413,8 @@ function tryWeaponOnRange(k, mode){
   soloPractice=true;
   if(!isUtil) tryStartWeapon=k;
   sfx('swap');
-  if(startPractice(mode||'range')===false) restoreTryLoadout();
+  if(startPractice(mode||'range')===false){restoreTryLoadout();return false;}
+  return true;
 }
 let tryStartWeapon=null;
 function restoreTryLoadout(){
@@ -410,6 +425,7 @@ function restoreTryLoadout(){
   if(tryBorrowedWeaponKey&&WEAPONS[tryBorrowedWeaponKey]===VAULT_WEAPONS[tryBorrowedWeaponKey]) delete WEAPONS[tryBorrowedWeaponKey];
   if(tryBorrowedUtilityKey&&UTILITIES[tryBorrowedUtilityKey]===VAULT_UTILITIES[tryBorrowedUtilityKey]) delete UTILITIES[tryBorrowedUtilityKey];
   tryLoadoutBackup=null; tryStartWeapon=null; tryBorrowedWeaponKey=null; tryBorrowedUtilityKey=null; practiceReturnPage='practice';
+  if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
 }
 function startPractice(mode){
   // fill any empty loadout slots so practice always has working weapons,

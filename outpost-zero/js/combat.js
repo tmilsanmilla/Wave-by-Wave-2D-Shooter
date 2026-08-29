@@ -5,6 +5,10 @@ function switchWeapon(k){
   if(!k || !WEAPONS[k]) return;                       // sparse single-item Practice loadouts have empty hotkeys
   if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
   if(state!=='play') return;
+  if(typeof isLocked==='function'&&isLocked(k)){
+    if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
+    cancelFanTheHammer();sfx('dry');return;
+  }
   resetFireCadence();
   cancelFanTheHammer();
   cancelMedHeal();                                   // swapping away always interrupts either Medkit heal
@@ -106,6 +110,9 @@ function meleeSwing(w, mul, flurryGenerated=false){
 }
 function equipUtility(){
   if(state!=='play' || !loadout.utility) return;
+  if(typeof isLocked==='function'&&isLocked(loadout.utility)){
+    if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
+  }
   resetFireCadence();
   cancelFanTheHammer();
   utilityOut=true;
@@ -178,10 +185,16 @@ function medChannelStart(){   // equipped LMB: repeated held/touch events do not
 }
 function utilQuick(){         // G (or E/LMB-tap when equipped): instant cast at the crosshair
   if(state!=='play' || !loadout.utility) return;
+  if(typeof isLocked==='function'&&isLocked(loadout.utility)){
+    if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
+  }
   if(loadout.utility==='medkit'){ medQuick(); return; }
   utilCast(loadout.utility);
 }
 function utilCast(u){
+  if(typeof isLocked==='function'&&isLocked(u)){
+    if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
+  }
   if(now < utilReadyT){ sfx('dry'); return; }
   if(u==='grenade'){
     const a=aimAngle();
@@ -235,6 +248,9 @@ function utilRelease(){
 let medHealPct=0;
 function quickMelee(){
   if(state!=='play' || !loadout.melee) return;
+  if(typeof isLocked==='function'&&isLocked(loadout.melee)){
+    if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
+  }
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
   cancelMedHeal();
   cancelFanTheHammer();

@@ -393,6 +393,7 @@ function tutorialRestoreLoadout(){
   loadout={primary:tutorialLoadoutBackup.primary,secondary:tutorialLoadoutBackup.secondary,
     melee:tutorialLoadoutBackup.melee,utility:tutorialLoadoutBackup.utility};
   tutorialLoadoutBackup=null;
+  if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
 }
 function tutorialSpawnPickup(type){
   for(let i=pickups.length-1;i>=0;i--) if(pickups[i].tutorialPickup) pickups.splice(i,1);
@@ -829,15 +830,16 @@ function shopStatLine(k){
   return bits.join('   \u00b7   ');
 }
 function drawShopWeapons(cw, y){
-  const x=W/2-cw/2;
-  if(!GEM_SHOP.length){
+  const x=W/2-cw/2,liveShop=GEM_SHOP.filter(it=>typeof isWeaponPublished!=='function'||isWeaponPublished(it.key));
+  if(shopExpanded&&!liveShop.some(it=>it.key===shopExpanded))shopExpanded=null;
+  if(!liveShop.length){
     ctx.textAlign='center';
     ctx.fillStyle='#6b7455'; ctx.font='700 15px ui-monospace,Consolas,monospace';
     ctx.fillText('THE SHELVES ARE EMPTY', W/2, y+30);
     return y+50;
   }
   // fit every card in the room between here and the BACK button (which sits ~64px tall at the bottom)
-  const n=GEM_SHOP.length, avail=H-y-64, gap=Math.max(4, Math.min(12, Math.floor(avail*0.015)));
+  const n=liveShop.length, avail=H-y-64, gap=Math.max(4, Math.min(12, Math.floor(avail*0.015)));
   // an opened row needs extra height, so take it out of the shared space first
   let openExtra=0;
   if(shopExpanded){
@@ -855,7 +857,7 @@ function drawShopWeapons(cw, y){
   }
   const ch=clamp(Math.floor((avail-openExtra-(n-1)*gap)/n), 24, 64);
   const compact = ch<56;
-  for(const it of GEM_SHOP){
+  for(const it of liveShop){
     const wdef=WEAPONS[it.key]||VAULT_WEAPONS[it.key]||UTILITIES[it.key]||VAULT_UTILITIES[it.key];
     const open = shopExpanded===it.key;
     let extra=0, blurbLines=[], statLine='';
@@ -903,18 +905,20 @@ function drawShopWeapons(cw, y){
         ctx.fillText(fitLine(statLine, cw-32), x+16, ty+8);
       }
     }
-    const owned=!!gemOwned[it.key];
+    const locked = typeof isLocked==='function' && isLocked(it.key);
+    const owned=!!gemOwned[it.key] && !locked;
     const b2w=112, b2h=Math.min(32,ch-10), b2x=x+cw-b2w-12, b2y=y+ch/2-b2h/2;
     shopRects.push({x:b2x,y:b2y,w:b2w,h:b2h,item:it,kind:'weapon'});
     const hv=mouse.x>=b2x&&mouse.x<=b2x+b2w&&mouse.y>=b2y&&mouse.y<=b2y+b2h;
-    const can=!owned && gems>=it.cost;
+    const can=!owned && gems>=it.cost && !locked;
     ctx.fillStyle = owned ? 'rgba(167,193,94,0.25)' : can ? (hv?'#7fd8ff':'rgba(127,216,255,0.2)') : 'rgba(255,255,255,0.06)';
     ctx.fillRect(b2x,b2y,b2w,b2h);
     ctx.strokeStyle= owned ? '#a7c15e' : can ? '#7fd8ff' : '#5a5648'; ctx.strokeRect(b2x+0.5,b2y+0.5,b2w,b2h);
     ctx.textAlign='center'; ctx.textBaseline='middle';
+    const label = owned ? 'OWNED' : can ? '\uD83D\uDC8E '+it.cost+' BUY' : locked ? 'LOCKED' : '\uD83D\uDC8E '+it.cost+' BUY';
     ctx.fillStyle = owned ? '#a7c15e' : (can&&hv) ? '#101208' : can ? '#cdd6b0' : '#6b7455';
     ctx.font='700 11px ui-monospace,Consolas,monospace';
-    ctx.fillText(owned ? 'OWNED' : '\uD83D\uDC8E '+it.cost+' BUY', b2x+b2w/2, b2y+b2h/2);
+    ctx.fillText(label, b2x+b2w/2, b2y+b2h/2);
     y+=rh+gap;
   }
   ctx.textBaseline='alphabetic';
@@ -2486,9 +2490,9 @@ function drawLoadout(){
 }
 
 // Home's WEAPONS route is a catalog, not another loadout editor. Its lists are
-// assembled from the public rosters, the limited-time rosters, and public gem
-// shop offers (the unowned Railgun is intentionally visible). Dormant vault
-// equipment only enters these rosters while an admin is in Test Mode.
+// assembled from the public rosters, the limited-time rosters, and currently
+// published gem-shop offers. Storage-only equipment is visible only to an
+// admin using the dedicated Test Mode/editor path.
 function weaponBrowserKeys(cat){
   const entry=CATS.find(c=>c[0]===cat);
   if(!entry) return [];
@@ -2497,10 +2501,9 @@ function weaponBrowserKeys(cat){
     const valid=slot==='utility' ? !!(UTILITIES[k]||VAULT_UTILITIES[k]) : !!(WEAPONS[k]||VAULT_WEAPONS[k]);
     if(!valid) return;
     const vaulted=Object.prototype.hasOwnProperty.call(VAULT_SLOTS,k);
-    const shop=GEM_SHOP.some(it=>it.key===k&&it.slot===slot);
     const adminTest=typeof fallEligible==='function'&&fallEligible();
-    const published=typeof savedWeaponPublished==='function'&&savedWeaponPublished(k);
-    if(vaulted&&!shop&&!adminTest&&!published) return;       // no dormant/public leaks
+    const published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
+    if(vaulted&&!adminTest&&!published) return;              // no storage-only/public leaks
     if(FALL_KEYS.includes(k)&&!adminTest) return;
     keys.push(k);
   };
@@ -2520,8 +2523,11 @@ function weaponBrowserAccess(k){
     ? {text:'LIMITED \u00b7 SIGN IN',col:'#d05548',locked:true}
     : {text:'LIMITED \u00b7 AVAILABLE',col:'#ff8b4d',locked:false};
   if(shop){
+    if(locked) return {text:gemOwned[k]
+      ? 'LOCKED \u00b7 NOT CURRENTLY LIVE'
+      : 'LOCKED \u00b7 \uD83D\uDC8E '+shop.cost,
+      col:'#d05548',locked:true};
     if(gemOwned[k]) return {text:'OWNED \u00b7 LIVE',col:'#a7c15e',locked:false};
-    if(locked) return {text:'LOCKED \u00b7 \uD83D\uDC8E '+shop.cost,col:'#7fd8ff',locked:true};
     if(typeof testMode!=='undefined'&&testMode) return {text:'TEST ACCESS \u00b7 NOT OWNED',col:'#d0763e',locked:false};
     if(typeof sb==='undefined'||!sb) return {text:'OFFLINE PREVIEW \u00b7 NOT OWNED',col:'#8fb3c9',locked:false};
     return {text:'AVAILABLE \u00b7 NOT OWNED',col:'#7fd8ff',locked:false};
@@ -2585,12 +2591,15 @@ function drawWeaponBrowserCard(k,cat,x,y,w,h){
   const compact=h<92, veryTight=h<62;
   const practiceW=compact?Math.min(44,w*.44):Math.min(78,Math.max(58,w*.36)), practiceH=compact?30:28;
   const practiceX=x+w-practiceW-6, practiceY=y+7;
-  weaponBrowserRects.push({kind:'practice',key:k,x:practiceX,y:practiceY,w:practiceW,h:practiceH});
+  const practiceAllowed=(typeof isWeaponPublished!=='function'||isWeaponPublished(k))||
+    (typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)&&typeof fallEligible==='function'&&fallEligible());
+  if(practiceAllowed)weaponBrowserRects.push({kind:'practice',key:k,x:practiceX,y:practiceY,w:practiceW,h:practiceH});
   const practiceHot=mouse.x>=practiceX&&mouse.x<=practiceX+practiceW&&mouse.y>=practiceY&&mouse.y<=practiceY+practiceH;
-  ctx.fillStyle=practiceHot?'#a7c15e':'rgba(167,193,94,0.13)'; ctx.fillRect(practiceX,practiceY,practiceW,practiceH);
-  ctx.strokeStyle='#a7c15e'; ctx.strokeRect(practiceX+0.5,practiceY+0.5,practiceW-1,practiceH-1);
-  ctx.fillStyle=practiceHot?'#101208':'#cfe0a8'; ctx.font='700 '+(compact?8:9)+'px ui-monospace,Consolas,monospace';
-  ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(compact?'\uD83C\uDFAF':'\uD83C\uDFAF PRACTICE',practiceX+practiceW/2,practiceY+practiceH/2);
+  ctx.fillStyle=practiceAllowed?(practiceHot?'#a7c15e':'rgba(167,193,94,0.13)'):'rgba(208,85,72,0.08)'; ctx.fillRect(practiceX,practiceY,practiceW,practiceH);
+  ctx.strokeStyle=practiceAllowed?'#a7c15e':'#6a413d'; ctx.strokeRect(practiceX+0.5,practiceY+0.5,practiceW-1,practiceH-1);
+  ctx.fillStyle=practiceAllowed?(practiceHot?'#101208':'#cfe0a8'):'#9a625c'; ctx.font='700 '+(compact?8:9)+'px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(practiceAllowed?(compact?'\uD83C\uDFAF':'\uD83C\uDFAF PRACTICE'):(compact?'LOCKED':'IN STORAGE'),practiceX+practiceW/2,practiceY+practiceH/2);
 
   if(!veryTight){
     const iconX=x+Math.min(32,w*.17), iconY=y+(compact?33:43), scale=compact?.55:.72;
