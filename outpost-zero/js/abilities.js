@@ -93,7 +93,7 @@ function meleeAbility(){
       vx:Math.cos(i/14*TAU)*rand(1.5,4), vy:Math.sin(i/14*TAU)*rand(1.5,4),
       life:340,max:340,col:'#bfe8ff',size:2.6});
     sfx('swap');
-    abilityCD[k]=now+abilityCdOf(k);
+    abilityCD[k]=now+abilityCdOf(k)+TWIN_SAI_PARRY_MS;
   } else if(k==='chainsaw'){                         // RIP: constant nearby damage + i-frames, with no forced lunge
     if(!ready){ sfx('dry'); return; }
     activated=true;

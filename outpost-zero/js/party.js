@@ -1460,7 +1460,7 @@ function partyCpuApplyPlayerState(p){
     // h.parrySeq remembers rejected/replayed activations without cutting short
     // a valid guard. Only a later sequence after parryReadyAt can reactivate.
     if(ownsSai&&left>0&&clock>=(h.parryReadyAt||0)){
-      h.parryUntil=clock+left;h.parryReadyAt=clock+ABILITY_CD.twinsai;
+      h.parryUntil=clock+left;h.parryReadyAt=clock+ABILITY_CD.twinsai+TWIN_SAI_PARRY_MS;
     }
   }
   h.hp=Math.min(h.hp,clamp(+p.hp||0,0,PARTY_CPU_HP)); // no healing in this mode; late packets cannot resurrect a teammate
