@@ -1,6 +1,6 @@
--- OUTPOST ZERO / ADMINISTRATION / 05: TESTERS, SUGGESTIONS, DEMOTION + REPORT EXPORT
--- Run after Administration 01, 02, 02B, and 04. Administration 03 (player
--- notification Inbox) is separate and may be run before or after this file.
+-- OUTPOST ZERO / ADMINISTRATION / 05: TESTERS + SUGGESTIONS + REPORT COPY
+-- Run after Administration 01, the merged Administration 02, Administration
+-- 03, and Administration 04.
 -- Safe to rerun. Existing admins, messages, reports, and suggestions remain.
 
 begin;
@@ -13,7 +13,7 @@ begin
     raise exception 'Administration 05 requires Administration 01 and 02';
   end if;
   if to_regprocedure('public._outpost_zero_weapon_is_published(text)') is null then
-    raise exception 'Administration 05 requires Administration 02B (unpublished weapon enforcement)';
+    raise exception 'Administration 05 requires the merged Administration 02 (weapon enforcement missing)';
   end if;
   if to_regclass('public.admin_msgs') is null or to_regclass('public.reports') is null then
     raise exception 'Administration 05 requires the original admin_msgs and reports tables';

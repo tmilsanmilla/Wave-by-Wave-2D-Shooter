@@ -141,15 +141,27 @@ into the SQL Editor.
 
 ## Administration
 
-Administration uses `01`, `02`, a focused `02B` security add-on, then `03`,
-`04`, and `05`. Administration `01` and `02` are independent; Administration
-`02B` is the unpublished-weapon enforcement that was formerly labeled `04`.
-It is named `02B` (not another replacement for `02`) because it extends the
-Administration security boundary and can run immediately after `01` + `02`.
-Administration `03` deliberately requires `01`, `02`, and Social `01` because
-it unifies their safe events in one private player Inbox. Administration `04`
-makes admin player targets use public usernames. Administration `05` adds the
-Tester tier, weapon suggestions, demotion, and report export.
+Administration now has one clean sequence: `01`, `02`, `03`, `04`, and `05`.
+There is no `02B`: its unpublished-weapon protection is merged into the full
+Administration `02` file. Administration `03` was installed and keeps its
+number. Administration `04` is the new username-based admin-actions migration,
+and Administration `05` adds Testers, suggestions, demotion, and report copy.
+
+For the current project state, Administration `01`, the older/shorter `02`, and
+`03` have already been run. Rerun the newly merged full `02` once, then run
+`04`, then `05`. All three files are rerunnable and preserve existing data.
+AI `02` and AI `03` are the migrations that were intentionally skipped; they
+are unrelated to this Administration sequence.
+
+Quick purpose guide:
+
+| File | What it adds | What it does not do |
+| --- | --- | --- |
+| Administration `01` | Audited player edits, temporary weapon gifts, permanent gift/request approvals, ban/appeal handling, and the private creator/main LOG. | It does not publish Home updates or create the player notification Inbox. |
+| Administration `02` | Secure Home/global Inbox update publishing **and** enforcement that unpublished weapons cannot be owned, granted, purchased, or restored by stale saves. | It does not add Tester accounts or private player conversations. |
+| Administration `03` | The private player notification Inbox for updates, bans, gifts, and friend events, plus targeted creator/main messages. | It does not expose the private admin LOG or change staff ranks. |
+| Administration `04` | Username-based wrappers for admin lookup, edit, grant, revoke, and ban actions, keeping private Auth emails on the server. | It does not change usernames or duplicate the underlying audited actions from `01`. |
+| Administration `05` | Tester rank, Tester/Co-admin weapon suggestions, creator/main suggestion review, Promote/Demote, staff Inbox restrictions, and `COPY ALL`/`COPY X` reports. | Approving a suggestion records the decision but does not automatically change weapon statistics. |
 
 ### Temporary gifts and the private LOG
 
@@ -201,19 +213,19 @@ intentionally revokes the old direct edit/request/appeal paths so an old tab
 cannot bypass the audit. After running it, sign out/in or hard-refresh before
 testing creator/main controls.
 
-### Secure Home + Inbox updates
+### Administration 02 — secure updates and unpublished-weapon enforcement
 
 For creator/main updates to appear on both Home and in every player's Inbox,
 paste and run this entire file in the Supabase SQL Editor:
 
-1. `administration/02-secure-updates.sql`
+1. `administration/02-secure-updates-and-weapon-enforcement.sql`
 
-For this update, add/run Administration `02`; do not replace a previous SQL
-file and do not rerun Social `01` through `05`. Administration `02` needs only
-the already-live `banners` and `admins` tables plus Supabase Auth. It is safe to
-run even if Administration `01` has never been run. If Supabase reports that
-`banners` or `admins` is missing, install the game's original administration
-schema first, then rerun this whole file.
+Administration `02` is now the merged file. It needs Administration `01` plus
+the already-live `banners`, `admins`, `profiles`, and `weapon_defs` tables and
+Supabase Auth. If the shorter Secure Updates version was already installed,
+run this entire merged file once; it replaces the functions and policies in
+place and preserves all updates, profiles, ownership, grants, and audit rows.
+Do not paste only the weapon half over an older query.
 
 What Administration `02` does, concretely:
 
@@ -244,6 +256,17 @@ What Administration `02` does, concretely:
 - Lists approved and pending updates independently. Even if there are ten or
   more newer drafts, they cannot consume the public feed limit and hide a live
   update.
+- Makes `weapon_defs.published` the server-authoritative access decision for
+  permanent ownership, temporary gifts, purchases, stale profile saves, and
+  direct RPC retries. An unpublished weapon cannot be restored by an old tab.
+- Treats ARC Railgun and future vault weapons as private until an explicit
+  `weapon_defs` row publishes them. Existing base Gem Shop weapons retain their
+  public defaults when no definition row exists.
+- Removes existing permanent ownership and temporary grants in the same
+  transaction when a weapon becomes unpublished. It does not delete the weapon
+  definition or refund currency; it removes access only.
+- Publishes `weapon_defs` changes through Supabase Realtime so open clients can
+  drop newly unpublished weapons immediately.
 
 Deploy the matching JavaScript and run Administration `02` together because the
 migration intentionally closes the old direct `admins` and `banners` write
@@ -326,34 +349,11 @@ banner, Friends, direct-message, and Party-invite views; it hides the targeted
 staff-message composer and never falls back to inserting a notification or
 private message directly.
 
-### Administration 02B — unpublished weapon enforcement
-
-After Administration `01` and `02` are installed, paste and run this entire
-file in a new Supabase SQL Editor query:
-
-1. `administration/02b-unpublished-weapon-enforcement.sql`
-
-Administration `02B` is rerunnable. It makes the saved weapon-editor publish
-flag authoritative for permanent ownership and temporary gifts. ARC Railgun
-defaults to private, so the migration removes any old Railgun ownership/grants
-unless its `weapon_defs` row explicitly says `published = true`. New profile
-writes, admin grants, temporary gifts, stale browser tabs, and direct RPC
-retries cannot add an unpublished weapon back. Unpublishing a weapon also
-cleans existing profile ownership and temporary grants in the same database
-transaction, while publishing it permits future purchases or grants.
-
-The migration adds `weapon_defs` to Supabase Realtime so open games receive
-publish changes immediately. It does not delete weapon definitions or refund
-currency; it removes access only. `02B` does not create notifications, change
-admin tiers, or replace Secure Updates (`02`); its only job is enforcing the
-published/unpublished weapon boundary. Administration `03` may be run before
-or after `02B`.
-
-### Username-only admin targeting
+### Administration 04 — username-based admin actions
 
 After Administration `01` and Social `01` are installed, run:
 
-1. `administration/04-username-admin-targets.sql`
+1. `administration/04-username-admin-actions.sql`
 
 Administration `04` lets creator/main admin lookup, edit, grant, revoke, and
 ban commands accept the player’s public username. The wrappers resolve the
@@ -363,11 +363,11 @@ or submits the target player’s private email. Pending-request screens likewise
 return the target username instead of the target email. The migration is
 rerunnable and does not replace or modify Social usernames.
 
-### Administration 05 — Testers, suggestions, demotion, and report export
+### Administration 05 — Testers, weapon suggestions, and report copy
 
-After Administration `01`, `02`, `02B`, and `04`, run:
+After Administration `01`, the merged `02`, installed `03`, and `04`, run:
 
-1. `administration/05-testers-suggestions-and-report-export.sql`
+1. `administration/05-testers-weapon-suggestions-and-report-copy.sql`
 
 Administration `05` adds a lowest `tester` staff tier. Testers can use Test
 Mode, read/archive only their own Admin Inbox messages, and submit a proposed
@@ -385,13 +385,19 @@ the creator can demote a Main. `COPY ALL`/`COPY X` uses a creator/main-only RPC
 that returns explicit report fields in newest-first order. Raw reports remain
 write-only to players and unreadable to Testers.
 
-Administration `03` is intentionally not a prerequisite for `05`: `03` owns
-player-facing notifications, while `05` owns the staff Admin Inbox and roles.
-If `03` was skipped, run `02B`, then `03`, then `04`, then `05`, each as a whole
-file in its own SQL Editor query. Do not paste any of them over Administration
-`02`; `02B` is an add-on, not a replacement.
+Administration `03` owns player-facing notifications; Administration `05` owns
+the staff-only Admin Inbox permissions and role hierarchy. In this project,
+`03` was already installed. Run the merged `02` as one whole file, then `04`,
+then `05`, each in its own SQL Editor query.
 
 ## AI bot ladder
+
+Current installation status: AI `01` is the live CPU ladder migration. AI `02`
+and AI `03` were intentionally skipped. They store model-release history and
+privacy-limited match evidence; neither one trains a bot or is required for CPU
+opponents, difficulty tiers, Score progress, promotion, or demotion. Do not run
+AI `02` or `03` unless those optional history/evidence features are deliberately
+restored later.
 
 The tactical bot brain is shared by every player, while signed-in players have
 private cloud ladder progress through five execution tiers: Beginner, Easy,
@@ -399,7 +405,9 @@ Medium, Hard, and Impossible. Guests play Beginner without creating database
 state. Normal completed AI matches update only the signed-in account; creator
 and main-admin comparison tests never update the ladder.
 
-For a brand-new AI feature install, run these independent scripts in order:
+The files remain documented for reference. For the current deployment, run
+only `01`. If the optional history/evidence features are restored later, their
+dependency order is:
 
 1. `ai/01-global-training.sql` — private per-account ladder, exact-once match
    receipts, RLS, narrow read/submit RPCs, and API grants

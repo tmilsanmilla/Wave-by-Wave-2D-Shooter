@@ -5,7 +5,8 @@ import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const admin=read('js/administration.js'),adminUi=read('js/admin-ui.js'),ui=read('js/ui.js'),input=read('js/input.js'),party=read('js/party.js'),social=read('js/social.js');
-const adminSql=read('sql/administration/05-testers-suggestions-and-report-export.sql');
+const adminSql=read('sql/administration/05-testers-weapon-suggestions-and-report-copy.sql');
+const admin02Sql=read('sql/administration/02-secure-updates-and-weapon-enforcement.sql');
 const partySql=read('sql/social/09-public-party-names-and-search.sql');
 const failures=[];
 function check(name,condition){if(condition)console.log('PASS',name);else{console.error('FAIL',name);failures.push(name);}}
@@ -27,7 +28,8 @@ check('SQL keeps legacy admin authority blind to Testers',/_outpost_zero_staff_r
 check('SQL gives Testers only own Admin Inbox policy',/outpost_zero_admin_msgs_own_read/.test(adminSql)&&/lower\(btrim\(to_email\)\)=public\._outpost_zero_admin_email\(\)/.test(adminSql));
 check('SQL stores and reviews weapon suggestions',/create table if not exists public\.outpost_zero_weapon_suggestions/.test(adminSql)&&/submit_outpost_zero_weapon_suggestion/.test(adminSql)&&/review_outpost_zero_weapon_suggestion/.test(adminSql));
 check('SQL exports reports only through the main-admin boundary',/export_outpost_zero_reports/.test(adminSql)&&/REPORT_ACCESS_REQUIRED/.test(adminSql)&&/outpost_zero_reports_main_read/.test(adminSql));
+check('Administration 02 includes unpublished-weapon enforcement',/_outpost_zero_weapon_is_published/.test(admin02Sql)&&/_outpost_zero_strip_unpublished_owned/.test(admin02Sql)&&/outpost_zero_weapon_defs_cleanup_access/.test(admin02Sql));
 check('SQL supports unique public names and host/name search',/unique index.*outpost_zero_public_party_name_unique_idx/s.test(partySql)&&/p\.party_name ilike/.test(partySql)&&/sp\.handle ilike/.test(partySql));
 
 if(failures.length){console.error(`SUMMARY FAIL ${failures.length}`);process.exit(1);}
-console.log('SUMMARY PASS',15);
+console.log('SUMMARY PASS',16);

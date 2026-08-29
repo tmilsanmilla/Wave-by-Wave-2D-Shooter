@@ -1,4 +1,4 @@
--- OUTPOST ZERO / ADMINISTRATION / 04: USERNAME-ONLY ADMIN TARGETING
+-- OUTPOST ZERO / ADMINISTRATION / 04: USERNAME-BASED ADMIN ACTIONS
 -- Run after Administration 01 and Social 01. Safe to rerun.
 --
 -- Admins enter a public username. These SECURITY DEFINER wrappers resolve the
