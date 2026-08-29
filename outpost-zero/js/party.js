@@ -1058,7 +1058,7 @@ function startOfflineCpu2v2(options={}){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
   if(options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai2v2',()=>startOfflineCpu2v2({ladderReady:true})))return true;
-  if(authUser&&!botLadderReadyForMatch()){
+  if(authUser&&!(typeof testMode!=='undefined'&&!!testMode)&&!botLadderReadyForMatch()){
     if(arena)arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'Resolve the pending CPU ladder result before starting.';
     sfx('dry');return false;
   }
@@ -1121,7 +1121,7 @@ function offlineCpu2v2Rematch(options={}){
   if(!botLadderMatchSettled(partyCpuMatch)){arena.status='Saving your ladder result before Play Again…';sfx('dry');return false;}
   if(!(options&&options.ladderReady===true)&&
      deferBotLadderMatchStart('ai2v2',()=>offlineCpu2v2Rematch({ladderReady:true})))return true;
-  if(authUser&&!botLadderReadyForMatch()){
+  if(authUser&&!(typeof testMode!=='undefined'&&!!testMode)&&!botLadderReadyForMatch()){
     arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'Resolve the pending CPU ladder result before Play Again.';
     sfx('dry');return false;
   }

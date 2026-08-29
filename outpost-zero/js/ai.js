@@ -830,16 +830,18 @@ function botLadderProgressText(state=botLadder){
 }
 function initializeBotLadderMatch(match,mode,difficulty,adminTest=false,modelId=activeBotModelId){
   const normalizedMode=String(mode||'ai1v1'),eligibleMode=normalizedMode==='ai1v1'||normalizedMode==='ai2v2',startState=currentBotLadder(),
-    accountId=!adminTest&&eligibleMode&&botLadderReadyForMatch()?botLadderOwnerId(authUser&&authUser.id):'',
+    rankingAllowed=!adminTest&&eligibleMode&&!(typeof testMode!=='undefined'&&!!testMode)&&botLadderReadyForMatch(),
+    accountId=rankingAllowed?botLadderOwnerId(authUser&&authUser.id):'',
     matchId=accountId?takeBotLadderMatchId(accountId):'',canSubmit=!!(accountId&&matchId);
   match.botLadderMode=normalizedMode;match.botDifficulty=accountId?startState.tier:clamp(Math.floor(+difficulty||0),0,4);
   match.botModelId=botModelRelease(modelId).id;
-  match.botAdminTest=!!adminTest;match.botLadderAccountId=accountId;match.botLadderReadOnly=!canSubmit;
+  match.botAdminTest=!!adminTest;match.botTestMode=typeof testMode!=='undefined'&&!!testMode;
+  match.botLadderAccountId=accountId;match.botLadderReadOnly=!canSubmit || match.botTestMode;
   match.botLadderStartState=startState;match.botLadderResultState=startState;match.botLadderRecorded=false;match.botLadderCompetitiveStarted=false;
   match.botLadderMatchId=matchId;match.botLadderSubmitAttempts=0;
   match.botLadderSubmitInFlight=false;match.botLadderSubmitDone=!canSubmit;match.botLadderRetryTimer=null;
   match.botLadderSubmitWon=null;match.botLadderSubmitResponse=null;
-  match.botLadderSyncStatus=adminTest?'admin_test':canSubmit?'ready':authUser?(botLadderQueueStorageReady===false?'save_unavailable':'offline'):'guest';
+  match.botLadderSyncStatus=adminTest?'admin_test':match.botTestMode?'test_mode':canSubmit?'ready':authUser?(botLadderQueueStorageReady===false?'save_unavailable':'offline'):'guest';
   match.botLadderDelta=0;match.botLadderPromoted=false;match.botLadderDemoted=false;
   if(canSubmit)botLadderRuntimeMatches.set(botLadderQueueKey(accountId,matchId),match);
   if(typeof initializeAiTrainingMatch==='function')initializeAiTrainingMatch(match);
@@ -855,7 +857,7 @@ function finishBotLadderSubmission(match,status){
   if(botLadderPendingResult===match)botLadderPendingResult=null;
 }
 function botLadderMatchForfeitEligible(match){
-  return !!(match&&match.botLadderCompetitiveStarted===true&&!match.botAdminTest&&!match.botLadderRecorded&&
+  return !!(match&&match.botLadderCompetitiveStarted===true&&!match.botAdminTest&&!match.botTestMode&&!match.botLadderRecorded&&
     !match.botLadderSubmitDone&&botLadderOwnerId(match.botLadderAccountId)&&botLadderResultUuid(match.botLadderMatchId)&&
     (match.botLadderMode==='ai1v1'||match.botLadderMode==='ai2v2'));
 }
@@ -911,6 +913,7 @@ function persistCompletedBotLadderMatch(match,options={}){
 function recordCompletedBotLadderMatch(won,match,options={}){
   if(!match||match.botLadderRecorded)return false;match.botLadderRecorded=true;match.botLadderSubmitWon=!!won;match.botLadderResultState=currentBotLadder();
   if(match.botAdminTest){finishBotLadderSubmission(match,'admin_test');return true;}
+  if(match.botTestMode){finishBotLadderSubmission(match,'test_mode');return true;}
   if(!match.botLadderAccountId||!match.botLadderMatchId){finishBotLadderSubmission(match,authUser?'offline':'guest');return true;}
   persistCompletedBotLadderMatch(match,options);return true;
 }
@@ -1050,6 +1053,7 @@ function botLadderHasPendingResult(){return !!(botLadderPendingResult&&!botLadde
 function botLadderMatchResultText(match){
   const state=normalizeBotLadder(match&&match.botLadderResultState||botLadder),progress=botLadderProgressText(state),status=String(match&&match.botLadderSyncStatus||'');
   if(status==='admin_test')return 'ADMIN TEST · ACCOUNT LADDER UNCHANGED';
+  if(status==='test_mode')return 'TEST MODE · RESULT WILL NOT CHANGE YOUR LADDER';
   if(status==='guest')return 'BEGINNER · SIGN IN TO SYNC YOUR LADDER';
   if(status==='save_unavailable')return 'DEVICE SAVE UNAVAILABLE · LADDER MATCH BLOCKED';
   if(status==='storage_error')return 'RESULT SAFE · DEVICE RECONCILIATION BLOCKED';
@@ -1127,7 +1131,7 @@ function startBotArena(options){
   const adminTest=options.adminTest===true&&typeof isMainAdmin==='function'&&isMainAdmin();
   if(!adminTest&&options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai1v1',()=>startBotArena(Object.assign({},options,{ladderReady:true}))))return true;
-  if(!adminTest&&authUser&&!botLadderReadyForMatch()){
+  if(!adminTest&&authUser&&!(typeof testMode!=='undefined'&&!!testMode)&&!botLadderReadyForMatch()){
     if(arena)arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':
       !botLadderSecureMatchReady()?'Secure CPU result save is unavailable in this browser.':'CPU ladder is still syncing. Try Start again.';
     if(typeof sfx==='function')sfx('dry');return false;
