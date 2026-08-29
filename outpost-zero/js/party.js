@@ -5,6 +5,99 @@
    the elected host owns the four-seat roster and versioned assignment plan. */
 function partyServiceAvailable(){ return !!(sb&&navigator.onLine!==false&&typeof sb.channel==='function'); }
 function partyCleanName(v){ return String(v||'').replace(/[\u0000-\u001f\u007f]/g,'').replace(/\s+/g,' ').trim().slice(0,32); }
+function partyCleanPublicName(v){const name=partyCleanName(v);return /^[A-Za-z0-9][A-Za-z0-9 _-]{2,31}$/.test(name)?name:'';}
+function partyPublicUuid(value){const id=String(value||'').toLowerCase();return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)?id:'';}
+function partyPublicOperationId(){
+  if(globalThis.crypto&&typeof crypto.randomUUID==='function')return crypto.randomUUID();
+  const bytes=new Uint8Array(16);if(!(globalThis.crypto&&crypto.getRandomValues))return '';crypto.getRandomValues(bytes);
+  bytes[6]=(bytes[6]&15)|64;bytes[8]=(bytes[8]&63)|128;const h=Array.from(bytes,n=>n.toString(16).padStart(2,'0')).join('');
+  return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
+}
+function partyPublicRpcMissing(error){const text=String(error&&error.message||error||'').toLowerCase();return text.includes('could not find the function')||text.includes('schema cache')||text.includes('pgrst202');}
+function partyPublicReset(message=''){
+  publicPartyRows=[];publicPartyHostRequests=[];publicPartyMyRequests=[];publicPartyPage=0;publicPartySearch='';publicPartyPollAt=0;publicPartyHostPollAt=0;
+  publicPartyPolling=false;publicPartyHostPolling=false;publicPartyActionBusy='';if(message)party.status=message;
+}
+function partyPublicNormalizeRow(row){
+  const id=partyPublicUuid(row&&row.party_id),handle=partyCleanName(row&&row.host_username),name=partyCleanPublicName(row&&row.party_name),members=Math.max(1,Math.floor(+row?.member_count||1)),capacity=Math.min(4,Math.max(2,Math.floor(+row?.capacity||4)));
+  return id&&handle&&name?{partyId:id,host:handle,name,members:Math.min(members,capacity),capacity,createdAt:Date.parse(row.created_at||'')||0,status:String(row.request_status||'')} : null;
+}
+function partyPublicNormalizeRequest(row,host=false){
+  const requestId=partyPublicUuid(row&&row.request_id);if(!requestId)return null;
+  return host?{requestId,username:partyCleanName(row.requester_username),createdAt:Date.parse(row.created_at||'')||0}:
+    {requestId,partyId:partyPublicUuid(row.party_id),host:partyCleanName(row.host_username),status:String(row.status||''),code:String(row.party_code||''),token:String(row.join_token||''),expiresAt:Date.parse(row.join_expires_at||'')||0,createdAt:Date.parse(row.created_at||'')||0};
+}
+async function partyPublicRefresh(force=false){
+  const owner=authUser?String(authUser.id||''):'';if(!sb||!owner||publicPartyPolling||navigator.onLine===false)return false;
+  const clock=Date.now();if(!force&&clock<publicPartyPollAt)return false;publicPartyPollAt=clock+7000;publicPartyPolling=true;
+  try{
+    const [directory,mine]=await Promise.all([sb.rpc('list_outpost_zero_public_parties',{p_limit:30,p_search:publicPartySearch||null}),sb.rpc('list_my_outpost_zero_public_party_requests',{p_limit:20})]);
+    if(!authUser||String(authUser.id||'')!==owner)return false;if(directory.error)throw directory.error;if(mine.error)throw mine.error;
+    publicPartyRows=(Array.isArray(directory.data)?directory.data:[]).map(partyPublicNormalizeRow).filter(Boolean);
+    publicPartyMyRequests=(Array.isArray(mine.data)?mine.data:[]).map(row=>partyPublicNormalizeRequest(row,false)).filter(Boolean);
+    publicPartySqlReady=true;return true;
+  }catch(error){if(partyPublicRpcMissing(error)){publicPartySqlReady=false;publicPartyRows=[];publicPartyMyRequests=[];}return false;}
+  finally{if(!authUser||String(authUser.id||'')===owner)publicPartyPolling=false;}
+}
+async function partyPublicRefreshHost(force=false){
+  const owner=authUser?String(authUser.id||''):'';if(!sb||!owner||!partyIsHost()||!party.publicParty||publicPartyHostPolling)return false;
+  const clock=Date.now();if(!force&&clock<publicPartyHostPollAt)return false;publicPartyHostPollAt=clock+4000;publicPartyHostPolling=true;
+  try{const result=await sb.rpc('list_outpost_zero_public_party_host_requests',{p_limit:20});if(result.error)throw result.error;
+    if(!authUser||String(authUser.id||'')!==owner)return false;publicPartyHostRequests=(Array.isArray(result.data)?result.data:[]).map(row=>partyPublicNormalizeRequest(row,true)).filter(Boolean);publicPartySqlReady=true;return true;
+  }catch(error){if(partyPublicRpcMissing(error)){publicPartySqlReady=false;publicPartyHostRequests=[];}return false;}
+  finally{if(!authUser||String(authUser.id||'')===owner)publicPartyHostPolling=false;}
+}
+async function partyPublicPublish(force=false){
+  if(!sb||!authUser||!partyIsHost()||!party.publicParty||!party.code||party.directCpu)return false;
+  const current=party,clock=Date.now();if(!force&&clock<(current.publicSyncAt||0))return false;current.publicSyncAt=clock+25000;
+  try{const result=await sb.rpc('publish_outpost_zero_public_party',{p_party_code:party.code,p_party_name:party.publicPartyName,p_member_count:party.members.length,p_capacity:PARTY_MAX});if(result.error)throw result.error;
+    const row=Array.isArray(result.data)?result.data[0]:result.data,id=partyPublicUuid(row&&row.party_id);
+    if(party!==current||!current.accepted||!current.publicParty){if(id)void partyPublicClose(id);return false;}
+    if(id)current.publicPartyId=id;publicPartySqlReady=true;publicPartyPollAt=0;return !!id;
+  }catch(error){const message=String(error&&error.message||'').toUpperCase();if(partyPublicRpcMissing(error)){publicPartySqlReady=false;party.status='PARTY NAMES NEED SOCIAL 09 SQL.';}
+    else if(/PARTY_NAME_TAKEN|UNIQUE/.test(message)){party.publicParty=false;party.status='THAT PUBLIC PARTY NAME IS TAKEN · CREATE AGAIN WITH A UNIQUE NAME.';}
+    else party.status='PUBLIC PARTY DIRECTORY COULD NOT UPDATE.';return false;}
+}
+async function partyPublicClose(partyId){const id=partyPublicUuid(partyId);if(!sb||!authUser||!id)return false;try{const result=await sb.rpc('close_outpost_zero_public_party',{p_party_id:id});return !result.error&&result.data===true;}catch(error){return false;}}
+async function partyPublicRequest(partyId){
+  const id=partyPublicUuid(partyId),operationId=partyPublicOperationId();if(!id||!operationId||!authUser||publicPartyActionBusy)return false;
+  publicPartyActionBusy='request:'+id;try{const result=await sb.rpc('request_outpost_zero_public_party',{p_party_id:id,p_operation_id:operationId});if(result.error)throw result.error;
+    const row=Array.isArray(result.data)?result.data[0]:result.data;party.status=row&&row.accepted?'JOIN REQUEST SENT · WAITING FOR HOST':'COULD NOT REQUEST THAT PARTY';await partyPublicRefresh(true);sfx(row&&row.accepted?'pickup':'dry');return !!(row&&row.accepted);
+  }catch(error){party.status='PUBLIC PARTY REQUEST FAILED.';if(partyPublicRpcMissing(error))publicPartySqlReady=false;sfx('dry');return false;}finally{publicPartyActionBusy='';}
+}
+async function partyPublicDecide(requestId,accept){
+  const id=partyPublicUuid(requestId);if(!id||!partyIsHost()||publicPartyActionBusy)return false;publicPartyActionBusy='decide:'+id;
+  let token='';
+  try{
+    if(accept){token=partyFriendInviteToken();const expiresAt=Date.now()+2*60*1000;if(!token||!await partyRegisterFriendInvite(token,expiresAt))throw new Error('Could not secure join token');}
+    const result=await sb.rpc('decide_outpost_zero_public_party_request',{p_request_id:id,p_accept:!!accept,p_join_token:accept?token:null});if(result.error)throw result.error;
+    const row=Array.isArray(result.data)?result.data[0]:result.data;
+    if(!row||row.accepted!==true){party.status=row&&row.status==='full'?'PARTY FULL · COULD NOT ACCEPT':'THAT REQUEST IS NO LONGER AVAILABLE';await partyPublicRefreshHost(true);sfx('dry');return false;}
+    party.status=accept?'JOIN REQUEST ACCEPTED':'JOIN REQUEST DECLINED';await partyPublicRefreshHost(true);sfx('swap');return true;
+  }catch(error){party.status='COULD NOT '+(accept?'ACCEPT':'DECLINE')+' THAT REQUEST.';sfx('dry');return false;}finally{publicPartyActionBusy='';}
+}
+function partyPublicMyRequest(partyId){const id=partyPublicUuid(partyId);return publicPartyMyRequests.find(row=>row.partyId===id)||null;}
+function partyPublicJoinAccepted(requestId){
+  const id=partyPublicUuid(requestId),row=publicPartyMyRequests.find(item=>item.requestId===id);if(!row||row.status!=='accepted'||!/^[A-HJ-NP-Z2-9]{6}$/.test(row.code)||!/^[A-Za-z0-9_-]{20,64}$/.test(row.token)||row.expiresAt<=Date.now()){party.status='THAT APPROVAL EXPIRED · REQUEST AGAIN';void partyPublicRefresh(true);sfx('dry');return false;}
+  return partyConnect(row.code,false,partyDefaultName(),{friendInviteToken:row.token,friendInviteExpiresAt:row.expiresAt});
+}
+function partyPublicTick(clock=Date.now()){
+  if(authUser&&typeof state!=='undefined'&&state==='select'&&typeof selPage!=='undefined'&&selPage==='social'&&typeof socialView!=='undefined'&&socialView==='party')void partyPublicRefresh();
+  if(partyIsHost()&&party.publicParty){void partyPublicPublish();void partyPublicRefreshHost();}
+}
+function partyPublicPromptSearch(){
+  let raw=null;try{raw=window.prompt('Search public parties by unique party name or host username:',publicPartySearch||'');}catch(error){}
+  if(raw===null)return false;const clean=partyCleanName(raw);if(clean&&!/^[A-Za-z0-9 _-]{1,32}$/.test(clean)){party.status='SEARCH USES LETTERS, NUMBERS, SPACES, _ OR -.';sfx('dry');return false;}
+  publicPartySearch=clean;publicPartyPage=0;publicPartyPollAt=0;void partyPublicRefresh(true);party.status=clean?'SEARCHING PUBLIC PARTIES FOR “'+clean+'”':'SHOWING ALL PUBLIC PARTIES';sfx('swap');return true;
+}
+function partyCreateFromDirectory(){
+  if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay())return false;
+  if(!partyServiceAvailable()){party.status='PARTIES NEED AN INTERNET CONNECTION.';sfx('dry');return false;}
+  const username=partyDefaultName();if(authUser&&!username){party.status='YOUR USERNAME IS STILL LOADING.';void fetchSocial(true);sfx('dry');return false;}
+  openForm({title:'CREATE NEW PARTY',hint:authUser?'Public parties appear in the directory. Private parties use only the code.':'Sign in to create a public party. Guest parties stay private.',saveLabel:'CREATE',
+    fields:[...(authUser?[{id:'partyname',label:'UNIQUE PUBLIC PARTY NAME',type:'text',value:(username+' Squad').slice(0,32),placeholder:'Night Owls'}]:[{id:'name',label:'GUEST NAME',type:'text',value:username,placeholder:'OPERATOR'}]),{id:'visibility',label:'VISIBILITY',type:'select',value:authUser?'public':'private',options:[{value:'public',label:'PUBLIC · HOST APPROVES'},{value:'private',label:'PRIVATE · CODE ONLY'}]}],
+    onSave:values=>{const isPublic=values.visibility==='public';if(isPublic&&!authUser){formError('Sign in to create a public party.');return;}const name=authUser?username:partyCleanName(values.name),publicName=isPublic?partyCleanPublicName(values.partyname):'';if(!name){formError('Enter a guest name.');return;}if(isPublic&&!publicName){formError('Party name must be 3–32 letters, numbers, spaces, _ or -.');return;}closeForm();partyConnect(randomArenaCode(),true,name,{publicParty:isPublic,publicPartyName:publicName});}});return true;
+}
 function partyCpuDirectInviteToken(){
   const bytes=new Uint8Array(18);
   if(!(globalThis.crypto&&crypto.getRandomValues))return '';
@@ -140,6 +233,7 @@ function partyPrepareForAuthChange(nextUserId){
   if(old&&old.chatComposing&&typeof formOpen!=='undefined'&&formOpen)closeForm();
   if(old&&old.channel){try{partySend('leave',{});}catch(e){}partyDropChannel(old.channel);}
   party=freshParty(hadParty?'Account changed. Create or join a new party.':'Create a party or join with a 6-character code.');
+  if(typeof partyPublicReset==='function')partyPublicReset();
   partyAuthOwnerId=next;partyInviteSendBusy=false;partyInvitePickerBusy=false;partyInvitePickerOp=null;partyFriendInviteSendOp=null;partyFriendInviteJoinBusy=false;partyRotateSessionIdentity();
   if(typeof pendingGameMode!=='undefined'&&pendingGameMode===PARTY_CPU_MODE)pendingGameMode=null;
   if(typeof selPage!=='undefined'&&(selPage==='party'||selPage==='partymodes')){
@@ -309,7 +403,7 @@ function partyBuildPlan(){
 }
 function partySnapshot(){
   return {from:party.self.id,code:party.code,hostId:party.hostId,hostEpoch:party.hostEpoch,revision:party.revision,
-          mode:party.mode,locked:false,cpuIntent:!!party.cpuIntent,directCpu:!!party.directCpu,chatEnabled:!!party.chatEnabled,
+          mode:party.mode,locked:false,cpuIntent:!!party.cpuIntent,directCpu:!!party.directCpu,publicParty:!!party.publicParty,chatEnabled:!!party.chatEnabled,
           kickedIds:Array.from(party.kickedIds),members:party.members.map(partyMemberCopy),plan:party.plan};
 }
 function partyHostCommit(message){
@@ -347,7 +441,7 @@ function partyApplyState(p,force){
   if(party.hostId&&party.hostId!==hostId&&typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(party);
   party.hostId=hostId; party.hostEpoch=epoch; party.revision=rev; party.members=members;
   const validMode=['endless','1v1','1v1v1','2v2'].includes(p.mode);
-  party.mode=validMode?p.mode:'endless'; party.locked=false;party.cpuIntent=p.cpuIntent===true;party.directCpu=party.cpuIntent&&p.directCpu===true;party.chatEnabled=p.chatEnabled!==false;
+  party.mode=validMode?p.mode:'endless'; party.locked=false;party.cpuIntent=p.cpuIntent===true;party.directCpu=party.cpuIntent&&p.directCpu===true;party.publicParty=p.publicParty===true;party.chatEnabled=p.chatEnabled!==false;
   party.kickedIds=new Set((Array.isArray(p.kickedIds)?p.kickedIds:[]).map(id=>String(id||'').slice(0,80)).filter(Boolean));
   if(!validMode) partySetDefaultPairings();
   party.plan=validMode&&Array.isArray(p.plan)?p.plan.slice(0,6).map(r=>({title:String(r.title||'').slice(0,42),body:String(r.body||'').slice(0,110),ready:!!r.ready})):partyBuildPlan();
@@ -517,6 +611,7 @@ function partyConnect(code,creating,name){
   }
   party=freshParty(creating?'Opening party...':'Looking for that party...');
   party.phase='joining';party.code=clean;party.self=self;party.creating=!!creating;party.joinDeadline=Date.now()+PARTY_JOIN_MS;
+  party.publicParty=!!(creating&&options.publicParty&&authUser);party.publicPartyName=party.publicParty?partyCleanPublicName(options.publicPartyName):'';party.publicSyncAt=0;
   party.cpuIntent=!!options.cpuIntent;party.directCpu=!!(options.directCpu&&options.cpuIntent);
   party.cpuInviteToken=party.directCpu?String(options.cpuInviteToken||''):'';
   party.directInviteExpiresAt=party.directCpu?Math.floor(+options.directInviteExpiresAt||0):0;
@@ -536,6 +631,7 @@ function partyConnect(code,creating,name){
       try{ await ch.track({id:self.id,name:self.name,joined:self.joined}); }catch(e){}
       if(creating){
         party.phase='lobby';partyHostCommit(party.directCpu?'PRIVATE CPU GAME READY · SENDING INVITE':'Party created. Share code '+clean+'.');
+        if(party.publicParty)void partyPublicPublish(true);
         if(party.directCpu&&typeof options.onSubscribed==='function')
           Promise.resolve(options.onSubscribed({code:clean,token:party.cpuInviteToken,expiresAt:party.directInviteExpiresAt})).catch(()=>{});
       }
@@ -953,6 +1049,8 @@ function partyCpuMakeBot(id,team,x,y,startAt){
     aiSeed:seed,aiRng:seed,aiTracks:{},aiRole:team==='A'?'guardian':(String(id).endsWith('1')?'anchor':'flanker'),
     aiTactic:'hold',aiTacticUntil:startAt,targetId:'',targetLockUntil:0,targetThinkAt:startAt,tntThinkAt:startAt,tntPlan:null,
     aiStuckTicks:0,aiStuckUntil:0,aiFailedMoveX:0,aiFailedMoveY:0,aiNavPath:[],aiNavUntil:0,aiUsingPortal:false,
+    aiPeekPhase:'',aiPeekTargetId:'',aiPeekUntil:0,aiPeekCooldownUntil:0,aiPeekWasHidden:undefined,
+    aiPeekExposedAt:0,aiPeekWindowUntil:0,aiPeekPunishScore:0,aiPrefirePressureUntil:0,
     aiTrainingTntAvoided:new Set(),aiTrainingWallAt:0,
     lastAttackerId:'',underFireUntil:0};
   bot.strafe=typeof cpuAiNext==='function'&&cpuAiNext(bot)<.5?-1:1;
@@ -1216,7 +1314,9 @@ function partyCpuSpawnBotShot(bot,target,profile){
 function partyCpuHostStep(dtms,clock){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight'||partyCpuMatch.roundResolved) return;
   const dt=dtms/16.667,w=WEAPONS.ar,partyProfile={approach:580,retreat:290,maxRange:1010,leadFactor:.60,maxLeadMs:205,
-    aimNoise:.085,shotJitter:.032,fireAimError:.125,turnRate:.06,moveSpeed:2.60,thinkMs:165},
+    aimNoise:.085,shotJitter:.032,fireAimError:.125,turnRate:.06,moveSpeed:2.60,thinkMs:165,
+    routeVariation:.66,peekFakeChance:.08,prefireAdapt:.72,peekTimingVariance:.58,peekHoldMin:70,peekHoldMax:220,
+    peekSettleMin:80,peekSettleMax:260,peekPunishHoldMs:300,peekCommitSpeed:1.13},
     shotProfile={damage:Math.min(18,w.dmg*.85),rng:w.range,fall:w.fall,maxRange:1050};
   for(const b of partyCpuMatch.bots){
     if(b.hp<=0) continue;
@@ -1244,8 +1344,9 @@ function partyCpuHostStep(dtms,clock){
     }
     const desired=Math.atan2(aimY-b.y,aimX-b.x)+(b.aimNoise||0),turn=cpuAiAngleDelta(desired,b.angle);
     b.angle+=clamp(turn,-profile.turnRate*dt,profile.turnRate*dt);
-    const tacticSpeed=b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=profile.moveSpeed*tacticSpeed*dt,
-      moveStartX=b.x,moveStartY=b.y,nx=b.x+b.moveX*spd,ny=b.y+b.moveY*spd,
+    const peek=cpuAiApplyPeekBehavior(b,target,b.moveX,b.moveY,clock,profile,b.tntPlan),
+      tacticSpeed=b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=profile.moveSpeed*tacticSpeed*peek.speedScale*dt,
+      moveStartX=b.x,moveStartY=b.y,nx=b.x+peek.x*spd,ny=b.y+peek.y*spd,
       blockedX=pointInRects(nx,b.y),blockedY=pointInRects(b.x,ny);
     if(!blockedX)b.x=nx; if(!blockedY)b.y=ny;
     clampActorToArena(b);collideRects(b);clampActorToArena(b);
@@ -1258,7 +1359,7 @@ function partyCpuHostStep(dtms,clock){
     const usedPortal=typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena()&&typeof arenaPortalStep==='function'&&arenaPortalStep(b,clock);
     if(usedPortal&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_portal_uses');
     b.tx=b.x;b.ty=b.y;
-    if(clock<b.reactionAt||b.reloadEnd)continue;
+    if(clock<b.reactionAt||b.reloadEnd||cpuAiPeekWithholdsFire(b))continue;
     if(aimTntId){
       const fresh=cpuAiTntPlan(b,foes,allies,shotProfile,clock),freshTnt=liveTnt.find(t=>String(t.id)===String(fresh.targetId));
       b.tntPlan=fresh;b.tntThinkAt=clock+CPU_AI_TNT_RETHINK_MS;
@@ -1390,6 +1491,7 @@ function partyCpuStepShots(dtms){
             if(target.team==='B'&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(target,'bot_damage_taken',dealt);
             partyCpuRecordThreat(b.ownerId,target.team,dealt,partyCpuAiClock());
             target.lastAttackerId=b.ownerId;target.underFireUntil=partyCpuAiClock()+900;
+            if(typeof cpuAiRegisterPeekPunishment==='function')cpuAiRegisterPeekPunishment(target,partyCpuAiClock());
             if(b.reflected&&String(b.ownerId||'')===String(cpuTeamLocalId()||''))addDamageNumber(target,dealt,true);
             dead=true;partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();break;
           }
@@ -1599,6 +1701,7 @@ function cpuTeamApplyBotHit(target,dmg,attackerId=cpuTeamLocalId(),kind='shot',h
   const before=Math.max(0,+target.hp||0),dealt=Math.min(before,hit);
   if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(target,'bot_damage_taken',dealt);
   target.hp=Math.max(0,target.hp-hit);target.lastAttackerId=String(attackerId||'');target.underFireUntil=partyCpuAiClock()+900;
+  if(typeof cpuAiRegisterPeekPunishment==='function')cpuAiRegisterPeekPunishment(target,partyCpuAiClock());
   partyCpuRecordThreat(attackerId,target.team,hit,partyCpuAiClock());
   partyCpuConfirmUnscopedKill({from:String(attackerId||''),kind,id:String(hitId||'')},target,before);
   partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();return true;
@@ -1610,6 +1713,7 @@ function partyCpuHostApplyHit(p){
   partyCpuMatch.seenHits.add(id);if(partyCpuMatch.seenHits.size>500)partyCpuMatch.seenHits=new Set([...partyCpuMatch.seenHits].slice(-250));
   const before=Math.max(0,+target.hp||0);
   target.hp=Math.max(0,target.hp-dmg);target.lastAttackerId=String(p.from||'');target.underFireUntil=partyCpuAiClock()+900;
+  if(typeof cpuAiRegisterPeekPunishment==='function')cpuAiRegisterPeekPunishment(target,partyCpuAiClock());
   partyCpuRecordThreat(p.from,target.team,dmg,partyCpuAiClock());
   partyCpuConfirmUnscopedKill(p,target,before);
   partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();return true;
@@ -1707,12 +1811,14 @@ function leaveParty(status,toHub){
   if(old&&old.chatComposing&&formOpen) closeForm();
   if(typeof partyFriendInviteFormOwnerId!=='undefined'&&partyFriendInviteFormOwnerId&&typeof formOpen!=='undefined'&&formOpen&&typeof closeForm==='function')closeForm();
   if(typeof partyClearFriendInviteWork==='function')partyClearFriendInviteWork(old);
+  if(old&&old.publicParty&&partyIsHost())void partyPublicClose(old.publicPartyId);
   if(old&&old.channel){ try{ partySend('leave',{}); }catch(e){} partyDropChannel(old.channel); }
   party=freshParty(status||'Create a party or join with a 6-character code.');
   partyInviteSendBusy=false;partyInvitePickerBusy=false;partyInvitePickerOp=null;partyFriendInviteSendOp=null;partyFriendInviteJoinBusy=false;partyFriendInviteFormOwnerId='';
   selPage=direct?'offlinecpu':toHub?'hub':'party';if(direct){offlineCpuView='2v2';offlineCpuInfoKey='';}
 }
 function partyTick(clock){
+  if(typeof partyPublicTick==='function')partyPublicTick(clock);
   if(!party||!party.channel||!party.self) return;
   if(party.directCpu&&party.phase==='closing')return;
   if(!party.accepted){

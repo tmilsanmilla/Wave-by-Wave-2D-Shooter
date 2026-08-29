@@ -17,7 +17,11 @@ let cam={x:WORLD.w/2,y:WORLD.h/2}, zoom=1, shakeMag=0, shakeX=0, shakeY=0;
 let wave=0, score=0, kills=0, waveMsg='', waveMsgT=0, hiScore=0, prevBest=0;
 let unscopedSniperCelebration={startAt:0,until:0,serial:0,seen:new Set()};
 let diffMode='normal';
+const DEFAULT_PRACTICE_TRACKING_SPEED=1, DEFAULT_PRACTICE_TRACKING_DIRECTION=0;
+const PRACTICE_TRACKING_SPEED_MIN=0.2, PRACTICE_TRACKING_SPEED_MAX=3.5, PRACTICE_TRACKING_SPEED_STEP=0.1;
+const PRACTICE_TRACKING_DIRECTION_STEP=15;
 let practiceMode=null, practiceSpawns=[], practiceRects=[], pracBtnRect=null, arenaBtnRect=null, dpsLog=[], dpsPrevHp=0, dpsTotal=0, dpsStart=0, pracLockMsgT=0, pracNeedMsgT=0, pendingPractice=null;
+let practiceTrackingSpeed=DEFAULT_PRACTICE_TRACKING_SPEED, practiceTrackingDirection=DEFAULT_PRACTICE_TRACKING_DIRECTION;
 const ARENA_TARGET=5, ARENA_HP=250, ARENA_ROUND_MS=90000, ARENA_SYNC_MS=50;
 const ARENA_MAPS=Object.freeze([
   Object.freeze({id:'arena',name:'ARENA'}),
@@ -38,7 +42,7 @@ function freshArena(status){
     mapVoteAcks:new Set(),mapVoteRevealUntil:0,mapVoteSyncAt:0,mapVoteStartPending:false,
     detonatedTnt:new Set(),tntDamage:new Map(),tntFx:[],portalLocks:{},pendingHazards:new Map(),hazardReceipts:new Map(),hazardArbitrations:new Map(),localKoCause:null,
     syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),pendingUnscopedHits:new Set(),
-    shotSeq:0,seenShots:new Set(),remoteShots:[],fireworkSeq:0,remoteFireworkHighestSeq:0,
+    shotSeq:0,seenShots:new Set(),remoteShots:[],meleeSeq:0,seenMelees:new Set(),fireworkSeq:0,remoteFireworkHighestSeq:0,
     seenFireworks:new Set(),remoteFireworks:[],remoteFireworkFx:[],
     rematchVotes:new Set(),savedUtility:undefined};
 }

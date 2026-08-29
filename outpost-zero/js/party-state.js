@@ -13,6 +13,7 @@ const PARTY_QUEUE_CAPS=Object.freeze({
 function freshParty(status){
   return {phase:'entry',code:'',channel:null,self:null,hostId:null,hostEpoch:0,revision:0,accepted:false,creating:false,
     members:[],mode:'endless',locked:false,cpuIntent:false,directCpu:false,cpuInviteToken:'',directInviteExpiresAt:0,directPeerId:'',directStartIssued:false,
+    publicParty:false,publicPartyId:'',publicPartyName:'',publicSyncAt:0,
     friendInviteToken:'',friendInviteExpiresAt:0,serverInviteId:'',friendInviteTokens:new Map(),friendInviteConsumed:new Set(),friendInviteConsumedOrder:[],friendInvitePending:new Map(),
     plan:[],status:status||'',liveIds:new Set(),missingSince:{},
     joinDeadline:0,nextJoinRequest:0,nextStateSend:0,chatEnabled:true,chatOpen:false,chatComposing:false,
@@ -22,3 +23,5 @@ function freshParty(status){
 let party=freshParty('Create a party or join with a 6-character code.');
 let partyAuthOwnerId='',partyInviteSendBusy=false,partyInvitePickerBusy=false,partyInvitePickerOp=null,
   partyFriendInviteSendOp=null,partyFriendInviteJoinBusy=false,partyFriendInviteFormOwnerId='';
+let publicPartySqlReady=null,publicPartyRows=[],publicPartyHostRequests=[],publicPartyMyRequests=[],publicPartyPage=0,publicPartySearch='',
+  publicPartyPollAt=0,publicPartyPolling=false,publicPartyHostPollAt=0,publicPartyHostPolling=false,publicPartyActionBusy='';

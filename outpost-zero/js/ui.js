@@ -1124,26 +1124,55 @@ function drawPractice(){
   const OPTS=[
     {mode:'range', name:'SHOOTING RANGE', d:'one of every enemy type \u00b7 they stand still \u00b7 respawn 3s after a kill'},
     {mode:'dps',   name:'DPS DUMMY',      d:'an unbreakable target \u00b7 live damage-per-second readout'},
+    {mode:'tracking', name:'TRACKING DUMMY', d:'one moving dummy \u00b7 choose its speed and travel direction', controls:true},
     {mode:'boss',  name:'WARLORD FIGHT',  d:'all four warlords, fully live \u00b7 you respawn on death'},
   ];
   const cw=Math.min(460,W-(tiny?20:80)), gap=tiny?5:14;
   const bh=tiny?30:44, bottomPad=tiny?7:14, backGap=tiny?5:8;
   let y=tiny?(needsLoadout?63:50):H*0.05+62;
   const cardBottom=H-bottomPad-bh-backGap;
-  const ch=clamp(Math.floor((cardBottom-y-gap*2)/3),tiny?42:52,74);
+  const controlsExtra=tiny?54:60;
+  const ch=clamp(Math.floor((cardBottom-y-gap*(OPTS.length-1)-controlsExtra)/OPTS.length),28,tiny?64:70);
   for(const o of OPTS){
-    const x=W/2-cw/2;
-    practiceRects.push({x,y,w:cw,h:ch,mode:o.mode});
-    const hv=mouse.x>=x&&mouse.x<=x+cw&&mouse.y>=y&&mouse.y<=y+ch;
+    const x=W/2-cw/2, cardH=ch+(o.controls?controlsExtra:0);
+    practiceRects.push({x,y,w:cw,h:cardH,mode:o.mode});
+    const hv=mouse.x>=x&&mouse.x<=x+cw&&mouse.y>=y&&mouse.y<=y+cardH;
     ctx.fillStyle=hv?'rgba(167,193,94,0.22)':'rgba(0,0,0,0.4)';
-    ctx.fillRect(x,y,cw,ch);
-    ctx.strokeStyle='#a7c15e'; ctx.strokeRect(x+0.5,y+0.5,cw,ch);
+    ctx.fillRect(x,y,cw,cardH);
+    ctx.strokeStyle='#a7c15e'; ctx.strokeRect(x+0.5,y+0.5,cw,cardH);
     ctx.textAlign='left';
     ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?12:16)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(o.name, cw-32), x+16, y+(tiny?10:14));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(o.d, cw-32), x+16, y+ch-(tiny?10:18));
-    y+=ch+gap;
+    if(ch>=36||o.controls) ctx.fillText(fitLine(o.d, cw-32), x+16, y+(tiny?27:34));
+    if(o.controls){
+      const rowX=x+12, rowW=cw-24, rowH=tiny?22:24, buttonW=tiny?40:46;
+      const firstY=y+cardH-controlsExtra+(tiny?3:4), secondY=firstY+rowH+(tiny?3:4);
+      const drawControlRow=(ry,label,leftAction,rightAction)=>{
+        ctx.fillStyle='rgba(167,193,94,0.08)'; ctx.fillRect(rowX,ry,rowW,rowH);
+        ctx.strokeStyle='rgba(167,193,94,0.42)'; ctx.strokeRect(rowX+0.5,ry+0.5,rowW,rowH);
+        const left={x:rowX,y:ry,w:buttonW,h:rowH,action:leftAction.action,delta:leftAction.delta};
+        const right={x:rowX+rowW-buttonW,y:ry,w:buttonW,h:rowH,action:rightAction.action,delta:rightAction.delta};
+        practiceRects.push(left,right);
+        for(const b of [left,right]){
+          const bhv=mouse.x>=b.x&&mouse.x<=b.x+b.w&&mouse.y>=b.y&&mouse.y<=b.y+b.h;
+          b.hover=bhv;
+          ctx.fillStyle=bhv?'#a7c15e':'rgba(167,193,94,0.18)'; ctx.fillRect(b.x,b.y,b.w,b.h);
+        }
+        ctx.textAlign='center'; ctx.textBaseline='middle';
+        ctx.fillStyle='#cfe0a8'; ctx.font='700 '+(tiny?9:11)+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine(label,rowW-buttonW*2-10),W/2,ry+rowH/2);
+        ctx.font='700 '+(tiny?13:15)+'px ui-monospace,Consolas,monospace';
+        ctx.fillStyle=left.hover?'#101208':'#cfe0a8';
+        ctx.fillText(leftAction.label,left.x+left.w/2,ry+rowH/2);
+        ctx.fillStyle=right.hover?'#101208':'#cfe0a8';
+        ctx.fillText(rightAction.label,right.x+right.w/2,ry+rowH/2);
+        ctx.textBaseline='top';
+      };
+      drawControlRow(firstY,'SPEED  '+practiceTrackingSpeed.toFixed(1)+'\u00d7',{action:'tracking-speed',delta:-PRACTICE_TRACKING_SPEED_STEP,label:'\u2212'},{action:'tracking-speed',delta:PRACTICE_TRACKING_SPEED_STEP,label:'+'});
+      drawControlRow(secondY,'DIRECTION  '+Math.round(normalizePracticeTrackingDirection())+'\u00b0  '+practiceTrackingDirectionArrow(),{action:'tracking-direction',delta:-PRACTICE_TRACKING_DIRECTION_STEP,label:'\u21b6'},{action:'tracking-direction',delta:PRACTICE_TRACKING_DIRECTION_STEP,label:'\u21b7'});
+    }
+    y+=cardH+gap;
   }
 
   ctx.textAlign='center';
@@ -1942,9 +1971,8 @@ function drawSocial(){
   const titleY=tiny?2:compact?7:12, titleFs=tiny?18:compact?25:34;
   ctx.textAlign='center';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
   ctx.fillText('SOCIAL',W/2,titleY);
-  const inboxLabel=isAdmin()?'ADMIN INBOX':'PRIVATE INBOX',socialSub=inboxLabel==='ADMIN INBOX'?'FRIENDS + ADMIN INBOX · PARTIES: NEW · BETA':'FRIENDS + PRIVATE INBOX NEED SIGN-IN · PARTIES: NEW · BETA',
-    socialStatusHint=isAdmin()?'SIGN IN FOR FRIENDS + ADMIN INBOX':'SIGN IN FOR FRIENDS + PRIVATE INBOX',
-    inboxPanelTitle=isAdmin()?'ADMIN INBOX':'PRIVATE INBOX';
+  const inboxLabel='PRIVATE INBOX',socialSub='FRIENDS + PRIVATE INBOX · PARTIES: NEW · BETA',
+    socialStatusHint='SIGN IN FOR FRIENDS + PRIVATE INBOX',inboxPanelTitle='PRIVATE INBOX';
   const subY=titleY+titleFs+(tiny?0:3);
   if(!tiny){
     ctx.fillStyle='#8a9268';ctx.font='700 '+(compact?8:10)+'px ui-monospace,Consolas,monospace';
@@ -1965,19 +1993,15 @@ function drawSocial(){
   const identityH=authUser&&!short?(W<500?(compact?32:48):(compact?27:32)):0;
   if(typeof socialLayoutIdentity==='function')socialLayoutIdentity(identityH?{x:contentX,y:identityY,w:contentW,h:identityH}:null);
   const contentTop=(identityH?identityY+identityH:statusY)+(tiny?5:compact?8:12);
-  const availableH=Math.max(150,contentBottom-contentTop),navH=tiny?36:compact?44:48;
-  const desiredPartyH=tiny?102:short?116:compact?(H<520?122:144):176;
-  const minPartyH=tiny?96:short?108:compact?116:150;
-  const minViewBody=tiny?62:short?66:compact?104:166;
-  const maxPartyH=availableH-navH-gap*2-minViewBody;
-  const partyH=Math.max(minPartyH,Math.min(desiredPartyH,maxPartyH));
-  const partyY=contentBottom-partyH,pageBottom=partyY-gap;
+  const navH=tiny?36:compact?44:48,pageBottom=contentBottom;
 
-  const navGap=tiny?5:compact?8:12,navW=(contentW-navGap)/2;
-  const friendsNav=drawSocialButton('social_view_friends','FRIENDS',contentX,contentTop,navW,navH,'#7fd8ff',true,{active:activeSocialView!=='inbox'}),
-    inboxNav=drawSocialButton('social_view_inbox',inboxLabel,contentX+navW+navGap,contentTop,navW,navH,'#a7c15e',true,{active:activeSocialView==='inbox'});
+  const navGap=tiny?4:compact?7:10,navW=(contentW-navGap*2)/3;
+  const friendsNav=drawSocialButton('social_view_friends','FRIENDS',contentX,contentTop,navW,navH,'#7fd8ff',true,{active:activeSocialView==='friends'}),
+    inboxNav=drawSocialButton('social_view_inbox','INBOX',contentX+navW+navGap,contentTop,navW,navH,'#a7c15e',true,{active:activeSocialView==='inbox'}),
+    partyNav=drawSocialButton('social_view_party','PARTY',contentX+(navW+navGap)*2,contentTop,navW,navH,'#bfa8ff',true,{active:activeSocialView==='party'});
   if(typeof socialHasUnreadFriendsActivity==='function'&&socialHasUnreadFriendsActivity())drawSocialAttentionBadge(friendsNav);
   if(typeof socialHasUnreadInboxActivity==='function'&&socialHasUnreadInboxActivity())drawSocialAttentionBadge(inboxNav);
+  if(typeof socialHasUnreadPartyActivity==='function'&&socialHasUnreadPartyActivity())drawSocialAttentionBadge(partyNav);
   const viewY=contentTop+navH+gap,view={x:contentX,y:viewY,w:contentW,h:Math.max(24,pageBottom-viewY)};
 
   const panelFrame=(p,title,col,sub)=>{
@@ -1989,7 +2013,7 @@ function drawSocial(){
     ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=col;ctx.font='700 '+(tiny?6:compact?8:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(text,p.w-16),p.x+p.w/2,y);
   };
 
-  if(activeSocialView!=='inbox'){
+  if(activeSocialView==='friends'){
     const owner=String(authUser&&authUser.id||'');
     const buckets={
       incoming:authUser?socialFriends.filter(r=>r.status==='pending'&&String(r.addressee_id)===owner):[],
@@ -2034,6 +2058,7 @@ function drawSocial(){
         const total=two?aw*2+actionGap:aw,ax=p.x+p.w-total-7;
         ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=blocked?'#d05548':key==='current'?'#cfe8ff':'#e8b658';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
         ctx.fillText(fitLine('@'+person.handle+' · '+status,Math.max(24,ax-p.x-13)),p.x+9,y+(rowH-2)/2);
+        socialRects.push({id:'player_profile',x:p.x+6,y,w:Math.max(24,ax-p.x-8),h:rowH-2,enabled:true,userId:other,handle:person.handle});
         if(key==='incoming'){
           drawSocialButton('friend_accept','ACCEPT',ax,y+1,aw,actionH,'#a7c15e',ready,{rowId:f.id});
           drawSocialButton('friend_block','BLOCK',ax+aw+actionGap,y+1,aw,actionH,'#d05548',ready,{rowId:f.id});
@@ -2073,121 +2098,175 @@ function drawSocial(){
   }
 
   if(activeSocialView==='inbox'){
-    const p=view,col='#a7c15e',footerH=tiny?30:compact?40:44,footerY=p.y+p.h-footerH-6,headY=p.y+(tiny?21:compact?28:34);
-    panelFrame(p,inboxPanelTitle,col,'DIRECT + OFFICIAL');
-    const officialMeta=value=>{
-      const stamp=Date.parse(value||'');if(!Number.isFinite(stamp))return 'OUTPOST ZERO · OFFICIAL';
-      const date=new Date(stamp);try{return 'POSTED '+date.toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(error){return 'POSTED '+date.toISOString().slice(0,16).replace('T',' ')+' UTC';}
-    };
-    const official=(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.message||'').trim()&&
-        !(typeof socialOfficialBannerAlreadyNotified==='function'&&socialOfficialBannerAlreadyNotified(row)))
-      .map(row=>({kind:'official',id:row.id,body:String(row.message||''),created_at:row.created_at||'',meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)}));
-    const notices=(authUser&&typeof socialNotifications!=='undefined'&&Array.isArray(socialNotifications)?socialNotifications:[])
-      .map(notice=>({kind:'notification',notice,created_at:new Date(notice.createdAt||0).toISOString(),sortAt:+notice.createdAt||0}));
-    const direct=(authUser&&Array.isArray(socialMessages)?socialMessages:[]).map(row=>({kind:'direct',row,created_at:row&&row.created_at||'',sortAt:Date.parse(row&&row.created_at||'')||(+row.id||0)}));
-    const cloudInvites=(authUser&&typeof socialPartyInvites!=='undefined'&&Array.isArray(socialPartyInvites)?socialPartyInvites:[]).map(invite=>({kind:'cloud_party_invite',invite,
-      created_at:new Date(invite.createdAt||0).toISOString(),sortAt:+invite.createdAt||0}));
-    const inboxRows=notices.concat(official,cloudInvites,direct).sort((a,b)=>b.sortAt-a.sortAt);
-    const dmReady=!!(authUser&&socialBackend.profiles===true&&socialBackend.messages===true&&socialBackend.friends===true);
-    const dmMissing=!!(authUser&&(socialBackend.profiles===false||socialBackend.messages===false||socialBackend.friends===false));
-    const dmLoading=!!(authUser&&socialLoading&&socialBackend.profiles===null);
-    const desiredRowH=tiny?24:compact?34:44,listSpace=Math.max(0,footerY-headY-2);
-    const maxRows=listSpace>=12?Math.max(1,Math.floor(listSpace/desiredRowH)):0;
-    const rowH=maxRows?Math.min(desiredRowH,listSpace/maxRows):0;
-    const pages=Math.max(1,Math.ceil(inboxRows.length/Math.max(1,maxRows)));socialMessagePage=clamp(socialMessagePage,0,pages-1);
-    const pageRows=maxRows?inboxRows.slice(socialMessagePage*maxRows,(socialMessagePage+1)*maxRows):[];
-    if(!inboxRows.length){
-      const empty=!authUser?'SIGN IN FOR DIRECT MESSAGES · NO OFFICIAL UPDATES':dmMissing?'SECURE MESSAGE STORAGE NEEDS SETUP':dmLoading?'LOADING PRIVATE INBOX...':'YOUR PRIVATE INBOX IS EMPTY';
-      panelMessage(p,empty,headY+(footerY-headY)/2,dmMissing?'#d05548':'#8a9268');
-    }else for(let i=0;i<pageRows.length;i++){
-      const item=pageRows[i],y=headY+i*rowH;
-      if(item.kind==='notification'){
-        const notice=item.notice||{},unread=!notice.readAt,
-          col=/^ban_/.test(notice.kind)?'#ff6b5d':/^friend_/.test(notice.kind)?'#7fd8ff':
-            /^weapon_|currency_updated|upgrades_updated|score_updated/.test(notice.kind)?'#e8b658':notice.kind==='admin_message'?'#bfa8ff':'#a7c15e';
-        ctx.fillStyle=unread?(i%2?'rgba(208,85,72,0.10)':'rgba(208,85,72,0.16)'):(i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)');ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
-        ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=col;ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
-        ctx.fillText(fitLine((unread?'● NEW · ':'')+String(notice.title||'OUTPOST ZERO NOTICE')+' · '+String(notice.authorLabel||'OUTPOST ZERO'),p.w-(tiny?48:96)),p.x+9,y+3);
-        ctx.textAlign='right';ctx.fillStyle='#a7c15e';ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(tiny?'OPEN ›':'OPEN TO READ ›',p.x+p.w-9,y+3);
-        ctx.textAlign='left';ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(notice.message||''),p.w-18),p.x+9,y+(tiny?13:compact?17:22));
-        socialRects.push({id:'inbox_notice_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,noticeKey:String(notice.uiKey||'')});continue;
+    const p=view,col='#a7c15e',footerH=tiny?28:compact?38:44,footerY=p.y+p.h-footerH-6,
+      conversations=authUser&&typeof socialPrivateConversations==='function'?socialPrivateConversations():[],
+      openConversation=typeof socialConversationPeer==='string'&&socialConversationPeer&&typeof socialPrivateConversation==='function'?socialPrivateConversation(socialConversationPeer):null,
+      dmReady=!!(authUser&&socialBackend.profiles===true&&socialBackend.messages===true),
+      dmMissing=!!(authUser&&(socialBackend.profiles===false||socialBackend.messages===false)),
+      dmLoading=!!(authUser&&socialLoading&&socialBackend.profiles===null);
+    if(openConversation){
+      const person=socialPerson(openConversation.peerId),archived=!!openConversation.archived,headerY=p.y+(tiny?20:compact?27:34),
+        listTop=headerY+(tiny?20:compact?26:32),listSpace=Math.max(0,footerY-listTop-3),desired=tiny?31:compact?43:54,
+        maxRows=listSpace>=18?Math.max(1,Math.floor(listSpace/desired)):1,rowH=Math.max(18,listSpace/Math.max(1,maxRows)),
+        pages=Math.max(1,Math.ceil(openConversation.messages.length/maxRows));
+      socialConversationPage=clamp(Number(socialConversationPage)||0,0,pages-1);
+      panelFrame(p,'PRIVATE CONVERSATION',archived?'#8a9268':col,openConversation.messages.length+' MESSAGES');
+      const pagerW=Math.min(compact?34:42,p.w*.11),profileW=Math.max(46,p.w-pagerW*2-28);
+      ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#f0ddb0';ctx.font='700 '+(tiny?7:compact?9:12)+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine('@'+person.handle+(archived?' · ARCHIVED':''),profileW-8),p.x+9,headerY+8);
+      socialRects.push({id:'player_profile',x:p.x+6,y:headerY,w:profileW,h:Math.max(16,listTop-headerY-2),enabled:true,userId:openConversation.peerId,handle:person.handle});
+      drawSocialButton('conversation_prev','‹',p.x+p.w-pagerW*2-8,headerY,pagerW,Math.max(16,listTop-headerY-2),'#8a9268',socialConversationPage>0);
+      drawSocialButton('conversation_next','›',p.x+p.w-pagerW-6,headerY,pagerW,Math.max(16,listTop-headerY-2),'#8a9268',socialConversationPage<pages-1);
+      const rows=openConversation.messages.slice(socialConversationPage*maxRows,(socialConversationPage+1)*maxRows),owner=String(authUser&&authUser.id||'');
+      for(let i=0;i<rows.length;i++){
+        const row=rows[i],mine=String(row.sender_id||'')===owner,y=listTop+i*rowH,stamp=typeof socialInboxTimestamp==='function'?socialInboxTimestamp(Date.parse(row.created_at||'')):'';
+        ctx.fillStyle=mine?(i%2?'rgba(127,216,255,.055)':'rgba(127,216,255,.10)'):(i%2?'rgba(167,193,94,.07)':'rgba(167,193,94,.13)');ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+        ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=mine?'#7fd8ff':'#a7c15e';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine((mine?'YOU':'@'+person.handle)+' · '+stamp,p.w-18),p.x+9,y+3);
+        ctx.fillStyle='#edf1df';ctx.font=(tiny?6:compact?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.body||''),p.w-18),p.x+9,y+(tiny?14:compact?19:24));
       }
-      if(item.kind==='official'){
-        ctx.fillStyle=i%2?'rgba(232,182,88,0.08)':'rgba(232,182,88,0.13)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
-        ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText('OFFICIAL UPDATE',p.x+9,y+3);
-        ctx.textAlign='right';ctx.fillStyle='#a7c15e';ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(tiny?'OPEN ›':'OPEN TO READ ›',p.x+p.w-9,y+3);
-        ctx.textAlign='left';ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(item.body,p.w-18),p.x+9,y+(tiny?13:compact?17:22));
-        socialRects.push({id:'official_update_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,body:item.body,meta:item.meta,updateId:item.id});continue;
+      const canReply=typeof socialCanMessageUser==='function'?socialCanMessageUser(openConversation.peerId):socialAcceptedFriend(openConversation.peerId),
+        controls=archived?[{id:'conversation_back',label:'‹ ARCHIVE',col:'#8a9268',ok:true},{id:'conversation_reply',label:'REPLY',col:'#a7c15e',ok:canReply},{id:'conversation_restore',label:'TO INBOX',col:'#7fd8ff',ok:!socialConversationBusy},{id:'conversation_delete',label:'DELETE',col:'#d05548',ok:!socialConversationBusy}]:
+          [{id:'conversation_back',label:'‹ INBOX',col:'#8a9268',ok:true},{id:'conversation_reply',label:'REPLY',col:'#a7c15e',ok:canReply},{id:'conversation_archive',label:'ARCHIVE',col:'#e8b658',ok:!socialConversationBusy}],
+        fg=compact?4:7,fw=(p.w-12-fg*(controls.length-1))/controls.length;
+      controls.forEach((item,i)=>drawSocialButton(item.id,item.label,p.x+6+i*(fw+fg),footerY,fw,footerH,item.col,item.ok,{conversationKey:openConversation.uiKey,userId:openConversation.peerId,handle:person.handle}));
+    }else{
+      panelFrame(p,inboxPanelTitle,col,'25 ACTIVE CONVERSATIONS MAX');
+      const tabY=p.y+(tiny?18:compact?25:31),tabH=tiny?21:compact?27:31,tabGap=compact?5:8,tabW=(p.w-12-tabGap)/2,
+        section=typeof socialInboxSection==='string'&&socialInboxSection==='archive'?'archive':'inbox';
+      drawSocialButton('inbox_section_inbox','INBOX · '+conversations.filter(row=>!row.archived).length,p.x+6,tabY,tabW,tabH,col,true,{active:section==='inbox'});
+      drawSocialButton('inbox_section_archive','ARCHIVE · '+conversations.filter(row=>row.archived).length,p.x+6+tabW+tabGap,tabY,tabW,tabH,'#8a9268',true,{active:section==='archive'});
+      const headY=tabY+tabH+(tiny?3:compact?5:7),officialMeta=value=>{
+        const stamp=Date.parse(value||'');if(!Number.isFinite(stamp))return 'OUTPOST ZERO · OFFICIAL';
+        const date=new Date(stamp);try{return 'POSTED '+date.toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(error){return 'POSTED '+date.toISOString().slice(0,16).replace('T',' ')+' UTC';}
+      };
+      const official=section==='inbox'?(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.message||'').trim()&&
+          !(typeof socialOfficialBannerAlreadyNotified==='function'&&socialOfficialBannerAlreadyNotified(row)))
+        .map(row=>({kind:'official',id:row.id,body:String(row.message||''),meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)})):[];
+      const notices=section==='inbox'?(authUser&&typeof socialNotifications!=='undefined'&&Array.isArray(socialNotifications)?socialNotifications:[])
+        .map(notice=>({kind:'notification',notice,sortAt:+notice.createdAt||0})):[];
+      const cloudInvites=section==='inbox'?(authUser&&typeof socialPartyInvites!=='undefined'&&Array.isArray(socialPartyInvites)?socialPartyInvites:[])
+        .map(invite=>({kind:'cloud_party_invite',invite,sortAt:+invite.createdAt||0})):[];
+      const legacyInvites=section==='inbox'?(authUser&&Array.isArray(socialMessages)?socialMessages:[]).filter(row=>
+        (typeof socialPrivateMessageVisible!=='function'||socialPrivateMessageVisible(row))&&
+        ((typeof socialCpuGameInviteEnvelope==='function'&&socialCpuGameInviteEnvelope(row.body))||(typeof socialPartyInviteEnvelope==='function'&&socialPartyInviteEnvelope(row.body))))
+        .map(row=>({kind:'legacy_invite',row,sortAt:Date.parse(row.created_at||'')||(+row.id||0)})):[];
+      const threadRows=conversations.filter(row=>section==='archive'?row.archived:!row.archived).map(conversation=>({kind:'conversation',conversation,sortAt:conversation.lastAt})),
+        inboxRows=notices.concat(official,cloudInvites,legacyInvites,threadRows).sort((a,b)=>b.sortAt-a.sortAt),
+        desiredRowH=tiny?25:compact?36:47,listSpace=Math.max(0,footerY-headY-2),maxRows=listSpace>=12?Math.max(1,Math.floor(listSpace/desiredRowH)):0,
+        rowH=maxRows?Math.min(desiredRowH,listSpace/maxRows):0,pages=Math.max(1,Math.ceil(inboxRows.length/Math.max(1,maxRows)));
+      socialMessagePage=clamp(socialMessagePage,0,pages-1);
+      const pageRows=maxRows?inboxRows.slice(socialMessagePage*maxRows,(socialMessagePage+1)*maxRows):[];
+      if(!inboxRows.length){
+        const empty=!authUser?'SIGN IN FOR PRIVATE CONVERSATIONS':dmMissing?'SECURE MESSAGE STORAGE NEEDS SETUP':dmLoading?'LOADING PRIVATE INBOX...':section==='archive'?'YOUR ARCHIVE IS EMPTY':'YOUR PRIVATE INBOX IS EMPTY';
+        panelMessage(p,empty,headY+(footerY-headY)/2,dmMissing?'#d05548':'#8a9268');
+      }else for(let i=0;i<pageRows.length;i++){
+        const item=pageRows[i],y=headY+i*rowH;
+        if(item.kind==='conversation'){
+          const conversation=item.conversation,person=socialPerson(conversation.peerId),archived=conversation.archived,busy=!!socialConversationBusy,
+            actionGap=tiny?2:4,buttonW=Math.min(compact?54:72,Math.max(44,p.w*.17)),actions=archived?2:1,
+            actionSpan=buttonW*actions+actionGap*(actions-1),openW=Math.max(55,p.w-14-actionSpan-actionGap),preview=typeof socialConversationPreviewBody==='function'?socialConversationPreviewBody(conversation.last):String(conversation.last&&conversation.last.body||'');
+          ctx.fillStyle=conversation.unread?'rgba(167,193,94,.16)':i%2?'rgba(255,255,255,.022)':'rgba(255,255,255,.05)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+          ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=conversation.unread?'#cfe8a8':'#f0ddb0';ctx.font='700 '+(tiny?6:compact?8:10)+'px ui-monospace,Consolas,monospace';
+          ctx.fillText(fitLine((conversation.unread?'● '+conversation.unread+' NEW · ':'')+'@'+person.handle+' · '+conversation.messages.length+' MESSAGES',openW-8),p.x+9,y+3);
+          ctx.fillStyle='#aeb59d';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(preview,openW-8),p.x+9,y+(tiny?14:compact?19:25));
+          socialRects.push({id:'inbox_conversation_open',x:p.x+5,y,w:openW,h:rowH-2,enabled:true,conversationKey:conversation.uiKey});
+          const ax=p.x+p.w-actionSpan-7;
+          if(archived){
+            drawSocialButton('conversation_restore','INBOX',ax,y+1,buttonW,Math.max(16,rowH-4),'#7fd8ff',!busy,{conversationKey:conversation.uiKey,handle:person.handle});
+            drawSocialButton('conversation_delete','DELETE',ax+buttonW+actionGap,y+1,buttonW,Math.max(16,rowH-4),'#d05548',!busy,{conversationKey:conversation.uiKey,handle:person.handle});
+          }else drawSocialButton('conversation_archive','ARCHIVE',ax,y+1,buttonW,Math.max(16,rowH-4),'#e8b658',!busy,{conversationKey:conversation.uiKey});
+          continue;
+        }
+        if(item.kind==='notification'){
+          const notice=item.notice||{},unread=!notice.readAt,ncol=/^ban_/.test(notice.kind)?'#ff6b5d':/^friend_/.test(notice.kind)?'#7fd8ff':notice.kind==='admin_message'?'#bfa8ff':'#a7c15e';
+          ctx.fillStyle=unread?'rgba(208,85,72,.15)':i%2?'rgba(255,255,255,.022)':'rgba(255,255,255,.05)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+          ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=ncol;ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((unread?'● NEW · ':'')+String(notice.title||'OUTPOST ZERO NOTICE'),p.w-18),p.x+9,y+3);
+          ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(notice.message||''),p.w-18),p.x+9,y+(tiny?14:compact?19:25));
+          socialRects.push({id:'inbox_notice_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,noticeKey:String(notice.uiKey||'')});continue;
+        }
+        if(item.kind==='official'){
+          ctx.fillStyle='rgba(232,182,88,.11)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText('OFFICIAL UPDATE',p.x+9,y+3);
+          ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(item.body,p.w-18),p.x+9,y+(tiny?14:compact?19:25));socialRects.push({id:'official_update_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,body:item.body,meta:item.meta,updateId:item.id});continue;
+        }
+        if(item.kind==='cloud_party_invite'){
+          const invite=item.invite,cpu=invite&&invite.kind==='cpu2v2',live=invite&&invite.expiresAt>(typeof socialPartyInviteServerNow==='function'?socialPartyInviteServerNow():Date.now()),joinW=live?Math.min(compact?64:88,p.w*.24):0,bodyW=p.w-18-(joinW?joinW+6:0);
+          ctx.fillStyle='rgba(191,168,255,.11)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('FROM @'+String(invite&&invite.senderUsername||'PLAYER'),bodyW),p.x+9,y+3);
+          ctx.fillStyle='#cdd6b0';ctx.fillText(fitLine(live?(cpu?'CPU 2v2 INVITE':'PARTY INVITE'):'INVITE EXPIRED',bodyW),p.x+9,y+(tiny?14:compact?19:25));
+          if(live)drawSocialButton('cloud_party_invite_accept',cpu?'START':'JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-4),'#bfa8ff',true,{inviteKey:String(invite.uiKey||'')});continue;
+        }
+        const m=item.row,incoming=String(m.recipient_id||'')===String(authUser&&authUser.id||''),other=incoming?m.sender_id:m.recipient_id,person=socialPerson(other),canJoin=socialAcceptedFriend(other),messageKey=typeof socialPrivateMessageUiKey==='function'?socialPrivateMessageUiKey(m):'',handled=typeof socialLegacyInviteHandled==='function'&&socialLegacyInviteHandled(m,authUser.id),
+          cpuEnvelope=typeof socialCpuGameInviteEnvelope==='function'?socialCpuGameInviteEnvelope(m.body):null,cpuInvite=incoming&&canJoin&&!handled&&typeof socialCpuGameInvite==='function'?socialCpuGameInvite(m.body):null,
+          partyEnvelope=typeof socialPartyInviteEnvelope==='function'?socialPartyInviteEnvelope(m.body):null,partyInvite=incoming&&canJoin&&!handled&&typeof socialPartyInvite==='function'?socialPartyInvite(m.body):null,
+          action=cpuInvite||partyInvite,joinW=action?Math.min(compact?64:88,p.w*.24):0,bodyW=p.w-18-(joinW?joinW+6:0);
+        ctx.fillStyle='rgba(191,168,255,.09)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((incoming?'FROM ':'TO ')+'@'+person.handle,bodyW),p.x+9,y+3);
+        const label=handled?'INVITE DISMISSED':cpuEnvelope?'CPU 2v2 GAME INVITE':partyEnvelope?'PARTY INVITE':'INVITE';ctx.fillStyle='#cdd6b0';ctx.fillText(fitLine(label,bodyW),p.x+9,y+(tiny?14:compact?19:25));
+        if(cpuInvite)drawSocialButton('cpu_invite_play','START',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-4),'#bfa8ff',true,{invite:{...cpuInvite,senderId:String(other)},messageKey});
+        else if(partyInvite)drawSocialButton('party_invite_join','JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-4),'#bfa8ff',true,{invite:{...partyInvite,senderId:String(other)},messageKey});
       }
-      if(item.kind==='cloud_party_invite'){
-        const invite=item.invite,cpu=invite&&invite.kind==='cpu2v2',stillLive=invite&&invite.expiresAt>(typeof socialPartyInviteServerNow==='function'?socialPartyInviteServerNow():Date.now()),
-          joinW=stillLive?Math.min(compact?70:92,Math.max(48,p.w*.25)):0,bodyW=p.w-18-(joinW?joinW+6:0);
-        ctx.fillStyle=i%2?'rgba(191,168,255,0.08)':'rgba(191,168,255,0.13)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
-        ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
-        ctx.fillText(fitLine('FROM @'+String(invite&&invite.senderUsername||'PLAYER'),bodyW),p.x+9,y+3);
-        const label=stillLive?(cpu?'NEW · BETA · CPU 2v2 INVITE · PRESS START':'PARTY INVITE · PRESS JOIN'):(cpu?'CPU 2v2 INVITE · EXPIRED':'PARTY INVITE · EXPIRED');
-        ctx.fillStyle='#cdd6b0';ctx.font=(stillLive&&W<430?6:tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(label,bodyW),p.x+9,y+(tiny?13:compact?17:22));
-        if(stillLive)drawSocialButton('cloud_party_invite_accept',cpu?'START':'JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{inviteKey:String(invite.uiKey||'')});
-        continue;
-      }
-      const m=item.row,incoming=String(m.recipient_id)===String(authUser.id),other=incoming?m.sender_id:m.recipient_id,person=socialPerson(other),canReply=socialAcceptedFriend(other),
-        messageKey=typeof socialPrivateMessageUiKey==='function'?socialPrivateMessageUiKey(m):'',handledInvite=typeof socialLegacyInviteHandled==='function'&&socialLegacyInviteHandled(m,authUser.id);
-      const cpuEnvelope=typeof socialCpuGameInviteEnvelope==='function'?socialCpuGameInviteEnvelope(m.body):null;
-      const cpuInvite=incoming&&canReply&&!handledInvite&&typeof socialCpuGameInvite==='function'?socialCpuGameInvite(m.body):null;
-      const partyEnvelope=typeof socialPartyInviteEnvelope==='function'?socialPartyInviteEnvelope(m.body):null;
-      const friendInvite=incoming&&canReply&&!handledInvite&&typeof socialPartyInvite==='function'?socialPartyInvite(m.body):null;
-      const actionable=cpuInvite||friendInvite,normalMessage=!cpuEnvelope&&!partyEnvelope,replyW=normalMessage&&incoming&&canReply?Math.min(compact?64:84,Math.max(46,p.w*.22)):0,
-        joinW=actionable?Math.min(compact?70:92,Math.max(48,p.w*.25)):0,actionW=actionable?joinW:replyW,
-        bodyW=p.w-18-(actionW?actionW+6:0),headerW=bodyW-(normalMessage?(tiny?42:90):0);
-      ctx.fillStyle=incoming&&!m.read_at?'rgba(167,193,94,0.14)':i%2?'rgba(255,255,255,0.022)':'rgba(255,255,255,0.05)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
-      ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=incoming?'#a7c15e':'#7fd8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((incoming?'FROM ':'TO ')+'@'+person.handle,headerW),p.x+9,y+3);
-      if(normalMessage&&!replyW){ctx.textAlign='right';ctx.fillStyle='#a7c15e';ctx.font='700 '+(tiny?5:compact?6:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(tiny?'OPEN ›':'OPEN TO READ ›',p.x+p.w-9,y+3);ctx.textAlign='left';}
-      const label=partyEnvelope?(incoming?(handledInvite?'PARTY INVITE · DISMISSED':friendInvite?'NEW · BETA · PARTY INVITE · PRESS JOIN':'NEW · BETA · PARTY INVITE · EXPIRED'):'NEW · BETA · PARTY INVITE SENT'):
-        cpuEnvelope?(incoming?(handledInvite?'CPU 2v2 INVITE · DISMISSED':cpuInvite?(W<430?'NEW/BETA · STARTS':'NEW · BETA · CPU 2v2 GAME INVITE · STARTS WHEN ACCEPTED'):'NEW · BETA · CPU 2v2 INVITE · EXPIRED'):'NEW · BETA · CPU 2v2 INVITE SENT'):m.body;
-      ctx.fillStyle='#cdd6b0';ctx.font=(actionable&&W<430?6:tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(label,bodyW),p.x+9,y+(tiny?13:compact?17:22));
-      if(cpuInvite)drawSocialButton('cpu_invite_play','START',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{invite:{...cpuInvite,senderId:String(other)},messageKey});
-      else if(friendInvite)drawSocialButton('party_invite_join','JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-2),'#bfa8ff',true,{invite:{...friendInvite,senderId:String(other)},messageKey});
-      else if(!cpuEnvelope&&!partyEnvelope){
-        if(replyW)drawSocialButton('inbox_message_reply','REPLY',p.x+p.w-actionW-7,y+1,actionW,Math.max(16,rowH-2),'#bfa8ff',true,{messageKey,replyTo:other,replyHandle:person.handle});
-        socialRects.push({id:'inbox_message_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,messageKey});
-      }
-    }
-    const canLoadOlder=!!(authUser&&typeof socialNotificationHasMore!=='undefined'&&socialNotificationHasMore),
-      loadingOlder=!!(typeof socialNotificationOlderOp!=='undefined'&&socialNotificationOlderOp),
-      footerGap=compact?5:8,count=pages>1?3:2,bw=(p.w-12-footerGap*(count-1))/count;
-    if(!authUser)drawSocialButton('signin','SIGN IN',p.x+6,footerY,bw,footerH,col,true);
-    else if(dmReady)drawSocialButton('dm_new','NEW MESSAGE',p.x+6,footerY,bw,footerH,col,true);
-    else drawSocialButton('social_retry',dmMissing?'RETRY MESSAGES':'LOADING MESSAGES',p.x+6,footerY,bw,footerH,col,dmMissing);
-    if(pages>1){
+      const footerGap=compact?5:8,bw=(p.w-12-footerGap*2)/3;
+      if(!authUser)drawSocialButton('signin','SIGN IN',p.x+6,footerY,bw,footerH,col,true);
+      else if(dmReady)drawSocialButton('dm_new','NEW MESSAGE',p.x+6,footerY,bw,footerH,col,true);
+      else drawSocialButton('social_retry',dmMissing?'RETRY MESSAGES':'LOADING MESSAGES',p.x+6,footerY,bw,footerH,col,dmMissing);
       drawSocialButton('dm_prev','‹ '+(socialMessagePage+1)+'/'+pages,p.x+6+bw+footerGap,footerY,bw,footerH,'#8a9268',socialMessagePage>0);
-      if(socialMessagePage<pages-1)drawSocialButton('dm_next',(socialMessagePage+1)+'/'+pages+' ›',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',true);
-      else if(canLoadOlder)drawSocialButton('inbox_load_older',loadingOlder?'LOADING...':'LOAD OLDER ›',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',!loadingOlder);
-      else drawSocialButton('dm_next',(socialMessagePage+1)+'/'+pages+' ›',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',false);
-    }else drawSocialButton(canLoadOlder?'inbox_load_older':'inbox_refresh',loadingOlder?'LOADING...':canLoadOlder?'LOAD OLDER':'REFRESH',p.x+6+bw+footerGap,footerY,bw,footerH,'#8a9268',!loadingOlder);
+      drawSocialButton(socialMessagePage<pages-1?'dm_next':'inbox_refresh',socialMessagePage<pages-1?(socialMessagePage+1)+'/'+pages+' ›':'REFRESH',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',socialMessagePage<pages-1||!!authUser);
+    }
   }
 
-  {
-    const p={x:contentX,y:partyY,w:contentW,h:partyH},col='#bfa8ff',online=partyServiceAvailable(),directCpu=!!party.directCpu;
-    panelFrame(p,directCpu?'CPU 2v2 · NEW · BETA':'PARTY · NEW · BETA',col,directCpu?'DIRECT · UNRANKED':'GUESTS OK · MAX '+PARTY_MAX);
-    const summary=directCpu?(party.phase==='closing'?'FINISHING THE CPU FRIEND CONNECTION':'CPU FRIEND GAME IS OPEN'):
-      !online?'PARTIES NEED AN INTERNET CONNECTION':party.accepted?(party.members.length+'/'+PARTY_MAX+' PLAYERS · JOINING ANOTHER CODE LEAVES THIS PARTY'):
-      party.channel?('CONNECTING TO '+party.code):'CREATE A PARTY, OR PRESS JOIN PARTY TO ENTER A CODE';
-    const actionH=tiny?30:short?32:compact?44:46,actionGap=tiny?4:compact?8:10;
-    const bottomPad=tiny?5:compact?(H<520?0:8):10;
-    const row1Y=p.y+p.h-actionH*2-actionGap-bottomPad,row2Y=row1Y+actionH+actionGap;
-    const summaryY=Math.min(row1Y-(tiny?7:10),Math.max(p.y+(tiny?20:23),p.y+(compact?36:42)));
-    panelMessage(p,summary,summaryY,!online?'#d05548':directCpu||party.accepted?'#d8c8ff':'#8a9268');
-    const sideGap=tiny?5:compact?8:10,bw=(p.w-12-sideGap)/2,leftX=p.x+6,joinX=leftX+bw+sideGap;
-    const partyFull=Array.isArray(party.members)&&party.members.length>=PARTY_MAX;
-    const cpuParty=directCpu||!!party.cpuIntent;
-    const inviteReady=!!(online&&authUser&&party.accepted&&party.channel&&party.self&&party.phase==='lobby'&&!cpuParty&&!partyFull);
-    const inviteLabel=partyFull?'PARTY FULL · INVITES CLOSED':cpuParty?'PARTY INVITES UNAVAILABLE DURING CPU SETUP':!authUser?'SIGN IN TO SEND PARTY INVITES':party.accepted&&party.phase==='lobby'?'INVITE A PLAYER':party.accepted?'PARTY INVITES ARE NOT AVAILABLE RIGHT NOW':'CREATE OR JOIN A PARTY TO INVITE A PLAYER';
-    drawSocialButton('party_invite_friend',inviteLabel,p.x+6,row1Y,p.w-12,actionH,'#e8b658',inviteReady);
-    if(directCpu)drawSocialButton('cpu_direct_return',party.phase==='closing'?'FINISHING...':'RETURN TO CPU',leftX,row2Y,bw,actionH,col,party.phase!=='closing');
-    else if(party.channel||party.accepted)drawSocialButton('party_open','OPEN PARTY',leftX,row2Y,bw,actionH,col,true);
-    else drawSocialButton('party_create','CREATE PARTY',leftX,row2Y,bw,actionH,'#a7c15e',online);
-    if(directCpu)drawSocialButton('cpu_direct_status','DIRECT GAME',joinX,row2Y,bw,actionH,'#8a9268',false);
-    else drawSocialButton('party_join','JOIN PARTY',joinX,row2Y,bw,actionH,'#7fd8ff',online);
+  if(activeSocialView==='party'){
+    const p=view,col='#bfa8ff',online=partyServiceAvailable(),actionH=tiny?29:compact?38:44,actionGap=tiny?4:compact?7:10,
+      side=(p.w-12-actionGap)/2,actionY=p.y+(tiny?19:compact?27:34);
+    panelFrame(p,'PARTY · NEW · BETA',col,'PUBLIC DIRECTORY · HOST APPROVAL');
+    drawSocialButton('party_create_new','CREATE NEW',p.x+6,actionY,side,actionH,'#a7c15e',online);
+    drawSocialButton('party_join','JOIN',p.x+6+side+actionGap,actionY,side,actionH,'#7fd8ff',online);
+    let cursor=actionY+actionH+(tiny?4:compact?7:10);
+    if(party.accepted){
+      const openH=tiny?22:compact?28:32;
+      drawSocialButton('party_open','OPEN CURRENT PARTY · '+party.members.length+'/'+PARTY_MAX,p.x+6,cursor,p.w-12,openH,col,true);cursor+=openH+(tiny?4:compact?7:9);
+    }
+    const pending=typeof publicPartyHostRequests!=='undefined'&&Array.isArray(publicPartyHostRequests)?publicPartyHostRequests:[];
+    if(partyIsHost()&&party.publicParty&&pending.length&&cursor<p.y+p.h-70){
+      const titleH=tiny?13:compact?17:20,rowH=tiny?27:compact?34:40;
+      ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';ctx.fillText('JOIN REQUESTS',p.x+8,cursor);cursor+=titleH;
+      for(const request of pending.slice(0,Math.max(1,Math.min(3,Math.floor((p.y+p.h-cursor-48)/rowH))))){
+        const y=cursor,buttonW=Math.min(compact?66:86,p.w*.20),profileW=Math.max(40,p.w-18-buttonW*2-actionGap);
+        ctx.fillStyle='rgba(232,182,88,.09)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+        ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#f0ddb0';ctx.font='700 '+(tiny?7:compact?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('@'+request.username,profileW-8),p.x+9,y+(rowH-2)/2);
+        socialRects.push({id:'player_profile',x:p.x+6,y,w:profileW,h:rowH-2,enabled:true,handle:request.username});
+        const bx=p.x+p.w-buttonW*2-actionGap-7,busy=!!publicPartyActionBusy;
+        drawSocialButton('public_party_accept','ACCEPT',bx,y+1,buttonW,rowH-4,'#a7c15e',!busy,{requestId:request.requestId});
+        drawSocialButton('public_party_decline','DECLINE',bx+buttonW+actionGap,y+1,buttonW,rowH-4,'#d05548',!busy,{requestId:request.requestId});cursor+=rowH;
+      }
+      cursor+=tiny?2:5;
+    }
+    const footerH=tiny?25:compact?32:38,footerY=p.y+p.h-footerH-5,titleY2=cursor,
+      listTop=cursor+(tiny?14:compact?19:23),listH=Math.max(0,footerY-listTop-3),desiredRow=tiny?27:compact?37:46,
+      maxRows=listH>=20?Math.max(1,Math.floor(listH/desiredRow)):0,rows=typeof publicPartyRows!=='undefined'&&Array.isArray(publicPartyRows)?publicPartyRows:[],
+      pages=Math.max(1,Math.ceil(rows.length/Math.max(1,maxRows)));
+    publicPartyPage=clamp(Math.floor(+publicPartyPage||0),0,pages-1);
+    const directoryTitle='PUBLIC PARTIES'+(publicPartySearch?' · SEARCH: '+publicPartySearch.toUpperCase():'');
+    ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=col;ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(directoryTitle,p.w-16),p.x+8,titleY2);
+    const visible=maxRows?rows.slice(publicPartyPage*maxRows,(publicPartyPage+1)*maxRows):[];
+    if(!authUser)panelMessage(p,'SIGN IN TO REQUEST OR CREATE A PUBLIC PARTY',listTop+listH/2,'#8a9268');
+    else if(publicPartySqlReady===false)panelMessage(p,'RUN SOCIAL 09 TO ENABLE PARTY NAMES + SEARCH',listTop+listH/2,'#d05548');
+    else if(publicPartyPolling&&!rows.length)panelMessage(p,'LOADING PUBLIC PARTIES...',listTop+listH/2,'#8a9268');
+    else if(!rows.length)panelMessage(p,'NO PUBLIC PARTIES ARE OPEN · CREATE THE FIRST',listTop+listH/2,'#8a9268');
+    for(let i=0;i<visible.length;i++){
+      const row=visible[i],mine=typeof partyPublicMyRequest==='function'?partyPublicMyRequest(row.partyId):null,y=listTop+i*(listH/Math.max(1,maxRows)),rowH=listH/Math.max(1,maxRows),
+        isHost=row.status==='host',approved=mine&&mine.status==='accepted'&&mine.expiresAt>Date.now(),pendingRequest=mine&&mine.status==='pending',
+        label=isHost?'OPEN':approved?'JOIN':pendingRequest?'PENDING':mine&&mine.status==='declined'?'REQUEST AGAIN':'REQUEST',
+        buttonW=Math.min(compact?86:112,Math.max(64,p.w*.24)),profileW=Math.max(60,p.w-buttonW-24);
+      ctx.fillStyle=i%2?'rgba(191,168,255,.055)':'rgba(191,168,255,.10)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+      ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e6dcff';ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(row.name,profileW-8),p.x+9,y+(tiny?3:5));
+      ctx.fillStyle='#8a9268';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('@'+row.host+' · '+row.members+'/'+row.capacity+' PLAYERS · PROFILE',profileW-8),p.x+9,y+(tiny?14:compact?19:24));
+      socialRects.push({id:'player_profile',x:p.x+6,y,w:profileW,h:rowH-2,enabled:true,handle:row.host});
+      drawSocialButton(isHost?'party_open':approved?'public_party_join':'public_party_request',label,p.x+p.w-buttonW-7,y+1,buttonW,Math.max(18,rowH-4),isHost||approved?'#bfa8ff':'#e8b658',!pendingRequest&&!publicPartyActionBusy,{partyId:row.partyId,requestId:mine&&mine.requestId});
+    }
+    const footGap=tiny?3:5,footW=(p.w-12-footGap*3)/4;
+    drawSocialButton('public_party_prev','‹ '+(publicPartyPage+1)+'/'+pages,p.x+6,footerY,footW,footerH,'#8a9268',publicPartyPage>0);
+    drawSocialButton('public_party_search',publicPartySearch?'CLEAR / SEARCH':'SEARCH',p.x+6+footW+footGap,footerY,footW,footerH,'#e8b658',!!authUser);
+    drawSocialButton('public_party_refresh','REFRESH',p.x+6+(footW+footGap)*2,footerY,footW,footerH,'#7fd8ff',!publicPartyPolling);
+    drawSocialButton('public_party_next',(publicPartyPage+1)+'/'+pages+' ›',p.x+6+(footW+footGap)*3,footerY,footW,footerH,'#8a9268',publicPartyPage<pages-1);
   }
 
   backRect=drawSocialButton('back','‹ HOME',margin,backY,Math.min(170,W-margin*2),backH,'#8a9268',true);
@@ -2329,6 +2408,7 @@ function drawPartyLobby(){
       const controlsX=rosterX+rosterW-controlsW-6, nameW=Math.max(22,controlsX-rosterX-13);
       ctx.textAlign='left'; ctx.fillStyle=isMe?'#7fd8ff':'#e8d9a8'; ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';
       ctx.fillText(fitLine((m.id===party.hostId?'\u2605 ':'')+m.name+(isMe?'  (YOU)':''),nameW),rosterX+10,y+rowH/2);
+      partyRects.push({id:'member_profile',x:rosterX+6,y,w:nameW+5,h:rowH,enabled:true,handle:m.name});
       drawPartyButton('member_prev','\u2039',controlsX,controlY,arrowW,controlH,'#bfa8ff',true,{memberId:m.id,dir:-1});
       ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle='#d8c8ff'; ctx.font='700 '+(tiny?6:compact?7:8)+'px ui-monospace,Consolas,monospace';
       ctx.fillText(fitLine(assignment,labelW-2),controlsX+arrowW+labelW/2,y+rowH/2);
@@ -2338,6 +2418,7 @@ function drawPartyLobby(){
       const labelW=tiny?38:compact?48:62, nameW=Math.max(28,rosterW-labelW-26);
       ctx.textAlign='left'; ctx.fillStyle=isMe?'#7fd8ff':'#e8d9a8'; ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';
       ctx.fillText(fitLine((m.id===party.hostId?'\u2605 ':'')+m.name+(isMe?'  (YOU)':''),nameW),rosterX+10,y+rowH/2);
+      partyRects.push({id:'member_profile',x:rosterX+6,y,w:nameW+5,h:rowH,enabled:true,handle:m.name});
       ctx.textAlign='right'; ctx.fillStyle='#d8c8ff'; ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
       ctx.fillText(fitLine(assignment,labelW),rosterX+rosterW-8,y+rowH/2);
     }
@@ -2441,9 +2522,10 @@ function drawParty(){
 function drawLoadout(){
   selBg(); catBtns=[];
   const arenaMode=pendingGameMode==='arena', ai1v1Mode=pendingGameMode==='ai1v1', ai2v2Mode=pendingGameMode==='ai2v2', aiMode=ai1v1Mode||ai2v2Mode,
-    partyCpuMode=pendingGameMode==='partycpu2v2', duelMode=arenaMode||aiMode||partyCpuMode;
+    partyCpuMode=pendingGameMode==='partycpu2v2', practiceSetup=pendingGameMode==='practice', duelMode=arenaMode||aiMode||partyCpuMode,
+    practiceLabel={range:'SHOOTING RANGE',dps:'DPS DUMMY',tracking:'TRACKING DUMMY',boss:'WARLORD PRACTICE'}[pendingPractice]||'PRACTICE';
   const queueNoticeActive=modeBoardNotice&&now<modeBoardNoticeT;
-  const modeCol=arenaMode?'#d05548':partyCpuMode?'#bfa8ff':aiMode?'#7fd8ff':'#e8b658';
+  const modeCol=arenaMode?'#d05548':partyCpuMode?'#bfa8ff':aiMode?'#7fd8ff':practiceSetup?'#a7c15e':'#e8b658';
   ctx.textAlign='center'; ctx.textBaseline='top';
   ctx.fillStyle=modeCol; ctx.font='700 '+(H<600?24:32)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('YOUR LOADOUT',W/2,H*0.035);
@@ -2453,6 +2535,7 @@ function drawLoadout(){
                    partyCpuMode?(W<430?'NEW/BETA \u00b7 SAVED \u00b7 CPU 2v2 \u00b7 2 DEVICES \u00b7 NO REWARDS':'NEW \u00b7 BETA \u00b7 TESTING \u00b7 AUTO-SAVED \u00b7 PARTY CPU 2v2 \u00b7 MULTIPLE DEVICES \u00b7 NO REWARDS'):
                    ai2v2Mode?(W<430?'NEW/BETA \u00b7 SAVED \u00b7 CPU 2v2 \u00b7 LOCAL \u00b7 NO REWARDS':'NEW \u00b7 BETA \u00b7 TESTING \u00b7 AUTO-SAVED \u00b7 CPU 2v2 \u00b7 LOCAL \u00b7 NO REWARDS'):
                    ai1v1Mode?'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 1v1 VS AI \u00b7 NO UPGRADES':
+                   practiceSetup?'OFFLINE \u00b7 PRACTICE \u00b7 '+practiceLabel+' \u00b7 NO SCORE OR REWARDS':
                           'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 ENDLESS \u00b7 UTILITY OPTIONAL';
   ctx.fillText(fitLine(queueNoticeActive?modeBoardNotice:betaLoadout?loadoutSub:('AUTO-SAVED FOR EVERY MODE \u00b7 '+loadoutSub),W-24),W/2,H*0.035+40);
   const rows=duelMode?CATS.slice(0,3):CATS;
@@ -2479,7 +2562,7 @@ function drawLoadout(){
   ctx.fillStyle=hot?modeCol:ready?(partyCpuMode?'rgba(191,168,255,0.16)':aiMode?'rgba(127,216,255,0.16)':arenaMode?'rgba(208,85,72,0.18)':'rgba(232,182,88,0.16)'):'rgba(0,0,0,0.35)'; ctx.fillRect(dx,dy,dw,dh);
   ctx.strokeStyle=ready?modeCol:'#4a4634'; ctx.lineWidth=1.5; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
   ctx.fillStyle=hot?'#101208':ready?'#e8d9a8':'#6b7455'; ctx.font='700 16px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
-  ctx.fillText(ready?(partyCpuMode?'READY FOR PARTY 2v2':arenaMode?'START QUEUING FOR 1v1':ai2v2Mode?'START 2v2 VS CPUs':ai1v1Mode?'START 1v1 VS AI':'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
+  ctx.fillText(ready?(partyCpuMode?'READY FOR PARTY 2v2':arenaMode?'START QUEUING FOR 1v1':ai2v2Mode?'START 2v2 VS CPUs':ai1v1Mode?'START 1v1 VS AI':practiceSetup?'START '+practiceLabel:'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
   const bbW=120, bbH=30, bbX=16, bbY=H-bbH-14; backRect={x:bbX,y:bbY,w:bbW,h:bbH};
   const backHot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
   ctx.fillStyle=backHot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH); ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
@@ -2752,7 +2835,7 @@ function drawHub(){
   let adminRowShift=0;
   if(isAdmin()){
     const defs=[];
-    defs.push({id:'panel', t:'\u2699 ADMIN TOOLS', st:'\u2699 TOOLS', d:'edit \u00b7 players \u00b7 modes',
+    defs.push({id:'panel', t:'\u2699 ADMIN TOOLS', st:'\u2699 TOOLS', d:isTester()?'test mode \u00b7 suggest weapons':'edit \u00b7 players \u00b7 modes',
                f0:'rgba(208,85,72,0.12)', f1:'rgba(208,85,72,0.30)', c:'#d05548', tc:'#e0a8a0'});
     if(isMainAdmin())
       defs.push({id:'admins', t:'\uD83D\uDEE1 ADMINS', st:'\uD83D\uDEE1 ADMINS', d:'manage the team',
@@ -2827,7 +2910,7 @@ function drawHub(){
   hubPostsRect=null;
   const actions=[
     {id:'play',title:'PLAY',sub:'ONLINE \u00b7 RANKED \u00b7 OFFLINE',col:'#e8b658',enabled:true},
-    {id:'practice',title:'PRACTICE',sub:'RANGE \u00b7 DPS \u00b7 WARLORDS',col:'#a7c15e',enabled:true},
+    {id:'practice',title:'PRACTICE',sub:'RANGE \u00b7 TRACKING \u00b7 DPS \u00b7 WARLORDS',col:'#a7c15e',enabled:true},
     {id:'social',title:'SOCIAL',sub:W<520?'NEW \u00b7 BETA \u00b7 PARTY':party.directCpu?'NEW \u00b7 BETA \u00b7 CPU 2v2':party.accepted?('NEW \u00b7 BETA \u00b7 PARTY '+party.members.length+'/'+PARTY_MAX):'NEW \u00b7 BETA \u00b7 PARTY \u00b7 FRIENDS',col:'#bfa8ff',enabled:true},
     {id:'weapons',title:'WEAPONS',sub:'STATS \u00b7 OWNERSHIP \u00b7 PRACTICE',col:'#8fb3c9',enabled:true}
   ];
@@ -2902,7 +2985,7 @@ function drawHub(){
   settingsBtnRect=hubBtn('\u2699 SETTINGS','#e8b658','#e8d9a8');
   shopBtnRect=hubBtn('\uD83D\uDC8E SHOP \u00b7 '+gems,'#7fd8ff','#bfe8ff');
   promoBtnRect=hubBtn('\uD83C\uDF81 CODE','#a7c15e','#cfe0a8');
-  shareBtnRect=hubBtn('\uD83D\uDD17 SHARE +5','#bfa8ff','#d8c8ff');
+  shareBtnRect=hubBtn('\uD83D\uDD17 SHARE INVITE','#bfa8ff','#d8c8ff');
   wheelBtnRect=hubBtn('\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+')':wheelCountdown()),
                       wheelReady>0?'#e8b658':'#5a5648', wheelReady>0?'#e8d9a8':'#8a9268');
   lookupBtnRect=hubBtn('\uD83D\uDD0D LOOKUP','#7fd8ff','#bfe8ff');
@@ -3835,19 +3918,19 @@ let appealSubmitBusy=false;
 let appealOperationReceipt=null;
 const appealDecisionBusy=new Set(),playerBanActionBusy=new Set();
 async function fetchPlayersData(){
-  if(!sb || !isAdmin()) return;
+  if(!sb || !canUsePlayerTools()) return;
   const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   try{
     const b=await sb.rpc('list_outpost_zero_bans',{p_limit:40});
     if(b.error)throw b.error;
-    if(!adminPrivacyRequestCurrent(epoch,userId)||!isAdmin())return;
+    if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
     banList=b.data||[];
   }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId))banList=[]; }
-  if(!adminPrivacyRequestCurrent(epoch,userId)||!isAdmin())return;
+  if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
   try{
     const a=await sb.rpc('list_outpost_zero_ban_appeals',{p_limit:40});
     if(a.error)throw a.error;
-    if(!adminPrivacyRequestCurrent(epoch,userId)||!isAdmin())return;
+    if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
     appealList=a.data||[];
   }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId))appealList=[]; }
 }

@@ -27,7 +27,7 @@ function metaPayload(){
   return {gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
           date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
-          hi:hiScore, mv:musicVol, sv:sfxVol, onboardV:onboardingVersion, loadout:storedLastLoadout()};
+          hi:hiScore, mv:musicVol, mt:typeof musicTrack==='string'?musicTrack:'calm', sv:sfxVol, onboardV:onboardingVersion, loadout:storedLastLoadout()};
 }
 function temporaryGrantMonotonicNow(){
   return typeof performance!=='undefined'&&typeof performance.now==='function'?performance.now():Date.now();
@@ -304,6 +304,7 @@ function applyProfile(m){
   }
   if(typeof m.hi==='number') hiScore=Math.max(hiScore, m.hi);   // best score is the best of both
   if(typeof m.mv==='number') musicVol=m.mv;
+  if(typeof m.mt==='string'&&typeof normalizedMusicTrack==='function') musicTrack=normalizedMusicTrack(m.mt);
   if(typeof m.sv==='number') sfxVol=m.sv;
   try{ if(musicGain) musicGain.gain.value=musicVol*0.7; if(sfxGain) sfxGain.gain.value=sfxVol; }catch(e){}
   if(typeof m.wr==='number') wheelReady=m.wr>0?1:0;
@@ -426,6 +427,7 @@ function loadMeta(){
     lastLoadoutAccountId='';
     lastLoadout=readLastLoadoutLocal('')||storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
     if(typeof m.mv==='number') musicVol=m.mv;
+    if(typeof m.mt==='string'&&typeof normalizedMusicTrack==='function') musicTrack=normalizedMusicTrack(m.mt);
     if(typeof m.sv==='number') sfxVol=m.sv;
     for(const k in animEquipped){ const id=animEquipped[k];
       if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }

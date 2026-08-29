@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OUTPOST ZERO — Tactical 2D Shooter</title>
-<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260827-touch-aim-joystick">
+<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260829-music-public-party">
 </head>
 <body>
 <canvas id="c" tabindex="-1"></canvas>
@@ -95,6 +95,10 @@
         <span>PASSWORD</span>
         <small id="settingspasswordsummary">Set a new private sign-in password</small>
       </button>
+      <button id="settingssoundtrackopen" class="btn settings-choice" type="button">
+        <span>SOUNDTRACK</span>
+        <small id="settingssoundtracksummary">Calm · original ambient electronic loop</small>
+      </button>
     </nav>
     <section id="settingsusernamepanel" class="settings-section" aria-labelledby="settingsusernametitle" hidden>
       <h3 id="settingsusernametitle">PUBLIC USERNAME</h3>
@@ -116,6 +120,17 @@
       <button id="settingspasswordsave" class="btn" type="button">CHANGE PASSWORD</button>
       <div id="settingspasswordstatus" class="settings-status" aria-live="polite"></div>
       <button id="settingspasswordback" class="btn settings-section-back" type="button">BACK TO SETTINGS</button>
+    </section>
+    <section id="settingssoundtrackpanel" class="settings-section" aria-labelledby="settingssoundtracktitle" hidden>
+      <h3 id="settingssoundtracktitle">CHOOSE SOUNDTRACK</h3>
+      <p>Switch instantly. Calm and Energetic are original Outpost Zero scores. Piano performs public-domain pieces by Bach and Beethoven.</p>
+      <div class="settings-track-grid" role="group" aria-label="Soundtrack">
+        <button id="settingstrackcalm" class="btn settings-track" type="button" data-track="calm">CALM<small>Ambient electronic</small></button>
+        <button id="settingstrackenergetic" class="btn settings-track" type="button" data-track="energetic">ENERGETIC<small>Original combat score</small></button>
+        <button id="settingstrackpiano" class="btn settings-track" type="button" data-track="piano">PIANO<small>Bach + Beethoven</small></button>
+      </div>
+      <div id="settingssoundtrackstatus" class="settings-status" aria-live="polite"></div>
+      <button id="settingssoundtrackback" class="btn settings-section-back" type="button">BACK TO SETTINGS</button>
     </section>
     <div id="settingsactions">
       <button id="settingssignout" class="btn" type="button">SIGN OUT</button>
@@ -219,33 +234,33 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./outpost-zero/js/networking.js?v=20260828-unpublished-weapons"></script>
+<script src="./outpost-zero/js/networking.js?v=20260829-huge-social-admin"></script>
 <script src="./outpost-zero/js/core.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/audio.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/weapons.js?v=20260829-twin-sai-cd-finish"></script>
+<script src="./outpost-zero/js/audio.js?v=20260829-music-public-party"></script>
+<script src="./outpost-zero/js/weapons.js?v=20260829-firework-wall-nerf"></script>
 <script src="./outpost-zero/js/economy-state.js?v=20260827-touch-aim-joystick"></script>
 <script src="./outpost-zero/js/layout.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/progression.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/administration.js?v=20260828-unpublished-weapons"></script>
-<script src="./outpost-zero/js/persistence.js?v=20260828-unpublished-weapons"></script>
+<script src="./outpost-zero/js/progression.js?v=20260829-report-fixes"></script>
+<script src="./outpost-zero/js/administration.js?v=20260829-huge-social-admin"></script>
+<script src="./outpost-zero/js/persistence.js?v=20260829-music-public-party"></script>
 <script src="./outpost-zero/js/world.js?v=20260827-touch-aim-joystick"></script>
 <script src="./outpost-zero/js/enemies.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/state.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/party-state.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/social.js?v=20260827-touch-aim-joystick"></script>
+<script src="./outpost-zero/js/state.js?v=20260829-report-fixes"></script>
+<script src="./outpost-zero/js/party-state.js?v=20260829-huge-social-admin"></script>
+<script src="./outpost-zero/js/social.js?v=20260829-huge-social-admin"></script>
 <script src="./outpost-zero/js/cpu-state.js?v=20260828-twin-sai-full-parry"></script>
 <script src="./outpost-zero/js/upgrades.js?v=20260829-twin-sai-cd-finish"></script>
-<script src="./outpost-zero/js/admin-ui.js?v=20260828-unpublished-weapons"></script>
+<script src="./outpost-zero/js/admin-ui.js?v=20260829-huge-social-admin"></script>
 <script src="./outpost-zero/js/abilities.js?v=20260829-twin-sai-cd-finish"></script>
-<script src="./outpost-zero/js/input.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/gameplay.js?v=20260828-unpublished-weapons"></script>
-<script src="./outpost-zero/js/ai.js?v=20260829-twin-sai-recheck"></script>
+<script src="./outpost-zero/js/input.js?v=20260829-huge-social-admin"></script>
+<script src="./outpost-zero/js/gameplay.js?v=20260829-dash-walls"></script>
+<script src="./outpost-zero/js/ai.js?v=20260829-peek-cadence"></script>
 <script src="./outpost-zero/js/ai-training.js?v=20260827-touch-aim-joystick"></script>
-<script src="./outpost-zero/js/online.js?v=20260829-twin-sai-recheck"></script>
-<script src="./outpost-zero/js/party.js?v=20260829-twin-sai-cd-finish"></script>
-<script src="./outpost-zero/js/combat.js?v=20260829-twin-sai-recheck"></script>
-<script src="./outpost-zero/js/rendering.js?v=20260829-twin-sai-recheck"></script>
-<script src="./outpost-zero/js/ui.js?v=20260829-twin-sai-cd-finish"></script>
+<script src="./outpost-zero/js/online.js?v=20260829-report-fixes"></script>
+<script src="./outpost-zero/js/party.js?v=20260829-huge-social-admin"></script>
+<script src="./outpost-zero/js/combat.js?v=20260829-firework-melee-walls"></script>
+<script src="./outpost-zero/js/rendering.js?v=20260829-clean-hostile-tracers"></script>
+<script src="./outpost-zero/js/ui.js?v=20260829-huge-social-admin"></script>
 <script src="./outpost-zero/js/loop.js?v=20260828-unpublished-weapons"></script>
 <script src="./outpost-zero/js/bootstrap.js?v=20260828-unpublished-weapons"></script>
 </body>

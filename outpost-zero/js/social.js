@@ -1,6 +1,7 @@
 "use strict";
 
 const SOCIAL_PROFILE_TABLE='social_profiles', SOCIAL_FRIEND_TABLE='friendships', SOCIAL_MESSAGE_TABLE='private_messages';
+const SOCIAL_CONVERSATION_TABLE='private_conversation_states',SOCIAL_INBOX_CONVERSATION_LIMIT=25;
 let socialRects=[], socialProfile=null, socialProfiles={}, socialFriends=[], socialMessages=[];
 let socialLoading=false, socialStatus='', socialLastFetch=0, socialChannel=null;
 let socialBackend={profiles:null,friends:null,messages:null};
@@ -8,6 +9,8 @@ let socialBackend={profiles:null,friends:null,messages:null};
 // Each friend bucket owns its own page so a busy Incoming list can never hide
 // Outgoing requests or current friends.
 let socialView='friends', socialFriendPage=0, socialMessagePage=0;
+let socialInboxSection='inbox',socialConversationPeer='',socialConversationPage=0;
+let socialConversationStates={},socialConversationSqlReady=null,socialConversationBusy='';
 let socialFriendPages={incoming:0,outgoing:0,current:0};
 let socialMessageTo=null, msgKind='admin';
 let socialDomPageActive=false;
@@ -325,6 +328,8 @@ function prepareSocialForAccount(userId){
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialAccountSettingsSqlReady=null;
   socialView='friends'; socialFriendPage=0; socialMessagePage=0;
+  socialInboxSection='inbox';socialConversationPeer='';socialConversationPage=0;
+  socialConversationStates={};socialConversationSqlReady=null;socialConversationBusy='';
   socialFriendPages={incoming:0,outgoing:0,current:0};
   socialCpuInvitePollAt=0; socialCpuInvitePolling=false; socialCpuInvitePromptedIds=new Set();
   socialPartyPresenceAt=0;socialPartyPresencePromise=null;socialPartyPresenceOwner=id;socialPartyServerOffsetMs=0;
@@ -345,6 +350,8 @@ function resetSocialState(message){
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialAccountSettingsSqlReady=null;
   socialView='friends'; socialFriendPage=0; socialMessagePage=0;
+  socialInboxSection='inbox';socialConversationPeer='';socialConversationPage=0;
+  socialConversationStates={};socialConversationSqlReady=null;socialConversationBusy='';
   socialFriendPages={incoming:0,outgoing:0,current:0};
   socialCpuInvitePollAt=0; socialCpuInvitePolling=false; socialCpuInvitePromptedIds=new Set();
   socialPartyPresenceAt=0;socialPartyPresencePromise=null;socialPartyPresenceOwner='';socialPartyServerOffsetMs=0;
@@ -367,6 +374,7 @@ function setupSocialRealtime(){
     for(const event of ['INSERT','UPDATE']){
       ch=ch.on('postgres_changes',{event,schema:'public',table:SOCIAL_FRIEND_TABLE},()=>{socialCpuInvitePollAt=0;socialNotificationPollAt=0;void fetchSocial(true);});
       ch=ch.on('postgres_changes',{event,schema:'public',table:SOCIAL_MESSAGE_TABLE},()=>{socialCpuInvitePollAt=0;socialNotificationPollAt=0;void fetchSocial(true);});
+      if(typeof socialConversationSqlReady!=='undefined'&&socialConversationSqlReady===true)ch=ch.on('postgres_changes',{event,schema:'public',table:SOCIAL_CONVERSATION_TABLE},()=>{void fetchSocial(true);});
     }
     socialChannel=ch;
     ch.subscribe(status=>{
@@ -838,6 +846,128 @@ function socialPrivateMessageByUiKey(uiKey){
   const ref=socialInboxReference(uiKey,'private_message');if(!ref)return null;
   return socialMessages.find(row=>row&&String(row.id)===ref.sourceKey)||null;
 }
+function socialConversationUiKey(peerId){
+  const peer=String(peerId||'');return peer?socialInboxUiKey('private_conversation',peer):'';
+}
+function socialConversationPeerByUiKey(uiKey){
+  const ref=socialInboxReference(uiKey,'private_conversation');return ref?String(ref.sourceKey||''):'';
+}
+function socialConversationState(peerId){
+  const state=socialConversationStates[String(peerId||'')];
+  return state&&typeof state==='object'?state:{peerId:String(peerId||''),archivedAt:0,deletedBefore:0,updatedAt:0};
+}
+function socialPrivateMessagePeer(row,owner=authUser&&authUser.id){
+  const me=String(owner||''),sender=String(row&&row.sender_id||''),recipient=String(row&&row.recipient_id||'');
+  if(!me||sender===me&&recipient===me)return '';
+  return sender===me?recipient:recipient===me?sender:'';
+}
+function socialPrivateMessageVisible(row,owner=authUser&&authUser.id){
+  const peer=socialPrivateMessagePeer(row,owner);if(!peer)return false;
+  const createdAt=Date.parse(row&&row.created_at||''),deletedBefore=Number(socialConversationState(peer).deletedBefore)||0;
+  return Number.isFinite(createdAt)&&createdAt>deletedBefore;
+}
+function socialConversationPreviewBody(row){
+  if(!row)return '';
+  if(socialCpuGameInviteEnvelope(row.body))return 'CPU 2v2 GAME INVITE';
+  if(socialPartyInviteEnvelope(row.body))return 'PARTY INVITE';
+  return String(row.body||'');
+}
+function socialPrivateConversations(){
+  const owner=String(authUser&&authUser.id||'');if(!owner)return [];
+  const grouped=new Map();
+  for(const row of socialMessages){
+    const peer=socialPrivateMessagePeer(row,owner);
+    if(!peer||!socialPrivateMessageVisible(row,owner)||socialCpuGameInviteEnvelope(row.body)||socialPartyInviteEnvelope(row.body))continue;
+    let conversation=grouped.get(peer);
+    if(!conversation){conversation={peerId:peer,messages:[],lastAt:0,last:null,unread:0,archived:false,autoArchived:false,uiKey:socialConversationUiKey(peer)};grouped.set(peer,conversation);}
+    const createdAt=Date.parse(row.created_at||'');conversation.messages.push(row);
+    if(createdAt>=conversation.lastAt){conversation.lastAt=createdAt;conversation.last=row;}
+    if(String(row.recipient_id||'')===owner&&!row.read_at)conversation.unread++;
+  }
+  const conversations=[...grouped.values()];
+  for(const conversation of conversations){
+    conversation.messages.sort((a,b)=>Date.parse(a.created_at||'')-Date.parse(b.created_at||''));
+    const state=socialConversationState(conversation.peerId);
+    conversation.archived=!!(state.archivedAt&&conversation.lastAt<=state.archivedAt);
+  }
+  conversations.sort((a,b)=>b.lastAt-a.lastAt);
+  const active=conversations.filter(row=>!row.archived);
+  for(let i=SOCIAL_INBOX_CONVERSATION_LIMIT;i<active.length;i++){active[i].archived=true;active[i].autoArchived=true;}
+  return conversations;
+}
+function socialPrivateConversation(peerId){
+  const peer=String(peerId||'');return socialPrivateConversations().find(row=>row.peerId===peer)||null;
+}
+function socialCanMessageUser(userId){
+  const peer=String(userId||''),owner=String(authUser&&authUser.id||'');if(!owner||!peer||peer===owner)return false;
+  const friendship=typeof socialFriendshipWith==='function'?socialFriendshipWith(peer):null;
+  return !(friendship&&friendship.status==='blocked');
+}
+function socialOpenPrivateConversation(uiKey){
+  const peer=socialConversationPeerByUiKey(uiKey),conversation=socialPrivateConversation(peer);
+  if(!peer||!conversation)return false;
+  socialConversationPeer=peer;socialConversationPage=1000000;
+  void socialMarkPrivateConversationRead(peer);
+  return true;
+}
+function socialClosePrivateConversation(){socialConversationPeer='';socialConversationPage=0;return true;}
+function socialNormalizeConversationState(row){
+  const peerId=String(row&&row.peer_id||''),archivedAt=Date.parse(row&&row.archived_at||''),deletedBefore=Date.parse(row&&row.deleted_before||''),updatedAt=Date.parse(row&&row.updated_at||'');
+  if(!peerId)return null;
+  return {peerId,archivedAt:Number.isFinite(archivedAt)?archivedAt:0,deletedBefore:Number.isFinite(deletedBefore)?deletedBefore:0,updatedAt:Number.isFinite(updatedAt)?updatedAt:0};
+}
+async function socialFetchConversationStates(owner=authUser&&authUser.id){
+  const account=String(owner||'');if(!sb||!account)return false;
+  try{
+    const result=await sb.rpc('list_my_outpost_zero_private_conversation_states');
+    if(!authUser||String(authUser.id||'')!==account)return false;
+    if(result&&result.error)throw result.error;
+    const next={};for(const raw of Array.isArray(result&&result.data)?result.data:[]){const state=socialNormalizeConversationState(raw);if(state)next[state.peerId]=state;}
+    socialConversationStates=next;socialConversationSqlReady=true;return true;
+  }catch(error){
+    if(authUser&&String(authUser.id||'')===account&&socialPartyInviteRpcMissing(error)){socialConversationStates={};socialConversationSqlReady=false;}
+    return false;
+  }
+}
+async function socialPersistConversationAction(peerId,action){
+  const peer=String(peerId||''),owner=String(authUser&&authUser.id||''),mode=String(action||'');
+  if(!sb||!owner||!peer||!['archive','inbox','delete'].includes(mode)||socialConversationBusy)return false;
+  socialConversationBusy=peer+':'+mode;
+  try{
+    const result=await sb.rpc('set_my_outpost_zero_private_conversation_state',{p_peer_id:peer,p_action:mode});
+    if(!authUser||String(authUser.id||'')!==owner)return false;
+    if(result&&result.error)throw result.error;
+    const raw=Array.isArray(result&&result.data)?result.data[0]:result&&result.data,state=socialNormalizeConversationState(raw);
+    if(!state||state.peerId!==peer)throw new Error('INVALID_CONVERSATION_STATE');
+    socialConversationStates[peer]=state;socialConversationSqlReady=true;
+    if(mode==='archive'){socialInboxSection='archive';socialStatus='CONVERSATION ARCHIVED';}
+    else if(mode==='inbox'){socialInboxSection='inbox';socialStatus='CONVERSATION MOVED TO INBOX';}
+    else socialStatus='ARCHIVED CONVERSATION DELETED FOR YOU';
+    socialClosePrivateConversation();sfx('swap');return true;
+  }catch(error){
+    if(authUser&&String(authUser.id||'')===owner){
+      if(socialPartyInviteRpcMissing(error)){socialConversationSqlReady=false;socialStatus='RUN SOCIAL 08 TO ENABLE ARCHIVE + DELETE';}
+      else socialStatus='COULD NOT UPDATE THAT CONVERSATION';
+      sfx('dry');
+    }
+    return false;
+  }finally{if(socialConversationBusy===peer+':'+mode)socialConversationBusy='';}
+}
+function socialPromptDeleteConversation(uiKey,handle='player'){
+  const peer=socialConversationPeerByUiKey(uiKey),conversation=socialPrivateConversation(peer);
+  if(!peer||!conversation||!conversation.archived)return false;
+  openForm({title:'DELETE ARCHIVED CONVERSATION',hint:'Delete your archived history with @'+String(handle||'player')+'? This removes it only from your account. The other player keeps their copy.',saveLabel:'DELETE FOR ME',fields:[],
+    onSave:()=>{closeForm();void socialPersistConversationAction(peer,'delete');}});return true;
+}
+async function socialArchiveConversationOverflow(){
+  const owner=String(authUser&&authUser.id||'');if(!sb||!owner||socialConversationSqlReady!==true)return false;
+  try{
+    const result=await sb.rpc('archive_my_outpost_zero_private_conversation_overflow');
+    if(!authUser||String(authUser.id||'')!==owner)return false;
+    if(result&&result.error)throw result.error;
+    await socialFetchConversationStates(owner);return true;
+  }catch(error){if(authUser&&String(authUser.id||'')===owner&&socialPartyInviteRpcMissing(error))socialConversationSqlReady=false;return false;}
+}
 async function socialMarkPrivateMessageRead(uiKey){
   const row=socialPrivateMessageByUiKey(uiKey),owner=authUser?String(authUser.id||''):'';
   if(!sb||!row||!owner||String(row.recipient_id||'')!==owner||row.read_at)return !!(row&&row.read_at);
@@ -859,6 +989,20 @@ async function socialMarkPrivateMessageRead(uiKey){
   })();
   socialPrivateMessageReadOps.set(sourceKey,op);return op.promise;
 }
+async function socialMarkPrivateConversationRead(peerId){
+  const peer=String(peerId||''),owner=authUser?String(authUser.id||''):'';
+  if(!sb||!peer||!owner)return false;
+  const rows=socialMessages.filter(row=>row&&String(row.sender_id||'')===peer&&String(row.recipient_id||'')===owner&&!row.read_at&&socialPrivateMessageVisible(row,owner));
+  const ids=rows.map(row=>row.id).filter(id=>id!=null);if(!ids.length)return true;
+  try{
+    const stamp=new Date().toISOString(),result=await sb.from(SOCIAL_MESSAGE_TABLE).update({read_at:stamp}).eq('recipient_id',owner).in('id',ids).is('read_at',null).select('id,read_at');
+    if(!authUser||String(authUser.id||'')!==owner)return false;
+    if(result&&result.error)throw result.error;
+    const confirmed=new Map((Array.isArray(result&&result.data)?result.data:[]).map(row=>[String(row&&row.id),String(row&&row.read_at||stamp)]));
+    for(const row of socialMessages){const readAt=confirmed.get(String(row&&row.id));if(readAt)row.read_at=readAt;}
+    return confirmed.size>0;
+  }catch(error){return false;}
+}
 function socialHandleLegacyInvite(row){
   const owner=authUser?String(authUser.id||''):'';
   if(!row||row.id==null||!owner||String(row.recipient_id||'')!==owner)return false;
@@ -866,19 +1010,12 @@ function socialHandleLegacyInvite(row){
 }
 function socialOpenInboxMessage(uiKey){
   const row=socialPrivateMessageByUiKey(uiKey),owner=authUser?String(authUser.id||''):'';
-  if(!row||!owner||typeof openReader!=='function')return false;
+  if(!row||!owner)return false;
   const incoming=String(row.recipient_id||'')===owner,outgoing=String(row.sender_id||'')===owner;
   if(!incoming&&!outgoing)return false;
   if(socialCpuGameInviteEnvelope(row.body)||socialPartyInviteEnvelope(row.body))return false;
-  const other=String(incoming?row.sender_id:row.recipient_id),person=socialPerson(other),handle=String(person.handle||'PLAYER').slice(0,32),
-    meta=(incoming?'FROM @':'TO @')+handle+' · '+socialInboxTimestamp(Date.parse(row.created_at||''));
-  const action=socialAcceptedFriend(other)?{label:'REPLY',owner,run:()=>{
-    if(!authUser||String(authUser.id||'')!==owner||!socialAcceptedFriend(other))return false;
-    if(typeof clearReaderState==='function')clearReaderState();openSocialMessageCompose(other,handle);return true;
-  }}:null;
-  openReader(incoming?'PRIVATE MESSAGE':'SENT MESSAGE',meta,String(row.body||''),'public',action);
-  if(incoming&&!row.read_at)void socialMarkPrivateMessageRead(uiKey);
-  return true;
+  const other=String(incoming?row.sender_id:row.recipient_id);
+  return socialOpenPrivateConversation(socialConversationUiKey(other));
 }
 function socialIncomingFriendRequestCount(){
   const owner=authUser?String(authUser.id||''):'';if(!owner)return 0;
@@ -886,13 +1023,13 @@ function socialIncomingFriendRequestCount(){
 }
 function socialUnreadPrivateMessageCount(){
   const owner=authUser?String(authUser.id||''):'';if(!owner)return 0;
-  return socialMessages.filter(row=>row&&String(row.recipient_id||'')===owner&&!row.read_at&&
+  return socialMessages.filter(row=>row&&(typeof socialPrivateMessageVisible!=='function'||socialPrivateMessageVisible(row,owner))&&String(row.recipient_id||'')===owner&&!row.read_at&&
     !socialCpuGameInviteEnvelope(row.body)&&!socialPartyInviteEnvelope(row.body)).length;
 }
 function socialLiveLegacyPartyInviteCount(){
   const owner=authUser?String(authUser.id||''):'';if(!owner)return 0;
   let count=0;for(const row of socialMessages){
-    if(!row||String(row.recipient_id||'')!==owner||socialLegacyInviteHandled(row,owner))continue;
+    if(!row||(typeof socialPrivateMessageVisible==='function'&&!socialPrivateMessageVisible(row,owner))||String(row.recipient_id||'')!==owner||socialLegacyInviteHandled(row,owner))continue;
     const sender=String(row.sender_id||'');if(!socialAcceptedFriend(sender))continue;
     if(socialCpuGameInvite(row.body)||socialPartyInvite(row.body))count++;
   }return count;
@@ -902,15 +1039,17 @@ function socialLiveCloudPartyInviteCount(){
   return socialPartyInvites.filter(invite=>invite&&invite.expiresAt>clock).length;
 }
 function socialUnreadSummary(){
-  if(!authUser)return {friendRequests:0,privateMessages:0,partyInvites:0,notifications:0,total:0,hasAny:false};
+  if(!authUser)return {friendRequests:0,privateMessages:0,partyInvites:0,partyRequests:0,notifications:0,total:0,hasAny:false};
   const friendRequests=socialIncomingFriendRequestCount(),privateMessages=socialUnreadPrivateMessageCount(),
     partyInvites=socialLiveLegacyPartyInviteCount()+socialLiveCloudPartyInviteCount(),
-    notifications=Math.max(0,Number(socialNotificationUnreadCount)||0),total=friendRequests+privateMessages+partyInvites+notifications;
-  return {friendRequests,privateMessages,partyInvites,notifications,total,hasAny:total>0};
+    partyRequests=typeof publicPartyHostRequests!=='undefined'&&Array.isArray(publicPartyHostRequests)?publicPartyHostRequests.length:0,
+    notifications=Math.max(0,Number(socialNotificationUnreadCount)||0),total=friendRequests+privateMessages+partyInvites+partyRequests+notifications;
+  return {friendRequests,privateMessages,partyInvites,partyRequests,notifications,total,hasAny:total>0};
 }
 function socialHasUnreadActivity(){return socialUnreadSummary().hasAny;}
 function socialHasUnreadFriendsActivity(){return socialUnreadSummary().friendRequests>0;}
 function socialHasUnreadInboxActivity(){const s=socialUnreadSummary();return s.privateMessages+s.partyInvites+s.notifications>0;}
+function socialHasUnreadPartyActivity(){return socialUnreadSummary().partyRequests>0;}
 function socialOfficialBannerAlreadyNotified(row){
   if(!authUser||socialNotificationSqlReady!==true||!row)return false;
   const resource='banner:'+String(row.id==null?'':row.id);
@@ -927,6 +1066,27 @@ function socialPerson(userId){
     ? (mine?(String(owner.email||'').trim().slice(0,160)||'NEW OPERATOR'):'NEW OPERATOR')
     : String(p.handle||'NEW OPERATOR');
   return {handle:username,display:username};
+}
+async function socialOpenPlayerProfile(userId,handle=''){
+  let id=String(userId||''),profile=id&&socialProfiles[id]||null,key=socialHandleKey(handle||profile&&profile.handle),found=!!profile,highScore=null;
+  if(sb&&key){
+    try{const result=await sb.rpc('get_outpost_zero_public_player',{p_query:partyCleanName(handle||profile&&profile.handle)}),row=Array.isArray(result&&result.data)?result.data[0]:result&&result.data;
+      if(!result.error&&row&&row.user_id){profile={user_id:row.user_id,handle:row.username,display_name:row.username};id=String(row.user_id||'');socialProfiles[id]=profile;found=true;highScore=Math.max(0,Math.floor(+row.high_score||0));}}catch(error){}
+  }
+  const username=partyCleanName(profile&&profile.handle||handle)||'UNKNOWN OPERATOR';
+  if(!username||username==='UNKNOWN OPERATOR'){socialStatus='THAT PLAYER PROFILE IS UNAVAILABLE';sfx('dry');return false;}
+  const mine=!!(authUser&&id&&id===String(authUser.id||'')),friend=id?socialFriendshipWith(id):null,
+    relationship=mine?'THIS IS YOU':friend&&friend.status==='accepted'?'CURRENT FRIEND':friend&&friend.status==='pending'?'FRIEND REQUEST PENDING':friend&&friend.status==='blocked'?'BLOCKED':'NOT CURRENTLY FRIENDS',
+    hosting=typeof publicPartyRows!=='undefined'&&publicPartyRows.some(row=>socialHandleKey(row.host)===socialHandleKey(username));
+  const body=['@'+username,'',found?relationship:'PARTY GUEST · NO ACCOUNT PROFILE FOUND',...(highScore==null?[]:['ENDLESS HIGH SCORE · '+highScore]),hosting?'HOSTING A PUBLIC PARTY NOW':'NO PUBLIC PARTY LISTED','',
+    found?'Public profiles show usernames and social status only. Private email and account identifiers are never shown.':'This display name is not connected to a public account profile.'].join('\n');
+  const owner=String(authUser&&authUser.id||''),actions=[];
+  if(!mine&&id&&socialCanMessageUser(id))actions.push({label:'MESSAGE',owner,run:()=>{clearReaderState();openSocialMessageCompose(id,username);}});
+  if(!mine&&id&&authUser&&!friend)actions.push({label:'ADD FRIEND',owner,run:()=>{
+    clearReaderState();openForm({title:'ADD @'+username,hint:'Send a friend request to this player?',saveLabel:'SEND REQUEST',fields:[],onSave:()=>socialSendFriendRequest(username)});
+  }});
+  if(typeof openReader==='function'){openReader('PLAYER PROFILE','@'+username+' · PUBLIC',body,'public',actions);sfx('swap');return true;}
+  return false;
 }
 function socialMergeRows(a,b){
   const byId=new Map(); for(const row of [...(a||[]),...(b||[])]) if(row&&row.id!=null) byId.set(String(row.id),row);
@@ -1095,14 +1255,16 @@ async function fetchSocialOnce(userId){
     if(fr.error){ socialBackend.friends=false; throw fr.error; }
     socialBackend.friends=true; socialFriends=fr.data||[];
 
-    const sent=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at').eq('sender_id',userId).order('created_at',{ascending:false}).limit(40);
+    const sent=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at').eq('sender_id',userId).order('created_at',{ascending:false}).limit(500);
     if(!stillCurrent()) return false;
     if(sent.error){ socialBackend.messages=false; throw sent.error; }
-    const received=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at').eq('recipient_id',userId).order('created_at',{ascending:false}).limit(40);
+    const received=await sb.from(SOCIAL_MESSAGE_TABLE).select('id,sender_id,recipient_id,body,read_at,created_at').eq('recipient_id',userId).order('created_at',{ascending:false}).limit(500);
     if(!stillCurrent()) return false;
     if(received.error){ socialBackend.messages=false; throw received.error; }
     socialBackend.messages=true;
-    socialMessages=socialMergeRows(sent.data,received.data).sort((a,b)=>Date.parse(b.created_at||0)-Date.parse(a.created_at||0)).slice(0,60);
+    socialMessages=socialMergeRows(sent.data,received.data).sort((a,b)=>Date.parse(b.created_at||0)-Date.parse(a.created_at||0)).slice(0,1000);
+    if(typeof socialFetchConversationStates==='function')await socialFetchConversationStates(userId);
+    if(!stillCurrent())return false;
 
     const ids=new Set([userId]);
     for(const row of socialFriends) ids.add(socialFriendOther(row));
@@ -1113,16 +1275,20 @@ async function fetchSocialOnce(userId){
       if(!stillCurrent()) return false;
       if(!people.error) for(const p of people.data||[]) socialProfiles[String(p.user_id)]=p;
     }
+    if(typeof socialConversationPeer!=='undefined'&&socialConversationPeer&&typeof socialPrivateConversation==='function'&&!socialPrivateConversation(socialConversationPeer)&&typeof socialClosePrivateConversation==='function')socialClosePrivateConversation();
     socialStatus=socialAccountSettingsSqlReady===false
       ? 'SOCIAL READY · RUN SOCIAL 05 FOR USERNAME SETTINGS'
       : usernameNeedsClaim(socialProfile,authUser)
         ? 'CHOOSE YOUR USERNAME · THIS REPLACES THE TEMPORARY ACCOUNT NAME EVERYWHERE'
-        : 'INBOX READY · DIRECT MESSAGES ARE FRIENDS-ONLY';
+        : typeof socialConversationSqlReady!=='undefined'&&socialConversationSqlReady===false
+          ? 'PRIVATE INBOX READY · RUN SOCIAL 08 TO SAVE ARCHIVE + DELETE'
+          : 'PRIVATE INBOX READY · 25 ACTIVE CONVERSATIONS MAX';
     socialLastFetch=Date.now();
     setupSocialRealtime();
     socialPartyPresenceAt=0;socialPartyInvitePollAt=0;
     void socialTouchPartyPresence(true).then(()=>socialPollPartyInvites(true));
     void socialPollNotifications(true);
+    if(typeof socialConversationSqlReady!=='undefined'&&socialConversationSqlReady===true&&typeof socialArchiveConversationOverflow==='function')void socialArchiveConversationOverflow();
     socialCpuInvitePollAt=Date.now()+SOCIAL_CPU_INVITE_POLL_MS;
     socialMaybePromptCpuGameInvite();
     return true;
@@ -1446,15 +1612,23 @@ async function socialRemoveFriend(rowId){
 }
 function socialPromptMessage(){
   if(!authUser){ toggleAuth(); return; }
-  openForm({title:'NEW PRIVATE MESSAGE',hint:'Enter an accepted friend\'s username.',saveLabel:'WRITE MESSAGE',
-    fields:[{id:'handle',label:'FRIEND USERNAME',type:'text',placeholder:'operator_7'}],onSave:v=>{
-      const key=socialHandleKey(v.handle), p=Object.values(socialProfiles).find(x=>socialHandleKey(x.handle_key||x.handle)===key);
-      if(!p||!socialAcceptedFriend(p.user_id)){ formError('private messages are only for accepted friends'); return; }
-      closeForm(); openSocialMessageCompose(p.user_id,p.handle);
+  openForm({title:'NEW PRIVATE MESSAGE',hint:'Enter any player\'s public username. Blocked players cannot message each other.',saveLabel:'WRITE MESSAGE',
+    fields:[{id:'handle',label:'PLAYER USERNAME',type:'text',placeholder:'operator_7'}],onSave:async v=>{
+      const key=socialHandleKey(v.handle);if(!key){formError('enter a valid username');return;}
+      let p=Object.values(socialProfiles).find(x=>socialHandleKey(x.handle_key||x.handle)===key)||null;
+      if(!p&&sb){
+        const result=await sb.from(SOCIAL_PROFILE_TABLE).select('user_id,handle,handle_key,display_name').eq('handle_key',key).maybeSingle();
+        if(result&&result.error){formError('could not find that player');return;}
+        p=result&&result.data||null;if(p)socialProfiles[String(p.user_id||'')]=p;
+      }
+      if(!p||!p.user_id){formError('no player has that username');return;}
+      if(!socialCanMessageUser(p.user_id)){formError('you cannot message that player');return;}
+      closeForm();openSocialMessageCompose(p.user_id,p.handle);
     }});
 }
 function openSocialMessageCompose(userId,handle){
-  if(!socialAcceptedFriend(userId)){ socialStatus='DIRECT MESSAGES ARE ONLY FOR ACCEPTED FRIENDS'; sfx('dry'); return; }
+  const allowed=typeof socialCanMessageUser==='function'?socialCanMessageUser(userId):socialAcceptedFriend(userId);
+  if(!allowed){ socialStatus='YOU CANNOT MESSAGE THAT PLAYER'; sfx('dry'); return; }
   if(typeof clearAdminNotificationComposerState==='function')clearAdminNotificationComposerState();
   msgKind='social'; socialMessageTo=String(userId); msgTo=String(handle||'friend'); msgOpen=true; adminsOpen=false;
   $('msgwrap').style.display='flex'; $('msgstatus').textContent=''; $('msgmsg').value=''; $('msgto').textContent='private to: @'+msgTo;
@@ -1466,11 +1640,26 @@ async function sendSocialMessage(){
   const txt=($('msgmsg').value||'').trim();
   if(!txt){ $('msgstatus').textContent='write something first'; return; }
   if(!sb||!authUser||!socialMessageTo){ $('msgstatus').textContent='sign in and reconnect first'; return; }
-  if(!socialAcceptedFriend(socialMessageTo)){ $('msgstatus').textContent='messages require an accepted friendship'; return; }
+  const allowed=typeof socialCanMessageUser==='function'?socialCanMessageUser(socialMessageTo):socialAcceptedFriend(socialMessageTo);
+  if(!allowed){ $('msgstatus').textContent='you cannot message that player'; return; }
   $('msgstatus').textContent='sending privately...';
+  const sendButton=$('msgsend');if(sendButton)sendButton.disabled=true;
   try{
-    const result=await sb.from(SOCIAL_MESSAGE_TABLE).insert({sender_id:authUser.id,recipient_id:socialMessageTo,body:txt.slice(0,500)});
-    if(result&&result.error) throw result.error;
-    $('msgstatus').textContent='sent!'; $('msgmsg').value=''; await fetchSocial(true); setTimeout(closeMsgCompose,700);
-  }catch(error){ $('msgstatus').textContent=socialSetupMissing(error)?socialSetupStatus():'could not send — accepted friends only'; }
+    const owner=String(authUser.id||''),peer=String(socialMessageTo),person=typeof socialPerson==='function'?socialPerson(peer):(socialProfiles&&socialProfiles[peer]||{}),handle=socialHandleKey(person&&person.handle||(typeof msgTo==='string'?msgTo:''));
+    let result=typeof sb.rpc==='function'?await sb.rpc('send_outpost_zero_private_message',{p_recipient_username:handle,p_body:txt.slice(0,500)}):{error:{message:'schema cache'}};
+    if(result&&result.error&&(typeof socialPartyInviteRpcMissing!=='function'||socialPartyInviteRpcMissing(result.error))){
+      if(typeof socialConversationSqlReady!=='undefined')socialConversationSqlReady=false;
+      if(!socialAcceptedFriend(peer))throw new Error('SOCIAL_08_REQUIRED');
+      result=await sb.from(SOCIAL_MESSAGE_TABLE).insert({sender_id:owner,recipient_id:peer,body:txt.slice(0,500)});
+    }
+    if(result&&result.error)throw result.error;
+    if(!authUser||String(authUser.id||'')!==owner)return;
+    $('msgstatus').textContent='sent!';$('msgmsg').value='';
+    if(typeof socialView!=='undefined')socialView='inbox';if(typeof socialInboxSection!=='undefined')socialInboxSection='inbox';
+    if(typeof socialConversationPeer!=='undefined')socialConversationPeer=peer;if(typeof socialConversationPage!=='undefined')socialConversationPage=1000000;
+    await fetchSocial(true);setTimeout(closeMsgCompose,350);
+  }catch(error){
+    $('msgstatus').textContent=String(error&&error.message||'').includes('SOCIAL_08_REQUIRED')?'run Social 08 to message players who are not friends':
+      socialSetupMissing(error)?socialSetupStatus():'could not send — check the username or block status';
+  }finally{if(sendButton)sendButton.disabled=false;}
 }

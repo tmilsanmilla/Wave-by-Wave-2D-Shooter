@@ -66,6 +66,7 @@ function meleeSwing(w, mul, flurryGenerated=false){
   }
   player.swingT=now; player.swingA=base; player.swingSide=swingSide; player.swingArc=arc; player.swingR=w.range;
   player.swingDur=clamp(w.fireRate*0.55, 90, 260);   // faster weapons = snappier visible swing
+  if(typeof arenaBroadcastMelee==='function')arenaBroadcastMelee(player.cur,base,arc,w.range,player.swingDur,swingSide);
   const targets=[];
   for(const e of enemies){
     const d=Math.hypot(e.x-player.x, e.y-player.y);
@@ -79,7 +80,8 @@ function meleeSwing(w, mul, flurryGenerated=false){
     for(const e of partyCpuMatch.bots.filter(b=>b.team==='B'&&b.hp>0)){
       const er=e.r||15,d=Math.hypot(e.x-player.x,e.y-player.y); if(d>w.range+er)continue;
       let da=Math.atan2(e.y-player.y,e.x-player.x)-base;da=Math.atan2(Math.sin(da),Math.cos(da));
-      if(Math.abs(da)<=arc/2+Math.asin(Math.min(1,er/(d+1)))*.8){
+      const clear=typeof arenaMeleeLineClear!=='function'||arenaMeleeLineClear(player.x,player.y,e.x,e.y);
+      if(clear&&Math.abs(da)<=arc/2+Math.asin(Math.min(1,er/(d+1)))*.8){
         partyCpuHitBot(e,w.dmg*perks.dmg*wm(player.cur).dmg*mul,'melee');arenaMeleeHit=true;
         if(player.cur==='terafists'&&!flurryGenerated) teraHitCharge=Math.min(teraHitsRequired(),teraHitCharge+1);
       }
@@ -89,7 +91,8 @@ function meleeSwing(w, mul, flurryGenerated=false){
     if(d<=w.range+er){
       let da=Math.atan2(e.y-player.y,e.x-player.x)-base;
       da=Math.atan2(Math.sin(da),Math.cos(da));
-      if(Math.abs(da)<=arc/2+Math.asin(Math.min(1,er/(d+1)))*0.8){
+      const clear=typeof arenaMeleeLineClear!=='function'||arenaMeleeLineClear(player.x,player.y,e.x,e.y);
+      if(clear&&Math.abs(da)<=arc/2+Math.asin(Math.min(1,er/(d+1)))*0.8){
         arenaHitOpponent(w.dmg*perks.dmg*wm(player.cur).dmg*mul,'melee');
         if(player.cur==='terafists'&&!flurryGenerated) teraHitCharge=Math.min(teraHitsRequired(),teraHitCharge+1);
         arenaMeleeHit=true; burst(e.x,e.y,'#d05548',5,3);
@@ -487,7 +490,11 @@ function update(dtms){
   if(mx||my) player.moveT=now;
   if(sticks.move.id!==null){ mx=sticks.move.dx/STICK_R; my=sticks.move.dy/STICK_R; }
   if(now < player.dashUntil){
-    player.x += player.ddx*(player.dashSpd||14)*dt; player.y += player.ddy*(player.dashSpd||14)*dt;
+    const dx=player.ddx*(player.dashSpd||14)*dt,dy=player.ddy*(player.dashSpd||14)*dt;
+    let moved=true;
+    if(typeof moveActorSwept==='function') moved=moveActorSwept(player,dx,dy);
+    else { player.x+=dx;player.y+=dy; }
+    if(!moved) player.dashUntil=now;                 // Scythe and other dashes stop at the first wall
   } else if(mx||my){
     const m=Math.max(1,Math.hypot(mx,my));
     const surgeMul = now<surgeT ? 1.3 : 1;
@@ -596,16 +603,15 @@ function update(dtms){
     if(now>=g.t || reached){
       const fw=g.firework;
       burst(g.x,g.y, fw?'#ff5a3c':'#e8b658', fw?24:30, fw?6:7); addShake(fw?6:8); sfx('die');
-      const rad=fw?150:170;
+      const rad=fw?85:170;
       destroyMissilesInRadius(g.x, g.y, rad);        // explosions knock down incoming missiles
       for(let j=enemies.length-1;j>=0;j--){
         const e=enemies[j];
         const d2g=dist2(e.x,e.y,g.x,g.y);
         if(d2g<rad*rad){
           const falloff=1-Math.sqrt(d2g)/(rad*1.3);
-          damageEnemy(e,(fw ? (ETYPES[e.type].boss?110:180) : (ETYPES[e.type].boss?180:300))*perks.dmg*falloff*freezeHit(e));
+          damageEnemy(e,(fw ? (ETYPES[e.type].boss?50:75) : (ETYPES[e.type].boss?180:300))*perks.dmg*falloff*freezeHit(e));
           e.hitT=now+80;
-          if(fw) igniteEnemy(e, 0);                  // firework leaves residual burn
           if(e.hp<=0) killEnemy(j);
         }
       }
@@ -614,14 +620,14 @@ function update(dtms){
           const d2g=dist2(target.x,target.y,g.x,g.y);
           if(d2g<rad*rad){
             const falloff=1-Math.sqrt(d2g)/(rad*1.3);
-            partyCpuHitBot(target,180*falloff,'firework');
+            partyCpuHitBot(target,65*falloff,'firework');
           }
         }
       } else if(fw&&practiceMode==='arena'&&arenaCanAct()&&arena.opponent){
         const d2g=dist2(arena.opponent.x,arena.opponent.y,g.x,g.y);
         if(d2g<rad*rad){
           const falloff=1-Math.sqrt(d2g)/(rad*1.3);
-          arenaHitOpponent(180*falloff,'firework');
+          arenaHitOpponent(65*falloff,'firework');
         }
       }
       // BIG rainbow firework burst on detonation
@@ -718,7 +724,15 @@ function update(dtms){
         const dx=player.x-bl.x, dy=player.y-bl.y, d=Math.hypot(dx,dy)||1;
         bl.vx=dx/d*17; bl.vy=dy/d*17;
       }
+      const oldX=bl.x,oldY=bl.y;
       bl.x+=bl.vx*dt; bl.y+=bl.vy*dt;
+      const hitWall=pointInRects(bl.x,bl.y)||
+        (typeof losBlocked==='function'&&losBlocked(oldX,oldY,bl.x,bl.y));
+      if(hitWall){
+        bl.x=oldX;bl.y=oldY;bl.returning=true;
+        const dx=player.x-bl.x,dy=player.y-bl.y,d=Math.hypot(dx,dy)||1;
+        bl.vx=dx/d*17;bl.vy=dy/d*17;
+      }
       if(projectileOutsideArena(bl,9)){
         clampProjectileToArena(bl,9); bl.returning=true;
         const dx=player.x-bl.x, dy=player.y-bl.y, d=Math.hypot(dx,dy)||1;
@@ -852,6 +866,29 @@ function update(dtms){
     }
     // practice range targets stand still and never attack
     if(e.practiceStill) continue;
+    // Tracking practice follows the chosen compass direction at a fixed speed.
+    // It reflects off the arena boundary and solid scenery instead of chasing
+    // or attacking the player, keeping the drill predictable and repeatable.
+    if(e.practiceMoving){
+      const eSm=enemySpeedMul(e), step=e.spd*dt*eSm, bounds=activeArenaBounds(), margin=e.r+2;
+      let dir=Number.isFinite(e.practiceDir)?e.practiceDir:0;
+      let vx=Math.cos(dir), vy=Math.sin(dir);
+      let nx=e.x+vx*step;
+      if(nx<bounds.left+margin||nx>bounds.right-margin||circleHitsRects(nx,e.y,e.r)){
+        vx=-vx; dir=Math.atan2(vy,vx); nx=e.x+vx*step;
+      }
+      if(nx>=bounds.left+margin&&nx<=bounds.right-margin&&!circleHitsRects(nx,e.y,e.r)) e.x=nx;
+      let ny=e.y+Math.sin(dir)*step;
+      if(ny<bounds.top+margin||ny>bounds.bottom-margin||circleHitsRects(e.x,ny,e.r)){
+        vy=-Math.sin(dir); dir=Math.atan2(vy,Math.cos(dir)); ny=e.y+vy*step;
+      }
+      if(ny>=bounds.top+margin&&ny<=bounds.bottom-margin&&!circleHitsRects(e.x,ny,e.r)) e.y=ny;
+      e.practiceDir=Math.atan2(Math.sin(dir),Math.cos(dir));
+      e.x=clamp(e.x,bounds.left+margin,bounds.right-margin);
+      e.y=clamp(e.y,bounds.top+margin,bounds.bottom-margin);
+      collideRects(e);
+      continue;
+    }
     // red balls taunt (chase); beach balls repel (flee)
     let tx=player.x, ty=player.y, taunted=false;
     if(balls.length && !t.boss){

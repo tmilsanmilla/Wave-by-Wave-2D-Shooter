@@ -94,7 +94,7 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   #settingsbox h2{color:#e8b658;font-size:clamp(18px,4vw,22px);margin:0 0 5px}
   #settingsaccount{color:#aab38a;font-size:10px;margin:0 0 14px;line-height:1.45;overflow-wrap:anywhere}
   #settingsintro{color:#8a9268;font-size:10px;line-height:1.5;margin:0 0 10px}
-  #settingshome{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 14px}
+  #settingshome{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:0 0 14px}
   #settingshome[hidden],.settings-section[hidden],#settingsintro[hidden]{display:none!important}
   .settings-choice{display:flex;min-height:82px;padding:13px 14px;flex-direction:column;align-items:flex-start;
     justify-content:center;gap:6px;text-align:left;border-color:#6f684b;background:rgba(0,0,0,.24)}
@@ -111,6 +111,11 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   .settings-section input:focus{outline:2px solid rgba(232,182,88,.24);outline-offset:1px;border-color:#e8b658}
   .settings-section input:disabled{opacity:.48;cursor:not-allowed}
   .settings-section .btn{display:block;width:100%;min-height:44px}
+  .settings-track-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+  .settings-track{display:flex!important;min-width:0;min-height:68px!important;flex-direction:column;align-items:center;justify-content:center;gap:5px}
+  .settings-track small{display:block;color:#8a9268;font:700 8px ui-monospace,Consolas,monospace;line-height:1.25}
+  .settings-track.active{background:#e8b658;color:#101208;box-shadow:0 0 0 2px rgba(232,182,88,.18)}
+  .settings-track.active small{color:#30351f}
   .settings-section .btn:disabled,#settingshome .btn:disabled,#settingsactions .btn:disabled{
     opacity:.46;cursor:not-allowed;background:rgba(255,255,255,.03);color:#77727f;border-color:#555}
   .settings-status{color:#a7c15e;font-size:10px;min-height:15px;margin-top:7px;line-height:1.45}
@@ -141,6 +146,8 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
     .settings-section p{font-size:9px;margin-bottom:7px}
     .settings-section input{min-height:44px;padding:8px;font-size:13px;margin-bottom:6px}
     .settings-section .btn,#settingsactions .btn{min-height:44px;padding:8px}
+    .settings-track-grid{grid-template-columns:1fr;gap:6px}
+    .settings-track{min-height:48px!important}
   }
   #repwrap{inset:0;background:rgba(8,9,5,.86);display:none;align-items:center;justify-content:center;z-index:60}
   #repbox{background:#101208;border:1px solid #4a4634;padding:26px;width:340px;text-align:center}

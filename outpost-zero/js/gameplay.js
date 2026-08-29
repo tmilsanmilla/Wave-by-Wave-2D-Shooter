@@ -156,6 +156,13 @@ function pointInRects(x,y){
     if(x>=o.x && x<=o.x+o.w && y>=o.y && y<=o.y+o.h) return true;
   return false;
 }
+function circleHitsRects(x,y,r){
+  for(const o of activeObstacles()){
+    const cx=clamp(x,o.x,o.x+o.w), cy=clamp(y,o.y,o.y+o.h), dx=x-cx, dy=y-cy;
+    if(dx*dx+dy*dy<r*r) return true;
+  }
+  return false;
+}
 // Returns true only when a projectile must stop or ricochet. A phase-enabled
 // slug spends one charge on wall entry, remains intangible inside that same
 // wall, and rearms ordinary collision only after it has exited the geometry.
@@ -180,6 +187,28 @@ function losBlocked(x0,y0,x1,y1){
     if(pointInRects(x0+dx*t, y0+dy*t)) return true;
   }
   return false;
+}
+// In Arena modes, walls must separate melee attackers from their target just
+// like they separate gunfire. Campaign melee keeps its existing crowd-cleave.
+function arenaMeleeLineClear(x0,y0,x1,y1){
+  return practiceMode!=='arena'||!losBlocked(x0,y0,x1,y1);
+}
+// Move a dashing actor in small collision-tested steps. A single endpoint
+// collision check lets fast dashes tunnel completely through thin walls.
+function moveActorSwept(e,dx,dy){
+  const distance=Math.hypot(dx,dy);
+  if(!distance) return true;
+  const radius=Math.max(1,+e.r||1);
+  const steps=Math.max(1,Math.ceil(distance/Math.max(2,radius*.4)));
+  const sx=dx/steps,sy=dy/steps,bounds=activeArenaBounds(),margin=radius;
+  for(let i=0;i<steps;i++){
+    const nx=e.x+sx,ny=e.y+sy;
+    if(nx<bounds.left+margin||nx>bounds.right-margin||
+       ny<bounds.top+margin||ny>bounds.bottom-margin||
+       circleHitsRects(nx,ny,radius)) return false;
+    e.x=nx;e.y=ny;
+  }
+  return true;
 }
 function burst(x,y,col,n,pow){
   if(practiceMode==='arena') n=Math.min(n,2);             // Arena favors readable hits over particle storms
@@ -324,13 +353,15 @@ function spawnOne(type){
                  mode:'chase', modeT:0, ringT:now+2500, dashT:now+5500, streamT:now+1500, missileT:now+3000, cvx:0, cvy:0, dragUntil:0 });
 }
 function spawnPracticeEnemy(sp, id){
-  const t=ETYPES[sp.type], hpMul=DIFFS[diffMode].hp;      // baseline (wave-1) strength
+  const t=ETYPES[sp.type], hpMul=DIFFS[diffMode].hp, spawnSpeed=Number.isFinite(sp.speed)?sp.speed:(Number.isFinite(t.spd)?t.spd:1),
+        practiceDir=Number.isFinite(sp.practiceDir)?sp.practiceDir:0;
   enemies.push({ type:sp.type, x:sp.x, y:sp.y, r:t.r, hp:t.hp*hpMul, maxhp:t.hp*hpMul,
-                 spd:t.spd, fireT:now+rand(400,1400), hitT:0,
+                 spd:spawnSpeed, fireT:now+rand(400,1400), hitT:0,
                  burnUntil:0, burnActiveUntil:0, fleeUntil:0, frozenUntil:0,
                  deflectNext:now+8000, deflectUntil:0, chargeNext:now+18000, chargeUntil:0, chargeGo:0, stunUntil:0, chronoStacks:0,
                  mode:'chase', modeT:0, ringT:now+2500, dashT:now+5500, streamT:now+1500, missileT:now+3000,
-                 cvx:0, cvy:0, dragUntil:0, spawnId:id, practiceStill:sp.still });
+                 cvx:0, cvy:0, dragUntil:0, spawnId:id, practiceStill:sp.still,
+                 practiceMoving:!!sp.practiceMoving, practiceDir:practiceDir });
   sp.alive=true;
   burst(sp.x, sp.y, '#8d949c', 8, 3);
 }
@@ -339,14 +370,28 @@ let practicePickOpen=false, practicePickKey=null, practicePickRects=[], soloPrac
 const PRACTICE_MODES=[
   {id:'range', name:'SHOOTING RANGE', d:'one of every enemy \u00b7 they stand still'},
   {id:'dps',   name:'DPS DUMMY',      d:'measure your damage per second'},
+  {id:'tracking', name:'TRACKING DUMMY', d:'moving target \u00b7 speed + direction'},
   {id:'boss',  name:'WARLORD',        d:'fight a boss one on one'},
 ];
+function normalizePracticeTrackingDirection(value=practiceTrackingDirection){
+  return ((Number(value)||0)%360+360)%360;
+}
+function practiceTrackingDirectionArrow(value=practiceTrackingDirection){
+  return ['\u2192','\u2198','\u2193','\u2199','\u2190','\u2196','\u2191','\u2197'][Math.round(normalizePracticeTrackingDirection(value)/45)%8];
+}
+function adjustPracticeTrackingSpeed(delta){
+  const next=clamp((Number(practiceTrackingSpeed)||DEFAULT_PRACTICE_TRACKING_SPEED)+delta,PRACTICE_TRACKING_SPEED_MIN,PRACTICE_TRACKING_SPEED_MAX);
+  practiceTrackingSpeed=Math.round(next*10)/10;
+}
+function adjustPracticeTrackingDirection(delta){
+  practiceTrackingDirection=normalizePracticeTrackingDirection((Number(practiceTrackingDirection)||0)+delta);
+}
 function openPracticePick(k, returnPage=selPage){
   practicePickKey=k; practiceReturnPage=String(returnPage||selPage||'practice'); practicePickOpen=true;
 }
 function drawPracticePick(){
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
-  const pw=Math.min(400,W-24), ph=Math.min(300,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  const pw=Math.min(400,W-24), ph=Math.min(360,H-24), px=W/2-pw/2, py=H/2-ph/2;
   ctx.fillStyle='#0a0c07'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#a7c15e'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   const def=WEAPONS[practicePickKey]||VAULT_WEAPONS[practicePickKey]||UTILITIES[practicePickKey]||VAULT_UTILITIES[practicePickKey]||{};
@@ -356,9 +401,11 @@ function drawPracticePick(){
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
   ctx.fillText('you will carry this weapon only \u00b7 pick a mode', W/2, py+42);
   practicePickRects=[];
-  const x0=px+16, rw=pw-32; let y=py+56;
+  const x0=px+16, rw=pw-32, gap=6, cancelH=26, cancelY=py+ph-36;
+  const listTop=py+54, listBottom=cancelY-8, rowH=clamp(Math.floor((listBottom-listTop-gap*(PRACTICE_MODES.length-1))/PRACTICE_MODES.length),28,48);
+  let y=listTop;
   for(const m of PRACTICE_MODES){
-    const h=44;
+    const h=rowH;
     practicePickRects.push({x:x0,y,w:rw,h,id:'m:'+m.id});
     const hv=mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+h;
     ctx.fillStyle=hv?'rgba(167,193,94,0.32)':'rgba(167,193,94,0.12)'; ctx.fillRect(x0,y,rw,h);
@@ -367,11 +414,14 @@ function drawPracticePick(){
     ctx.fillStyle='#cfe0a8'; ctx.font='700 12px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(m.name, rw-16), W/2, y+h/2-8);
     ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(m.d, rw-16), W/2, y+h/2+9);
+    const detail=m.id==='tracking'
+      ? 'speed '+practiceTrackingSpeed.toFixed(1)+'\u00d7 \u00b7 direction '+Math.round(normalizePracticeTrackingDirection())+'\u00b0 '+practiceTrackingDirectionArrow()
+      : m.d;
+    ctx.fillText(fitLine(detail, rw-16), W/2, y+h/2+9);
     ctx.textBaseline='alphabetic';
-    y+=h+8;
+    y+=h+gap;
   }
-  const cbw=Math.min(140,pw-40), cbh=26, cbx=W/2-cbw/2, cby=py+ph-36;
+  const cbw=Math.min(140,pw-40), cbh=cancelH, cbx=W/2-cbw/2, cby=cancelY;
   practicePickRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'cancel'});
   const chv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
   ctx.fillStyle=chv?'#d05548':'rgba(208,85,72,0.14)'; ctx.fillRect(cbx,cby,cbw,cbh);
@@ -458,6 +508,12 @@ function startPractice(mode){
   } else if(mode==='dps'){
     practiceSpawns.push({type:'dummy', x:cx+60, y:cy, still:true, alive:false, respawnAt:0});
     waveMsg='DPS DUMMY \u2014 integrity never breaks'; waveMsgT=now+3000;
+  } else if(mode==='tracking'){
+    const speed=clamp(Number(practiceTrackingSpeed)||DEFAULT_PRACTICE_TRACKING_SPEED, PRACTICE_TRACKING_SPEED_MIN, PRACTICE_TRACKING_SPEED_MAX);
+    const dir=normalizePracticeTrackingDirection();
+    const rad=dir*Math.PI/180;
+    practiceSpawns.push({type:'dummy', x:cx+60, y:cy, still:false, practiceMoving:true, speed:1.4*speed, practiceDir:rad, alive:false, respawnAt:0});
+    waveMsg='TRACKING DUMMY \u2014 moving practice target'; waveMsgT=now+3000;
   } else if(mode==='boss'){
     practiceSpawns.push({type:'boss',       x:cx+300, y:cy-260, still:false, alive:false, respawnAt:0});
     practiceSpawns.push({type:'bossBlue',   x:cx+300, y:cy+260, still:false, alive:false, respawnAt:0});

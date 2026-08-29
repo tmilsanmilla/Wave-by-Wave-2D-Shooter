@@ -271,7 +271,7 @@ function arenaSend(event,payload){
   const body=Object.assign({from:authUser.id,room:arena.room,epoch:arena.matchEpoch,round:arena.round},payload||{});
   try{ return arena.matchChannel.send({type:'broadcast',event,payload:body}); }catch(e){ return null; }
 }
-const REMOTE_SHOT_QUEUE_MAX=300, REMOTE_SHOT_SEEN_MAX=500;
+const REMOTE_SHOT_QUEUE_MAX=300, REMOTE_SHOT_SEEN_MAX=500, REMOTE_MELEE_SEEN_MAX=160;
 const REMOTE_FIREWORK_QUEUE_MAX=24, REMOTE_FIREWORK_FX_MAX=32, REMOTE_FIREWORK_SEEN_MAX=96;
 const REMOTE_FIREWORK_FUSE_MS=480, REMOTE_FIREWORK_FX_MS=650;
 function remoteShotWeaponOwned(loadout,weaponId){
@@ -294,6 +294,41 @@ function remoteShotRemember(seen,id){
     const keep=[...seen].slice(-Math.floor(REMOTE_SHOT_SEEN_MAX/2));seen.clear();for(const value of keep)seen.add(value);
   }
   return true;
+}
+function remoteMeleeWeaponOwned(loadout,weaponId){
+  const id=String(weaponId||''),w=WEAPONS[id];
+  return !!(w&&w.melee&&loadout&&String(loadout.melee||'')===id&&
+    (typeof isWeaponPublished!=='function'||isWeaponPublished(id)));
+}
+function remoteMeleeIdValid(id,owner,epoch,round){
+  const value=String(id||''),prefix=String(owner)+':'+Math.floor(+epoch||0)+':'+Math.floor(+round||0)+':melee:';
+  if(!value.startsWith(prefix)||value.length>120)return false;
+  const seq=value.slice(prefix.length);return /^\d{1,10}$/.test(seq)&&+seq>0;
+}
+function remoteMeleeRemember(seen,id){
+  if(!(seen instanceof Set)||seen.has(id))return false;
+  seen.add(id);
+  if(seen.size>REMOTE_MELEE_SEEN_MAX){const keep=[...seen].slice(-80);seen.clear();for(const value of keep)seen.add(value);}
+  return true;
+}
+function arenaBroadcastMelee(weaponId,angle,arc,range,duration,side){
+  if(!arena||!authUser||!arena.matchChannel||!arena.opponent||arena.phase!=='fight'||!arenaCanAct()||
+     isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())||!remoteMeleeWeaponOwned(loadout,weaponId))return false;
+  arena.meleeSeq=Math.max(0,Math.floor(+arena.meleeSeq||0))+1;
+  const id=String(authUser.id)+':'+arena.matchEpoch+':'+arena.round+':melee:'+arena.meleeSeq;
+  arenaSend('melee',{id,weapon:String(weaponId),angle:+angle,arc:+arc,range:+range,duration:+duration,side:side<0?-1:1});return true;
+}
+function arenaApplyRemoteMelee(p){
+  if(!p||!arena||!arena.active||arena.networkHold||!arena.opponent||arena.phase!=='fight'||p.round!==arena.round||
+     String(p.from)!==String(arena.opponent.id)||!remoteMeleeIdValid(p.id,p.from,arena.matchEpoch,arena.round)||
+     !remoteMeleeWeaponOwned(arena.opponent.loadout,p.weapon))return false;
+  const angle=+p.angle,arc=+p.arc,range=+p.range,duration=+p.duration,side=+p.side;
+  if(!Number.isFinite(angle)||Math.abs(angle)>TAU*1000||!Number.isFinite(arc)||arc<.1||arc>TAU||
+     !Number.isFinite(range)||range<15||range>220||!Number.isFinite(duration)||duration<60||duration>400||![-1,1].includes(side))return false;
+  if(!(arena.seenMelees instanceof Set))arena.seenMelees=new Set();
+  if(!remoteMeleeRemember(arena.seenMelees,String(p.id)))return false;
+  const e=arena.opponent;e.cur=String(p.weapon);e.angle=Math.atan2(Math.sin(angle),Math.cos(angle));e.swingT=now;
+  e.swingA=e.angle;e.swingArc=arc;e.swingR=range;e.swingDur=duration;e.swingSide=side;return true;
 }
 function remoteFireworkWeaponOwned(loadout,weaponId){
   const id=String(weaponId||''),w=WEAPONS[id];
@@ -849,7 +884,7 @@ function arenaConnectRoom(code,wantsHost,mode,expectedIds){
   arena.wantsHost=!!wantsHost; arena.expectedIds=expectedIds; arena.joinedAt=arena.joinedAt||Date.now();
   arena.localReady=mode==='queue'; arena.remoteReady=false;
   const ch=sb.channel('oz-arena-v1-'+code,{config:{broadcast:{self:false,ack:false},presence:{key:authUser.id}}});
-  for(const ev of ['state','shot','firework','hit','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
+  for(const ev of ['state','shot','melee','firework','hit','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
                     'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_tnt_hit','map_hazard','map_hazard_ack','leave','room_full'])
     ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload));
   ch.on('presence',{event:'sync'},()=>arenaMatchPresenceSync(ch));
@@ -989,6 +1024,7 @@ function arenaReceive(event,p){
     return;
   }
   if(event==='shot'){ arenaApplyRemoteShot(p); return; }
+  if(event==='melee'){ arenaApplyRemoteMelee(p); return; }
   if(event==='firework'){ arenaApplyRemoteFirework(p); return; }
   if(event==='state'){
     if(p.round!==arena.round) return;
@@ -1054,7 +1090,7 @@ function arenaApplyRematchStart(p){
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
   arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();
   arena.hitSeq=0; arena.sentHitKinds=new Map(); arena.pendingUnscopedHits=new Set();
-  arena.seenShots=new Set(); arena.shotSeq=0; arena.remoteShots=[];
+  arena.seenShots=new Set(); arena.shotSeq=0; arena.remoteShots=[];arena.seenMelees=new Set();arena.meleeSeq=0;
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.winRecorded=false;
   arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
@@ -1080,7 +1116,7 @@ function arenaApplyRoundStart(p){
   clearCameraShake();
   arena.round=p.round; arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=false;
   arena.seenHits=new Set();arena.receivedHitKinds=new Map();arena.hitSeq=0;arena.sentHitKinds=new Map();
-  arena.seenShots=new Set();arena.shotSeq=0;arena.remoteShots=[];
+  arena.seenShots=new Set();arena.shotSeq=0;arena.remoteShots=[];arena.seenMelees=new Set();arena.meleeSeq=0;
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.pendingUnscopedHits=new Set();
   // Use a relative countdown on each device. Absolute browser clocks can be

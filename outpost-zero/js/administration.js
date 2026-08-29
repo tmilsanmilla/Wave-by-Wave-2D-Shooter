@@ -1,27 +1,38 @@
 "use strict";
 
-// MAIN ADMINS have every power; CO-ADMINS get the shared ones (test mode, commands) but not storage.
+// MAIN ADMINS have every power; CO-ADMINS have shared staff tools; TESTERS
+// have only Test Mode, the Admin Inbox, and the weapon-suggestion form.
 const MAIN_ADMINS = ['tmilsanmilla@gmail.com'];     // full access
 const CO_ADMINS   = [];                             // add co-admin emails here
 function adminEmail(){ return String((authUser&&authUser.email)||'').toLowerCase(); }
 function isCreator(){ return !sb || adminEmail()===ROOT_ADMIN; }   // tmilsanmilla: always top rank
 function isMainAdmin(){ return isCreator() || MAIN_ADMINS.includes(adminEmail()) || adminRoles[adminEmail()]==='main'; }
 function isCoAdmin(){ return CO_ADMINS.includes(adminEmail()) || adminRoles[adminEmail()]==='co'; }
-function myRank(){ return isCreator()?'creator' : isMainAdmin()?'main' : isCoAdmin()?'co' : ''; }
+function isTester(){ return adminRoles[adminEmail()]==='tester'; }
+function myRank(){ return isCreator()?'creator' : isMainAdmin()?'main' : isCoAdmin()?'co' : isTester()?'tester' : ''; }
 function adminRoster(){                              // creator first, then the table
   const r=[{email:ROOT_ADMIN, rank:'creator'}];
-  for(const e of Object.keys(adminRoles)) if(e!==ROOT_ADMIN) r.push({email:e, rank:adminRoles[e]==='main'?'main':'co'});
+  for(const e of Object.keys(adminRoles)) if(e!==ROOT_ADMIN&&['main','co','tester'].includes(adminRoles[e])) r.push({email:e, rank:adminRoles[e]});
   return r;
 }
-function isAdmin(){ return isMainAdmin() || isCoAdmin(); }   // any admin (preview !sb -> main)
+function isAdmin(){ return isMainAdmin() || isCoAdmin() || isTester(); }   // any staff tier (preview !sb -> main)
+function canAccessReports(){ return isMainAdmin(); }
+function canManageAdmins(){ return isMainAdmin(); }
+function canPostUpdates(){ return isMainAdmin() || isCoAdmin(); }
+function canUsePlayerTools(){ return isMainAdmin() || isCoAdmin(); }
+function canViewWeaponStorage(){ return isMainAdmin() || isCoAdmin(); }
+function canSuggestWeaponEdits(){ return isTester() || isCoAdmin(); }
+function canReviewWeaponSuggestions(){ return isMainAdmin(); }
 let unrankedRun=false;                              // next-season (early access) weapons -> no leaderboard
 let adminOpen=false, adminUsed=false, adminBtnRect={x:-99,y:-99,w:0,h:0}, adminRects=[];
 let testMode=false;                                 // test mode (all admins); storage is a viewer popout now
 let adminPanelOpen=false, adminHubBtnRect=null, adminPanelRects=[];
 let aiLearningOpen=false, aiLearningRects=[], aiLearningDifficulty=4, aiLearningNotice='',aiLearningSelectedModelId='',aiLearningRestoreBusyId='';
 const ROOT_ADMIN='tmilsanmilla@gmail.com';          // can never be kicked or demoted
-let adminRoles={};                                  // email -> 'main'|'co' (from the Supabase admins table)
+let adminRoles={};                                  // email -> 'main'|'co'|'tester' (from the Supabase admins table)
 let banners=[], pendingBanners=[], bannerFetchSeq=0, bannerDraftEpoch=0, updatesFeed={staff:[],player:[]};
+let reportCopyMode='all',reportCopyCustomCount=25,reportCopyBusy=false,reportCopyStatus='';
+let weaponSuggestions=[],weaponSuggestionsOpen=false,weaponSuggestionsRects=[],weaponSuggestionBusy=false,weaponSuggestionStatus='';
 let inboxTab='msgs';
 let postOpen=false, postBusy=false, postRequestSeq=0, updatesOpen=false, updatesHubBtnRect=null, updatesRects=[], staffReport=false;
 let adminsOpen=false, msgsOpen=false, adminsHubBtnRect=null, msgsHubBtnRect=null, adminsRects=[], msgsRects=[];
@@ -108,7 +119,7 @@ function clearMainOnlyAdminState(){
   const closeStaffReport=!!staffReport;
   bannerDraftEpoch++;pendingBanners=[];
   clearAdminAuditCache();scoreReqs=[];updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];
-  aiLearningOpen=false;adminsOpen=false;storageOpen=false;clearPostComposerPrivateState();staffReport=false;
+  aiLearningOpen=false;adminsOpen=false;storageOpen=false;weaponSuggestionsOpen=false;weaponSuggestions=[];clearPostComposerPrivateState();staffReport=false;
   composePickOpen=false;
   if(msgOpen&&typeof msgKind!=='undefined'&&(msgKind==='admin'||msgKind==='player_notification')){msgOpen=false;msgTo='';}
   clearAdminNotificationComposerState();
@@ -119,9 +130,15 @@ function clearMainOnlyAdminState(){
   if(typeof document!=='undefined')for(const id of ['msgwrap','postwrap'].concat(closeStaffReport?['repwrap']:[])){const el=document.getElementById(id);if(el)el.style.display='none';}
   if(typeof enforceReaderAccess==='function')enforceReaderAccess();
 }
+function clearCoAndMainAdminState(){
+  clearMainOnlyAdminState();
+  if(typeof playersOpen!=='undefined')playersOpen=false;
+  storageOpen=false;weaponSuggestionsOpen=false;staffReport=false;clearPrivatePlayerEditor();
+  if(typeof document!=='undefined')for(const id of ['scorewrap','postwrap','repwrap']){const el=document.getElementById(id);if(el)el.style.display='none';}
+}
 function scrubPrivilegedUiForAccountChange(){
   adminPrivacyEpoch++;adminRosterFetchSeq++;bannerFetchSeq++;bannerDraftEpoch++;pendingBanners=[];adminRoles={};
-  adminOpen=adminPanelOpen=aiLearningOpen=adminsOpen=msgsOpen=updatesOpen=archOpen=storageOpen=scoresOpen=false;
+  adminOpen=adminPanelOpen=aiLearningOpen=adminsOpen=msgsOpen=updatesOpen=archOpen=storageOpen=scoresOpen=weaponSuggestionsOpen=false;
   if(typeof playersOpen!=='undefined')playersOpen=false;
   if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
   if(typeof weaponEditOpen!=='undefined')weaponEditOpen=false;
@@ -143,15 +160,16 @@ function enforceAdminRolePrivacy(previousRank=''){
     // demotion to co-admin. A co-admin may reopen a fresh view-only lookup.
     if(previousRank==='main'||previousRank==='creator')clearPrivatePlayerEditor();
   }
+  if(!canUsePlayerTools())clearCoAndMainAdminState();
   if(!isAdmin()&&previousRank)scrubPrivilegedUiForAccountChange();
   else if(typeof enforceReaderAccess==='function')enforceReaderAccess();
 }
 let lookupBtnRect=null;
-// Public lookup is username + high score only. Private account state is loaded
-// only through the existing admin-only RPC after an admin enters an email.
-function canSeeStats(){ return isAdmin(); }
+// Every player target is a public username. Admin-only RPCs resolve that
+// username to Auth privately on the server before returning protected state.
+function canSeeStats(){ return canUsePlayerTools(); }
 function canEditPlayer(){ return isMainAdmin(); }
-function canEditLoadedPlayer(){ return canEditPlayer()&&peData&&!peData.publicOnly&&peTarget.indexOf('@')>0; }
+function canEditLoadedPlayer(){ return canEditPlayer()&&peData&&!peData.publicOnly; }
 function canBan(){ return isMainAdmin(); }            // main admins may ban directly now
 function openAiLearning(){
   if(!isMainAdmin()){ aiLearningOpen=false; sfx('dry'); return false; }
@@ -301,8 +319,10 @@ async function lookupPlayer(target){
   peBusy=true; peData=null; peEdit=null; peNotice=''; peGiftMode='permanent';
   try{
     const q=String(target||'').trim();
-    if(isAdmin()&&q.indexOf('@')>0){
-      const {data,error}=await sb.rpc('admin_get_player',{target_email:q.toLowerCase()});
+    const privateLookup=typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin();
+    if(privateLookup){
+      if(!/^[A-Za-z0-9_]{3,32}$/.test(q))throw new Error('invalid username');
+      const {data,error}=await sb.rpc('outpost_zero_admin_get_player_by_username',{p_target_username:q});
       if(error) throw error;
       if(session!==peEditorSession)return;
       const d=Array.isArray(data)?data[0]:data; if(!d) throw new Error('not found');
@@ -310,7 +330,7 @@ async function lookupPlayer(target){
       peTarget=q.toLowerCase();
       if(isMainAdmin()){
         try{
-          const grants=await sb.rpc('admin_list_outpost_zero_weapon_grants',{p_target_email:peTarget});
+          const grants=await sb.rpc('admin_list_outpost_zero_weapon_grants_by_username',{p_target_username:peTarget});
           if(grants.error) throw grants.error;
           if(session!==peEditorSession)return;
           peData.tempGrants=normalizedPlayerTempGrants(grants.data||[]); peData.tempGrantsLoaded=true;
@@ -390,12 +410,12 @@ async function peApply(){
     };
     for(const row of temp.set){
       assertCurrentApply();
-      await callReceiptRpc('admin_set_outpost_zero_weapon_grant',{p_target_email:applyTarget,p_weapon_key:row.key,
+      await callReceiptRpc('admin_set_outpost_zero_weapon_grant_by_username',{p_target_username:applyTarget,p_weapon_key:row.key,
         p_duration_minutes:row.durationMinutes,p_note:'Player Lookup temporary gift',p_operation_id:row.operationId});
     }
     for(const row of temp.revoke){
       assertCurrentApply();
-      await callReceiptRpc('admin_revoke_outpost_zero_weapon_grant',{p_target_email:applyTarget,p_weapon_key:row.key,
+      await callReceiptRpc('admin_revoke_outpost_zero_weapon_grant_by_username',{p_target_username:applyTarget,p_weapon_key:row.key,
         p_note:'Player Lookup temporary gift revoked',p_operation_id:row.operationId});
     }
     assertCurrentApply();
@@ -453,7 +473,7 @@ async function fetchScoreReqs(){
   if(!sb || !isMainAdmin()) return;
   const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   try{
-    const {data,error}=await sb.rpc('list_outpost_zero_player_requests',{p_limit:20});
+    const {data,error}=await sb.rpc('list_outpost_zero_player_requests_by_username',{p_limit:20});
     if(error)throw error;
     if(!adminPrivacyRequestCurrent(epoch,userId)||!isMainAdmin())return;
     scoreReqs=data||[];
@@ -474,8 +494,8 @@ async function adminReceiptRpc(name,args,operationId=adminOperationUuid()){
   }
   throw lastError||new Error('admin service unavailable');
 }
-function submitPlayerEditRequest(email,patch,operationId=adminOperationUuid()){
-  return adminReceiptRpc('submit_outpost_zero_player_request',{p_target_email:String(email||'').toLowerCase(),p_patch:patch},operationId);
+function submitPlayerEditRequest(username,patch,operationId=adminOperationUuid()){
+  return adminReceiptRpc('submit_outpost_zero_player_request_by_username',{p_target_username:String(username||'').trim(),p_patch:patch},operationId);
 }
 function resolvePlayerEditRequest(id,decision,operationId=adminOperationUuid()){
   return adminReceiptRpc('resolve_outpost_zero_player_request',{p_request_id:id,p_decision:decision},operationId);
@@ -539,23 +559,22 @@ function openScoreEdit(){
   $('pban').value='';
   $('pscope_account').checked=true; $('pscope_device').checked=false; $('pscope_board').checked=false;
   const banning = peMode==='ban';
-  // Admin edit/ban targets private email; normal player lookup targets username.
+  // Lookup, edits, grants, and bans all use the same public username.
   for(const id of ['scoreval','pgems','pcoins','pgrant','prevoke']) $(id).style.display='none';
   $('pban').style.display   = banning?'':'none';
   $('pscopes').style.display= banning?'':'none';
   $('pnote').style.display  = banning?'':'none';
   $('scoretitle').textContent = banning ? '\u26D4 BAN PLAYER'
                               : canEditPlayer() ? '\u270E PLAYER EDIT' : '\uD83D\uDD0D PLAYER LOOKUP';
-  const privateEmailMode=banning||isAdmin(), targetInput=$('scoreemail');
-  targetInput.type=privateEmailMode?'email':'text';
-  targetInput.inputMode=privateEmailMode?'email':'text';
+  const targetInput=$('scoreemail');
+  targetInput.type='text';
+  targetInput.inputMode='text';
   targetInput.autocomplete='off';
   targetInput.autocapitalize='none';
   $('scorehint').textContent = banning
-    ? 'Who are you banning? Pick how long, what it covers, and leave a note.'
-    : isAdmin() ? 'Enter the player\u2019s private account email.'
+    ? 'Enter the player\u2019s username, then choose the ban details.'
     : 'Enter the player\u2019s username.';
-  targetInput.placeholder=privateEmailMode?'player@email.com':'username';
+  targetInput.placeholder='username';
   $('scoresend').textContent = banning ? (canBan()?'BAN':'REQUEST BAN') : 'LOOK UP';
   scoreEditBusy=false;scoreEditOperationReceipt=null;$('scoresend').disabled=false;
   try{ $('scoreemail').focus(); }catch(e){}
@@ -564,8 +583,8 @@ function itemList(v){
   return String(v||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean).slice(0,20);
 }
 function buildPatch(){                                // read the form into a patch, or return an error
-  const email=String($('scoreemail').value||'').trim().toLowerCase();
-  if(!email || email.indexOf('@')<0) return {err:'enter a valid email'};
+  const username=String($('scoreemail').value||'').trim().replace(/^@/,'');
+  if(!/^[A-Za-z0-9_]{3,32}$/.test(username)) return {err:'enter a valid username'};
   const num=(id,cap)=>{ const raw=String($(id).value||'').trim();
     if(raw==='') return null; return Math.max(0, Math.min(cap, Math.round(+raw||0))); };
   const pt={};
@@ -576,7 +595,6 @@ function buildPatch(){                                // read the form into a pa
   if(g.length) pt.grant=g;
   if(r.length) pt.revoke=r;
   const ban=String($('pban').value||'');
-  if(ban && ban!=='unban' && email===ROOT_ADMIN) return {err:'the creator cannot be banned'};
   if(ban){
     pt.ban = ban==='perm' ? 'perm' : ban==='unban' ? 'unban' : String(Math.max(1,Math.min(3650,+ban||1)));
     if(ban!=='unban'){
@@ -592,15 +610,14 @@ function buildPatch(){                                // read the form into a pa
   if(note) pt.note=note;
   if(!Object.keys(pt).filter(k=>k!=='note').length) return {err:'nothing to change'};
   if(pt.ban && pt.ban!=='unban' && !pt.note) return {err:'a ban needs a note'};
-  return {email, patch:pt};
+  return {username, patch:pt};
 }
-async function applyPlayerEdit(email, patch, operationId=adminOperationUuid()){ // server re-checks rank + receipts retries
-  email=String(email).toLowerCase();
-  if(patch && patch.ban && patch.ban!=='unban' && email===ROOT_ADMIN) throw new Error('creator cannot be banned');
+async function applyPlayerEdit(username, patch, operationId=adminOperationUuid()){ // server re-checks rank + receipts retries
+  username=String(username||'').trim();
   let lastError=null;const actor=currentAuthUserId(),privacyEpoch=adminPrivacyEpoch;
   for(let attempt=0;attempt<2;attempt++){
     if(!adminPrivacyRequestCurrent(privacyEpoch,actor))throw new Error('account changed');
-    const {data,error}=await sb.rpc('outpost_zero_admin_edit_player',{p_target_email:email,p_patch:patch,p_operation_id:operationId});
+    const {data,error}=await sb.rpc('outpost_zero_admin_edit_player_by_username',{p_target_username:username,p_patch:patch,p_operation_id:operationId});
     if(!adminPrivacyRequestCurrent(privacyEpoch,actor))throw new Error('account changed');
     if(!error&&data!==false&&data!==null)return true;
     lastError=error||new Error('no such player');
@@ -619,9 +636,9 @@ function closeScoreEdit(){
 async function submitScoreEdit(){
   if(scoreEditBusy)return;
   if(peMode!=='ban'){
-    const query=String($('scoreemail').value||'').trim();
-    if(isAdmin()){
-      if(!query||query.indexOf('@')<1){ $('scorestatus').textContent='enter a valid email'; return; }
+    const query=String($('scoreemail').value||'').trim().replace(/^@/,'');
+    if(typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin()){
+      if(!/^[A-Za-z0-9_]{3,32}$/.test(query)){ $('scorestatus').textContent='enter a valid username'; return; }
     } else if(!/^[A-Za-z0-9_]{3,32}$/.test(query)){
       $('scorestatus').textContent='enter a valid username'; return;
     }
@@ -629,7 +646,7 @@ async function submitScoreEdit(){
     $('scorestatus').textContent='looking up...';setScoreEditBusy(true);
     try{
       await lookupPlayer(query);
-      if(!peData){ $('scorestatus').textContent=isAdmin()?'no player with that email':'username not found'; return; }
+      if(!peData){ $('scorestatus').textContent='username not found'; return; }
     }finally{setScoreEditBusy(false);}
     closeScoreEdit(); scoresOpen=true; peStep='panel';
     return;
@@ -638,7 +655,7 @@ async function submitScoreEdit(){
   if(f.err){ $('scorestatus').textContent=f.err; return; }
   if(!sb){ $('scorestatus').textContent='preview build \u2014 works on the live site'; return; }
   if(!canEditPlayer()){ $('scorestatus').textContent='not allowed'; return; }
-  const fingerprint=f.email+'\n'+JSON.stringify(f.patch);
+  const fingerprint=f.username.toLowerCase()+'\n'+JSON.stringify(f.patch);
   if(!scoreEditOperationReceipt||scoreEditOperationReceipt.fingerprint!==fingerprint)
     scoreEditOperationReceipt={fingerprint,operationId:adminOperationUuid()};
   const operationId=scoreEditOperationReceipt.operationId;
@@ -646,16 +663,16 @@ async function submitScoreEdit(){
   let completed=false;
   try{
     if(isCreator() || (peMode==='ban' && canBan())){      // mains can ban outright
-      await applyPlayerEdit(f.email, f.patch,operationId);
+      await applyPlayerEdit(f.username, f.patch,operationId);
       $('scorestatus').textContent='player updated';
       fetchBoard(); fetchPlayersData();
     } else {
-      await submitPlayerEditRequest(f.email,f.patch,operationId);
+      await submitPlayerEditRequest(f.username,f.patch,operationId);
       $('scorestatus').textContent='sent to the creator for approval';
     }
     completed=true;scoreEditOperationReceipt=null;
     setTimeout(()=>{setScoreEditBusy(false);closeScoreEdit();},1200);
-  }catch(err){ $('scorestatus').textContent='failed \u2014 check the email and try again'; }
+  }catch(err){ $('scorestatus').textContent='failed \u2014 check the username and try again'; }
   finally{if(!completed)setScoreEditBusy(false);}
 }
 async function approveScoreReq(r){                  // creator only
@@ -1016,12 +1033,12 @@ async function fetchBanners(){
     ?rows[1].value.filter(b=>b&&b.approved===false):[];
 }
 async function fetchUpdatesFeed(){
-  if(!sb||!isMainAdmin()){ updatesFeed={staff:[],player:[]}; updatesResolved=[]; return; }
+  if(!sb||!canAccessReports()){ updatesFeed={staff:[],player:[]}; updatesResolved=[]; return; }
   const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   try{
     const { data } = await sb.from('reports').select('id,name,message,created_at,meta,resolved')
       .order('id',{ascending:false}).limit(40);
-    if(!adminPrivacyRequestCurrent(epoch,userId)||!isMainAdmin())return;
+    if(!adminPrivacyRequestCurrent(epoch,userId)||!canAccessReports())return;
     const all=data||[];
     const isStaff=r=>(r.meta&&r.meta.staff) || String(r.message||'').indexOf('[STAFF]')===0;
     const open=all.filter(r=>!r.resolved);
@@ -1029,8 +1046,61 @@ async function fetchUpdatesFeed(){
     updatesResolved=all.filter(r=>r.resolved);
   }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId)){updatesFeed={staff:[],player:[]};updatesResolved=[];} }
 }
+function reportCopyCount(){return reportCopyMode==='custom'?Math.max(1,Math.min(10000,Math.floor(+reportCopyCustomCount||1))):null;}
+function chooseReportCopyAll(){reportCopyMode='all';reportCopyStatus='';}
+function chooseReportCopyCustom(){
+  let raw=null;try{raw=window.prompt('How many of the newest reports should be copied? (1–10,000)',String(reportCopyCustomCount||25));}catch(error){}
+  if(raw===null)return false;
+  const count=Math.floor(+raw);if(!Number.isFinite(count)||count<1||count>10000){reportCopyStatus='CUSTOM MUST BE 1–10,000.';sfx('dry');return false;}
+  reportCopyMode='custom';reportCopyCustomCount=count;reportCopyStatus='READY TO COPY '+count+' REPORT'+(count===1?'':'S')+'.';return true;
+}
+function reportExportText(rows,requested){
+  const list=Array.isArray(rows)?rows:[],created=new Date().toISOString();
+  const out=['OUTPOST ZERO REPORT EXPORT','EXPORTED: '+created,'SELECTION: '+(requested==null?'ALL REPORTS':'NEWEST '+requested),'COPIED: '+list.length,''];
+  list.forEach((row,index)=>{
+    const meta=row&&row.meta&&typeof row.meta==='object'?row.meta:{},staff=!!meta.staff||String(row&&row.message||'').startsWith('[STAFF]'),message=String(row&&row.message||'').replace(/^\[STAFF\]\s*/,'');
+    out.push('REPORT '+(index+1),'ID: '+String(row&&row.id!=null?row.id:'unknown'),'TYPE: '+(staff?'STAFF REPORT':'PLAYER REPORT'),'STATUS: '+(row&&row.resolved?'RESOLVED':'OPEN'),'FROM: '+String(row&&row.name||'unknown'),'CREATED: '+String(row&&row.created_at||'unknown'),'MESSAGE: '+message);
+    const context=[];
+    for(const [key,label] of [['category','CATEGORY'],['screen','SCREEN'],['state','GAME STATE'],['mode','MODE'],['wave','WAVE'],['score','SCORE']])
+      if(meta[key]!==undefined&&meta[key]!==null&&String(meta[key])!=='')context.push(label+': '+String(meta[key]));
+    if(context.length)out.push(...context);
+    out.push('');
+  });
+  return out.join('\n');
+}
+async function writeReportExport(text){
+  try{if(navigator.clipboard&&typeof navigator.clipboard.writeText==='function'){await navigator.clipboard.writeText(text);return true;}}catch(error){}
+  try{window.prompt('Copy all of this report export:',text);return true;}catch(error){return false;}
+}
+async function copyOutpostZeroReports(){
+  if(reportCopyBusy||!canAccessReports())return false;
+  const requested=reportCopyCount(),owner=currentAuthUserId(),epoch=adminPrivacyEpoch;reportCopyBusy=true;reportCopyStatus='LOADING REPORTS…';
+  try{
+    let rows=[];
+    if(!sb)rows=[...(updatesFeed.staff||[]),...(updatesFeed.player||[]),...(updatesResolved||[])].sort((a,b)=>(+b.id||0)-(+a.id||0));
+    else{
+      const result=await sb.rpc('export_outpost_zero_reports',{p_limit:requested});
+      if(!result.error){
+        const payload=Array.isArray(result.data)?result.data[0]:result.data;
+        rows=Array.isArray(payload)?payload:Array.isArray(payload&&payload.reports)?payload.reports:[];
+      }else{
+        // Safe rollout fallback for an existing creator/main session before
+        // Administration 05 is pasted. Existing report RLS remains authority.
+        const fallback=await sb.from('reports').select('id,name,message,created_at,meta,resolved').order('id',{ascending:false}).limit(requested||10000);
+        if(fallback.error)throw fallback.error;rows=fallback.data||[];
+      }
+    }
+    if(!adminPrivacyRequestCurrent(epoch,owner)||!canAccessReports())return false;
+    if(requested!=null)rows=rows.slice(0,requested);
+    const copied=await writeReportExport(reportExportText(rows,requested));
+    reportCopyStatus=copied?'COPIED '+rows.length+' REPORT'+(rows.length===1?'':'S')+' TO CLIPBOARD.':'COPY FAILED · TRY AGAIN.';
+    sfx(copied?'pickup':'dry');return copied;
+  }catch(error){
+    if(adminPrivacyRequestCurrent(epoch,owner)){reportCopyStatus='COULD NOT COPY · RUN ADMINISTRATION 05, THEN RETRY.';sfx('dry');}return false;
+  }finally{if(adminPrivacyRequestCurrent(epoch,owner))reportCopyBusy=false;}
+}
 async function resolveReport(id){                    // mains: mark handled; it moves to the archive
-  if(!isMainAdmin()) return;
+  if(!canAccessReports()) return;
   if(!sb){
     for(const k of ['staff','player']){
       const i=updatesFeed[k].findIndex(r=>r.id===id);
@@ -1048,6 +1118,7 @@ function setPostBusy(busy){
   if(cancel)cancel.disabled=postBusy;
 }
 function openPost(){
+  if(typeof canPostUpdates==='function'&&!canPostUpdates()){sfx('dry');return false;}
   postRequestSeq++;setPostBusy(false);postOpen=true;adminPanelOpen=false;
   $('postwrap').style.display='flex';$('poststatus').textContent='';
   try{$('postmsg').focus();}catch(e){}
@@ -1057,7 +1128,7 @@ function closePost(force=false){
   postRequestSeq++;setPostBusy(false);postOpen=false;$('postwrap').style.display='none';
 }
 async function sendPost(){
-  if(postBusy)return;
+  if(postBusy||(typeof canPostUpdates==='function'&&!canPostUpdates()))return;
   const msg=($('postmsg').value||'').trim();
   if(!msg){ $('poststatus').textContent='write something first'; return; }
   const token=++postRequestSeq,owner=currentAuthUserId();
@@ -1104,7 +1175,7 @@ async function rejectBanner(id){
   await fetchBanners();
 }
 async function kickAdmin(email){
-  if(!isMainAdmin()) return;                         // co-admins cannot manage the roster
+  if(!canManageAdmins()) return;                     // co-admins/testers cannot manage the roster
   email=String(email||'').toLowerCase(); if(email===ROOT_ADMIN) return;
   if(!sb){ delete adminRoles[email]; return; }
   try{
@@ -1114,25 +1185,80 @@ async function kickAdmin(email){
   await fetchAdmins();
 }
 async function promoteAdmin(email){
-  if(!isMainAdmin()) return;                         // co-admins cannot manage the roster
+  if(!canManageAdmins()) return;                     // tester -> co, or co -> main
   email=String(email||'').toLowerCase(); if(email===ROOT_ADMIN) return;
-  if(!sb){ adminRoles[email]='main'; return; }
+  if(!sb){ adminRoles[email]=adminRoles[email]==='tester'?'co':'main'; return; }
   try{
     const {data,error}=await sb.rpc('promote_outpost_zero_admin',{p_email:email});
     if(error)throw error;if(data!==true)return;
   }catch(e){return;}
   await fetchAdmins();
 }
-async function addCoAdmin(){
-  if(!isMainAdmin()) return;                         // co-admins cannot manage the roster
-  let em; try{ em=window.prompt('co-admin email:'); }catch(e){ em=null; }
-  em=String(em||'').trim().toLowerCase(); if(!em || em.indexOf('@')<0) return;
-  if(!sb){ adminRoles[em]='co'; return; }
-  try{
-    const {data,error}=await sb.rpc('add_outpost_zero_co_admin',{p_email:em});
-    if(error)throw error;if(!data||(Array.isArray(data)&&!data.length))return;
-  }catch(e){return;}
+async function demoteAdmin(email){
+  if(!canManageAdmins())return;
+  email=String(email||'').toLowerCase();if(!email||email===ROOT_ADMIN)return;
+  const current=adminRoles[email],next=current==='main'?'co':current==='co'?'tester':'';if(!next)return;
+  let ok=false;try{ok=typeof window.confirm!=='function'||window.confirm('Demote '+email+' from '+current.toUpperCase()+' to '+next.toUpperCase()+'?');}catch(error){}
+  if(!ok)return;
+  if(!sb){adminRoles[email]=next;return;}
+  try{const {data,error}=await sb.rpc('demote_outpost_zero_admin',{p_email:email});if(error)throw error;if(data!==true)return;}catch(error){return;}
   await fetchAdmins();
+}
+function addAdmin(){
+  if(!canManageAdmins())return false;
+  openForm({title:'ADD ADMIN',hint:'Testers get only Test Mode, Admin Inbox, and weapon suggestions. Co-admins get shared staff tools.',saveLabel:'ADD',
+    fields:[{id:'email',label:'ACCOUNT EMAIL',type:'text',placeholder:'tester@example.com'},{id:'role',label:'STARTING TIER',type:'select',value:'tester',options:[{value:'tester',label:'TESTER · LIMITED'},{value:'co',label:'CO-ADMIN · SHARED TOOLS'}]}],
+    onSave:async values=>{
+      const email=String(values.email||'').trim().toLowerCase(),role=values.role==='co'?'co':'tester';
+      if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){formError('Enter the email used by that Outpost account.');return false;}
+      if(!sb){adminRoles[email]=role;closeForm();return true;}
+      $('formstatus').textContent='adding '+role+'…';
+      try{
+        let result=await sb.rpc('add_outpost_zero_admin',{p_email:email,p_role:role});
+        if(result.error&&role==='co')result=await sb.rpc('add_outpost_zero_co_admin',{p_email:email});
+        if(result.error)throw result.error;closeForm();await fetchAdmins();return true;
+      }catch(error){formError(role==='tester'?'Run Administration 05 to add Testers.':'Could not add that admin.');return false;}
+    }});return true;
+}
+function weaponSuggestionOptions(){
+  const keys=[...Object.keys(typeof WEAPONS==='object'&&WEAPONS||{}),...Object.keys(typeof UTILITIES==='object'&&UTILITIES||{})],seen=new Set(),rows=[];
+  for(const key of keys){if(seen.has(key)||(typeof isWeaponPublished==='function'&&!isWeaponPublished(key)))continue;seen.add(key);const def=(WEAPONS&&WEAPONS[key])||(UTILITIES&&UTILITIES[key])||{};rows.push({value:key,label:String(def.name||key).toUpperCase()});}
+  return rows.sort((a,b)=>a.label.localeCompare(b.label));
+}
+function openWeaponSuggestionForm(){
+  if(!canSuggestWeaponEdits()){sfx('dry');return false;}
+  const options=weaponSuggestionOptions();if(!options.length){weaponSuggestionStatus='NO PUBLISHED WEAPONS ARE AVAILABLE.';sfx('dry');return false;}
+  openForm({title:'SUGGEST WEAPON EDIT',hint:'Describe the exact stat, behavior, or balance change. This sends a suggestion only; it cannot edit the weapon.',saveLabel:'SEND SUGGESTION',
+    fields:[{id:'weapon',label:'PUBLISHED WEAPON',type:'select',value:options[0].value,options},{id:'suggestion',label:'PROPOSED CHANGE',type:'text',placeholder:'Example: reduce damage from 25 to 22 because…'}],
+    onSave:async values=>{
+      const weapon=String(values.weapon||''),suggestion=String(values.suggestion||'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim();
+      if(!options.some(row=>row.value===weapon)){formError('Choose a published weapon.');return false;}
+      if(suggestion.length<10||suggestion.length>800){formError('Explain the proposed change in 10–800 characters.');return false;}
+      if(!sb){weaponSuggestionStatus='SUGGESTION SAVED IN PREVIEW ONLY.';closeForm();sfx('pickup');return true;}
+      $('formstatus').textContent='sending suggestion…';
+      try{const result=await sb.rpc('submit_outpost_zero_weapon_suggestion',{p_weapon_key:weapon,p_suggestion:suggestion});if(result.error)throw result.error;
+        weaponSuggestionStatus='SUGGESTION SENT TO CREATOR + MAIN ADMINS.';closeForm();sfx('pickup');return true;
+      }catch(error){formError('Could not send · run Administration 05, then retry.');return false;}
+    }});
+  const input=typeof document!=='undefined'?document.getElementById('ff_suggestion'):null;if(input)input.maxLength=800;return true;
+}
+async function fetchWeaponSuggestions(){
+  if(!canReviewWeaponSuggestions()){weaponSuggestions=[];return false;}
+  if(!sb){weaponSuggestions=[];weaponSuggestionStatus='Suggestions load on the deployed site.';return true;}
+  weaponSuggestionBusy=true;weaponSuggestionStatus='LOADING…';
+  try{const result=await sb.rpc('list_outpost_zero_weapon_suggestions',{p_limit:40,p_status:'pending'});if(result.error)throw result.error;
+    weaponSuggestions=Array.isArray(result.data)?result.data:[];weaponSuggestionStatus=weaponSuggestions.length?weaponSuggestions.length+' PENDING':'NO PENDING SUGGESTIONS';return true;
+  }catch(error){weaponSuggestions=[];weaponSuggestionStatus='RUN ADMINISTRATION 05 TO LOAD SUGGESTIONS.';return false;}
+  finally{weaponSuggestionBusy=false;}
+}
+async function reviewWeaponSuggestion(id,decision){
+  if(!canReviewWeaponSuggestions()||weaponSuggestionBusy||!['approved','rejected'].includes(decision))return false;
+  let note='';try{note=String(window.prompt((decision==='approved'?'Approve':'Reject')+' this suggestion. Optional reviewer note:','')||'').trim();}catch(error){}
+  weaponSuggestionBusy=true;
+  try{if(sb){const result=await sb.rpc('review_outpost_zero_weapon_suggestion',{p_suggestion_id:+id,p_decision:decision,p_reviewer_note:note.slice(0,500)});if(result.error||result.data!==true)throw result.error||new Error('not changed');}
+    weaponSuggestions=weaponSuggestions.filter(row=>String(row.id)!==String(id));weaponSuggestionStatus=decision.toUpperCase()+' · '+weaponSuggestions.length+' PENDING';sfx(decision==='approved'?'pickup':'dry');return true;
+  }catch(error){weaponSuggestionStatus='COULD NOT REVIEW THAT SUGGESTION.';sfx('dry');return false;}
+  finally{weaponSuggestionBusy=false;}
 }
 const LLR_URL   = 'https://www.youtube.com/@AsrtsbLLR';
 const MOVES_URL = 'https://movesforamission.org/donate-now/#1740457740469-d24153b1-38c1';
@@ -1189,5 +1315,5 @@ function normalizeDailyRewards(){
     t.prog=clamp(+t.prog||0,0,t.goal); if(t.done) t.prog=t.goal;
   }
 }
-function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({owner:profileOwnerUserId==null?null:String(profileOwnerUserId), gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, sv:sfxVol})); persistLastLoadoutLocal(); }catch(e){} }
+function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({owner:profileOwnerUserId==null?null:String(profileOwnerUserId), gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, mt:typeof musicTrack==='string'?musicTrack:'calm', sv:sfxVol})); persistLastLoadoutLocal(); }catch(e){} }
 function saveMeta(){ saveMetaLocal(); queueProfileSave(); }

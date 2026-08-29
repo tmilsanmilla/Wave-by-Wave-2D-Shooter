@@ -216,6 +216,86 @@ function cpuAiObserveMovement(bot,clock){
   bot.aiFailedMoveX=+bot.moveX||0;bot.aiFailedMoveY=+bot.moveY||0;bot.aiSide=-(bot.aiSide||1);
   bot.aiTactic='flank';bot.aiTacticUntil=clock;bot.aiNavPath=[];return true;
 }
+function cpuAiPeekDuration(bot,min,max,variance=1){
+  min=Math.max(0,+min||0);max=Math.max(min,+max||min);variance=clamp(+variance||0,0,1);
+  const middle=(min+max)/2,random=cpuAiRange(bot,min,max);
+  return middle+(random-middle)*variance;
+}
+function cpuAiClearPeek(bot,clock=0,cooldown=true){
+  if(!bot)return;
+  bot.aiPeekPhase='';bot.aiPeekTargetId='';bot.aiPeekUntil=0;bot.aiPeekWillFake=false;
+  if(cooldown)bot.aiPeekCooldownUntil=Math.max(+bot.aiPeekCooldownUntil||0,clock+180);
+}
+// A punishment is tied only to the brief exposure event, never to a wall,
+// coordinate, or named corner. Every corner has the same peeker disadvantage.
+function cpuAiRegisterPeekPunishment(bot,clock){
+  if(!bot||clock>(+bot.aiPeekWindowUntil||0))return false;
+  bot.aiPeekPunishScore=Math.min(4,Math.max(0,+bot.aiPeekPunishScore||0)+1);
+  bot.aiPrefirePressureUntil=clock+5200;
+  // A capable bot can pull the current shoulder back, but it may recommit at
+  // the same location with a different cadence; nothing is blacklisted.
+  if(['commit','fake_out'].includes(bot.aiPeekPhase)&&Number.isFinite(+bot.aiPeekDirX)&&Number.isFinite(+bot.aiPeekDirY)){
+    bot.aiPeekPhase='fake_back';bot.aiPeekUntil=clock+120;
+  }
+  return true;
+}
+function cpuAiPeekWithholdsFire(bot){
+  return !!(bot&&['hold','fake_out','fake_back','settle'].includes(bot.aiPeekPhase));
+}
+function cpuAiApplyPeekBehavior(bot,target,moveX,moveY,clock,config,tntPlan){
+  if(!bot||!target)return{x:+moveX||0,y:+moveY||0,speedScale:1,phase:''};
+  const rawX=+moveX||0,rawY=+moveY||0,rawLen=Math.hypot(rawX,rawY),targetId=String(target.id||target.aiId||'player'),
+    hidden=cpuAiLosBlocked(bot.x,bot.y,target.x,target.y),r=Math.max(1,+bot.r||15),
+    avoid=tntPlan&&Array.isArray(tntPlan.avoid)?tntPlan.avoid:[];
+  if(bot.aiPeekWasHidden===undefined)bot.aiPeekWasHidden=hidden;
+  if(!hidden&&bot.aiPeekWasHidden){bot.aiPeekExposedAt=clock;bot.aiPeekWindowUntil=clock+480;}
+  bot.aiPeekWasHidden=hidden;
+  if(bot.aiPeekPhase&&bot.aiPeekTargetId!==targetId)cpuAiClearPeek(bot,clock,false);
+  const safe=(x,y)=>cpuAiMoveSegmentClear(bot.x,bot.y,bot.x+x*38,bot.y+y*38,r,avoid);
+  const output=(x,y,speedScale=1)=>{
+    if(Math.hypot(x,y)>.01&&!safe(x,y)){cpuAiClearPeek(bot,clock);return{x:rawX,y:rawY,speedScale:1,phase:''};}
+    return{x,y,speedScale,phase:bot.aiPeekPhase||''};
+  };
+  if(bot.aiPeekPhase){
+    const dirX=+bot.aiPeekDirX||0,dirY=+bot.aiPeekDirY||0;
+    if(bot.aiPeekPhase==='hold'){
+      if(clock<(bot.aiPeekUntil||0))return output(0,0);
+      if(bot.aiPeekWillFake){
+        bot.aiPeekPhase='fake_out';bot.aiPeekUntil=clock+cpuAiPeekDuration(bot,+config.peekFakeOutMin||65,+config.peekFakeOutMax||105,+config.peekTimingVariance||0);
+      }else{
+        bot.aiPeekPhase='commit';bot.aiPeekUntil=clock+(+config.peekCommitMs||310);
+      }
+    }
+    if(bot.aiPeekPhase==='fake_out'){
+      if(clock<(bot.aiPeekUntil||0))return output(dirX,dirY,+config.peekFakeSpeed||1.05);
+      bot.aiPeekPhase='fake_back';bot.aiPeekUntil=clock+cpuAiPeekDuration(bot,90,145,+config.peekTimingVariance||0);
+    }
+    if(bot.aiPeekPhase==='fake_back'){
+      if(clock<(bot.aiPeekUntil||0))return output(-dirX,-dirY,+config.peekFakeSpeed||1.05);
+      bot.aiPeekPhase='settle';bot.aiPeekUntil=clock+cpuAiPeekDuration(bot,+config.peekSettleMin||90,+config.peekSettleMax||240,+config.peekTimingVariance||0);
+    }
+    if(bot.aiPeekPhase==='settle'){
+      if(clock<(bot.aiPeekUntil||0))return output(0,0);
+      bot.aiPeekPhase='commit';bot.aiPeekUntil=clock+(+config.peekCommitMs||310);
+    }
+    if(bot.aiPeekPhase==='commit'){
+      if(clock<(bot.aiPeekUntil||0))return output(dirX,dirY,+config.peekCommitSpeed||1);
+      cpuAiClearPeek(bot,clock);return{x:rawX,y:rawY,speedScale:1,phase:''};
+    }
+  }
+  if(!hidden||rawLen<=.01||clock<(+bot.aiPeekCooldownUntil||0))return{x:rawX,y:rawY,speedScale:1,phase:''};
+  const dirX=rawX/rawLen,dirY=rawY/rawLen,probe=54+r;
+  // Only intervene when the current movement is about to cross from cover
+  // into sight. The same logic applies at every wall and on every map.
+  if(cpuAiLosBlocked(bot.x+dirX*probe,bot.y+dirY*probe,target.x,target.y))return{x:rawX,y:rawY,speedScale:1,phase:''};
+  const pressured=clock<(+bot.aiPrefirePressureUntil||0),punish=pressured?clamp((+bot.aiPeekPunishScore||0)/4,0,1):0,
+    adapt=clamp(+config.prefireAdapt||0,0,1),fakeChance=clamp((+config.peekFakeChance||0)+punish*adapt*.62,0,.92);
+  bot.aiPeekPhase='hold';bot.aiPeekTargetId=targetId;bot.aiPeekDirX=dirX;bot.aiPeekDirY=dirY;
+  bot.aiPeekWillFake=cpuAiNext(bot)<fakeChance;
+  const extra=punish*adapt*(+config.peekPunishHoldMs||260);
+  bot.aiPeekUntil=clock+cpuAiPeekDuration(bot,+config.peekHoldMin||70,(+config.peekHoldMax||170)+extra,+config.peekTimingVariance||0);
+  return output(0,0);
+}
 function cpuAiTacticalGoal(bot,target,tactic,side,localMove,avoid){
   const dx=target.x-bot.x,dy=target.y-bot.y,d=Math.hypot(dx,dy)||1,fx=dx/d,fy=dy/d,perpX=-fy*side,perpY=fx*side;
   if(tactic==='cover'){
@@ -232,13 +312,15 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
   if(!bot.aiTactic||clock>=(bot.aiTacticUntil||0)){
     const recovering=clock<(bot.aiStuckUntil||0),roll=cpuAiNext(bot),blocked=cpuAiLosBlocked(bot.x,bot.y,target.x,target.y),underFire=clock<(bot.underFireUntil||0),
       losing=Number.isFinite(+bot.hp)&&Number.isFinite(+target.hp)&&bot.hp<target.hp*.78;
+    const routeVariation=clamp(config.routeVariation==null?1:+config.routeVariation,0,1);
     if(recovering)bot.aiTactic='flank';
     else if(config.useReactiveCover!==false&&underFire&&losing)bot.aiTactic='cover';
+    else if(routeVariation<.3)bot.aiTactic=blocked?'flank':d>(config.approach||520)?'push':d<(config.retreat||230)?'retreat':'orbit';
     else if(blocked)bot.aiTactic='flank';
     else if(d>(config.approach||520))bot.aiTactic=roll<.58?'push':roll<.82?'flank':'orbit';
     else if(d<(config.retreat||230))bot.aiTactic=roll<.60?'retreat':roll<.88?'orbit':'flank';
     else bot.aiTactic=roll<.45?'orbit':roll<.65?'hold':roll<.85?'flank':roll<.925?'push':'retreat';
-    if(!recovering)bot.aiSide=cpuAiNext(bot)<.5?-1:1;
+    if(!recovering&&(!bot.aiSide||cpuAiNext(bot)<routeVariation))bot.aiSide=cpuAiNext(bot)<.5?-1:1;
     bot.aiTacticUntil=clock+cpuAiRange(bot,CPU_AI_MOVE_MIN_MS,CPU_AI_MOVE_MAX_MS);
   }
   const tactic=bot.aiTactic,side=bot.aiSide||1,bias=tactic==='push'?[1.15,.25]:tactic==='retreat'?[-1.15,.35]:
@@ -331,16 +413,21 @@ const BOT_LADDER_TOMBSTONE_STORAGE_KEY='oz_bot_ladder_result_tombstones_v1',BOT_
 const BOT_LADDER_RESULT_QUEUE_MAX=128,BOT_LADDER_TOMBSTONE_MAX=512;
 const BOT_LADDER_QUEUE_RETRY_MS=Object.freeze([2000,10000,30000,120000]),BOT_LADDER_RATE_LIMIT_RETRY_MS=31000;
 const BOT_DIFFICULTIES=Object.freeze([
-  Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'STRONG FOUNDATIONS',detail:'Competent from the first match, with readable mistakes.',
-    reactionMs:670,moveSpeed:2.50,aimNoise:.080,shotJitter:.030,fireAimError:.125,leadFactor:.35,maxLeadMs:150,thinkMs:198,turnRate:.055}),
-  Object.freeze({id:1,key:'easy',name:'EASY',summary:'QUICKER DECISIONS',detail:'Cleaner movement and early movement prediction.',
-    reactionMs:540,moveSpeed:2.65,aimNoise:.060,shotJitter:.022,fireAimError:.100,leadFactor:.52,maxLeadMs:205,thinkMs:160,turnRate:.070}),
-  Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'COMPLETE TACTICS',detail:'Reliable routes, leading, cover pressure, and TNT plays.',
-    reactionMs:400,moveSpeed:2.85,aimNoise:.040,shotJitter:.015,fireAimError:.075,leadFactor:.67,maxLeadMs:270,thinkMs:118,turnRate:.090}),
-  Object.freeze({id:3,key:'hard',name:'HARD',summary:'RELENTLESS TACTICIAN',detail:'A genuinely hard opponent with fast, precise decisions.',
-    reactionMs:240,moveSpeed:3.00,aimNoise:.022,shotJitter:.006,fireAimError:.047,leadFactor:.85,maxLeadMs:370,thinkMs:78,turnRate:.135}),
-  Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'STRONGEST FAIR EXECUTION',detail:'Near-perfect decisions and aim without health or damage cheats.',
-    reactionMs:100,moveSpeed:3.15,aimNoise:.012,shotJitter:.0020,fireAimError:.040,leadFactor:.95,maxLeadMs:500,thinkMs:40,turnRate:.195}),
+  Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'STRONG FOUNDATIONS',detail:'Readable routes with mostly direct, repeatable peeks.',
+    reactionMs:670,moveSpeed:2.50,aimNoise:.080,shotJitter:.030,fireAimError:.125,leadFactor:.35,maxLeadMs:150,thinkMs:198,turnRate:.055,
+    routeVariation:.12,peekFakeChance:.03,prefireAdapt:0,peekTimingVariance:.08,peekHoldMin:105,peekHoldMax:145,peekSettleMin:115,peekSettleMax:155,peekCommitSpeed:1}),
+  Object.freeze({id:1,key:'easy',name:'EASY',summary:'QUICKER DECISIONS',detail:'Cleaner movement with occasional timing changes and bait peeks.',
+    reactionMs:540,moveSpeed:2.65,aimNoise:.060,shotJitter:.022,fireAimError:.100,leadFactor:.52,maxLeadMs:205,thinkMs:160,turnRate:.070,
+    routeVariation:.36,peekFakeChance:.08,prefireAdapt:.18,peekTimingVariance:.28,peekHoldMin:85,peekHoldMax:180,peekSettleMin:95,peekSettleMax:210,peekCommitSpeed:1.05}),
+  Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'COMPLETE TACTICS',detail:'Recognizes punished entries and changes its next peek timing.',
+    reactionMs:400,moveSpeed:2.85,aimNoise:.040,shotJitter:.015,fireAimError:.075,leadFactor:.67,maxLeadMs:270,thinkMs:118,turnRate:.090,
+    routeVariation:.66,peekFakeChance:.08,prefireAdapt:.72,peekTimingVariance:.58,peekHoldMin:70,peekHoldMax:220,peekSettleMin:80,peekSettleMax:260,peekPunishHoldMs:300,peekCommitSpeed:1.13}),
+  Object.freeze({id:3,key:'hard',name:'HARD',summary:'RELENTLESS TACTICIAN',detail:'Actively varies timing, baits shots, and commits with wide swings.',
+    reactionMs:240,moveSpeed:3.00,aimNoise:.022,shotJitter:.006,fireAimError:.047,leadFactor:.85,maxLeadMs:370,thinkMs:78,turnRate:.135,
+    routeVariation:.90,peekFakeChance:.42,prefireAdapt:.88,peekTimingVariance:.92,peekHoldMin:45,peekHoldMax:280,peekSettleMin:55,peekSettleMax:300,peekPunishHoldMs:340,peekFakeSpeed:1.12,peekCommitSpeed:1.23}),
+  Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'STRONGEST FAIR EXECUTION',detail:'Maximum fair timing variety, fake peeks, and fast committed swings.',
+    reactionMs:100,moveSpeed:3.15,aimNoise:.012,shotJitter:.0020,fireAimError:.040,leadFactor:.95,maxLeadMs:500,thinkMs:40,turnRate:.195,
+    routeVariation:1,peekFakeChance:.62,prefireAdapt:1,peekTimingVariance:1,peekHoldMin:30,peekHoldMax:330,peekSettleMin:40,peekSettleMax:340,peekPunishHoldMs:380,peekFakeSpeed:1.18,peekCommitSpeed:1.32}),
 ]);
 // Tactical releases are a separate axis from Beginner–Impossible execution.
 // Releases are cumulative, immutable, and allowlisted in both client and SQL.
@@ -1198,6 +1285,8 @@ function arenaBotStartRound(){
     aimNoise:0,strafe:1,strafeUntil:now,
     reactionAt:arena.roundStartAt+tuning.reactionMs,moveX:0,moveY:0,lastThinkX:right.x,lastThinkY:right.y,
     aiStuckTicks:0,aiStuckUntil:0,aiFailedMoveX:0,aiFailedMoveY:0,aiNavPath:[],aiNavUntil:0,aiUsingPortal:false,
+    aiPeekPhase:'',aiPeekTargetId:'',aiPeekUntil:0,aiPeekCooldownUntil:0,aiPeekWasHidden:undefined,
+    aiPeekExposedAt:0,aiPeekWindowUntil:0,aiPeekPunishScore:0,aiPrefirePressureUntil:0,
     aiTrainingTntAvoided:new Set(),aiTrainingWallAt:0,
     lastPlayerX:player.x,lastPlayerY:player.y,playerVx:0,playerVy:0});
   b.strafe=cpuAiNext(b)<.5?-1:1;b.strafeUntil=now+cpuAiRange(b,900,1500);
@@ -1253,6 +1342,7 @@ function arenaHitOpponent(dmg,kind,meta){
   if(typeof recordAiTrainingSignal==='function')recordAiTrainingSignal(arena,'bot_damage_taken',dealt);
   arena.opponent.hp=Math.max(0,arena.opponent.hp-hit);arena.opponent.hitT=now+90;
   arena.opponent.underFireUntil=now+900;arena.opponent.aiTacticUntil=now;arena.opponent.thinkAt=now;
+  if(typeof cpuAiRegisterPeekPunishment==='function')cpuAiRegisterPeekPunishment(arena.opponent,now);
   addDamageNumber(arena.opponent,dealt,kind==='crit'||kind==='parry');
   if(arena.opponent.hp<=0){
     triggerUnscopedSniperKillCelebration(before,arena.opponent.hp,
@@ -1313,8 +1403,9 @@ function updateArenaBot(dtms){
   const desired=Math.atan2(aimY-b.y,aimX-b.x)+(b.aimNoise||0);
   const turn=Math.atan2(Math.sin(desired-b.angle),Math.cos(desired-b.angle));
   b.angle+=clamp(turn,-tuning.turnRate*dt,tuning.turnRate*dt);
-  const tacticSpeed=b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=tuning.moveSpeed*tacticSpeed*dt,
-    moveStartX=b.x,moveStartY=b.y,nx=b.x+b.moveX*spd,ny=b.y+b.moveY*spd,
+  const peek=cpuAiApplyPeekBehavior(b,player,b.moveX,b.moveY,now,tuning,b.tntPlan),
+    tacticSpeed=b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=tuning.moveSpeed*tacticSpeed*peek.speedScale*dt,
+    moveStartX=b.x,moveStartY=b.y,nx=b.x+peek.x*spd,ny=b.y+peek.y*spd,
     blockedX=pointInRects(nx,b.y),blockedY=pointInRects(b.x,ny);
   if(!blockedX) b.x=nx;
   if(!blockedY) b.y=ny;
@@ -1331,7 +1422,7 @@ function updateArenaBot(dtms){
   if(d2>0&&d2<rr*rr){ const d=Math.sqrt(d2),p=(rr-d)/d; b.x+=pdx*p; b.y+=pdy*p; }
   clampActorToArena(b); b.tx=b.x; b.ty=b.y;
 
-  if(now<b.reactionAt||b.reloadEnd)return;
+  if(now<b.reactionAt||b.reloadEnd||cpuAiPeekWithholdsFire(b))return;
   // A TNT plan is cheap to cache for movement, but its safety is rechecked at
   // the actual firing boundary so a player entering the blast cannot be read as
   // permission to execute a stale detonation plan.

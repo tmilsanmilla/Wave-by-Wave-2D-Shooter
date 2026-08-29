@@ -46,20 +46,24 @@ async function copyReferralLink(url){
 async function shareReferral(){
   if(!authUser){ referralMsg='SIGN IN TO GET YOUR SHARE LINK'; referralMsgT=now+2400; sfx('dry'); return; }
   const url=referralLink(), text='Play OUTPOST ZERO with me! We both get 5 gems.';
+  let shared=false;
   try{
     if(typeof navigator.share==='function'){
       await navigator.share({title:'OUTPOST ZERO',text,url});
-      referralMsg='SHARED \u2014 YOU BOTH GET 5 GEMS';
-    } else if(await copyReferralLink(url)) referralMsg='LINK COPIED \u2014 YOU BOTH GET 5 GEMS';
-    else { window.prompt('Copy your share link:',url); referralMsg='SHARE THIS LINK \u2014 YOU BOTH GET 5 GEMS'; }
+      referralMsg='INVITE SENT \u00b7 5 GEMS ONLY AFTER A NEW PLAYER JOINS';shared=true;
+    } else if(await copyReferralLink(url)){referralMsg='INVITE LINK COPIED \u00b7 REWARD AFTER A NEW PLAYER JOINS';shared=true;}
+    else { window.prompt('Copy your invite link:',url); referralMsg='REWARD ONLY AFTER A NEW PLAYER JOINS'; }
   }catch(e){
     if(e&&e.name==='AbortError') referralMsg='SHARE CANCELLED';
     else try{
-      if(await copyReferralLink(url)) referralMsg='LINK COPIED \u2014 YOU BOTH GET 5 GEMS';
-      else { window.prompt('Copy your share link:',url); referralMsg='SHARE THIS LINK \u2014 YOU BOTH GET 5 GEMS'; }
-    }catch(e2){ window.prompt('Copy your share link:',url); referralMsg='SHARE THIS LINK \u2014 YOU BOTH GET 5 GEMS'; }
+      if(await copyReferralLink(url)){referralMsg='INVITE LINK COPIED \u00b7 REWARD AFTER A NEW PLAYER JOINS';shared=true;}
+      else { window.prompt('Copy your invite link:',url); referralMsg='REWARD ONLY AFTER A NEW PLAYER JOINS'; }
+    }catch(e2){ window.prompt('Copy your invite link:',url); referralMsg='REWARD ONLY AFTER A NEW PLAYER JOINS'; }
   }
-  referralMsgT=now+3000; sfx('pickup');
+  // Opening, cancelling, or closing the system Share sheet never grants gems.
+  // Rewards remain server-backed and arrive only through processReferral()
+  // after a different signed-in account actually joins through this URL.
+  referralMsgT=now+3600; sfx(shared?'swap':'dry');
 }
 async function payReferralClaims(){
   if(!sb||!authUser) return;

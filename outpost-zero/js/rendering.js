@@ -1,7 +1,6 @@
 "use strict";
 
 /* ---------------- render: world ---------------- */
-const HOSTILE_PROJECTILE_HEAD_RADIUS_PX=6, HOSTILE_PROJECTILE_HALO_RADIUS_PX=8;
 function hostileProjectileCollisionRadius(projectile){
   const b=projectile||{};
   if(Number.isFinite(+b.dangerRadius))return Math.max(3,Math.min(32,+b.dangerRadius));
@@ -12,41 +11,28 @@ function hostileProjectileCollisionRadius(projectile){
   return 3;
 }
 function hostileProjectileProfile(projectile,source){
-  if(source==='firework')return {danger:'#ff3f36',accent:'#ffd37a',tail:30,head:7,diamond:true};
-  if(projectile&&projectile.h)return {danger:'#ff3f36',accent:'#ffe0a3',tail:34,head:7};
-  if(projectile&&projectile.king)return {danger:'#ff275f',accent:Math.sin(now/85)>0?'#ffd3ff':'#fff0d4',tail:25,head:7.5};
-  if(source==='remote')return {danger:'#ff3b34',accent:projectile&&projectile.col||'#fff1dc',tail:30,head:6.5};
-  if(source==='cpu')return {danger:'#ff3b34',accent:'#fff0dc',tail:28,head:6.5};
-  if(projectile&&projectile.botArena)return {danger:'#ff3b34',accent:'#fff0dc',tail:32,head:6.5};
-  return {danger:'#ff4438',accent:'#fff2de',tail:27,head:HOSTILE_PROJECTILE_HEAD_RADIUS_PX};
+  if(source==='firework')return {danger:'#ff3f36',tail:30,diamond:true};
+  if(projectile&&projectile.h)return {danger:'#ff3f36',tail:34};
+  if(projectile&&projectile.king)return {danger:'#ff275f',tail:25};
+  if(source==='remote')return {danger:'#ff3b34',tail:30};
+  if(source==='cpu')return {danger:'#ff3b34',tail:28};
+  if(projectile&&projectile.botArena)return {danger:'#ff3b34',tail:32};
+  return {danger:'#ff4438',tail:27};
 }
 function drawHostileProjectileCue(projectile,source='enemy'){
   const b=projectile||{},x=+b.x,y=+b.y,vx=+b.vx||0,vy=+b.vy||0;
   if(!Number.isFinite(x)||!Number.isFinite(y))return false;
   const profile=hostileProjectileProfile(b,source),scale=1/Math.max(0.05,+zoom||1);
   const speed=Math.hypot(vx,vy),ux=speed?vx/speed:0,uy=speed?vy/speed:0;
-  const tail=profile.tail*scale,head=profile.head*scale;
-  const dangerRadius=Math.max((profile.head+1)*scale,hostileProjectileCollisionRadius(b));
-  const halo=Math.max(HOSTILE_PROJECTILE_HALO_RADIUS_PX*scale,dangerRadius+1.5*scale);
+  const tail=profile.tail*scale;
   ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
-  // Every hostile family gets the same black/red danger silhouette. Weapon
-  // color is confined to the small inner core, so it can never read as an
-  // allied blue or a local gold tracer on dark, portal, or TNT backgrounds.
-  ctx.strokeStyle='rgba(20,4,5,.94)';ctx.lineWidth=8*scale;
+  // Hostile rounds use the same clean tracer language as ordinary rounds,
+  // recolored red. Never surround a hostile projectile with a warning ring.
+  ctx.strokeStyle=profile.danger;ctx.lineWidth=3.2*scale;
   ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-ux*tail,y-uy*tail);ctx.stroke();
-  ctx.strokeStyle=profile.danger;ctx.lineWidth=5*scale;
-  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-ux*tail,y-uy*tail);ctx.stroke();
-  ctx.strokeStyle=profile.accent;ctx.lineWidth=1.7*scale;
-  ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-ux*tail*.58,y-uy*tail*.58);ctx.stroke();
-  ctx.fillStyle='rgba(15,3,4,.96)';ctx.beginPath();ctx.arc(x,y,halo,0,TAU);ctx.fill();
-  ctx.strokeStyle=profile.danger;ctx.lineWidth=2*scale;ctx.beginPath();ctx.arc(x,y,dangerRadius,0,TAU);ctx.stroke();
-  ctx.fillStyle=profile.danger;ctx.beginPath();ctx.arc(x,y,head,0,TAU);ctx.fill();
-  ctx.strokeStyle='#270609';ctx.lineWidth=1.7*scale;ctx.stroke();
   if(profile.diamond){
-    const d=4.1*scale;ctx.fillStyle=profile.accent;ctx.beginPath();
+    const d=4.1*scale;ctx.fillStyle=profile.danger;ctx.beginPath();
     ctx.moveTo(x,y-d);ctx.lineTo(x+d,y);ctx.lineTo(x,y+d);ctx.lineTo(x-d,y);ctx.closePath();ctx.fill();
-  }else{
-    ctx.fillStyle=profile.accent;ctx.beginPath();ctx.arc(x,y,2.3*scale,0,TAU);ctx.fill();
   }
   ctx.restore();return true;
 }
@@ -77,6 +63,52 @@ function drawRemoteFireworkExplosionVisuals(list){
   }
   ctx.restore();
 }
+function meleeWeaponPalette(hostile=false){
+  return hostile
+    ? {shaft:'#8b201e',blade:'#ff3b34',edge:'#ff8b80',grip:'#5a1111',bright:'#ff6b61',housing:'#731b19',bar:'#ff3b34',teeth:'#40090a'}
+    : {shaft:'#5a6b52',blade:'#a9c4d6',edge:'#8fb3c9',grip:'#3a4239',bright:'#c9d6e2',housing:'#3a4a54',bar:'#8fb3c9',teeth:'#25313a'};
+}
+// Drawn at the origin and facing +X. Both local and remote actors call this
+// exact geometry; hostile ownership changes only the palette.
+function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
+  const p=meleeWeaponPalette(hostile);ctx.lineCap='round';
+  if(key==='scythe'){
+    ctx.strokeStyle=p.shaft;ctx.lineWidth=3.4;ctx.beginPath();ctx.moveTo(2,7);ctx.lineTo(36,-7);ctx.stroke();
+    ctx.strokeStyle=p.blade;ctx.lineWidth=3.8;ctx.beginPath();ctx.arc(30,-16,12,.45,2.7);ctx.stroke();
+    ctx.strokeStyle=p.edge;ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(30,-16,8.5,.55,2.6);ctx.stroke();
+  }else if(key==='knife'){
+    ctx.strokeStyle=p.grip;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(12,0);ctx.stroke();
+    ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(12,-3);ctx.lineTo(38,0);ctx.lineTo(12,3);ctx.closePath();ctx.fill();
+  }else if(key==='hammer'){
+    ctx.strokeStyle=p.shaft;ctx.lineWidth=3.6;ctx.beginPath();ctx.moveTo(4,5);ctx.lineTo(26,-7);ctx.stroke();
+    ctx.fillStyle=p.blade;ctx.save();ctx.translate(26,-7);ctx.rotate(.5);ctx.fillRect(-5,-10,10,20);ctx.restore();
+  }else if(key==='twinsai'){
+    const guard=parryActive ? .34 : 0;
+    for(const side of [-1,1]){
+      ctx.save();ctx.rotate(side*guard);ctx.translate(0,side*5);
+      ctx.strokeStyle=p.grip;ctx.lineWidth=3.4;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(12,0);ctx.stroke();
+      ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(11,-2.5);ctx.lineTo(35,0);ctx.lineTo(11,2.5);ctx.closePath();ctx.fill();
+      ctx.strokeStyle=p.edge;ctx.lineWidth=2.2;ctx.beginPath();ctx.moveTo(13,0);ctx.lineTo(18,-6);ctx.moveTo(13,0);ctx.lineTo(18,6);ctx.stroke();ctx.restore();
+    }
+  }else{
+    ctx.fillStyle=p.housing;ctx.fillRect(3,-4.5,11,9);
+    ctx.fillStyle=p.bar;ctx.fillRect(14,-2.8,18,5.6);
+    ctx.fillStyle=p.teeth;const jig=(!hostile&&typeof player!=='undefined'&&now-player.lastSaw<160)?(now>>5)%2:0;
+    for(let i=0;i<4;i++)ctx.fillRect(15+i*4.4,((i+jig)%2?-4.8:2.4),2.6,2.4);
+  }
+}
+function drawMeleeSwingPath(x,y,angle,arc,range,progress){
+  ctx.beginPath();
+  if(arc<.6){
+    ctx.moveTo(x+Math.cos(angle)*12,y+Math.sin(angle)*12);
+    const thrustR=range*(.8+.25*progress);
+    ctx.lineTo(x+Math.cos(angle)*thrustR,y+Math.sin(angle)*thrustR);
+  }else{
+    const sweepR=range*(.7+.3*progress);
+    ctx.arc(x,y,sweepR,angle-arc/2,angle+arc/2);
+  }
+  ctx.stroke();
+}
 function drawPartyCpuActors(){
   if(!isCpuTeamArena())return;
   const actors=[],localId=cpuTeamLocalId(),clock=cpuTeamClock();
@@ -91,8 +123,12 @@ function drawPartyCpuActors(){
     if(ally&&clock<(e.parryUntil||0)){
       ctx.strokeStyle='#bfe8ff';ctx.lineWidth=3/zoom;ctx.beginPath();ctx.arc(e.x,e.y,r+10,0,TAU);ctx.stroke();
     }
-    ctx.strokeStyle=weaponColor(e.cur,ally?'#bde7ff':'#e0a8a0');ctx.lineWidth=(wk.melee?4:5)/zoom;ctx.lineCap='round';
-    ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6);ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8));ctx.stroke();
+    if(wk.melee){
+      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(a);drawMeleeWeaponSilhouette(e.cur,!ally,false);ctx.restore();
+    }else{
+      ctx.strokeStyle=weaponColor(e.cur,ally?'#bde7ff':'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
+      ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6);ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8));ctx.stroke();
+    }
     if(clock<(e.flash||0)){ctx.fillStyle='#ffd98a';ctx.beginPath();ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU);ctx.fill();}
     // Teammate status helps coordination. Enemy CPUs intentionally expose no
     // name, exact health bar, damage flash, or hit-confirmation information.
@@ -114,22 +150,40 @@ function drawArenaOpponentWorld(){
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){drawPartyCpuActors();return;}
   if(!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
-  // Online state owns the existing opponent tag.  The local AI used to expose
-  // extra perfect information (exact HP, a tracking nameplate, and a confirmed
-  // hit flash) that a normal 1v1 does not give the Offline player.
-  const showOpponentIntel=!isBotArena();
+  // Exact opponent health is result information, never live combat intel.
+  // This applies equally to Casual 1v1 and every local 1v1 bot difficulty.
+  const showOpponentHp=arena.phase==='round_end'||arena.phase==='match_end';
+  const showOpponentName=!isBotArena()||showOpponentHp;
+  const showOpponentHitFlash=!isBotArena();
+  const swingDur=Math.max(1,+e.swingDur||130),swingProgress=e.swingT&&(now-e.swingT)>=0&&(now-e.swingT)<swingDur?(now-e.swingT)/swingDur:null;
+  let weaponAngle=a;
+  if(swingProgress!==null){
+    const ease=swingProgress<.25?-(swingProgress/.25)*.35:-.35+((swingProgress-.25)/.75)*1.35;
+    weaponAngle+=(e.swingSide||1)*(e.swingArc||1.2)*.5*ease;
+  }
   ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU); ctx.fill();
-  ctx.fillStyle=showOpponentIntel&&now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
+  ctx.fillStyle=showOpponentHitFlash&&now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   ctx.strokeStyle='#ff8b80'; ctx.lineWidth=2/zoom; ctx.stroke();
   const wk=WEAPONS[e.cur]||WEAPONS.ar, len=Math.min(38,wk.len||24);
-  ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0'); ctx.lineWidth=(wk.melee?4:5)/zoom; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6); ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8)); ctx.stroke();
+  if(wk.melee){
+    ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,true,false);ctx.restore();
+  }else{
+    ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
+    ctx.beginPath();ctx.moveTo(e.x+Math.cos(weaponAngle)*6,e.y+Math.sin(weaponAngle)*6);ctx.lineTo(e.x+Math.cos(weaponAngle)*(len+8),e.y+Math.sin(weaponAngle)*(len+8));ctx.stroke();
+  }
   if(now<(e.flash||0)){
     ctx.fillStyle='#ffd98a'; ctx.beginPath(); ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU); ctx.fill();
   }
-  if(showOpponentIntel){
+  if(swingProgress!==null){
+    const attackA=Number.isFinite(+e.swingA)?+e.swingA:a,attackArc=e.swingArc||wk.arc||.5,attackR=e.swingR||wk.range||55;
+    ctx.strokeStyle='rgba(255,59,52,'+(.8*(1-swingProgress)).toFixed(3)+')';ctx.lineWidth=4/zoom;
+    drawMeleeSwingPath(e.x,e.y,attackA,attackArc,attackR,swingProgress);
+  }
+  if(showOpponentHp){
     ctx.fillStyle='rgba(0,0,0,0.65)'; ctx.fillRect(e.x-31,e.y-r-23,62,6);
     ctx.fillStyle='#d05548'; ctx.fillRect(e.x-31,e.y-r-23,62*clamp(e.hp/ARENA_HP,0,1),6);
+  }
+  if(showOpponentName){
     ctx.textAlign='center'; ctx.textBaseline='bottom'; ctx.fillStyle='#ffd9d2'; ctx.font='700 9px ui-monospace,Consolas,monospace';
     ctx.fillText(String(e.name||'OPPONENT').slice(0,16),e.x,e.y-r-27);
     ctx.textAlign='left'; ctx.textBaseline='alphabetic';
@@ -173,14 +227,10 @@ function drawScopedHostileProjectileCues(){
     if(x<bounds.left||x>bounds.right||y<bounds.top||y>bounds.bottom)continue;
     const point=worldToScreen(x,y),sx=+point.x,sy=+point.y;
     // This is not an off-screen warning system: only an already-visible live
-    // projectile center receives a small post-vignette marker at its true spot.
+    // projectile gets its same red tracer repeated above the scope vignette.
     if(!Number.isFinite(sx)||!Number.isFinite(sy)||sx<0||sx>W||sy<0||sy>H)continue;
-    const footprint=Math.max(8,hostileProjectileCollisionRadius(b)*Math.max(0.05,+zoom||1));
-    ctx.fillStyle='rgba(15,3,4,.96)';ctx.beginPath();ctx.arc(sx,sy,footprint+2,0,TAU);ctx.fill();
-    ctx.strokeStyle='#ff3b34';ctx.lineWidth=2;ctx.beginPath();ctx.arc(sx,sy,footprint,0,TAU);ctx.stroke();
-    ctx.fillStyle='#ff3b34';ctx.beginPath();ctx.moveTo(sx,sy-6);ctx.lineTo(sx+6,sy);ctx.lineTo(sx,sy+6);ctx.lineTo(sx-6,sy);ctx.closePath();ctx.fill();
-    ctx.strokeStyle='#fff1dc';ctx.lineWidth=1.5;ctx.stroke();
-    ctx.fillStyle='#fff1dc';ctx.beginPath();ctx.arc(sx,sy,1.8,0,TAU);ctx.fill();drawn++;
+    const speed=Math.hypot(+b.vx||0,+b.vy||0),ux=speed?(+b.vx||0)/speed:0,uy=speed?(+b.vy||0)/speed:0;
+    ctx.strokeStyle='#ff3b34';ctx.lineWidth=3.2;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(sx,sy);ctx.lineTo(sx-ux*24,sy-uy*24);ctx.stroke();drawn++;
   }
   ctx.restore();return drawn;
 }
@@ -502,47 +552,8 @@ function drawWorld(){
   }
   if(utilityOut){                                // utility in hand
     drawUtilIcon(14, 0, loadout.utility, '#c98fb8', 0.8);
-  } else if(w.melee){                            // melee: distinct steel-blue silhouettes
-    ctx.lineCap='round';
-    if(player.cur==='scythe'){
-      ctx.strokeStyle='#5a6b52'; ctx.lineWidth=3.4;
-      ctx.beginPath(); ctx.moveTo(2,7); ctx.lineTo(36,-7); ctx.stroke();     // long shaft
-      ctx.strokeStyle='#a9c4d6'; ctx.lineWidth=3.8;
-      ctx.beginPath(); ctx.arc(30,-16,12,0.45,2.7); ctx.stroke();            // curved blade
-      ctx.strokeStyle='#8fb3c9'; ctx.lineWidth=1.6;
-      ctx.beginPath(); ctx.arc(30,-16,8.5,0.55,2.6); ctx.stroke();
-    } else if(player.cur==='knife'){
-      ctx.strokeStyle='#3a4239'; ctx.lineWidth=4;
-      ctx.beginPath(); ctx.moveTo(4,0); ctx.lineTo(12,0); ctx.stroke();      // handle
-      ctx.fillStyle='#c9d6e2';
-      ctx.beginPath(); ctx.moveTo(12,-3); ctx.lineTo(38,0); ctx.lineTo(12,3); ctx.closePath(); ctx.fill();
-    } else if(player.cur==='hammer'){
-      ctx.strokeStyle='#5a6b52'; ctx.lineWidth=3.6;
-      ctx.beginPath(); ctx.moveTo(4,5); ctx.lineTo(26,-7); ctx.stroke();       // haft
-      ctx.fillStyle='#a9c4d6';
-      ctx.save(); ctx.translate(26,-7); ctx.rotate(0.5);
-      ctx.fillRect(-5,-10,10,20); ctx.restore();                              // head
-    } else if(player.cur==='twinsai'){
-      // Two real forward-facing sai. The whole player weapon transform is
-      // already rotated to aimAngle(), so both points track the crosshair.
-      const guard=now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS?0.34:0;
-      for(const side of [-1,1]){
-        ctx.save();ctx.rotate(side*guard);ctx.translate(0,side*5);
-        ctx.strokeStyle='#3a4239';ctx.lineWidth=3.4;
-        ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(12,0);ctx.stroke();          // wrapped grip
-        ctx.fillStyle='#c9d6e2';
-        ctx.beginPath();ctx.moveTo(11,-2.5);ctx.lineTo(35,0);ctx.lineTo(11,2.5);ctx.closePath();ctx.fill();
-        ctx.strokeStyle='#8fb3c9';ctx.lineWidth=2.2;
-        ctx.beginPath();ctx.moveTo(13,0);ctx.lineTo(18,-6);ctx.moveTo(13,0);ctx.lineTo(18,6);ctx.stroke(); // side prongs
-        ctx.restore();
-      }
-    } else {                                                                 // chainsaw
-      ctx.fillStyle='#3a4a54'; ctx.fillRect(3,-4.5,11,9);                    // engine body
-      ctx.fillStyle='#8fb3c9'; ctx.fillRect(14,-2.8,18,5.6);                 // bar
-      ctx.fillStyle='#25313a';
-      const jig = (now-player.lastSaw<160) ? (now>>5)%2 : 0;                 // teeth buzz while sawing
-      for(let i=0;i<4;i++) ctx.fillRect(15+i*4.4, ((i+jig)%2 ? -4.8 : 2.4), 2.6, 2.4);
-    }
+  } else if(w.melee){                            // shared local/remote melee geometry
+    drawMeleeWeaponSilhouette(player.cur,false,now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS);
   } else if(w.solar){                            // solar rifle: long barrel + glowing solar core
     ctx.fillStyle='#3a3320';                      // stock/body
     ctx.fillRect(-4,-3,10,6);
@@ -581,7 +592,7 @@ function drawWorld(){
 
   // Incoming ordnance is deliberately the last world-space combat layer, so
   // enemy bodies, the local player, and dense wave effects cannot cover the
-  // projectile head during the short reaction window before impact.
+  // red tracer during the short reaction window before impact.
   drawHostileProjectileWorldPass(playBounds);
 
   // melee swing arc — animation length tracks the weapon's swing speed
@@ -590,15 +601,7 @@ function drawWorld(){
     const pr=(now-player.swingT)/swingDur;
     ctx.strokeStyle='rgba(232,217,168,'+(0.8*(1-pr)).toFixed(3)+')';
     ctx.lineWidth=4/zoom;
-    ctx.beginPath();
-    if(player.swingArc<0.6){                         // knife thrust: a line, not an arc
-      ctx.moveTo(player.x+Math.cos(player.swingA)*12, player.y+Math.sin(player.swingA)*12);
-      ctx.lineTo(player.x+Math.cos(player.swingA)*player.swingR*(0.8+0.25*pr),
-                 player.y+Math.sin(player.swingA)*player.swingR*(0.8+0.25*pr));
-    } else {
-      ctx.arc(player.x,player.y,player.swingR*(0.7+0.3*pr),player.swingA-player.swingArc/2,player.swingA+player.swingArc/2);
-    }
-    ctx.stroke();
+    drawMeleeSwingPath(player.x,player.y,player.swingA,player.swingArc,player.swingR,pr);
   }
 
   // reload arc
@@ -701,7 +704,7 @@ function drawHUD(){
 
   // The sniper vignette intentionally hides most of the world, but never an
   // incoming projectile whose center is already on screen. Draw after the hurt
-  // flash as well, so the red fullscreen wash cannot erase the danger marker.
+  // flash as well, so the red fullscreen wash cannot erase the tracer.
   if(scoped)drawScopedHostileProjectileCues();
 
   const pad=18;
@@ -735,7 +738,7 @@ function drawHUD(){
     ctx.fillText('SCORE '+score, pad, pad);
     ctx.fillStyle='#8a9268'; ctx.font='13px ui-monospace,Consolas,monospace';
   if(practiceMode){
-    ctx.fillText({range:'\uD83C\uDFAF SHOOTING RANGE', dps:'\uD83C\uDFAF DPS DUMMY', boss:'\uD83C\uDFAF WARLORD PRACTICE'}[practiceMode]+' \u2014 ESC for menu', pad, pad+28);
+    ctx.fillText({range:'\uD83C\uDFAF SHOOTING RANGE', dps:'\uD83C\uDFAF DPS DUMMY', tracking:'\uD83C\uDFAF TRACKING DUMMY', boss:'\uD83C\uDFAF WARLORD PRACTICE'}[practiceMode]+' \u2014 ESC for menu', pad, pad+28);
     if(practiceMode==='dps'){
       const elapsed = dpsStart ? Math.max(0.5,(now-dpsStart)/1000) : 0;
       const avg = dpsStart ? dpsTotal/elapsed : 0;

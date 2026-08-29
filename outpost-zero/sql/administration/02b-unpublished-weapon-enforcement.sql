@@ -1,5 +1,5 @@
--- OUTPOST ZERO / ADMINISTRATION / 04: UNPUBLISHED WEAPON ENFORCEMENT
--- Run after Administration 01, 02, and 03 in the Supabase SQL Editor.
+-- OUTPOST ZERO / ADMINISTRATION / 02B: UNPUBLISHED WEAPON ENFORCEMENT
+-- Run after Administration 01 and 02 in the Supabase SQL Editor.
 -- Paste and run this entire file as one statement batch. It is safe to rerun.
 --
 -- What this migration enforces:
@@ -29,16 +29,16 @@ begin;
 do $preflight$
 begin
   if to_regclass('public.profiles') is null then
-    raise exception 'Administration 04 requires public.profiles';
+    raise exception 'Administration 02B requires public.profiles';
   end if;
   if to_regclass('public.weapon_defs') is null then
-    raise exception 'Administration 04 requires public.weapon_defs';
+    raise exception 'Administration 02B requires public.weapon_defs';
   end if;
   if to_regclass('public.outpost_zero_weapon_grants') is null then
-    raise exception 'Run Administration 01 before Administration 04';
+    raise exception 'Run Administration 01 before Administration 02B';
   end if;
   if to_regprocedure('public._outpost_zero_validate_admin_patch(jsonb)') is null then
-    raise exception 'Run Administration 01 before Administration 04 (admin patch validator missing)';
+    raise exception 'Run Administration 01 before Administration 02B (admin patch validator missing)';
   end if;
   if not exists (
     select 1
@@ -51,7 +51,7 @@ begin
     where table_schema = 'public' and table_name = 'profiles'
       and column_name = 'data'
   ) then
-    raise exception 'Administration 04 requires profiles(user_id, data)';
+    raise exception 'Administration 02B requires profiles(user_id, data)';
   end if;
   if not exists (
     select 1
@@ -64,7 +64,7 @@ begin
     where table_schema = 'public' and table_name = 'weapon_defs'
       and column_name = 'published'
   ) then
-    raise exception 'Administration 04 requires weapon_defs(key, published)';
+    raise exception 'Administration 02B requires weapon_defs(key, published)';
   end if;
 end;
 $preflight$;

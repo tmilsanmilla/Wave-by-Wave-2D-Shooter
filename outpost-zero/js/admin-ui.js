@@ -78,9 +78,9 @@ function drawHubPosts(topY, maxBottom){
   ctx.textBaseline='alphabetic';
   return topY+bh;
 }
-let readerOpen=false, readerTitle='', readerMeta='', readerBody='', readerRects=[], readerScroll=0, readerAccess='public',readerAction=null;
+let readerOpen=false, readerTitle='', readerMeta='', readerBody='', readerRects=[], readerScroll=0, readerAccess='public',readerActions=[];
 function clearReaderState(){
-  readerOpen=false;readerTitle='';readerMeta='';readerBody='';readerRects=[];readerScroll=0;readerAccess='public';readerAction=null;
+  readerOpen=false;readerTitle='';readerMeta='';readerBody='';readerRects=[];readerScroll=0;readerAccess='public';readerActions=[];
 }
 function readerAccessAllowed(){
   return readerAccess==='main'?isMainAdmin():readerAccess==='admin'?isAdmin():true;
@@ -89,7 +89,8 @@ function enforceReaderAccess(){if(readerOpen&&!readerAccessAllowed()){clearReade
 function openReader(title, meta, body, access='public',action=null){
   readerOpen=true; readerTitle=String(title||''); readerMeta=String(meta||'');
   readerBody=String(body||''); readerScroll=0;readerAccess=['admin','main'].includes(access)?access:'public';
-  readerAction=action&&typeof action.run==='function'?{label:String(action.label||'OPEN').slice(0,20),owner:String(action.owner||''),run:action.run}:null;
+  const choices=Array.isArray(action)?action:[action];readerActions=choices.filter(item=>item&&typeof item.run==='function').slice(0,2)
+    .map(item=>({label:String(item.label||'OPEN').slice(0,20),owner:String(item.owner||''),run:item.run}));
 }
 function readerLines(maxW){
   const out=[],width=Math.max(1,Number(maxW)||1);
@@ -172,8 +173,12 @@ function drawReader(){
     ctx.textAlign='right'; ctx.fillStyle='#6b7455'; ctx.font='8px ui-monospace,Consolas,monospace';
     ctx.fillText((readerScroll+1)+'-'+Math.min(lines.length,readerScroll+fit)+' of '+lines.length, px+pw-14, bottom+12);
   }
-  const actions=readerAction?[['action',readerAction.label,'#bfa8ff'],['copy','COPY TEXT','#a7c15e'],['close','CLOSE','#7fd8ff']]:
-    [['copy','COPY TEXT','#a7c15e'],['close','CLOSE','#7fd8ff']],gap=8,
+  // Keep the reader independently renderable for older cached clients and
+  // isolated UI checks that predate the multi-action profile reader.
+  const optionalReaderActions=typeof readerActions!=='undefined'&&Array.isArray(readerActions)?readerActions:
+    (typeof readerAction!=='undefined'&&readerAction?[readerAction]:[]);
+  const actions=optionalReaderActions.map((action,index)=>['action:'+index,action.label,index?'#e8b658':'#bfa8ff'])
+    .concat([['copy','COPY TEXT','#a7c15e'],['close','CLOSE','#7fd8ff']]),gap=8,
     cbw=Math.min(130,(pw-40-gap*(actions.length-1))/actions.length), cbh=footerButtonH, cby=py+ph-cbh-6;
   const button=(id,label,bx,col)=>{
     readerRects.push({x:bx,y:cby,w:cbw,h:cbh,id});
@@ -199,8 +204,8 @@ function readerClick(){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       if(r.id==='close'){ clearReaderState(); sfx('swap'); return; }
       if(r.id==='copy'){ copyReaderText(); return; }
-      if(r.id==='action'){
-        const action=readerAction,owner=authUser?String(authUser.id||''):'';
+      if(String(r.id).indexOf('action:')===0){
+        const action=readerActions[+String(r.id).slice(7)],owner=authUser?String(authUser.id||''):'';
         if(!action||action.owner&&action.owner!==owner){clearReaderState();sfx('dry');return;}
         try{action.run();sfx('swap');}catch(error){clearReaderState();sfx('dry');}return;
       }
@@ -214,7 +219,7 @@ function readerClick(){
 function drawInboxTabs(px,py,pw,y,rects){
   const TABS=[];
   if(isAdmin())     TABS.push(['msgs','\u2709 MESSAGES'+(unreadMsgs?' ('+unreadMsgs+')':'')]);
-  if(isMainAdmin()) TABS.push(['updates','\uD83D\uDCE5 UPDATES']);
+  if(canAccessReports()) TABS.push(['updates','\uD83D\uDCE5 REPORTS']);
   if(isMainAdmin()) TABS.push(['log','\uD83D\uDCDC ADMIN AUDIT LOG']);
   if(isAdmin())     TABS.push(['archive','\uD83D\uDDC3 ARCHIVE']);
   if(TABS.length<2) return y;                       // nothing to switch between
@@ -248,14 +253,15 @@ function inboxTabClick(id){
   return true;
 }
 function drawUpdates(){
-  if(!isMainAdmin()){updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];return;}
+  if(!canAccessReports()){updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
   const pw=Math.min(460,W-30), ph=Math.min(520,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  const compactReports=ph<420;
   ctx.fillStyle='#080c0e'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   ctx.fillStyle='#bfe8ff'; ctx.font='700 17px ui-monospace,Consolas,monospace';
-  ctx.fillText('\uD83D\uDCE5 UPDATES', W/2, py+26);
+  ctx.fillText('\uD83D\uDCE5 REPORTS', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
   ctx.fillText(sb?'staff reports first, then player reports':'reports live on the deployed site \u2014 preview shows none', W/2, py+42);
   updatesRects=[];
@@ -267,8 +273,8 @@ function drawUpdates(){
       ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
       ctx.fillText('nothing here yet', x0+4, y+8); y+=18; return;
     }
-    for(const r of rows.slice(0,5)){
-      const h=30, rbw=52;
+    for(const r of rows.slice(0,compactReports?1:3)){
+      const h=compactReports?27:30, rbw=52;
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
       ctx.strokeStyle=tint; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
       ctx.textBaseline='middle';
@@ -310,6 +316,19 @@ function drawUpdates(){
   };
   section('\u26A0 STAFF REPORTS'+(updatesFeed.staff.length?' ('+updatesFeed.staff.length+')':''), updatesFeed.staff, '#e0a8a0');
   section('\uD83D\uDC65 PLAYER REPORTS'+(updatesFeed.player.length?' ('+updatesFeed.player.length+')':''), updatesFeed.player, '#8a9268');
+  const copyY=py+ph-70,copyH=24,copyGap=6,modeW=70,copyW=rw-modeW*2-copyGap*2;
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle=/FAILED|COULD NOT|MUST/.test(reportCopyStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine(reportCopyStatus||'COPY AN EXPLICIT, READABLE REPORT EXPORT',rw),W/2,copyY-5);
+  const copyButtons=[
+    {id:'report_copy_all',x:x0,w:modeW,label:'ALL',col:'#7fd8ff',active:reportCopyMode==='all',enabled:!reportCopyBusy},
+    {id:'report_copy_custom',x:x0+modeW+copyGap,w:modeW,label:'CUSTOM',col:'#e8b658',active:reportCopyMode==='custom',enabled:!reportCopyBusy},
+    {id:'report_copy',x:x0+modeW*2+copyGap*2,w:copyW,label:reportCopyBusy?'COPYING…':reportCopyMode==='custom'?'COPY '+reportCopyCustomCount:'COPY ALL',col:'#a7c15e',active:false,enabled:!reportCopyBusy}
+  ];
+  for(const b of copyButtons){
+    updatesRects.push({x:b.x,y:copyY,w:b.w,h:copyH,id:b.id,enabled:b.enabled});const hv=b.enabled&&mouse.x>=b.x&&mouse.x<=b.x+b.w&&mouse.y>=copyY&&mouse.y<=copyY+copyH;
+    ctx.fillStyle=b.active?b.col:hv?b.col:'rgba(255,255,255,.06)';ctx.fillRect(b.x,copyY,b.w,copyH);ctx.strokeStyle=b.col;ctx.strokeRect(b.x+.5,copyY+.5,b.w,copyH);
+    ctx.fillStyle=b.active||hv?'#101208':'#cdd6b0';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.textBaseline='middle';ctx.fillText(fitLine(b.label,b.w-6),b.x+b.w/2,copyY+copyH/2);
+  }
   const bw2=110, bh2=26, gap2=10;
   const rx=W/2-bw2-gap2/2, cx=W/2+gap2/2, byy=py+ph-34;
   updatesRects.push({x:rx,y:byy,w:bw2,h:bh2,id:'refresh'});
@@ -331,6 +350,9 @@ function updatesClick(){
       if(inboxTabClick(r.id)) return;
       if(r.id==='close'){ updatesOpen=false; sfx('swap'); }
       else if(r.id==='refresh'){ fetchUpdatesFeed(); sfx('swap'); }
+      else if(r.id==='report_copy_all'){chooseReportCopyAll();sfx('aim');}
+      else if(r.id==='report_copy_custom'){if(chooseReportCopyCustom())sfx('aim');}
+      else if(r.id==='report_copy'){void copyOutpostZeroReports();}
       else if(String(r.id).indexOf('rs:')===0){ resolveReport(+String(r.id).slice(3)); sfx('pickup'); }
       else if(r.read){ openReader(r.read.t, r.read.m, r.read.b,'main'); sfx('swap'); }
       return;
@@ -1024,7 +1046,7 @@ function wheelClick(){
   }
 }
 function drawPlayers(){
-  if(!isAdmin()){playersOpen=false;playersTab='lookup';playersRects=[];banList=[];appealList=[];return;}
+  if(!canUsePlayerTools()){playersOpen=false;playersTab='lookup';playersRects=[];banList=[];appealList=[];return;}
   if(!['lookup','banned','appeals'].includes(playersTab))playersTab='lookup';
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
   const pw=Math.min(520,W-24), ph=Math.min(520,H-24), px=W/2-pw/2, py=H/2-ph/2;
@@ -1040,7 +1062,7 @@ function drawPlayers(){
   const x0=px+16, rw=pw-32; let y=py+52;
 
   const TABS=[['lookup', canEditPlayer()?'\u270E EDIT':'\uD83D\uDD0D LOOKUP']]
-    .concat(isAdmin()?[['banned','\u26D4 BANNED'+(banList.length?' ('+banList.length+')':'')],
+    .concat(canUsePlayerTools()?[['banned','\u26D4 BANNED'+(banList.length?' ('+banList.length+')':'')],
                        ['appeals','\u2696 APPEALS'+(appealList.filter(a=>a.status==='open').length?' ('+appealList.filter(a=>a.status==='open').length+')':'')]]:[]);
   const tw=Math.min(118,(rw-(TABS.length-1)*6)/TABS.length), th=22;
   let tx=W/2-(TABS.length*tw+(TABS.length-1)*6)/2;
@@ -1090,7 +1112,7 @@ function drawPlayers(){
         ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
         ctx.textAlign='left'; ctx.textBaseline='middle';
         ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-        ctx.fillText(fitLine(String(r.target_email||''), rw-2*bw2-24), x0+8, y+9);
+        ctx.fillText(fitLine('@'+String(r.target_username||'unknown'), rw-2*bw2-24), x0+8, y+9);
         ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
         ctx.fillText(fitLine(patchSummary(r.patch)+'  by '+String(r.requested_by||'?'), rw-2*bw2-24), x0+8, y+20);
         if(isCreator()){
@@ -1203,9 +1225,9 @@ function playersClick(){
   }
 }
 function drawScores(){
-  const privateScores=peMode==='ban'||(peData&&!peData.publicOnly)||(peStep==='panel'&&String(peTarget||'').indexOf('@')>0);
+  const privateScores=peMode==='ban'||(peData&&!peData.publicOnly);
   const containsMainOnlyGiftData=!!(peData&&!peData.publicOnly&&peData.tempGrantsLoaded);
-  if((privateScores&&!isAdmin())||(containsMainOnlyGiftData&&!isMainAdmin())){clearPrivatePlayerEditor();return;}
+  if((privateScores&&!canUsePlayerTools())||(containsMainOnlyGiftData&&!isMainAdmin())){clearPrivatePlayerEditor();return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
   const pw=Math.min(480,W-24), ph=Math.min(500,H-24), px=W/2-pw/2, py=H/2-ph/2;
   ctx.fillStyle='#080c0e'; ctx.fillRect(px,py,pw,ph);
@@ -1282,7 +1304,7 @@ function drawScores(){
       ctx.textAlign='left'; ctx.textBaseline='middle';
       const room=isCreator()? rw-2*bw2-24 : rw-24;
       ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine(String(r.target_email||''), room), x0+8, y+11);
+      ctx.fillText(fitLine('@'+String(r.target_username||'unknown'), room), x0+8, y+11);
       ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
       ctx.fillText(fitLine(patchSummary(r.patch)+'   by '+String(r.requested_by||'?'), room), x0+8, y+23);
       if(isCreator()){
@@ -1536,7 +1558,7 @@ function scoresClick(){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       const id=String(r.id||'');
       if(peBusy){sfx('dry');return;}
-      if(id==='close'){ scoresOpen=false; peStep='choose'; peData=null; resetPlayerEditScroll(); if(isAdmin()) playersOpen=true; sfx('swap'); return; }
+      if(id==='close'){ scoresOpen=false; peStep='choose'; peData=null; resetPlayerEditScroll(); if(canUsePlayerTools()) playersOpen=true; sfx('swap'); return; }
       if(id==='back'){ peStep='choose'; peData=null; resetPlayerEditScroll(); sfx('swap'); return; }
       if(id==='go_edit'){ peMode='edit'; openScoreEdit(); sfx('swap'); return; }
       if(id==='go_ban'){ if(!canEditPlayer()){ sfx('dry'); return; } peMode='ban'; openScoreEdit(); sfx('swap'); return; }
@@ -1582,7 +1604,7 @@ function scoresClick(){
   }
 }
 function drawAdminsMenu(){
-  if(!isMainAdmin()){adminsOpen=false;adminsRects=[];return;}
+  if(!canManageAdmins()){adminsOpen=false;adminsRects=[];return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
   const pw=Math.min(500,W-24), ph=Math.min(470,H-24), px=W/2-pw/2, py=H/2-ph/2;
   ctx.fillStyle='#0e0c07'; ctx.fillRect(px,py,pw,ph);
@@ -1591,7 +1613,7 @@ function drawAdminsMenu(){
   ctx.fillStyle='#e8d9a8'; ctx.font='700 17px ui-monospace,Consolas,monospace';
   ctx.fillText('\uD83D\uDC65 ADMINS', W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText(isCreator()?'CREATOR \u00b7 you can kick main admins too':'MAIN ADMIN \u00b7 manage co-admins', W/2, py+42);
+  ctx.fillText(isCreator()?'CREATOR \u00b7 manage every staff tier':'MAIN ADMIN \u00b7 manage co-admins + testers', W/2, py+42);
   adminsRects=[];
   const x0=px+16, rw=pw-32;
   let y=py+56;
@@ -1610,17 +1632,17 @@ function drawAdminsMenu(){
     ctx.textAlign='left'; ctx.textBaseline='middle';
     // email
     ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
-    const nAct=(row.email===me?0:1)+((row.rank==='co'&&isMainAdmin())?1:0)
-              +(((row.rank==='co'&&isMainAdmin())||(row.rank==='main'&&isCreator()))?1:0);
+    const canPromote=(row.rank==='tester'||row.rank==='co')&&canManageAdmins(),canDemote=(row.rank==='co'&&canManageAdmins())||(row.rank==='main'&&isCreator()),
+      canKick=(row.rank==='tester'||row.rank==='co')&&canManageAdmins()||row.rank==='main'&&isCreator(),nAct=(row.email===me?0:1)+(canPromote?1:0)+(canDemote?1:0)+(canKick?1:0);
     const actW=nAct*(bw2+bg);
     const rankW=Math.min(84, Math.max(26, rw-actW-120));
     const rankX=x0+rw-actW-rankW-4;
     ctx.fillText(fitLine(row.email, Math.max(40, rankX-x0-12)), x0+6, y+h/2);
     // rank
-    const rl = row.rank==='creator' ? (row.email===me?'CREATOR (ME)':'CREATOR') : row.rank==='main' ? 'MAIN ADMIN' : 'CO-ADMIN';
-    ctx.fillStyle= row.rank==='creator' ? '#e8b658' : row.rank==='main' ? '#e0a8a0' : '#a7c15e';
+    const rl = row.rank==='creator' ? (row.email===me?'CREATOR (ME)':'CREATOR') : row.rank==='main' ? 'MAIN ADMIN' : row.rank==='co'?'CO-ADMIN':'TESTER';
+    ctx.fillStyle= row.rank==='creator' ? '#e8b658' : row.rank==='main' ? '#e0a8a0' : row.rank==='co'?'#a7c15e':'#7fd8ff';
     ctx.font='700 8px ui-monospace,Consolas,monospace';
-    const rlShort = rankW<60 ? (row.rank==='creator'?(row.email===me?'ME':'CR'):row.rank==='main'?'MAIN':'CO') : rl;
+    const rlShort = rankW<60 ? (row.rank==='creator'?(row.email===me?'ME':'CR'):row.rank==='main'?'MAIN':row.rank==='co'?'CO':'TEST') : rl;
     ctx.fillText(fitLine(rlShort, rankW), rankX, y+h/2);
     // actions, right-aligned: [MESSAGE] [PROMOTE] [KICK]
     let ax=x0+rw-4;
@@ -1635,9 +1657,9 @@ function drawAdminsMenu(){
       ctx.textAlign='left';
       ax=bx2-bg;
     };
-    const canKick = (row.rank==='co' && isMainAdmin()) || (row.rank==='main' && isCreator());
     if(canKick) act('ak:'+row.email,'KICK','#d05548',['rgba(208,85,72,0.18)','rgba(208,85,72,0.36)'],'#e0a8a0');
-    if(row.rank==='co' && isMainAdmin()) act('ap:'+row.email,'PROMOTE','#e8b658',['rgba(232,182,88,0.16)','rgba(232,182,88,0.34)'],'#e8d9a8');
+    if(canDemote) act('ad:'+row.email,'DEMOTE','#7fd8ff',['rgba(127,216,255,0.14)','rgba(127,216,255,0.32)'],'#bfe8ff');
+    if(canPromote) act('ap:'+row.email,'PROMOTE','#e8b658',['rgba(232,182,88,0.16)','rgba(232,182,88,0.34)'],'#e8d9a8');
     if(row.email!==me) act('am:'+row.email,'MESSAGE','#a7c15e',['rgba(167,193,94,0.16)','rgba(167,193,94,0.34)'],'#cfe0a8');
     ctx.textBaseline='alphabetic';
     y+=h+5;
@@ -1666,12 +1688,51 @@ function adminsClick(){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       const id=r.id||'';
       if(id==='close'){ adminsOpen=false; sfx('swap'); return; }
-      if(id==='add'){ addCoAdmin(); sfx('swap'); return; }
+      if(id==='add'){ addAdmin(); sfx('swap'); return; }
       if(id.indexOf('ak:')===0){ kickAdmin(id.slice(3)); sfx('dry'); return; }
       if(id.indexOf('ap:')===0){ promoteAdmin(id.slice(3)); sfx('pickup'); return; }
+      if(id.indexOf('ad:')===0){ demoteAdmin(id.slice(3)); sfx('aim'); return; }
       if(id.indexOf('am:')===0){ openMsgCompose(id.slice(3)); sfx('swap'); return; }
       return;
     }
+  }
+}
+function drawWeaponSuggestions(){
+  if(!canReviewWeaponSuggestions()){weaponSuggestionsOpen=false;weaponSuggestions=[];return;}
+  ctx.fillStyle='rgba(4,6,3,0.96)';ctx.fillRect(0,0,W,H);
+  const pw=Math.min(560,W-24),ph=Math.min(520,H-24),px=W/2-pw/2,py=H/2-ph/2,x0=px+14,rw=pw-28;
+  ctx.fillStyle='#0b0d0b';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#a7c15e';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#cfe0a8';ctx.font='700 16px ui-monospace,Consolas,monospace';ctx.fillText('\uD83D\uDCCB WEAPON SUGGESTIONS',W/2,py+25);
+  ctx.fillStyle=/COULD NOT|RUN ADMIN/.test(weaponSuggestionStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(weaponSuggestionStatus||'TESTER + CO-ADMIN IDEAS · REVIEW DOES NOT AUTO-EDIT STATS',pw-26),W/2,py+41);
+  weaponSuggestionsRects=[];let y=py+52;
+  const room=ph-104,rowH=58,maxRows=Math.max(1,Math.floor(room/rowH)),rows=weaponSuggestions.slice(0,maxRows);
+  if(!rows.length&&!weaponSuggestionBusy){ctx.fillStyle='#5a5648';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText('NO PENDING WEAPON SUGGESTIONS',W/2,y+24);}
+  for(let index=0;index<rows.length;index++){
+    const row=rows[index],h=rowH-5,buttonW=Math.min(58,Math.max(44,rw*.14)),buttonsW=buttonW*3+8,contentW=rw-buttonsW-12;
+    ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(255,255,255,.055)';ctx.fillRect(x0,y,rw,h);ctx.strokeStyle='#566047';ctx.strokeRect(x0+.5,y+.5,rw,h);
+    ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.weapon_key||'WEAPON').toUpperCase()+' · '+String(row.author_role||'STAFF').toUpperCase(),contentW-8),x0+7,y+5);
+    ctx.fillStyle='#cdd6b0';ctx.font='8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.suggestion||''),contentW-8),x0+7,y+20);
+    ctx.fillStyle='#777f68';ctx.font='7px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.author_email||'')+' · '+String(row.created_at||'').slice(0,16).replace('T',' '),contentW-8),x0+7,y+36);
+    const bx=x0+rw-buttonsW-4,by=y+9,bh=h-18,defs=[['ws_read','READ','#7fd8ff'],['ws_approve','OK','#a7c15e'],['ws_reject','NO','#d05548']];
+    defs.forEach((def,i)=>{const x=bx+i*(buttonW+4),enabled=!weaponSuggestionBusy;weaponSuggestionsRects.push({x,y:by,w:buttonW,h:bh,id:def[0],suggestionId:row.id,row,enabled});const hv=enabled&&mouse.x>=x&&mouse.x<=x+buttonW&&mouse.y>=by&&mouse.y<=by+bh;
+      ctx.fillStyle=hv?def[2]:'rgba(255,255,255,.05)';ctx.fillRect(x,by,buttonW,bh);ctx.strokeStyle=def[2];ctx.strokeRect(x+.5,by+.5,buttonW,bh);ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=hv?'#101208':'#d9dec9';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(def[1],x+buttonW/2,by+bh/2);});
+    y+=rowH;
+  }
+  const bh=28,gap=8,bw=120,fy=py+ph-bh-8;
+  for(const def of [{id:'ws_refresh',label:'\u21BB REFRESH',x:W/2-bw-gap/2,col:'#7fd8ff'},{id:'ws_close',label:'CLOSE',x:W/2+gap/2,col:'#d05548'}]){
+    weaponSuggestionsRects.push({x:def.x,y:fy,w:bw,h:bh,id:def.id,enabled:!weaponSuggestionBusy});const hv=!weaponSuggestionBusy&&mouse.x>=def.x&&mouse.x<=def.x+bw&&mouse.y>=fy&&mouse.y<=fy+bh;
+    ctx.fillStyle=hv?def.col:'rgba(255,255,255,.05)';ctx.fillRect(def.x,fy,bw,bh);ctx.strokeStyle=def.col;ctx.strokeRect(def.x+.5,fy+.5,bw,bh);ctx.fillStyle=hv?'#101208':'#d9dec9';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.fillText(def.label,def.x+bw/2,fy+bh/2);
+  }
+  ctx.textAlign='left';ctx.textBaseline='alphabetic';
+}
+function weaponSuggestionsClick(){
+  for(const r of weaponSuggestionsRects){
+    if(mouse.x<r.x||mouse.x>r.x+r.w||mouse.y<r.y||mouse.y>r.y+r.h)continue;if(r.enabled===false){sfx('dry');return;}
+    if(r.id==='ws_close'){weaponSuggestionsOpen=false;sfx('swap');return;}
+    if(r.id==='ws_refresh'){void fetchWeaponSuggestions();sfx('swap');return;}
+    if(r.id==='ws_read'){const row=r.row||{};openReader('WEAPON SUGGESTION',String(row.weapon_key||'WEAPON').toUpperCase()+' · '+String(row.author_role||'STAFF').toUpperCase(),String(row.suggestion||''),'main');sfx('swap');return;}
+    if(r.id==='ws_approve'){void reviewWeaponSuggestion(r.suggestionId,'approved');return;}
+    if(r.id==='ws_reject'){void reviewWeaponSuggestion(r.suggestionId,'rejected');return;}
   }
 }
 function drawMsgs(){
@@ -1939,22 +2000,23 @@ function aiLearningClick(){
 function drawAdminPanel(){
   if(!isAdmin()){adminPanelOpen=false;return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
-  const pw=Math.min(430,W-30), ph=Math.min(430,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  const pw=Math.min(430,W-30), ph=Math.min(500,H-24), px=W/2-pw/2, py=H/2-ph/2;
+  const compactAdmin=ph<390;
   ctx.fillStyle='#0e0a0a'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#d05548'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   ctx.fillStyle='#e0a8a0'; ctx.font='700 17px ui-monospace,Consolas,monospace';
-  ctx.fillText('\u2699 ADMIN TOOLS', W/2, py+26);
+  ctx.fillText('\u2699 ADMIN TOOLS', W/2, py+(compactAdmin?20:26));
   ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
-  ctx.fillText(isMainAdmin()?'MAIN ADMIN \u00b7 full access':'CO-ADMIN \u00b7 shared powers', W/2, py+42);
+  ctx.fillText(isMainAdmin()?'MAIN ADMIN \u00b7 full access':isCoAdmin()?'CO-ADMIN \u00b7 shared powers':'TESTER \u00b7 test + suggest only', W/2, py+(compactAdmin?34:42));
   ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText('test mode taints the run \u2014 it will not be ranked', W/2, py+56);
+  ctx.fillText('test mode taints the run \u2014 it will not be ranked', W/2, py+(compactAdmin?47:56));
 
   adminPanelRects=[];
-  const gap=7, x0=px+18, rw=pw-36;
-  let y=py+68;
+  const gap=compactAdmin?2:7, x0=px+18, rw=pw-36;
+  let y=py+(compactAdmin?56:68);
   const actionBtn=(id,label,accent)=>{
-    const h=28;
+    const h=compactAdmin?22:28;
     adminPanelRects.push({x:x0,y,w:rw,h,id,enabled:true});
     const hv=mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+h;
     ctx.fillStyle=hv?(accent||'rgba(208,85,72,0.35)'):'rgba(208,85,72,0.14)'; ctx.fillRect(x0,y,rw,h);
@@ -1965,7 +2027,7 @@ function drawAdminPanel(){
     ctx.textBaseline='alphabetic'; y+=h+gap;
   };
   const toggle=(id,label,on,enabled)=>{
-    const h=28;
+    const h=compactAdmin?22:28;
     adminPanelRects.push({x:x0,y,w:rw,h,id,enabled});
     const hv=enabled && mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+h;
     ctx.fillStyle= !enabled ? 'rgba(255,255,255,0.03)' : on ? 'rgba(167,193,94,0.22)' : hv?'rgba(208,85,72,0.2)':'rgba(0,0,0,0.35)';
@@ -1981,17 +2043,19 @@ function drawAdminPanel(){
   };
   const label=(t)=>{ ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace'; ctx.fillText(t, x0, y+8); y+=14; };
 
-  // co-admins: their own report channel, right at the top
+  // Testers deliberately skip reports, player lookup, posts, logs, and every
+  // editor. Co-admins keep their existing shared staff tools.
   if(isCoAdmin() && !isMainAdmin()) actionBtn('staffreport','\u26A0 STAFF REPORT \u2014 flag a problem to the mains');
-  // everyone with admin: broadcast a banner
-  actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 Home + every Inbox'+(isMainAdmin()?'':' (needs approval)'));
-  actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up \u00b7 edit \u00b7 ban');
+  if(canPostUpdates())actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 Home + every Inbox'+(isMainAdmin()?'':' (needs approval)'));
+  if(canUsePlayerTools())actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up'+(isMainAdmin()?' \u00b7 edit \u00b7 ban':' \u00b7 view only'));
   if(isMainAdmin()) actionBtn('layout','\u2194 LAYOUT EDITOR \u2014 move home page sections');
   if(isMainAdmin()) actionBtn('promos','\uD83C\uDF81 PROMO CODES \u2014 create \u00b7 edit \u00b7 expire');
 
   toggle('testmode','\uD83E\uDDEA TEST MODE \u2014 all weapons \u00b7 no gems', testMode, true);
-  actionBtn('storage', isMainAdmin() ? '\u2699 WEAPON EDITOR \u2014 stats \u00b7 price \u00b7 publish'
+  if(canViewWeaponStorage())actionBtn('storage', isMainAdmin() ? '\u2699 WEAPON EDITOR \u2014 stats \u00b7 price \u00b7 publish'
                                      : '\u2699 WEAPON EDITOR \u2014 view every weapon');
+  if(canSuggestWeaponEdits())actionBtn('suggest_weapon','\u270E SUGGEST WEAPON EDIT \u2014 sends to mains');
+  if(canReviewWeaponSuggestions())actionBtn('weapon_suggestions','\uD83D\uDCCB WEAPON SUGGESTIONS \u2014 review tester + co ideas');
 
   if(isMainAdmin()){
     // pending co-admin posts: approve or reject, right here in the admin menu
@@ -2000,8 +2064,8 @@ function drawAdminPanel(){
       ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
       ctx.textAlign='left'; ctx.fillText('nothing awaiting approval', x0+4, y+8); y+=18;
     }
-    for(const b of pendingBanners.slice(0,2)){
-      const h=22;
+    for(const b of pendingBanners.slice(0,compactAdmin?1:2)){
+      const h=compactAdmin?18:22;
       const bw2=52;
       ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
       ctx.strokeStyle='#5a5648'; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
@@ -2022,7 +2086,7 @@ function drawAdminPanel(){
     }
   }
 
-  const cbw=140, cbh=28, cbx=W/2-cbw/2, cby=py+ph-36;
+  const cbw=140, cbh=compactAdmin?24:28, cbx=W/2-cbw/2, cby=py+ph-cbh-8;
   adminPanelRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
   const chv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
   ctx.fillStyle=chv?'#d05548':'rgba(208,85,72,0.14)'; ctx.fillRect(cbx,cby,cbw,cbh);
@@ -2038,15 +2102,17 @@ function adminPanelClick(){
       const id=r.id||'';
       if(id==='close'){ adminPanelOpen=false; sfx('swap'); return; }
       if(id==='staffreport'){ openStaffReport(); sfx('swap'); return; }
-      if(id==='post'){ openPost(); sfx('swap'); return; }
+      if(id==='post'){ if(canPostUpdates())openPost();else sfx('dry'); return; }
       if(id==='promos'){ adminPanelOpen=false; promoAdminOpen=true; fetchPromos(); sfx('swap'); return; }
-      if(id==='players'){ adminPanelOpen=false; playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
+      if(id==='players'){ if(!canUsePlayerTools()){sfx('dry');return;}adminPanelOpen=false; playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
       if(id==='layout'){
         if(!isMainAdmin()){ sfx('dry'); return; }
         adminPanelOpen=false; selPage='hub'; layoutMode=true; layoutPick=null; sfx('swap'); return;
       }
       if(id==='testmode'){ setTestMode(!testMode); sfx('swap'); return; }
-      if(id==='storage'){ adminPanelOpen=false; storageOpen=true; sfx('swap'); return; }
+      if(id==='storage'){ if(!canViewWeaponStorage()){sfx('dry');return;}adminPanelOpen=false; storageOpen=true; sfx('swap'); return; }
+      if(id==='suggest_weapon'){openWeaponSuggestionForm();sfx('swap');return;}
+      if(id==='weapon_suggestions'){if(!canReviewWeaponSuggestions()){sfx('dry');return;}adminPanelOpen=false;weaponSuggestionsOpen=true;void fetchWeaponSuggestions();sfx('swap');return;}
       if(id.indexOf('appr:')===0){ approveBanner(+id.slice(5)); sfx('pickup'); return; }
       if(id.indexOf('rej:')===0){ rejectBanner(+id.slice(4)); sfx('dry'); return; }
       return;
@@ -2091,14 +2157,18 @@ function timeDragField(){                            // TIMETURNER E: slow every
 // their existing authoritative/deduplicated hit path.
 function arenaMeleeTargetsAt(x,y,radius){
   if(practiceMode!=='arena'||!arenaCanAct()) return [];
+  const lineClear=t=>typeof arenaMeleeLineClear!=='function'||arenaMeleeLineClear(x,y,t.x,t.y);
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){
-    return partyCpuMatch.bots.filter(t=>t.team==='B'&&t.hp>0&&dist2(t.x,t.y,x,y)<(radius+(t.r||15))*(radius+(t.r||15)));
+    return partyCpuMatch.bots.filter(t=>t.team==='B'&&t.hp>0&&lineClear(t)&&
+      dist2(t.x,t.y,x,y)<(radius+(t.r||15))*(radius+(t.r||15)));
   }
   const t=arena&&arena.opponent;
-  return t&&t.hp>0&&dist2(t.x,t.y,x,y)<(radius+(t.r||15))*(radius+(t.r||15))?[t]:[];
+  return t&&t.hp>0&&lineClear(t)&&dist2(t.x,t.y,x,y)<(radius+(t.r||15))*(radius+(t.r||15))?[t]:[];
 }
-function arenaMeleeSpecialHit(target,dmg,kind){
+function arenaMeleeSpecialHit(target,dmg,kind,sourceX,sourceY){
   if(!target||practiceMode!=='arena'||!arenaCanAct()) return false;
+  const x=Number.isFinite(+sourceX)?+sourceX:player.x,y=Number.isFinite(+sourceY)?+sourceY:player.y;
+  if(typeof arenaMeleeLineClear==='function'&&!arenaMeleeLineClear(x,y,target.x,target.y)) return false;
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()) return partyCpuHitBot(target,dmg,kind);
   arenaHitOpponent(dmg,kind); return true;
 }
