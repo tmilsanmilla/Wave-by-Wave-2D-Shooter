@@ -1,5 +1,6 @@
--- OUTPOST ZERO / SOCIAL / 05: ACCOUNT SETTINGS
--- Requires Social 01 through 04. Run after Leaderboards 01 if that is the
+-- OUTPOST ZERO / SOCIAL / 02: USERNAMES
+-- File: Social-02-usernames.sql
+-- Requires Social 01. Run after Leaderboards 01 if that is the
 -- latest SQL you installed. Adds the server-enforced username-change clock.
 -- Safe to run again. Password changes use Supabase Auth and need no SQL.
 
@@ -19,7 +20,7 @@ comment on column public.social_profiles.username_changed_at is
 create or replace function public.social_profiles_username_clock()
 returns trigger
 language plpgsql
-security definer
+security invoker
 set search_path = pg_catalog, public
 as $$
 declare
@@ -91,7 +92,7 @@ returns table(
   first_choice boolean
 )
 language plpgsql
-security definer
+security invoker
 set search_path = pg_catalog, public
 as $$
 declare
@@ -169,11 +170,11 @@ end;
 $$;
 
 -- These strings are transport/UI sentinels, not claimable public identities.
--- Refresh the signup availability RPC here so an existing Social-04 install
+-- Refresh the signup availability RPC here so an existing legacy Social install
 -- receives the rule by running only this one upgrade file.
 create or replace function public.outpost_zero_username_available(p_username text)
 returns boolean
-language sql stable security definer
+language sql stable security invoker
 set search_path = pg_catalog, public
 as $$
   select coalesce(
@@ -186,18 +187,7 @@ as $$
   )
 $$;
 
--- Remove the legacy direct username-write route. SECURITY DEFINER lets the
--- authenticated RPC perform the update while RLS and grants keep browser
--- table writes closed. Profile reads remain available for Social name lookup.
-drop policy if exists social_profiles_own_update on public.social_profiles;
-revoke update on table public.social_profiles from anon, authenticated;
-revoke update (handle, handle_key, display_name, username_changed_at)
-  on public.social_profiles from anon, authenticated;
-
-revoke all on function public.social_profiles_username_clock() from public, anon, authenticated;
-revoke all on function public.outpost_zero_set_username(text) from public, anon, authenticated;
-revoke all on function public.outpost_zero_username_available(text) from public, anon, authenticated;
-grant execute on function public.outpost_zero_set_username(text) to authenticated;
-grant execute on function public.outpost_zero_username_available(text) to anon, authenticated;
+-- RLS, direct-write removal, and RPC execute permissions are centralized in
+-- Social 04 so every Social security boundary is reviewed in one place.
 
 commit;

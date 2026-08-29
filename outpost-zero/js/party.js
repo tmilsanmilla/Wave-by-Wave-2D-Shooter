@@ -54,7 +54,7 @@ async function partyPublicPublish(force=false){
     const row=Array.isArray(result.data)?result.data[0]:result.data,id=partyPublicUuid(row&&row.party_id);
     if(party!==current||!current.accepted||!current.publicParty){if(id)void partyPublicClose(id);return false;}
     if(id)current.publicPartyId=id;publicPartySqlReady=true;publicPartyPollAt=0;return !!id;
-  }catch(error){const message=String(error&&error.message||'').toUpperCase();if(partyPublicRpcMissing(error)){publicPartySqlReady=false;party.status='PARTY NAMES NEED SOCIAL 09 SQL.';}
+  }catch(error){const message=String(error&&error.message||'').toUpperCase();if(partyPublicRpcMissing(error)){publicPartySqlReady=false;party.status='PUBLIC PARTIES NEED SOCIAL 03 SQL.';}
     else if(/PARTY_NAME_TAKEN|UNIQUE/.test(message)){party.publicParty=false;party.status='THAT PUBLIC PARTY NAME IS TAKEN · CREATE AGAIN WITH A UNIQUE NAME.';}
     else party.status='PUBLIC PARTY DIRECTORY COULD NOT UPDATE.';return false;}
 }
@@ -723,13 +723,13 @@ function partyPromptFriendInvite(){
       return target.source==='friend'&&!!(target.recipientId||target.deliveryKey);
     }).slice(0,40).map((target,index)=>({...target,optionKey:'invite_player_'+index}));
     if(!choices.length){
-      party.status=result&&result.onlineReady?'NO FRIENDS OR OTHER ONLINE PLAYERS ARE AVAILABLE':'ADD A FRIEND, OR RUN SOCIAL 06 TO INVITE ONLINE PLAYERS';
+      party.status=result&&result.onlineReady?'NO FRIENDS OR OTHER ONLINE PLAYERS ARE AVAILABLE':'ADD A FRIEND, OR RUN SOCIAL 03 TO INVITE ONLINE PLAYERS';
       sfx('dry');return false;
     }
     partyFriendInviteFormOwnerId=formOwner;
     openForm({title:'INVITE A PLAYER',hint:(result&&result.onlineReady
         ?'FRIENDS are accepted friends. ONLINE NOW shows other active players. The server checks availability again when you send.'
-        :'Choose an accepted friend. Install Social 06 to also invite other players who are online.'),saveLabel:'SEND INVITE',
+        :'Choose an accepted friend. Install Social 03 to also invite other players who are online.'),saveLabel:'SEND INVITE',
       fields:[{id:'recipient',label:'FRIENDS / ONLINE',type:'select',value:choices[0].optionKey,
         options:choices.map(target=>({value:target.optionKey,label:(target.source==='friend'
           ?(target.isOnline?'FRIEND \u00b7 ONLINE \u00b7 @':'FRIEND \u00b7 @'):'ONLINE NOW \u00b7 @')+target.handle}))}],

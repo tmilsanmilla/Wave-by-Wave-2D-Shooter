@@ -7,92 +7,82 @@ Each feature has its own numbered scripts and may be installed independently.
 
 The Social feature provides unique public usernames, friendships, private messages, row
 level security, API privileges, Realtime refresh hints, account-setting rules,
-server-authorized Party invitations, and threaded private-conversation state. Profiles, friendships, and messages
-share one core data script because they form the same Social model. Security,
-privileges, Realtime, and the optional online-invite upgrade remain separate.
+server-authorized Party invitations, public Parties, and threaded private-conversation state. Profiles, friendships, and messages
+share one core data script because they form the same Social model. All Social
+RLS, browser privileges, RPC permissions, and Realtime publication membership
+are centralized in one final security script.
 
 In the Supabase Dashboard, open **SQL Editor**, paste each file below, and run
 them one at a time in this exact order:
 
-1. `social/01-social-core.sql` — profiles, friendships, and private messages
-2. `social/02-rls-policies.sql` — row-level security policies
-3. `social/03-privileges.sql` — narrow API permissions, including signup username availability
-4. `social/04-realtime.sql` — friendship and message refresh events
-5. `social/05-account-settings.sql` — authenticated username-setting RPC and the server-enforced 21-day change clock
-6. `social/06-party-online-invites.sql` — private-safe online presence and Party invites to accepted friends or currently-online players
-7. `social/07-public-parties.sql` — public Party directory, join requests, and host Accept/Decline approval
-8. `social/08-private-conversations.sql` — threaded Private Inbox, 25-conversation auto-archive, per-player deletion, and username messaging
-9. `social/09-public-party-names-and-search.sql` — unique public Party names plus party-name/host search
+1. `social/Social-01-social-menu.sql` — profiles, friendships, private messages, threaded Inbox state, Archive/Delete, and username messaging
+2. `social/Social-02-usernames.sql` — username-setting RPC and the server-enforced 21-day change clock
+3. `social/Social-03-parties.sql` — Realtime online discovery, invitations, public Parties, host approval, unique names, and search
+4. `social/Social-04-security.sql` — every Social RLS policy, browser/table privilege, RPC permission, and Realtime publication rule
 
-All nine scripts are rerunnable. Run the complete sequence again after changing
+All four scripts are rerunnable. Run the complete sequence again after changing
 the Social schema so tables are preserved while functions, triggers, policies,
 privileges, and realtime membership are refreshed.
 
 What each Social file does, concretely:
 
 - Run Social `01` once on a project that has never installed Social. It creates
-  the three Social tables, gives every existing Auth account a collision-safe
-  temporary username, and provisions future accounts automatically. Rerunning
-  it preserves rows.
-- Run Social `02` immediately after `01`. It turns on row-level security so a
-  signed-in player can see public usernames but only participants can see a
-  friendship or private message.
-- Run Social `03` immediately after `02`. It removes broad browser table access,
-  grants only the columns each feature needs, and exposes the boolean username
-  availability check used during signup.
-- Run Social `04` immediately after `03`. It adds only friendships and private
-  messages to Supabase Realtime so screens refresh after a change; RLS still
-  filters every delivered row.
-- Run Social `05` after `04`. It adds `username_changed_at`, moves every username
+  profiles, friendships, private messages, and per-player conversation state;
+  gives every existing Auth account a collision-safe temporary username; and
+  provisions future accounts automatically. It also groups replies into one
+  conversation per player, keeps at most 25 conversations active, provides
+  per-player Archive/Delete state, and installs username-addressed messaging
+  with block and abuse-limit checks. Deleting hides existing history only for
+  that player; the other participant keeps their copy. Rerunning preserves all
+  rows.
+- Run Social `02` after `01`. It adds `username_changed_at`, moves every username
   write behind `outpost_zero_set_username`, and enforces one change per 21 days
   with a database trigger and row lock. Replacing a generated `op_<uuid>` name
   for the first time never has a wait. Because old databases did not record
   historical username-change dates, each already-chosen account receives one
   immediate migration-grace change; the 21-day clock starts when that change is
   saved. It does not read, store, or publish account emails.
-- Run Social `06` after `05`. It adds a 90-second server-time online heartbeat,
-  viewer-bound opaque picker tokens, and short-lived Party invitations. A
-  normal Party invite may go to an accepted friend (online or offline) or a
-  player whose heartbeat is currently fresh. CPU 2v2 invites remain
-  accepted-friend-only. The database rechecks that rule when sending, gives
+- Run Social `03` after `02`. It uses Supabase Realtime Presence for the visible
+  online-player list, so it creates no database heartbeat row or heartbeat RPC.
+  The database safely resolves Realtime usernames into viewer-bound opaque
+  picker tokens and short-lived Party invitations. A normal Party invite may
+  go to an accepted friend or a player visible through Realtime; CPU 2v2
+  invites remain accepted-friend-only. The database checks identity, blocks,
+  ticket ownership, and the CPU friendship rule when sending, gives
   normal Party invites a five-minute lifetime and CPU invites two minutes,
   makes retries exact-once, and applies per-sender/per-recipient abuse limits.
   Incoming lists expose only the sender username and invite metadata; only the
   intended recipient can claim the hidden party code/join token. Claims are
   safely repeatable by that recipient until expiry so reloads and failed
-  connections can retry. Raw presence, target, and invite tables use forced
-  RLS with no browser grants. No email or Auth account UUID is returned.
-- Run Social `07` after `06`. It adds the public Party directory and pending
-  join-request queue. The directory returns only host usernames and party size;
-  it never returns a code or join token. The host must accept or decline each
-  request. Only an accepted requester receives the short-lived code and token,
-  while raw directory/request tables remain inaccessible to browser roles.
-- Run Social `08` after `07`. It groups replies into one private conversation
-  per player, keeps at most 25 active conversations, and stores Archive/Delete
-  state separately for each participant. Deleting an archived conversation
-  hides its existing history only for the player who deletes it; it never
-  removes the other participant's copy. A later message reopens a clean thread.
-  Human-written messages use a username-resolving RPC that permits non-friend
-  messages while enforcing either player's block and server-side abuse limits.
-  Raw messages remain participant-only, and no email is accepted or returned.
-- Run Social `09` after `07` (and normally after `08`). It adds a unique,
-  case-insensitive 3–32 character name to each public Party and upgrades the
-  directory RPC so players can search that party name or the host's public
-  username. It does not expose the private Party code or join token; host
-  Accept/Decline remains required.
+  connections can retry. The same file adds the public Party directory, unique
+  case-insensitive Party names, host/name search, and pending join-request queue.
+  The directory returns only the Party name, host username, and Party size; it
+  never returns a code or join token. The host must accept or decline each
+  request. Only an accepted requester receives the short-lived code and token.
+  No email or Auth account UUID is returned. The public Party
+  directory still has a short expiring lease so abandoned listings disappear;
+  that Party-record lease is not player online presence.
+- Run Social `04` last. It is the one Social security file: profile, friendship,
+  message, Party, and Inbox RLS; narrow table/sequence privileges; RPC execution
+  permissions and `SECURITY DEFINER` elevation; and Realtime publication membership. Raw Party capability rows
+  remain unreadable, friendships/messages remain participant-only, and username
+  writes remain limited to the cooldown RPC. Action-specific authentication,
+  block, and rate-limit checks stay inside their RPCs because those checks must
+  execute atomically with the action they protect.
 
-If Social `05` is the last Social file you already ran, paste and run the entire
-`social/06-party-online-invites.sql` file first, then paste and run the entire
-`social/07-public-parties.sql` file, then run `social/08-private-conversations.sql`,
-then `social/09-public-party-names-and-search.sql`, each in its own query. Do not
-rerun Social `01` through `05`, do not combine the files, and do not rerun
-Leaderboards `01`. If Social `08` is already installed, run only Social `09`.
+If the legacy Social `05` is the last Social file you already ran, that same
+username code is now named Social `02`; do not rerun it. Run the updated
+`social/Social-01-social-menu.sql` first to add the merged Private Inbox features,
+then run `social/Social-03-parties.sql`, then run `social/Social-04-security.sql`, each
+in its own query. Do not rerun Leaderboards `01`. If a former Social `06`, `07`,
+or `09` was already installed, the consolidated Social `03` safely upgrades
+those tables and removes the old database online-heartbeat table and functions.
 Deploy the matching game JavaScript at
-the same time, then hard-refresh or sign out/in. Missing `06` hides online-player
-invite discovery; missing `07` shows a clear setup warning and disables the
-public directory; missing `08` keeps basic message delivery but disables saved
-Archive/Delete state and non-friend messages; missing `09` disables public
-Party naming/search while private code-based Parties continue to work.
+the same time, then hard-refresh or sign out/in. Missing the updated `01` keeps
+basic message delivery but disables saved Archive/Delete state and non-friend
+messages. Missing `03` hides online-player invite discovery and disables the public directory.
+Missing the final Social `04` means the consolidated security installation is
+incomplete; do not use the Social features until it succeeds.
 
 Future database features should get a sibling folder under `sql/` with their
 own numbered scripts and a dependency order documented here.
@@ -105,9 +95,9 @@ after Social core has created and backfilled player usernames:
 
 1. `leaderboards/01-public-board.sql`
 
-If you already finished Social `01` through `04`, run only this one Leaderboards
+If you already finished the legacy Social `01` through `04`, run only this one Leaderboards
 script next. If `leaderboards/01-public-board.sql` is the last database script
-you already ran, your only new paste is `social/05-account-settings.sql`; do not
+you already ran, your only new paste is `social/Social-02-usernames.sql`; do not
 replace any table and do not rerun Leaderboards `01` for the Settings update.
 It uses the existing `public.scores` table that already stores game scores; it
 does not create or replace the table.
@@ -141,15 +131,15 @@ into the SQL Editor.
 
 ## Administration
 
-Administration now has one clean sequence: `01`, `02`, `03`, `04`, and `05`.
-There is no `02B`: its unpublished-weapon protection is merged into the full
-Administration `02` file. Administration `03` was installed and keeps its
-number. Administration `04` is the new username-based admin-actions migration,
-and Administration `05` adds Testers, suggestions, demotion, and report copy.
+Administration now has one clean sequence: `01`, `02`, `03`, and `04`.
+There is no `02B` or `05`. Administration `02` owns secure updates and admin
+role controls. Administration `03` keeps its notification-Inbox number.
+Administration `04` merges username-based admin actions with Testers, weapon
+suggestions, demotion, and report copy.
 
-For the current project state, Administration `01`, the older/shorter `02`, and
-`03` have already been run. Rerun the newly merged full `02` once, then run
-`04`, then `05`. All three files are rerunnable and preserve existing data.
+For the current project state, Administration `01`, `02`, and `03` have already
+been run. Run `04` if its merged features are not installed yet. Every active
+file is rerunnable and preserves existing data.
 AI `02` and AI `03` are the migrations that were intentionally skipped; they
 are unrelated to this Administration sequence.
 
@@ -158,10 +148,9 @@ Quick purpose guide:
 | File | What it adds | What it does not do |
 | --- | --- | --- |
 | Administration `01` | Audited player edits, temporary weapon gifts, permanent gift/request approvals, ban/appeal handling, and the private creator/main LOG. | It does not publish Home updates or create the player notification Inbox. |
-| Administration `02` | Secure Home/global Inbox update publishing **and** enforcement that unpublished weapons cannot be owned, granted, purchased, or restored by stale saves. | It does not add Tester accounts or private player conversations. |
+| Administration `02` | Secure Home/global Inbox update publishing and server-authorized admin-role controls. | It does not enforce weapon publication or add Tester accounts. |
 | Administration `03` | The private player notification Inbox for updates, bans, gifts, and friend events, plus targeted creator/main messages. | It does not expose the private admin LOG or change staff ranks. |
-| Administration `04` | Username-based wrappers for admin lookup, edit, grant, revoke, and ban actions, keeping private Auth emails on the server. | It does not change usernames or duplicate the underlying audited actions from `01`. |
-| Administration `05` | Tester rank, Tester/Co-admin weapon suggestions, creator/main suggestion review, Promote/Demote, staff Inbox restrictions, and `COPY ALL`/`COPY X` reports. | Approving a suggestion records the decision but does not automatically change weapon statistics. |
+| Administration `04` | Username-based admin wrappers, Tester rank, Tester/Co-admin weapon suggestions, creator/main review, Promote/Demote, staff Inbox restrictions, and `COPY ALL`/`COPY X` reports. | It does not expose private Auth emails, change Social usernames, or automatically apply an approved weapon suggestion. |
 
 ### Temporary gifts and the private LOG
 
@@ -213,19 +202,16 @@ intentionally revokes the old direct edit/request/appeal paths so an old tab
 cannot bypass the audit. After running it, sign out/in or hard-refresh before
 testing creator/main controls.
 
-### Administration 02 — secure updates and unpublished-weapon enforcement
+### Administration 02 — secure updates and admin roles
 
 For creator/main updates to appear on both Home and in every player's Inbox,
 paste and run this entire file in the Supabase SQL Editor:
 
-1. `administration/02-secure-updates-and-weapon-enforcement.sql`
+1. `administration/02-secure-updates.sql`
 
-Administration `02` is now the merged file. It needs Administration `01` plus
-the already-live `banners`, `admins`, `profiles`, and `weapon_defs` tables and
-Supabase Auth. If the shorter Secure Updates version was already installed,
-run this entire merged file once; it replaces the functions and policies in
-place and preserves all updates, profiles, ownership, grants, and audit rows.
-Do not paste only the weapon half over an older query.
+Administration `02` needs Administration `01` plus the already-live `banners`
+and `admins` tables and Supabase Auth. It replaces update/admin-role functions
+and policies in place while preserving existing updates and admin rows.
 
 What Administration `02` does, concretely:
 
@@ -243,7 +229,7 @@ What Administration `02` does, concretely:
   co-admin see only their own row, and exposes server-authorized list/add,
   promote, demote, and remove RPCs. The fixed creator can manage main/co admins;
   a main admin can add/manage co-admins but cannot alter the creator or another
-  main admin. Administration `05` extends this safely with Tester and visible
+  main admin. Administration `04` extends this safely with Tester and visible
   Promote/Demote controls.
   Raw admin rows are not published through Realtime; the client refreshes the
   narrow roster RPC after authentication, when opening Admin tools, and on a
@@ -256,17 +242,10 @@ What Administration `02` does, concretely:
 - Lists approved and pending updates independently. Even if there are ten or
   more newer drafts, they cannot consume the public feed limit and hide a live
   update.
-- Makes `weapon_defs.published` the server-authoritative access decision for
-  permanent ownership, temporary gifts, purchases, stale profile saves, and
-  direct RPC retries. An unpublished weapon cannot be restored by an old tab.
-- Treats ARC Railgun and future vault weapons as private until an explicit
-  `weapon_defs` row publishes them. Existing base Gem Shop weapons retain their
-  public defaults when no definition row exists.
-- Removes existing permanent ownership and temporary grants in the same
-  transaction when a weapon becomes unpublished. It does not delete the weapon
-  definition or refund currency; it removes access only.
-- Publishes `weapon_defs` changes through Supabase Realtime so open clients can
-  drop newly unpublished weapons immediately.
+
+Unpublished-weapon ownership and shop availability are enforced by the shipped
+game code, not by an Administration SQL migration. Administration `02` does not
+create weapon policies, strip ownership, or publish `weapon_defs` to Realtime.
 
 Deploy the matching JavaScript and run Administration `02` together because the
 migration intentionally closes the old direct `admins` and `banners` write
@@ -285,23 +264,23 @@ this entire file in the Supabase SQL Editor:
 
 If you already ran Administration `01` and `02`, this is the **only** new SQL
 paste. Add/run `03`; do not replace or append to `01` or `02`, and do not rerun
-Social `01` through `06`. If either Administration prerequisite was never run,
+the installed Social files. If either Administration prerequisite was never run,
 run the missing prerequisite first and then run `03`. A clear prerequisite
 error means the earlier file is missing; it does not mean to paste the files
 together. Administration `03` is safe to rerun and preserves every existing
 notification and read receipt.
 
-If the last SQL you actually applied was Social `05` and you have not installed
-these later features yet, run these four whole files **one at a time**, in this
-order: Social `06`, Administration `01`, Administration `02`, Administration
-`03`. For each step, create a new SQL Editor query, paste the entire file, and
+If the last SQL you actually applied was legacy Social `05` and you have not installed
+these later features yet, run these six whole files **one at a time**, in this
+order: the updated Social `01`, Social `03`, Social `04`, Administration `01`,
+Administration `02`, Administration `03`. For each step, create a new SQL Editor query, paste the entire file, and
 press Run; add/run each file rather than replacing or appending to an older
-file. Do not rerun Social `01` through `05` and do not rerun Leaderboards `01`.
+file. Do not rerun the username code now named Social `02` or Leaderboards `01`.
 Administration `01` first needs the game's original `admins`, `profiles`,
 `scores`, `bans`, `ban_appeals`, and `player_requests` tables plus its original
 `admin_edit_player(target_email, patch)` RPC; if Supabase reports one missing,
 install that original administration schema before continuing. If you already
-ran any file in the four-step list successfully, do not repeat it—continue with
+ran any file in the six-step list successfully, do not repeat it—continue with
 the next missing file.
 
 What Administration `03` does, concretely:
@@ -349,29 +328,21 @@ banner, Friends, direct-message, and Party-invite views; it hides the targeted
 staff-message composer and never falls back to inserting a notification or
 private message directly.
 
-### Administration 04 — username-based admin actions
+### Administration 04 — username actions, Testers, suggestions, and reports
 
 After Administration `01` and Social `01` are installed, run:
 
-1. `administration/04-username-admin-actions.sql`
+1. `administration/04-username-actions-testers-and-reports.sql`
 
 Administration `04` lets creator/main admin lookup, edit, grant, revoke, and
 ban commands accept the player’s public username. The wrappers resolve the
 corresponding Auth email only inside a `SECURITY DEFINER` function and then
 call the existing audited Administration `01` RPCs. The browser never receives
 or submits the target player’s private email. Pending-request screens likewise
-return the target username instead of the target email. The migration is
-rerunnable and does not replace or modify Social usernames.
-
-### Administration 05 — Testers, weapon suggestions, and report copy
-
-After Administration `01`, the merged `02`, installed `03`, and `04`, run:
-
-1. `administration/05-testers-weapon-suggestions-and-report-copy.sql`
-
-Administration `05` adds a lowest `tester` staff tier. Testers can use Test
+return the target username instead of the target email. The same file adds a
+lowest `tester` staff tier. Testers can use Test
 Mode, read/archive only their own Admin Inbox messages, and submit a proposed
-change for a currently published weapon. They cannot read reports or the audit
+weapon change. They cannot read reports or the audit
 log, look up private player data, post updates, manage staff, view unpublished
 weapons, edit weapons, or call the older Administration RPCs directly. The old
 admin authority helper deliberately continues to return no role for Testers;
@@ -385,10 +356,10 @@ the creator can demote a Main. `COPY ALL`/`COPY X` uses a creator/main-only RPC
 that returns explicit report fields in newest-first order. Raw reports remain
 write-only to players and unreadable to Testers.
 
-Administration `03` owns player-facing notifications; Administration `05` owns
+Administration `03` owns player-facing notifications; Administration `04` owns
 the staff-only Admin Inbox permissions and role hierarchy. In this project,
-`03` was already installed. Run the merged `02` as one whole file, then `04`,
-then `05`, each in its own SQL Editor query.
+`03` was already installed. Run `04` as one whole SQL Editor query if these
+merged Administration features are not installed yet.
 
 ## AI bot ladder
 

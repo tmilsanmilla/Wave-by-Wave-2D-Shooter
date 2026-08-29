@@ -2248,7 +2248,7 @@ function drawSocial(){
     ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=col;ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(directoryTitle,p.w-16),p.x+8,titleY2);
     const visible=maxRows?rows.slice(publicPartyPage*maxRows,(publicPartyPage+1)*maxRows):[];
     if(!authUser)panelMessage(p,'SIGN IN TO REQUEST OR CREATE A PUBLIC PARTY',listTop+listH/2,'#8a9268');
-    else if(publicPartySqlReady===false)panelMessage(p,'RUN SOCIAL 09 TO ENABLE PARTY NAMES + SEARCH',listTop+listH/2,'#d05548');
+    else if(publicPartySqlReady===false)panelMessage(p,'RUN SOCIAL 03 TO ENABLE PUBLIC PARTIES',listTop+listH/2,'#d05548');
     else if(publicPartyPolling&&!rows.length)panelMessage(p,'LOADING PUBLIC PARTIES...',listTop+listH/2,'#8a9268');
     else if(!rows.length)panelMessage(p,'NO PUBLIC PARTIES ARE OPEN · CREATE THE FIRST',listTop+listH/2,'#8a9268');
     for(let i=0;i<visible.length;i++){

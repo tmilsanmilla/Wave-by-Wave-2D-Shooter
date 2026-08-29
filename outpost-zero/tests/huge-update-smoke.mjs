@@ -5,9 +5,10 @@ import {fileURLToPath} from 'node:url';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const admin=read('js/administration.js'),adminUi=read('js/admin-ui.js'),ui=read('js/ui.js'),input=read('js/input.js'),party=read('js/party.js'),social=read('js/social.js');
-const adminSql=read('sql/administration/05-testers-weapon-suggestions-and-report-copy.sql');
-const admin02Sql=read('sql/administration/02-secure-updates-and-weapon-enforcement.sql');
-const partySql=read('sql/social/09-public-party-names-and-search.sql');
+const adminSql=read('sql/administration/04-username-actions-testers-and-reports.sql');
+const admin02Sql=read('sql/administration/02-secure-updates.sql');
+const socialCoreSql=read('sql/social/Social-01-social-menu.sql'),socialSettingsSql=read('sql/social/Social-02-usernames.sql'),partySql=read('sql/social/Social-03-parties.sql');
+const socialSecuritySql=read('sql/social/Social-04-security.sql');
 const failures=[];
 function check(name,condition){if(condition)console.log('PASS',name);else{console.error('FAIL',name);failures.push(name);}}
 
@@ -20,6 +21,7 @@ check('Tester is a real client role',/function isTester\(\)/.test(admin)&&/admin
 check('Tester tools are restricted to test and suggestion paths',/TESTER .* test \+ suggest only/.test(adminUi)&&/if\(canPostUpdates\(\)\)actionBtn\('post'/.test(adminUi)&&/if\(canUsePlayerTools\(\)\)actionBtn\('players'/.test(adminUi));
 check('Co-admin and Tester can suggest while mains review',/function canSuggestWeaponEdits\(\).*isTester\(\).*isCoAdmin\(\)/.test(admin)&&/function canReviewWeaponSuggestions\(\).*isMainAdmin\(\)/.test(admin));
 check('Admin roster exposes Promote, Demote, and Kick',/PROMOTE/.test(adminUi)&&/DEMOTE/.test(adminUi)&&/KICK/.test(adminUi)&&/demoteAdmin/.test(adminUi));
+check('Client setup guidance uses merged Administration 04',!/Administration 05/.test(admin)&&/Administration 04/.test(admin));
 
 check('Reports screen has All, Custom, and Copy X controls',/report_copy_all/.test(adminUi)&&/report_copy_custom/.test(adminUi)&&/COPY '\+reportCopyCustomCount/.test(adminUi));
 check('Report export uses explicit labeled fields',/OUTPOST ZERO REPORT EXPORT/.test(admin)&&/TYPE: /.test(admin)&&/STATUS: /.test(admin)&&/MESSAGE: /.test(admin));
@@ -28,8 +30,15 @@ check('SQL keeps legacy admin authority blind to Testers',/_outpost_zero_staff_r
 check('SQL gives Testers only own Admin Inbox policy',/outpost_zero_admin_msgs_own_read/.test(adminSql)&&/lower\(btrim\(to_email\)\)=public\._outpost_zero_admin_email\(\)/.test(adminSql));
 check('SQL stores and reviews weapon suggestions',/create table if not exists public\.outpost_zero_weapon_suggestions/.test(adminSql)&&/submit_outpost_zero_weapon_suggestion/.test(adminSql)&&/review_outpost_zero_weapon_suggestion/.test(adminSql));
 check('SQL exports reports only through the main-admin boundary',/export_outpost_zero_reports/.test(adminSql)&&/REPORT_ACCESS_REQUIRED/.test(adminSql)&&/outpost_zero_reports_main_read/.test(adminSql));
-check('Administration 02 includes unpublished-weapon enforcement',/_outpost_zero_weapon_is_published/.test(admin02Sql)&&/_outpost_zero_strip_unpublished_owned/.test(admin02Sql)&&/outpost_zero_weapon_defs_cleanup_access/.test(admin02Sql));
+check('Administration 02 leaves unpublished-weapon enforcement to game code',!/_outpost_zero_weapon_is_published/.test(admin02Sql)&&!/_outpost_zero_strip_unpublished_owned/.test(admin02Sql));
+check('Administration 04 does not depend on removed SQL weapon enforcement',!/_outpost_zero_weapon_is_published/.test(adminSql)&&!/PUBLISHED_WEAPON_REQUIRED/.test(adminSql));
 check('SQL supports unique public names and host/name search',/unique index.*outpost_zero_public_party_name_unique_idx/s.test(partySql)&&/p\.party_name ilike/.test(partySql)&&/sp\.handle ilike/.test(partySql));
+check('Social 03 uses Realtime handles without a database heartbeat table',/p_online_usernames text\[\]/.test(partySql)&&!/create table if not exists public\.outpost_zero_social_presence/.test(partySql));
+check('Game tracks online Party targets through Realtime Presence',/oz-social-party-online-v1/.test(social)&&/\.on\('presence',\{event:'sync'\}/.test(social)&&!/rpc\('touch_outpost_zero_social_presence'\)/.test(social));
+check('All Social perimeter security is centralized',/create policy social_profiles_authenticated_read/.test(socialSecuritySql)&&/create policy friendships_participant_read/.test(socialSecuritySql)&&/create policy private_messages_participant_read/.test(socialSecuritySql)&&/create policy private_conversation_states_owner_read/.test(socialSecuritySql));
+check('Social 01 includes threaded Inbox storage and messaging',/create table if not exists public\.private_conversation_states/.test(socialCoreSql)&&/send_outpost_zero_private_message/.test(socialCoreSql)&&/position > 25/.test(socialCoreSql));
+check('Only Social Security elevates privileged Social RPCs',![socialCoreSql,socialSettingsSql,partySql].some(sql=>/security definer/i.test(sql))&&/alter function public\.send_outpost_zero_party_invite\([^)]+\) security definer/i.test(socialSecuritySql)&&/alter function public\.send_outpost_zero_private_message\([^)]+\) security definer/i.test(socialSecuritySql));
+check('Feature SQL has no scattered RLS or browser grants',![socialCoreSql,socialSettingsSql,partySql].some(sql=>/enable row level security|create policy|alter publication|grant execute|grant select|revoke all on table/i.test(sql)));
 
 if(failures.length){console.error(`SUMMARY FAIL ${failures.length}`);process.exit(1);}
-console.log('SUMMARY PASS',16);
+console.log('SUMMARY PASS',24);

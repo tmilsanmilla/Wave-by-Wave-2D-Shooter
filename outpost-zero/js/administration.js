@@ -1085,7 +1085,7 @@ async function copyOutpostZeroReports(){
         rows=Array.isArray(payload)?payload:Array.isArray(payload&&payload.reports)?payload.reports:[];
       }else{
         // Safe rollout fallback for an existing creator/main session before
-        // Administration 05 is pasted. Existing report RLS remains authority.
+        // Administration 04 is pasted. Existing report RLS remains authority.
         const fallback=await sb.from('reports').select('id,name,message,created_at,meta,resolved').order('id',{ascending:false}).limit(requested||10000);
         if(fallback.error)throw fallback.error;rows=fallback.data||[];
       }
@@ -1217,7 +1217,7 @@ function addAdmin(){
         let result=await sb.rpc('add_outpost_zero_admin',{p_email:email,p_role:role});
         if(result.error&&role==='co')result=await sb.rpc('add_outpost_zero_co_admin',{p_email:email});
         if(result.error)throw result.error;closeForm();await fetchAdmins();return true;
-      }catch(error){formError(role==='tester'?'Run Administration 05 to add Testers.':'Could not add that admin.');return false;}
+      }catch(error){formError(role==='tester'?'Run Administration 04 to add Testers.':'Could not add that admin.');return false;}
     }});return true;
 }
 function weaponSuggestionOptions(){
@@ -1238,7 +1238,7 @@ function openWeaponSuggestionForm(){
       $('formstatus').textContent='sending suggestion…';
       try{const result=await sb.rpc('submit_outpost_zero_weapon_suggestion',{p_weapon_key:weapon,p_suggestion:suggestion});if(result.error)throw result.error;
         weaponSuggestionStatus='SUGGESTION SENT TO CREATOR + MAIN ADMINS.';closeForm();sfx('pickup');return true;
-      }catch(error){formError('Could not send · run Administration 05, then retry.');return false;}
+      }catch(error){formError('Could not send · run Administration 04, then retry.');return false;}
     }});
   const input=typeof document!=='undefined'?document.getElementById('ff_suggestion'):null;if(input)input.maxLength=800;return true;
 }

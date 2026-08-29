@@ -1,5 +1,5 @@
 -- OUTPOST ZERO / LEADERBOARDS / 01: PUBLIC USERNAME BOARDS
--- Run Social 01-social-core.sql first so every account has a unique username.
+-- Run Social-01-social-menu.sql first so every account has a unique username.
 -- Requires the game's existing public.scores table (user_id, name, game, score).
 -- Safe to run again.
 
