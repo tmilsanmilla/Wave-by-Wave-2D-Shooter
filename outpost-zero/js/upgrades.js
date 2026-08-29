@@ -9,8 +9,8 @@ let flameFuel=100, flameLock=false, daggersOut=null, splitBalls=[], flames=[], c
 let timeStopUntil=0, timeStopArm=0, fistFlurryUntil=0, fistNextT=0, teraHitCharge=15, parryUntil=0, parrySeq=0;
 let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
 let utilReadyT=0, medChan=0, medChanHeal=0, medKillCharge=MED_KILLS_REQUIRED, medDropKillAcc=0, medStash=0, balls=[], grenades=[], pearls=[], utilityOut=false;
-const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:6400, warpwave:18000, timeturner:12000};
-const TWIN_SAI_PARRY_MS=2500;
+const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:2500, warpwave:18000, timeturner:12000};
+const TWIN_SAI_PARRY_MS=1000;
 let wmods={}, utilMods={}, bossBounty=false;
 function wm(k){ return wmods[k] || (wmods[k]={dmg:1,rate:1,mag:1,pellets:0,pierce:0,drain:1,cdAdd:1,slamR:1,range:1,fall:1,spread:1,arc:1}); }
 function um(k){ return utilMods[k] || (utilMods[k]={cd:1}); }

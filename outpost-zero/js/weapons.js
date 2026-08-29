@@ -73,7 +73,7 @@ const WEAPONS = {
              pellets:1, spread:0, aimSpread:0, len:14, kick:1.2, zoom:1.12, scoped:false, combo:true, sai:true,
              moveMod:1.12, range:96,  arc:0.6,
              gimmick:{id:'twin_sai_parry',copy:'Aim-centered dual slashes; Parry reflects every incoming shot during its window.'},
-             blurb:'Fast aimed dual blades. E / F / melee RMB: 2.5s PARRY sends incoming shots toward your aim.' },
+             blurb:'Fast aimed dual blades. E / F / melee RMB: 1s PARRY sends incoming shots toward your aim.' },
   knife  : { name:'KA-BAR KNIFE', melee:true, dmg:48, mag:Infinity, reload:0, fireRate:380, auto:true,
              pellets:1, spread:0, aimSpread:0, len:16, kick:2.5, zoom:1.15, scoped:false,
              moveMod:1.08, range:130, arc:0.35,
