@@ -1336,7 +1336,7 @@ function drawArena(){
         ctx.fillText(fitLine(pickText,cardW-10),x+cardW/2,y+cardH*(wide?0.82:0.86));
       });
       const listBottom=wide?cardsY+cardH:cardsY+ids.length*cardH+(ids.length-1)*cardGap;
-      button('map_leave',localMapVote?'LEAVE MAP VOTE':'LEAVE MATCH',listBottom+cardGap,'#d05548');
+      if(!localMapVote)button('map_leave_match','LEAVE MATCH',listBottom+cardGap,'#d05548');
     }
   } else if(cpuTeamMode&&partyCpuMatch.phase==='match_end'){
     const me=partyCpuMatch.scores.allies||0,them=partyCpuMatch.scores.cpus||0;
@@ -1499,7 +1499,7 @@ function arenaClick(){
   const hit=r=>mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
   for(const r of arenaRects) if(r.enabled!==false&&hit(r)){
     if(r.mapId){ arenaCastMapVote(r.mapId); return; }
-    else if(r.id==='map_leave') leaveArena('Left the map vote.',false);
+    else if(r.id==='map_leave_match') leaveArena('Left the match.',false);
     else if(r.id==='teamrematch') cpuResultRematch('ai2v2');
     else if(r.id==='teamloadout'){
       if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
