@@ -1278,7 +1278,7 @@ function drawScores(){
       big('go_ban','\u26D4 BAN','temporary or permanent \u00b7 account / device / leaderboard',
           ['rgba(208,85,72,0.14)','rgba(208,85,72,0.32)','#d05548','#e0a8a0']);
     if(typeof adminNotificationComposerAvailable==='function'&&adminNotificationComposerAvailable())
-      big('go_message','\u2709 MESSAGE PLAYER','send by username or no-username account email',
+      big('go_message','\u2709 MESSAGE PLAYER','send by username or exact account email',
           ['rgba(191,168,255,0.14)','rgba(191,168,255,0.32)','#bfa8ff','#e5dcff']);
     y+=4;
     if(!canEditPlayer()) return peFooter(px,py,pw,ph);

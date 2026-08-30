@@ -170,7 +170,7 @@ profiles/scores tables:
 
 | File | Section | Purpose |
 | --- | --- | --- |
-| Admin 01 | Admin Menu | Secure username-based player lookup/editing, temporary and permanent grants, bans, appeals, approval requests, and the append-only audit LOG. |
+| Admin 01 | Admin Menu | Secure username-or-email player lookup/editing, temporary and permanent grants, bans, appeals, approval requests, and the append-only audit LOG. |
 | Admin 02 | Admins | Creator/Main/Co/Tester hierarchy, Add/Promote/Demote/Remove, Tester/Co weapon suggestions, heading/details global updates, and non-enumerable promo codes. |
 | Admin 03 | Inbox + Suggestions | Targeted player notifications, one-row global update notifications, staff messages, Archive/read state, Reports, report export, Realtime refresh hints, and LOG access through Admin 01. |
 
@@ -182,9 +182,11 @@ timestamp. Private tables use forced RLS and narrow column/RPC privileges.
 
 Admin 01 includes the former Appeals setup and the safe internal compatibility
 functions required by its audited wrapper. Private Auth email resolution occurs
-inside Postgres. Creator/Main may use or see the exact account email only when
-that account has no chosen username; Co-admins remain username-only except for
-their own fallback identity. Public and non-admin APIs remain email-free. On its first run,
+inside Postgres. Creator/Main may target any account by its exact email, but a
+chosen username remains the returned/displayed identity; email is displayed
+only as the fallback for an account without a username. Co-admins remain
+username-only except for their own fallback identity. Public and non-admin APIs
+remain email-free. On its first run,
 Admin 01 reads the creator username from the private, transaction-local
 `outpost_zero.creator_username` setting and pins that account's Auth UUID in a
 forced-RLS config row. The public file contains no creator identity. Existing

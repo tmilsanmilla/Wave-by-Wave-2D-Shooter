@@ -36,7 +36,8 @@ const AUTH_IDENTIFIER_FUNCTION='outpost-zero-sign-in';
 const AUTH_INVALID_CREDENTIALS='Email/username or password is incorrect. If you just signed up, verify your email first.';
 const AUTH_TRY_LATER='Too many sign-in attempts. Wait a moment and try again.';
 const AUTH_SIGNIN_SETUP='Username sign-in needs the secure Outpost Zero Edge Function deployed. Email sign-in is still available.';
-let authActionBusy=false,authActionEpoch=0;
+const AUTH_AMBIGUOUS_IDENTIFIER='AMBIGUOUS_IDENTIFIER';
+let authActionBusy=false,authActionEpoch=0,authAccountChoiceOpen=false;
 let accountSettingsOpen=false, accountSettingsRequiredUsername=false, accountSettingsBusy=false, accountSettingsUserId='', accountSettingsSection='menu', accountSettingsReturnFocus=null, accountSettingsEpoch=0;
 let accountMenuOpen=false, accountMenuConfirming=false, accountMenuBusy=false, accountMenuUserId='', accountMenuReturnView='';
 const $ = id => document.getElementById(id);
@@ -736,7 +737,8 @@ async function toggleAuth(options){
 function authElements(){
   if(typeof document==='undefined')return {};
   return {wrap:$('authwrap'),section:$('authsignin'),identifier:$('aidentifier'),password:$('apass'),
-    signIn:$('ain'),signUp:$('aup'),forgot:$('aforgot'),message:$('authmsg')};
+    signIn:$('ain'),signUp:$('aup'),forgot:$('aforgot'),message:$('authmsg'),choice:$('authaccountchoice'),
+    chooseEmail:$('achooseemail'),chooseUsername:$('achooseusername')};
 }
 function authIdentifierValue(){
   const el=authElements();return String(el.identifier&&el.identifier.value||'').trim();
@@ -750,9 +752,16 @@ function authIdentifierKind(raw){
 function authActionSync(){
   const el=authElements(),busy=!!authActionBusy;
   if(el.section&&el.section.classList)el.section.classList.toggle('busy',busy);
-  for(const control of [el.identifier,el.password,el.signIn,el.signUp])if(control)control.disabled=busy;
+  for(const control of [el.identifier,el.password,el.signIn,el.signUp,el.chooseEmail,el.chooseUsername])if(control)control.disabled=busy;
   if(el.forgot){el.forgot.setAttribute('aria-disabled',busy?'true':'false');el.forgot.tabIndex=busy?-1:0;}
   return busy;
+}
+function authAccountChoice(show=false,message=''){
+  const el=authElements();authAccountChoiceOpen=!!show;
+  if(el.choice)el.choice.hidden=!authAccountChoiceOpen;
+  const title=typeof document!=='undefined'?$('authaccountchoicetitle'):null;
+  if(title&&message)title.textContent=String(message);
+  return authAccountChoiceOpen;
 }
 function authActionCurrent(epoch){return !!epoch&&authActionBusy&&epoch===authActionEpoch;}
 function authActionStart(message){
@@ -768,6 +777,7 @@ function authActionFinish(epoch){
 function authActionCancel(clearPassword=false){
   ++authActionEpoch;authActionBusy=false;
   const el=authElements();if(clearPassword&&el.password)el.password.value='';
+  authAccountChoice(false);
   authActionSync();return true;
 }
 function authFunctionStatus(error){
@@ -783,14 +793,11 @@ function authSignInFailure(error,edge=false){
     return {ok:false,message:AUTH_INVALID_CREDENTIALS,reason:'credentials'};
   return {ok:false,message:'Could not reach sign-in. Check your connection and try again.',reason:'unavailable'};
 }
-async function authSignInWithIdentifier(rawIdentifier,password,epoch=authActionEpoch){
-  const kind=authIdentifierKind(rawIdentifier),identifier=String(rawIdentifier||'').trim();
-  if(!kind||!password)return {ok:false,message:'Email or username and password are required.',reason:'invalid'};
-  if(!sb)return {ok:false,message:'Sign-in unavailable here \u2014 works once deployed.',reason:'unavailable'};
-  if(kind==='email')try{
-    // Never let signInWithPassword mutate the shared client directly. This
-    // isolated client holds the returned session in memory only; the active
-    // epoch is checked before the shared client can install its tokens.
+async function authDirectEmailSignIn(identifier,password,epoch=authActionEpoch){
+  try{
+    // Availability fallback for a deployment where the Edge Function is not
+    // installed yet. A current deployment routes email through the function
+    // first so its credential-verified legacy-collision guard can run.
     const detached=authDetachedClient('signin',epoch);
     if(!detached)return {ok:false,message:'Email sign-in is temporarily unavailable. Reload and try again.',reason:'unavailable'};
     const result=await detached.auth.signInWithPassword({email:identifier,password});
@@ -803,25 +810,58 @@ async function authSignInWithIdentifier(rawIdentifier,password,epoch=authActionE
     const installed=await sb.auth.setSession({access_token:accessToken,refresh_token:refreshToken});
     return installed&&installed.error?authSignInFailure(installed.error):{ok:true};
   }catch(error){return authSignInFailure(error);}
+}
+async function authSignInWithIdentifier(rawIdentifier,password,epoch=authActionEpoch,accountKind=''){
+  const kind=authIdentifierKind(rawIdentifier),identifier=String(rawIdentifier||'').trim(),choice=String(accountKind||'');
+  if(!kind||!password||!['','email','username'].includes(choice)||
+     (choice==='email'&&kind!=='email'))
+    return {ok:false,message:'Email or username and password are required.',reason:'invalid'};
+  if(!sb)return {ok:false,message:'Sign-in unavailable here \u2014 works once deployed.',reason:'unavailable'};
   const normalized=kind==='username'?identifier.replace(/^@/,''):identifier;
   try{
     if(!sb.functions||typeof sb.functions.invoke!=='function')
-      return {ok:false,message:AUTH_SIGNIN_SETUP,reason:'setup'};
-    // Username resolution stays server-side so a public handle can never
-    // expose its account email. The shared client receives tokens only after
-    // this operation is still the active form epoch.
-    const result=await sb.functions.invoke(AUTH_IDENTIFIER_FUNCTION,{body:{identifier:normalized,password}});
+      return kind==='email'&&!choice?authDirectEmailSignIn(identifier,password,epoch):
+        {ok:false,message:AUTH_SIGNIN_SETUP,reason:'setup'};
+    // Both identity types go through the server so an email-shaped malformed
+    // legacy username can be detected without exposing either account. The
+    // shared client receives tokens only after the form epoch is still active.
+    const body={identifier:normalized,password};if(choice)body.account_kind=choice;
+    const result=await sb.functions.invoke(AUTH_IDENTIFIER_FUNCTION,{body});
     if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
-    if(result&&result.error)return authSignInFailure(result.error,true);
+    if(result&&result.error){
+      const failure=authSignInFailure(result.error,true);
+      return kind==='email'&&!choice&&failure.reason==='setup'
+        ?authDirectEmailSignIn(identifier,password,epoch):failure;
+    }
     const session=result&&result.data,keys=session&&typeof session==='object'?Object.keys(session).sort():[];
+    if(!choice&&session&&session.code===AUTH_AMBIGUOUS_IDENTIFIER)
+      return {ok:false,ambiguous:true,message:String(session.message||'Choose which account you want to sign in to.'),reason:'ambiguous'};
     if(keys.length!==2||keys[0]!=='access_token'||keys[1]!=='refresh_token'||
        typeof session.access_token!=='string'||!session.access_token||
        typeof session.refresh_token!=='string'||!session.refresh_token)
-      return {ok:false,message:'Username sign-in is temporarily unavailable. Try email sign-in instead.',reason:'unavailable'};
+      return {ok:false,message:'Sign-in is temporarily unavailable. Try again.',reason:'unavailable'};
     if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
     const installed=await sb.auth.setSession({access_token:session.access_token,refresh_token:session.refresh_token});
     return installed&&installed.error?authSignInFailure(installed.error):{ok:true};
   }catch(error){return authSignInFailure(error,true);}
+}
+async function authSubmitSignIn(accountKind=''){
+  const identifier=authIdentifierValue(),password=$('apass').value,choice=String(accountKind||'');
+  if(!authIdentifierKind(identifier)||!password){$('authmsg').textContent='Email or username and password are required.';return false;}
+  if(!choice)authAccountChoice(false);
+  const epoch=authActionStart(choice?'SIGNING IN TO '+choice.toUpperCase()+' ACCOUNT\u2026':'SIGNING IN\u2026');if(!epoch)return false;
+  const result=await authSignInWithIdentifier(identifier,password,epoch,choice);
+  if(!authActionFinish(epoch)||result.stale)return false;
+  if(result.ambiguous){
+    authAccountChoice(true,result.message);
+    $('authmsg').textContent='CHOOSE EMAIL ACCOUNT OR USERNAME ACCOUNT';
+    try{$('achooseemail').focus();}catch(error){}
+    return false;
+  }
+  if(result.ok)authAccountChoice(false);
+  else if(choice&&result.reason==='credentials')authAccountChoice(true);
+  $('authmsg').textContent=result.ok?'SIGNED IN\u2026':result.message;
+  return !!result.ok;
 }
 function authDetachedClient(purpose,epoch){
   const factory=typeof window!=='undefined'&&window.supabase;
@@ -1212,16 +1252,13 @@ function bindDomEvents(){
   $('authmsg').textContent='';
   $('authwrap').style.display='none';
   };
-  for(const id of ['aidentifier','apass'])
+  for(const id of ['aidentifier','apass']){
+    $(id).addEventListener('input',()=>authAccountChoice(false));
     $(id).addEventListener('keydown', e=>{ if(e.key==='Enter'){e.preventDefault();$('ain').click();} });
-  $('ain').onclick = async ()=>{
-  const identifier=authIdentifierValue(),password=$('apass').value;
-  if(!authIdentifierKind(identifier)||!password){$('authmsg').textContent='Email or username and password are required.';return;}
-  const epoch=authActionStart('SIGNING IN\u2026');if(!epoch)return;
-  const result=await authSignInWithIdentifier(identifier,password,epoch);
-  if(!authActionFinish(epoch)||result.stale)return;
-  $('authmsg').textContent=result.ok?'SIGNED IN\u2026':result.message;
-  };
+  }
+  $('ain').onclick = ()=>authSubmitSignIn('');
+  $('achooseemail').onclick = ()=>authSubmitSignIn('email');
+  $('achooseusername').onclick = ()=>authSubmitSignIn('username');
   $('aup').onclick = async ()=>{
   const identifier=authIdentifierValue(),password=$('apass').value;
   if(authIdentifierKind(identifier)!=='email'){

@@ -209,8 +209,9 @@ function enforceAdminRolePrivacy(previousRank=''){
   else if(typeof enforceReaderAccess==='function')enforceReaderAccess();
 }
 let lookupBtnRect=null;
-// Player targets use a username, or an email only for legacy accounts that do
-// not yet have one. Admin-only RPCs validate and resolve the identifier.
+// Player targets use a username or, for Creator/Main, an exact account email.
+// Admin-only RPCs resolve it without returning that private email when a
+// public username exists.
 function canSeeStats(){ return canUsePlayerTools(); }
 function canEditPlayer(){ return isMainAdmin(); }
 function canEditLoadedPlayer(){ return canEditPlayer()&&peData&&!peData.publicOnly; }
@@ -600,7 +601,8 @@ function openScoreEdit(){
   $('pban').value='';
   $('pscope_account').checked=true; $('pscope_device').checked=false; $('pscope_board').checked=false;
   const banning = peMode==='ban';
-  // Username-less legacy accounts may be selected by their account email.
+  // Creator/Main may select any account by its exact email. Co-admins remain
+  // username-only so private account addresses are not exposed to that tier.
   for(const id of ['scoreval','pgems','pcoins','pgrant','prevoke']) $(id).style.display='none';
   $('pban').style.display   = banning?'':'none';
   $('pscopes').style.display= banning?'':'none';
@@ -614,9 +616,9 @@ function openScoreEdit(){
   targetInput.autocapitalize='none';
   const privateLookup=typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin(),allowEmail=isMainAdmin();
   $('scorehint').textContent = allowEmail
-    ? (banning?'Enter the username, or the email if no username exists, then choose the ban details.':'Enter the username, or the email if that account has no username.')
+    ? (banning?'Enter the username or exact account email, then choose the ban details.':'Enter the username or exact account email.')
     : 'Enter the player\u2019s username.';
-  targetInput.placeholder=allowEmail?'username or no-username email':'username';
+  targetInput.placeholder=allowEmail?'username or exact account email':'username';
   $('scoresend').textContent = banning ? (canBan()?'BAN':'REQUEST BAN') : 'LOOK UP';
   scoreEditBusy=false;scoreEditOperationReceipt=null;$('scoresend').disabled=false;
   try{ $('scoreemail').focus(); }catch(e){}
@@ -626,7 +628,7 @@ function itemList(v){
 }
 function buildPatch(){                                // read the form into a patch, or return an error
   const username=adminAccountIdentifier($('scoreemail').value);
-  if(!username) return {err:'enter a username, or an email for an account without one'};
+  if(!username) return {err:'enter a username or exact account email'};
   const num=(id,cap)=>{ const raw=String($(id).value||'').trim();
     if(raw==='') return null; return Math.max(0, Math.min(cap, Math.round(+raw||0))); };
   const pt={};
@@ -682,7 +684,7 @@ async function submitScoreEdit(){
       query=privateLookup?adminAccountIdentifier(rawQuery):rawQuery.replace(/^@/,'');
     if(privateLookup){
       if(!query||(typeof cleanAccountEmail==='function'&&cleanAccountEmail(query)&&!isMainAdmin())){
-        $('scorestatus').textContent=isMainAdmin()?'enter a username or no-username account email':'enter a valid username';return;
+        $('scorestatus').textContent=isMainAdmin()?'enter a username or exact account email':'enter a valid username';return;
       }
     } else if(!/^[A-Za-z0-9_]{3,32}$/.test(query)){
       $('scorestatus').textContent='enter a valid username'; return;
@@ -1083,10 +1085,10 @@ function adminOpenPlayerTargetMessage(username=''){
   if(!target){
     const owner=currentAuthUserId(),epoch=adminPrivacyEpoch;
     adminNotificationTargetFormOpen=true;
-    openForm({title:'MESSAGE A PLAYER',hint:'Enter the username, or the account email only when that player has no username.',saveLabel:'WRITE MESSAGE',
-      fields:[{id:'username',label:'USERNAME OR NO-USERNAME EMAIL',type:'text',placeholder:'operator_7 or account email'}],onSave:values=>{
+    openForm({title:'MESSAGE A PLAYER',hint:'Enter the username or exact account email.',saveLabel:'WRITE MESSAGE',
+      fields:[{id:'username',label:'USERNAME OR EMAIL',type:'text',placeholder:'operator_7 or exact account email'}],onSave:values=>{
         if(!adminPrivacyRequestCurrent(epoch,owner)||!isMainAdmin()){adminNotificationTargetFormOpen=false;closeForm();return false;}
-        const chosen=adminNotificationUsername(values.username);if(!chosen){formError('Enter a username, or an email for an account without one.');return false;}
+        const chosen=adminNotificationUsername(values.username);if(!chosen){formError('Enter a username or exact account email.');return false;}
         adminNotificationTargetFormOpen=false;closeForm();return adminOpenPlayerTargetMessage(chosen);
       },onCancel:()=>{adminNotificationTargetFormOpen=false;}});return true;
   }
@@ -1111,7 +1113,7 @@ async function sendAdminPlayerNotification(){
   const contextCurrent=()=>adminPrivacyRequestCurrent(epoch,owner)&&isMainAdmin()&&msgOpen&&msgKind==='player_notification'&&
     adminNotificationComposerEpoch===composerEpoch&&adminNotificationTargetUsername===target;
   if(!contextCurrent()||!adminNotificationComposerAvailable()){$('msgstatus').textContent='Admin 03 Inbox or creator/main access is required.';return false;}
-  if(!target){$('msgstatus').textContent='Choose a valid username or no-username account email.';return false;}
+  if(!target){$('msgstatus').textContent='Choose a valid username or exact account email.';return false;}
   if(subject.length<1||subject.length>80){$('msgstatus').textContent='Subject must be 1–80 characters.';return false;}
   if(message.length<1||message.length>600){$('msgstatus').textContent='Message must be 1–600 characters.';return false;}
   const fingerprint=target.toLowerCase()+'\n'+subject+'\n'+message;
@@ -1145,7 +1147,7 @@ async function sendAdminPlayerNotification(){
     if(!contextCurrent()||adminNotificationSendOp!==op)return false;
     const text=String(error&&error.message||error||'').toUpperCase();
     $('msgstatus').textContent=/RATE_LIMIT/.test(text)?'Too many messages. Try again later.':
-      /TARGET_UNAVAILABLE/.test(text)?'That username or no-username account email is unavailable.':
+      /TARGET_UNAVAILABLE/.test(text)?'That username or account email is unavailable.':
       /ADMIN 03 INBOX/.test(text)?'Run Admin 03 Inbox before sending player messages.':'Could not send. Review the message and try again.';
     return false;
   }finally{
@@ -1567,11 +1569,11 @@ async function demoteAdmin(username){
 }
 function addAdmin(){
   if(!canManageAdmins())return false;
-  openForm({title:'ADD ADMIN',hint:'Use the public username, or the account email only if no username exists. Testers get Test Mode and Admin Inbox.',saveLabel:'ADD',
-    fields:[{id:'username',label:'USERNAME OR NO-USERNAME EMAIL',type:'text',placeholder:'player_username or account email'},{id:'role',label:'STARTING TIER',type:'select',value:'tester',options:[{value:'tester',label:'TESTER · LIMITED'},{value:'co',label:'CO-ADMIN · SHARED TOOLS'}]}],
+  openForm({title:'ADD ADMIN',hint:'Use the public username or exact account email. Testers get Test Mode and Admin Inbox.',saveLabel:'ADD',
+    fields:[{id:'username',label:'USERNAME OR EMAIL',type:'text',placeholder:'player_username or exact account email'},{id:'role',label:'STARTING TIER',type:'select',value:'tester',options:[{value:'tester',label:'TESTER · LIMITED'},{value:'co',label:'CO-ADMIN · SHARED TOOLS'}]}],
     onSave:async values=>{
       const username=adminAccountIdentifier(values.username).toLowerCase(),role=values.role==='co'?'co':'tester';
-      if(!username){formError('Enter a username, or an email for an account without one.');return false;}
+      if(!username){formError('Enter a username or exact account email.');return false;}
       if(!sb){adminRoles[username]=role;closeForm();return true;}
       $('formstatus').textContent='adding '+role+'…';
       try{

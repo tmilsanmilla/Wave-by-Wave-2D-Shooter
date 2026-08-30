@@ -1,11 +1,17 @@
-# Secure username sign-in
+# Secure email-or-username sign-in
 
-Outpost Zero signs email addresses in through Supabase Auth directly. A public
-username cannot be resolved to its private email in browser code, so username
-sign-in goes through the `outpost-zero-sign-in` Edge Function in this folder.
-The function returns only session tokens after Supabase Auth accepts the
-password. It never returns or logs the resolved email, account UUID, password,
-or raw Auth error.
+Outpost Zero sends both email and username sign-in through the
+`outpost-zero-sign-in` Edge Function. A public username is resolved to its
+private Auth email only inside that function. The function returns only session
+tokens after Supabase Auth accepts the password; it never returns or logs the
+resolved email, account UUID, password, or raw Auth error.
+
+Current usernames contain only letters, numbers, and underscores, so they
+cannot equal an email address. The function still protects malformed legacy
+data: if one email-shaped value authenticates an email account and is also the
+exact username of a different account, it returns a generic account-choice
+prompt only after credential verification. The selected account kind is then
+authenticated explicitly. This avoids account-existence disclosure.
 
 ## Deploy once
 

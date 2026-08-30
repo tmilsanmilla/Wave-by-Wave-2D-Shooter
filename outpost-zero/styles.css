@@ -39,6 +39,11 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   #authbox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
   #authsignin .btn{min-height:42px}
   #authsignin.busy input,#authsignin.busy .btn{opacity:.55;cursor:wait}
+  #authaccountchoice{border:1px solid #d05548;background:rgba(208,85,72,.08);padding:10px;margin:0 0 10px}
+  #authaccountchoice[hidden]{display:none}
+  #authaccountchoice p{color:#e0a8a0;font-size:10px;margin:0 0 8px;text-align:center}
+  #authaccountchoice .btn{min-height:36px;margin-bottom:6px}
+  #authaccountchoice .btn:last-child{margin-bottom:0}
   #authmsg{color:#a7c15e;font-size:11px;min-height:15px;margin-top:4px}
   #usernameclaimwrap{inset:0;background:rgba(5,6,4,.96);display:none;align-items:center;justify-content:center;z-index:100}
   #usernameclaimbox{background:#101208;border:1px solid #e8b658;padding:clamp(20px,6vw,30px);

@@ -929,9 +929,9 @@ end;
 $weapon_write_boundary$;
 
 -- Browser-safe staff identity boundary. Chosen usernames remain primary. An
--- exact Auth email may be accepted only by Creator/Main for an account without
--- a chosen username; roster output exposes that fallback only to Creator/Main
--- or to the same non-main staff account viewing itself.
+-- any exact Auth email may be accepted only by Creator/Main; roster output
+-- remains username-first and exposes an email fallback only to Creator/Main or
+-- to the same non-main staff account viewing itself.
 create or replace function public._outpost_zero_staff_target_email_for_username(p_username text)
 returns text
 language plpgsql
@@ -961,13 +961,7 @@ begin
   end if;
   select lower(btrim(u.email)) into v_email
   from auth.users u
-  left join public.social_profiles chosen on chosen.user_id=u.id
-    and chosen.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and chosen.handle_key not in ('username_not_set','usernamenotset')
-    and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),20)
-    and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),8)
   where lower(btrim(u.email))=lower(btrim(p_username))
-    and chosen.user_id is null
   limit 1;
   return v_email;
 end;

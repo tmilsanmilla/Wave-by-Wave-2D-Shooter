@@ -59,13 +59,17 @@ for(const [label,resolver] of [
   ['Admin 02 staff resolver',admin02Resolver],
   ['Admin 03 target resolver',targetResolver]
 ]){
-  assert.match(resolver,/left join public\.social_profiles chosen/,
-    `${label} must test whether an account already chose a username`);
-  assert.match(resolver,/and chosen\.user_id is null/,
-    `${label} must accept exact email only for a username-less account`);
+  assert.match(resolver,/from auth\.users u[\s\S]*where lower\(btrim\(u\.email\)\)=lower\(/,
+    `${label} must accept an exact authoritative Auth email`);
+  assert.doesNotMatch(resolver,/left join public\.social_profiles chosen|chosen\.user_id is null/,
+    `${label} must not reject an exact email merely because the account has a username`);
   assert.match(resolver,/char_length\([\s\S]*between 3 and 320/,
     `${label} must bound supplied identity text`);
 }
+assert.match(admin01Resolver,/if v_actor_role not in \('creator','main'\)[\s\S]*return null/,
+  'Admin 01 email targeting must remain Creator/Main-only while Co stays username-only');
+assert.match(admin02Resolver,/_outpost_zero_staff_role\(\) not in \('creator','main'\)/,
+  'Admin 02 email targeting must remain Creator/Main-only');
 assert.match(targetResolver,/not in \('creator','main'\)/,
   'Admin 03 private identity resolution must be Creator/Main-only');
 assert.match(targetResolver,/p_staff_only[\s\S]*in \('main','co','tester'\)/,
@@ -120,4 +124,4 @@ for(const [name,sql] of [['Admin 02',admin02],['Admin 03',admin03]]){
     `${name} must reload PostgREST only inside the successful transaction`);
 }
 
-console.log('PASS admin identity email fallbacks are role-gated, bounded, and username-first');
+console.log('PASS exact-email admin targeting is role-gated, bounded, private, and username-first');

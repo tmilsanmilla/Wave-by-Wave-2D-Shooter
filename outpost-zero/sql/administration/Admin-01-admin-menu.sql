@@ -2466,8 +2466,9 @@ revoke all on function public.list_outpost_zero_admin_identity_labels(uuid[]) fr
 grant execute on function public.list_outpost_zero_admin_identity_labels(uuid[]) to authenticated;
 
 -- Username-addressed wrappers keep Auth emails server-side. Creator/Main may
--- also supply the exact email of an account that has no chosen username;
--- Co-admins retain username lookup only.
+-- also supply any account's exact email; results remain username-first and
+-- email-free whenever that account has a chosen username. Co-admins retain
+-- username lookup only.
 do $preflight$
 begin
   if to_regclass('public.social_profiles') is null then
@@ -2521,13 +2522,7 @@ begin
   end if;
   select lower(btrim(u.email)) into v_email
   from auth.users u
-  left join public.social_profiles chosen on chosen.user_id=u.id
-    and chosen.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and chosen.handle_key not in ('username_not_set','usernamenotset')
-    and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),20)
-    and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),8)
   where lower(btrim(u.email))=lower(v_input)
-    and chosen.user_id is null
   limit 1;
   return v_email;
 end;

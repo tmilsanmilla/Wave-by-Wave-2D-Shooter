@@ -213,10 +213,10 @@ alter table public.outpost_zero_notifications
   add constraint outpost_zero_notifications_message_length
     check(char_length(message) between 1 and 4000);
 
--- Creator/Main may address a username-less account by its exact Auth email.
--- Preserve the historical column name for compatibility, but widen only the
--- manual admin-message label shape; every other notification still requires a
--- public username or NULL.
+-- Creator/Main receipts may display an exact Auth email only as the fallback
+-- for a username-less account. Preserve the historical column name for
+-- compatibility, but widen only the manual admin-message label shape; every
+-- other notification still requires a public username or NULL.
 alter table public.outpost_zero_notifications
   drop constraint if exists outpost_zero_notifications_recipient_username;
 alter table public.outpost_zero_notifications
@@ -620,8 +620,9 @@ after insert or update of status on public.friendships
 for each row execute function public._outpost_zero_notify_friendship();
 
 -- Resolve one Creator/Main-supplied identity without ever making email search
--- public. Usernames are preferred. An exact email is accepted only when that
--- account has no chosen username; optional staff scoping protects Admin Inbox.
+-- public. Usernames are preferred. Creator/Main may supply any account's exact
+-- email; output remains username-first. Optional staff scoping protects Admin
+-- Inbox recipients.
 create or replace function public._outpost_zero_admin_target_user_id(
   p_identity text,
   p_staff_only boolean default false
@@ -653,13 +654,7 @@ begin
         and v_input ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
     select u.id into v_target
     from auth.users u
-    left join public.social_profiles chosen on chosen.user_id=u.id
-      and chosen.handle ~ '^[A-Za-z0-9_]{3,32}$'
-      and chosen.handle_key not in ('username_not_set','usernamenotset')
-      and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),20)
-      and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),8)
     where lower(btrim(u.email))=lower(v_input)
-      and chosen.user_id is null
     limit 1;
   end if;
   if v_target is null or not coalesce(p_staff_only,false) then return v_target;end if;
@@ -676,7 +671,7 @@ revoke all on function public._outpost_zero_admin_target_user_id(text,boolean)
   from public,anon,authenticated;
 
 -- Creator/main-only targeted message. The recipient may be a chosen username
--- or the exact email of an account that has no chosen username.
+-- or any account's exact email; the receipt remains username-first.
 -- One operation UUID is exact-once for one actor and exact payload.
 create or replace function public.send_outpost_zero_admin_notification(
   p_recipient_username text,

@@ -4,6 +4,7 @@ const INVALID_MESSAGE =
   'Email/username or password is incorrect. If you just signed up, verify your email first.'
 const TRY_LATER_MESSAGE = 'Too many sign-in attempts. Wait a moment and try again.'
 const UNAVAILABLE_MESSAGE = 'Sign-in is temporarily unavailable. Try again later.'
+const AMBIGUOUS_MESSAGE = 'These credentials match two accounts. Choose the email account or username account.'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -88,13 +89,26 @@ function clientIp(request: Request): string {
   return ''
 }
 
-function classifyIdentifier(raw: unknown): { kind: 'email' | 'username'; value: string } | null {
+function classifyIdentifier(
+  raw: unknown,
+  requestedKind: unknown = '',
+): { kind: 'email' | 'username'; value: string } | null {
   if (typeof raw !== 'string') return null
   const value = raw.trim()
   if (!value || value.length > 254 || /\s/.test(value)) return null
-  if (!value.startsWith('@') && /^[^@]+@[^@]+$/.test(value)) return { kind: 'email', value }
+  const email = !value.startsWith('@') && /^[^@]+@[^@]+$/.test(value)
   const username = value.replace(/^@/, '')
-  return /^[A-Za-z0-9_]{3,32}$/.test(username) ? { kind: 'username', value: username } : null
+  const normalUsername = /^[A-Za-z0-9_]{3,32}$/.test(username)
+  if (requestedKind === 'email') return email ? { kind: 'email', value } : null
+  // Email-shaped usernames cannot be created now. This explicit mode exists
+  // only so a credential-verified collision with malformed legacy data can be
+  // resolved without weakening the current username rules.
+  if (requestedKind === 'username') {
+    return normalUsername || email ? { kind: 'username', value: normalUsername ? username : value } : null
+  }
+  if (requestedKind !== '' && requestedKind != null) return null
+  if (email) return { kind: 'email', value }
+  return normalUsername ? { kind: 'username', value: username } : null
 }
 
 const ZERO_USER_ID = '00000000-0000-0000-0000-000000000000'
@@ -124,6 +138,52 @@ async function resolvedUsernameTarget(
   }
 }
 
+type PasswordGrant =
+  | { status: 'ok'; session: Record<string, unknown> }
+  | { status: 'rate'; retryAfter: string }
+  | { status: 'invalid' }
+
+async function passwordGrant(
+  url: string,
+  secretKey: string,
+  request: Request,
+  email: string,
+  password: string,
+): Promise<PasswordGrant> {
+  const authHeaders: Record<string, string> = {
+    apikey: secretKey,
+    'Content-Type': 'application/json',
+  }
+  const forwardedFor = clientIp(request)
+  if (forwardedFor) authHeaders['Sb-Forwarded-For'] = forwardedFor
+  const authResponse = await fetch(`${url}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: authHeaders,
+    body: JSON.stringify({ email, password }),
+  })
+  if (authResponse.status === 429) {
+    const retryAfter = authResponse.headers.get('retry-after') || ''
+    return { status: 'rate', retryAfter: /^\d{1,6}$/.test(retryAfter) ? retryAfter : '' }
+  }
+  if (!authResponse.ok) return { status: 'invalid' }
+  return { status: 'ok', session: await authResponse.json() }
+}
+
+function sessionIdentity(session: Record<string, unknown>): string {
+  const user = session?.user
+  return user && typeof user === 'object' && typeof (user as Record<string, unknown>).id === 'string'
+    ? String((user as Record<string, unknown>).id)
+    : ''
+}
+
+function sessionResponse(session: Record<string, unknown>) {
+  const accessToken = typeof session?.access_token === 'string' ? session.access_token : ''
+  const refreshToken = typeof session?.refresh_token === 'string' ? session.refresh_token : ''
+  return accessToken && refreshToken
+    ? json(200, { access_token: accessToken, refresh_token: refreshToken })
+    : json(503, { code: 'SIGN_IN_UNAVAILABLE', message: UNAVAILABLE_MESSAGE })
+}
+
 Deno.serve(async (request: Request) => {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders })
   if (request.method !== 'POST') return json(405, { code: 'METHOD_NOT_ALLOWED', message: UNAVAILABLE_MESSAGE })
@@ -136,7 +196,7 @@ Deno.serve(async (request: Request) => {
   const contentLength = Number(request.headers.get('content-length') || 0)
   if (contentLength > 4096) return json(401, { code: 'INVALID_CREDENTIALS', message: INVALID_MESSAGE })
 
-  let body: { identifier?: unknown; password?: unknown }
+  let body: { identifier?: unknown; password?: unknown; account_kind?: unknown }
   try {
     const raw = await request.text()
     if (raw.length > 4096) throw new Error('body too large')
@@ -145,7 +205,8 @@ Deno.serve(async (request: Request) => {
     return json(401, { code: 'INVALID_CREDENTIALS', message: INVALID_MESSAGE })
   }
 
-  const identifier = classifyIdentifier(body?.identifier)
+  const requestedKind = body?.account_kind == null ? '' : body.account_kind
+  const identifier = classifyIdentifier(body?.identifier, requestedKind)
   const password = typeof body?.password === 'string' ? body.password : ''
   if (!identifier || !password || password.length > 1024) {
     return json(401, { code: 'INVALID_CREDENTIALS', message: INVALID_MESSAGE })
@@ -159,49 +220,57 @@ Deno.serve(async (request: Request) => {
     const admin = createClient(url, secretKey, {
       auth: { autoRefreshToken: false, detectSessionInUrl: false, persistSession: false },
     })
-    const target = identifier.kind === 'email'
-      ? { email: identifier.value, userId: '' }
-      : await resolvedUsernameTarget(admin, identifier.value)
+    // Email-shaped usernames cannot be created under the current Social rules,
+    // but an old malformed row may still exist. Resolve it on every email
+    // attempt, then reveal a collision only after valid credentials prove the
+    // caller controls one of the accounts.
+    const usernameTarget = identifier.kind === 'username'
+      ? await resolvedUsernameTarget(admin, identifier.value)
+      : requestedKind === 'email'
+        ? { email: '', userId: '' }
+        : await resolvedUsernameTarget(admin, identifier.value)
+    const authEmail = identifier.kind === 'email'
+      ? identifier.value
+      : usernameTarget.email || 'missing-account@invalid.outpost-zero.local'
+    let grant = await passwordGrant(url, secretKey, request, authEmail, password)
 
-    // Unknown usernames still take the normal Auth password path. This keeps
-    // the outward response and Auth rate-limit behavior identical while never
-    // disclosing whether a username exists or which private email it maps to.
-    const authEmail = target.email || 'missing-account@invalid.outpost-zero.local'
-    const authHeaders: Record<string, string> = {
-      apikey: secretKey,
-      'Content-Type': 'application/json',
-    }
-    const forwardedFor = clientIp(request)
-    if (forwardedFor) authHeaders['Sb-Forwarded-For'] = forwardedFor
-    const authResponse = await fetch(`${url}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: authHeaders,
-      body: JSON.stringify({ email: authEmail, password }),
-    })
-
-    if (authResponse.status === 429) {
-      const retryAfter = authResponse.headers.get('retry-after')
-      const headers = retryAfter && /^\d{1,6}$/.test(retryAfter) ? { 'Retry-After': retryAfter } : {}
+    if (grant.status === 'rate') {
+      const headers = grant.retryAfter ? { 'Retry-After': grant.retryAfter } : {}
       return json(429, { code: 'TRY_LATER', message: TRY_LATER_MESSAGE }, headers)
     }
-    if (!authResponse.ok) {
+
+    // If an email-shaped identifier did not authenticate as email but is also
+    // an exact legacy username, try that username target without returning its
+    // private mapped email to the browser.
+    if (grant.status === 'invalid' && identifier.kind === 'email' && requestedKind === '' && usernameTarget.userId) {
+      grant = await passwordGrant(url, secretKey, request, usernameTarget.email, password)
+      if (grant.status === 'rate') {
+        const headers = grant.retryAfter ? { 'Retry-After': grant.retryAfter } : {}
+        return json(429, { code: 'TRY_LATER', message: TRY_LATER_MESSAGE }, headers)
+      }
+    }
+    if (grant.status !== 'ok') {
       return json(401, { code: 'INVALID_CREDENTIALS', message: INVALID_MESSAGE })
     }
 
-    const session = await authResponse.json()
-    const accessToken = typeof session?.access_token === 'string' ? session.access_token : ''
-    const refreshToken = typeof session?.refresh_token === 'string' ? session.refresh_token : ''
-    const authenticatedUserId = typeof session?.user?.id === 'string' ? session.user.id : ''
+    const authenticatedUserId = sessionIdentity(grant.session)
     // A username must authenticate the exact Auth user referenced by the
     // canonical Social profile read above. This rejects a stale/swapped
     // resolver result and also makes every unknown username fail closed.
-    if (identifier.kind === 'username' && (!target.userId || authenticatedUserId !== target.userId)) {
+    if (identifier.kind === 'username' && (!usernameTarget.userId || authenticatedUserId !== usernameTarget.userId)) {
       return json(401, { code: 'INVALID_CREDENTIALS', message: INVALID_MESSAGE })
     }
-    if (!accessToken || !refreshToken) {
-      return json(503, { code: 'SIGN_IN_UNAVAILABLE', message: UNAVAILABLE_MESSAGE })
+
+    if (identifier.kind === 'email' && requestedKind === '' && usernameTarget.userId &&
+        authenticatedUserId !== usernameTarget.userId) {
+      return json(200, {
+        code: 'AMBIGUOUS_IDENTIFIER',
+        message: AMBIGUOUS_MESSAGE,
+        email_choice: 'EMAIL ACCOUNT',
+        username_choice: 'USERNAME ACCOUNT',
+      })
     }
-    return json(200, { access_token: accessToken, refresh_token: refreshToken })
+    return sessionResponse(grant.session)
   } catch {
     // Never log or return credentials, resolved email, UUID, or raw Auth errors.
     return json(503, { code: 'SIGN_IN_UNAVAILABLE', message: UNAVAILABLE_MESSAGE })
