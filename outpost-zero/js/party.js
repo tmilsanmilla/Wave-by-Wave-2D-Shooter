@@ -1196,7 +1196,7 @@ function offlineCpu2v2RoundTick(){
   }
   if(partyCpuMatch.phase==='fight'&&now>=partyCpuMatch.roundEndAt){
     const alliesHp=partyCpuActors('A').reduce((total,a)=>total+a.hp,0),cpusHp=partyCpuActors('B').reduce((total,a)=>total+a.hp,0);
-    offlineCpu2v2Resolve(alliesHp===cpusHp?null:(alliesHp>cpusHp?'allies':'cpus'));
+    offlineCpu2v2Resolve(arenaTimeoutWinner('allies',alliesHp,'cpus',cpusHp));
   }
   if(partyCpuMatch.phase==='round_end'&&partyCpuMatch.nextRoundAt&&now>=partyCpuMatch.nextRoundAt){
     partyCpuMatch.nextRoundAt=0;offlineCpu2v2BeginRound();
@@ -1534,17 +1534,20 @@ function partyCpuWallTick(clock){
   }
   if(!isPartyCpuMatch()) return;
   if(partyCpuMatch.phase==='countdown'&&clock>=partyCpuMatch.roundStartAt){ partyCpuMatch.phase='fight';arena.phase='fight';waveMsg='FIGHT';waveMsgT=now+800; }
-  if(partyCpuIsHost()&&partyCpuMatch.phase==='fight'&&clock>=partyCpuMatch.roundEndAt){
-    const ahp=partyCpuActors('A').reduce((n,a)=>n+a.hp,0),bhp=partyCpuActors('B').reduce((n,a)=>n+a.hp,0);
-    partyCpuHostResolve(ahp===bhp?null:(ahp>bhp?'allies':'cpus'));
-  }
   if(partyCpuIsHost()&&partyCpuMatch.phase==='round_end'&&partyCpuMatch.nextRoundAt&&clock>=partyCpuMatch.nextRoundAt){ partyCpuMatch.nextRoundAt=0;partyCpuHostStartRound(); }
-  const elapsed=partyCpuMatch.simAt?clamp(clock-partyCpuMatch.simAt,0,250):16.667; partyCpuMatch.simAt=clock;partyCpuMatch.simAcc+=elapsed;
+  // Advance authority only through the exact deadline before comparing HP.
+  // The old order resolved first and could omit the final pre-timeout step.
+  const simLimit=partyCpuMatch.phase==='fight'?Math.min(clock,partyCpuMatch.roundEndAt):clock;
+  const elapsed=partyCpuMatch.simAt?clamp(simLimit-partyCpuMatch.simAt,0,250):16.667; partyCpuMatch.simAt=simLimit;partyCpuMatch.simAcc+=elapsed;
   let steps=0; while(partyCpuMatch.simAcc>=PARTY_CPU_STEP&&steps<8){
-    const stepClock=(partyCpuMatch.simClock||clock-elapsed)+PARTY_CPU_STEP;
+    const stepClock=(partyCpuMatch.simClock||simLimit-elapsed)+PARTY_CPU_STEP;
     partyCpuFixedStep(PARTY_CPU_STEP,stepClock);partyCpuMatch.simAcc-=PARTY_CPU_STEP;steps++;
   }
   if(steps===8&&partyCpuMatch.simAcc>=PARTY_CPU_STEP)partyCpuMatch.simAcc=0;
+  if(partyCpuIsHost()&&partyCpuMatch.phase==='fight'&&clock>=partyCpuMatch.roundEndAt){
+    const ahp=partyCpuActors('A').reduce((n,a)=>n+a.hp,0),bhp=partyCpuActors('B').reduce((n,a)=>n+a.hp,0);
+    partyCpuHostResolve(arenaTimeoutWinner('allies',ahp,'cpus',bhp));
+  }
   const alpha=1-Math.pow(.78,elapsed/16.667);
   for(const h of Object.values(partyCpuMatch.humans)) if(!party.self||h.id!==party.self.id){ h.x+=(h.tx-h.x)*alpha;h.y+=(h.ty-h.y)*alpha; }
   if(!partyCpuIsHost()) for(const b of partyCpuMatch.bots){ b.x+=(b.tx-b.x)*alpha;b.y+=(b.ty-b.y)*alpha; }

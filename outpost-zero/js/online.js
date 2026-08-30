@@ -350,6 +350,51 @@ function arenaSend(event,payload){
   const body=Object.assign({from:authUser.id,room:arena.room,epoch:arena.matchEpoch,round:arena.round},payload||{});
   try{ return arena.matchChannel.send({type:'broadcast',event,payload:body}); }catch(e){ return null; }
 }
+function arenaTimeoutHpId(epoch=arena.matchEpoch,round=arena.round){
+  return Math.floor(+epoch||0)+':'+Math.floor(+round||0)+':timeout-hp';
+}
+function arenaResetTimeoutHp(epoch=arena.matchEpoch,round=arena.round){
+  arena.timeoutHpId=arenaTimeoutHpId(epoch,round);arena.timeoutHp=new Map();arena.timeoutHpNextAt=0;
+  arena.timeoutOpponentHp=null;return arena.timeoutHp;
+}
+function arenaTimeoutHpLedger(){
+  const id=arenaTimeoutHpId();
+  if(arena.timeoutHpId!==id||!(arena.timeoutHp instanceof Map))arenaResetTimeoutHp();
+  return arena.timeoutHp;
+}
+function arenaApplyTimeoutHp(p){
+  if(!p||!arena||!authUser||!arena.opponent||String(authUser.id)!==String(arena.hostId)||
+     arena.phase!=='fight'||Date.now()<arena.roundEndAt||p.round!==arena.round||
+     Math.floor(+p.epoch||0)!==arena.matchEpoch||String(p.from||'')!==String(arena.opponent.id)||
+     String(p.timeoutId||'')!==arenaTimeoutHpId())return false;
+  const hp=Number.isFinite(+p.hp)?clamp(+p.hp,0,ARENA_HP):null;if(hp===null)return false;
+  const ledger=arenaTimeoutHpLedger(),from=String(p.from);
+  if(ledger.has(from))return Math.abs(ledger.get(from)-hp)<1e-6;
+  ledger.set(from,hp);return true;
+}
+function arenaTimeoutTick(clock=Date.now()){
+  if(!arena||!authUser||!arena.opponent||arena.phase!=='fight'||clock<arena.roundEndAt)return false;
+  const ledger=arenaTimeoutHpLedger(),me=String(authUser.id),opponent=String(arena.opponent.id);
+  if(!ledger.has(me)){
+    ledger.set(me,clamp(+player.hp||0,0,ARENA_HP));
+    arena.timeoutOpponentHp=clamp(+arena.opponent.hp||0,0,ARENA_HP);
+  }
+  const localHp=ledger.get(me);
+  if(clock>=Math.max(0,+arena.timeoutHpNextAt||0)){
+    arena.timeoutHpNextAt=clock+ARENA_TIMEOUT_HP_RETRY_MS;
+    arenaSend('round_timeout_hp',{timeoutId:arenaTimeoutHpId(),hp:localHp});
+  }
+  if(me!==String(arena.hostId))return true;
+  const hasRemote=ledger.has(opponent),fallback=clock>=arena.roundEndAt+ARENA_TIMEOUT_HP_FALLBACK_MS;
+  if(arena.hazardArbitrations instanceof Map&&arena.hazardArbitrations.size){
+    if(!fallback)return true;
+    for(const pending of arena.hazardArbitrations.values())if(pending&&pending.timer)clearTimeout(pending.timer);
+    arena.hazardArbitrations.clear();
+  }
+  if(!hasRemote&&!fallback)return true;
+  const remoteHp=hasRemote?ledger.get(opponent):clamp(+arena.timeoutOpponentHp||0,0,ARENA_HP);
+  arenaHostResolve(arenaTimeoutWinner(me,localHp,opponent,remoteHp));return true;
+}
 const REMOTE_UTILITY_SEEN_MAX=96;
 function arenaUtilityIdValid(id,owner,epoch,round){
   const value=String(id||''),prefix=String(owner)+':'+Math.floor(+epoch||0)+':'+Math.floor(+round||0)+':utility:';
@@ -702,12 +747,15 @@ function arenaForfeitResultId(loserId){
 function arenaClearDisconnectHold(resumeClocks){
   if(!arena) return 0;
   const heldFor=Math.max(0,Date.now()-(arena.disconnectAt||Date.now()));
+  const timeoutLocked=arena.phase==='fight'&&arena.timeoutHpId===arenaTimeoutHpId()&&
+    arena.timeoutHp instanceof Map&&authUser&&arena.timeoutHp.has(String(authUser.id));
   if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
   arena.disconnectTimer=null; arena.disconnectAt=0; arena.disconnectSide=''; arena.networkHold=false;
   if(!resumeClocks||!heldFor) return heldFor;
-  if(arena.active&&arena.roundStartAt){
+  if(arena.active&&arena.roundStartAt&&!timeoutLocked){
     arena.roundStartAt+=heldFor; arena.roundEndAt+=heldFor;
     if(arena.nextRoundAt) arena.nextRoundAt+=heldFor;
+    if(['countdown','fight'].includes(arena.phase))arenaResetTimeoutHp();
   }
   if(arena.mapVotePhase==='voting'&&arena.mapVoteDeadline) arena.mapVoteDeadline+=heldFor;
   if(arena.mapVotePhase==='reveal'&&arena.mapVoteRevealUntil) arena.mapVoteRevealUntil+=heldFor;
@@ -1043,7 +1091,7 @@ function arenaConnectRoom(code,wantsHost,mode,expectedIds){
   arena.wantsHost=!!wantsHost; arena.expectedIds=expectedIds; arena.joinedAt=arena.joinedAt||Date.now();
   arena.localReady=mode==='queue'; arena.remoteReady=false;
   const ch=sb.channel('oz-arena-v1-'+code,{config:{broadcast:{self:false,ack:false},presence:{key:authUser.id}}});
-  for(const ev of ['state','shot','melee','firework','utility','hit','hit_result','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
+  for(const ev of ['state','shot','melee','firework','utility','hit','hit_result','round_timeout_hp','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
                     'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_tnt_hit','map_hazard','map_hazard_ack','leave','room_full'])
     ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload));
   ch.on('presence',{event:'sync'},()=>arenaMatchPresenceSync(ch));
@@ -1152,7 +1200,7 @@ function arenaReceive(event,p){
     arena.mapVoteAcks.add(String(p.from)); return;
   }
   if(event==='map_tnt_hit'){
-    if(!arenaHazardEnvelopeValid(p)||arena.phase!=='fight') return;
+    if(!arenaHazardEnvelopeValid(p)||arena.phase!=='fight'||Date.now()>=arena.roundEndAt) return;
     const cumulative=arenaTntDamageValue(p.damage);if(cumulative===null)return;
     arenaMergeTntDamageSnapshot(String(p.from),{[String(p.tntId)]:cumulative});return;
   }
@@ -1162,7 +1210,7 @@ function arenaReceive(event,p){
     if(!(arena.hazardReceipts instanceof Map)) arena.hazardReceipts=new Map();
     let receipt=arena.hazardReceipts.get(p.eventId);
     if(!receipt){
-      if(arena.phase==='fight'||arena.phase==='ko_wait') arenaApplyTntDetonation(p.tntId,'remote');
+      if((arena.phase==='fight'||arena.phase==='ko_wait')&&Date.now()<arena.roundEndAt) arenaApplyTntDetonation(p.tntId,'remote');
       receipt={tntId:String(p.tntId),receiverHp:Math.max(0,+player.hp||0)}; arena.hazardReceipts.set(p.eventId,receipt);
     }
     if(authUser.id===arena.hostId){
@@ -1187,9 +1235,10 @@ function arenaReceive(event,p){
   if(event==='melee'){ arenaApplyRemoteMelee(p); return; }
   if(event==='firework'){ arenaApplyRemoteFirework(p); return; }
   if(event==='utility'){ arenaApplyRemoteUtility(p); return; }
+  if(event==='round_timeout_hp'){ arenaApplyTimeoutHp(p); return; }
   if(event==='state'){
     if(p.round!==arena.round) return;
-    if(activeArenaMapId()==='construction'&&p.tntDamage&&typeof p.tntDamage==='object')
+    if(Date.now()<arena.roundEndAt&&activeArenaMapId()==='construction'&&p.tntDamage&&typeof p.tntDamage==='object')
       arenaMergeTntDamageSnapshot(String(p.from),p.tntDamage);
     const r=arena.opponent, bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:0,top:0,right:WORLD.w,bottom:WORLD.h}, margin=Math.max(1,+r.r||15);
     const oldPortalSeq=Math.max(0,Math.floor(+r.portalSeq||0)), hasPortalSeq=p.portalSeq!==undefined&&p.portalSeq!==null;
@@ -1208,7 +1257,7 @@ function arenaReceive(event,p){
     arenaApplyRemoteParryState(r,p,now);
     arenaApplyRemoteMeleeAbilityState(r,p,r.loadout,now);
     r.hp=clamp(+p.hp||0,0,ARENA_HP); r.lastSeen=Date.now();
-    if(authUser.id===arena.hostId&&r.hp<=0){
+    if(authUser.id===arena.hostId&&r.hp<=0&&Date.now()<arena.roundEndAt){
       if(arenaHazardCauseValid(p)) arenaHostRecordHazardHp(p.hazardEventId,p.hazardTntId,r.id,0);
       else if(arena.phase==='fight') arenaHostResolve(authUser.id,arenaUnscopedKillCause(p,authUser.id));
     }
@@ -1259,6 +1308,7 @@ function arenaApplyRematchStart(p){
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.winRecorded=false;
   arena.utilitySeq=0;arena.seenUtilities=new Set();arena.remoteUtilityReadyAt=new Map();arena.utilityFrozenUntil=0;
+  arenaResetTimeoutHp(arena.matchEpoch,arena.round);
   arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
   arenaResetMapVote('arena');
   arena.phase='lobby'; arena.status='Rematch confirmed. Starting round 1...';
@@ -1287,6 +1337,7 @@ function arenaApplyRoundStart(p){
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.pendingUnscopedHits=new Set();
   arena.utilitySeq=0;arena.seenUtilities=new Set();arena.remoteUtilityReadyAt=new Map();arena.utilityFrozenUntil=0;
+  arenaResetTimeoutHp(arena.matchEpoch,arena.round);
   // Use a relative countdown on each device. Absolute browser clocks can be
   // minutes apart even when both players have a healthy connection.
   const startDelay=Number.isFinite(+p.startDelay)?clamp(+p.startDelay,0,10000):clamp((+p.startAt||Date.now())-Date.now(),0,10000);
@@ -1346,11 +1397,7 @@ function arenaWallTick(wall){
     if(typeof duelArenaFitZoom==='function') zoom=duelArenaFitZoom();
     waveMsg='FIGHT'; waveMsgT=now+800;
   }
-  if(arena.phase==='fight'&&clock>=arena.roundEndAt&&authUser&&authUser.id===arena.hostId&&
-     (!(arena.hazardArbitrations instanceof Map)||arena.hazardArbitrations.size===0)){
-    const rhp=arena.opponent?arena.opponent.hp:0;
-    arenaHostResolve(player.hp===rhp?null:(player.hp>rhp?authUser.id:arena.opponent.id));
-  }
+  if(arena.phase==='fight'&&clock>=arena.roundEndAt)arenaTimeoutTick(clock);
   if(arena.phase==='round_end'&&arena.nextRoundAt&&clock>=arena.nextRoundAt&&authUser&&authUser.id===arena.hostId){
     arena.nextRoundAt=0; arenaHostStartRound();
   }

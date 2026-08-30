@@ -1352,7 +1352,7 @@ function arenaBotRoundTick(){
   }
   if(arena.phase==='fight'&&now>=arena.roundEndAt){
     const bhp=arena.opponent?arena.opponent.hp:0;
-    arenaBotResolve(player.hp===bhp?null:(player.hp>bhp?LOCAL_DUEL_PLAYER:LOCAL_DUEL_BOT));
+    arenaBotResolve(arenaTimeoutWinner(LOCAL_DUEL_PLAYER,player.hp,LOCAL_DUEL_BOT,bhp));
   }
   if(arena.phase==='round_end'&&arena.nextRoundAt&&now>=arena.nextRoundAt) arenaBotStartRound();
 }

@@ -23,6 +23,14 @@ const PRACTICE_TRACKING_DIRECTION_STEP=15;
 let practiceMode=null, practiceSpawns=[], practiceRects=[], pracBtnRect=null, arenaBtnRect=null, dpsLog=[], dpsPrevHp=0, dpsTotal=0, dpsStart=0, pracLockMsgT=0, pracNeedMsgT=0, pendingPractice=null;
 let practiceTrackingSpeed=DEFAULT_PRACTICE_TRACKING_SPEED, practiceTrackingDirection=DEFAULT_PRACTICE_TRACKING_DIRECTION;
 const ARENA_TARGET=5, ARENA_HP=250, ARENA_ROUND_MS=90000, ARENA_SYNC_MS=50;
+const ARENA_TIMEOUT_HP_RETRY_MS=160, ARENA_TIMEOUT_HP_FALLBACK_MS=1000;
+// Every timed Arena round uses this one rule. Remaining HP is compared as a
+// real number; only an exact tie is a draw and receives no round point.
+function arenaTimeoutWinner(firstId,firstHp,secondId,secondHp){
+  const first=Number.isFinite(+firstHp)?Math.max(0,+firstHp):0;
+  const second=Number.isFinite(+secondHp)?Math.max(0,+secondHp):0;
+  return first===second?null:(first>second?firstId:secondId);
+}
 const ARENA_MAPS=Object.freeze([
   Object.freeze({id:'arena',name:'ARENA'}),
   Object.freeze({id:'dimension',name:'DIMENSION'}),
@@ -42,7 +50,7 @@ function freshArena(status){
     mapVoteAcks:new Set(),mapVoteRevealUntil:0,mapVoteSyncAt:0,mapVoteStartPending:false,
     detonatedTnt:new Set(),tntDamage:new Map(),tntFx:[],portalLocks:{},pendingHazards:new Map(),hazardReceipts:new Map(),hazardArbitrations:new Map(),localKoCause:null,
     syncAt:0,wallTickAt:0,hitSeq:0,seenHits:new Set(),receivedHitKinds:new Map(),receivedHitDamage:new Map(),sentHitKinds:new Map(),sentHitDamage:new Map(),
-    pendingHitFeedback:new Map(),pendingUnscopedHits:new Set(),
+    pendingHitFeedback:new Map(),pendingUnscopedHits:new Set(),timeoutHpId:'',timeoutHp:new Map(),timeoutHpNextAt:0,timeoutOpponentHp:null,
     shotSeq:0,seenShots:new Set(),remoteShots:[],meleeSeq:0,seenMelees:new Set(),fireworkSeq:0,remoteFireworkHighestSeq:0,
     seenFireworks:new Set(),remoteFireworks:[],remoteFireworkFx:[],
     utilitySeq:0,seenUtilities:new Set(),remoteUtilityReadyAt:new Map(),utilityFrozenUntil:0,
