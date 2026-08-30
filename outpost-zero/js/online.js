@@ -53,6 +53,22 @@ function remoteCarriedWeapon(loadout,key){
   return !!(WEAPONS[key]&&(typeof isWeaponPublished!=='function'||isWeaponPublished(key))&&loadout&&
     [loadout.primary,loadout.secondary,loadout.melee].some(value=>String(value||'')===key));
 }
+function arenaApplyRemoteParryState(actor,packet,clock=now){
+  if(!actor||!packet)return false;
+  const seq=+packet.parrySeq,left=+packet.parryMs,oldSeq=Math.max(0,Math.floor(+actor.parrySeq||0));
+  if(!Number.isSafeInteger(seq)||seq<0||seq>1000000000||seq<oldSeq||
+     !Number.isFinite(left)||left<0||left>TWIN_SAI_PARRY_MS)return false;
+  if(seq===oldSeq){
+    if(left===0&&clock<(actor.parryUntil||0)){actor.parryUntil=clock;return true;}
+    return false;
+  }
+  actor.parrySeq=seq;
+  if(left===0){actor.parryUntil=clock;return true;}
+  if(!actor.loadout||actor.loadout.melee!=='twinsai'||clock<(actor.parryReadyAt||0))return false;
+  actor.parryUntil=clock+left;
+  actor.parryReadyAt=actor.parryUntil+ABILITY_CD.twinsai;
+  return true;
+}
 function arenaGuard(){
   if(!sb||!authUser){
     arenaAuthPending=true; $('aguest').style.display='none';
@@ -1037,7 +1053,8 @@ function arenaMatchPresenceSync(ch){
   if(arena.networkHold) arenaClearDisconnectHold(true);
   const remoteKit=typeof arenaRemoteLoadout==='function'?arenaRemoteLoadout(om):
     {primary:om.primary,secondary:om.secondary,melee:om.melee};
-  arena.opponent=Object.assign(oldOpp||{x:WORLD.w/2+380,y:WORLD.h/2,tx:WORLD.w/2+380,ty:WORLD.h/2,angle:Math.PI,hp:ARENA_HP,cur:remoteKit&&remoteKit.primary||'ar',utilityOut:false,lastSeen:Date.now()},
+  arena.opponent=Object.assign(oldOpp||{x:WORLD.w/2+380,y:WORLD.h/2,tx:WORLD.w/2+380,ty:WORLD.h/2,angle:Math.PI,hp:ARENA_HP,cur:remoteKit&&remoteKit.primary||'ar',utilityOut:false,
+                                 parrySeq:0,parryUntil:0,parryReadyAt:0,lastSeen:Date.now()},
                                {id:om.id,name:om.name||'opponent',loadout:remoteKit||{primary:'ar',secondary:'m9',melee:'knife'},remoteLoadoutValid:!!remoteKit});
   // Stay visible in the quick queue until both confirmed IDs have actually
   // arrived in the match room. This closes the one-sided transition race.
@@ -1149,6 +1166,7 @@ function arenaReceive(event,p){
       :!!WEAPONS[p.cur];
     r.cur=carried?p.cur:r.cur;
     if(typeof p.utilityOut==='boolean')r.utilityOut=!!(p.utilityOut&&r.loadout&&r.loadout.utility);
+    arenaApplyRemoteParryState(r,p,now);
     r.hp=clamp(+p.hp||0,0,ARENA_HP); r.lastSeen=Date.now();
     if(authUser.id===arena.hostId&&r.hp<=0){
       if(arenaHazardCauseValid(p)) arenaHostRecordHazardHp(p.hazardEventId,p.hazardTntId,r.id,0);
@@ -1251,7 +1269,7 @@ function arenaApplyRoundStart(p){
   if(typeof duelArenaFitZoom==='function') zoom=duelArenaFitZoom();
   arena.opponent.x=theirs.x; arena.opponent.y=theirs.y; arena.opponent.tx=theirs.x; arena.opponent.ty=theirs.y; arena.opponent.angle=theirs.angle;
   arena.opponent.hp=ARENA_HP; arena.opponent.cur=arena.opponent.loadout.primary||'ar';
-  arena.opponent.utilityOut=false;
+  arena.opponent.utilityOut=false;arena.opponent.parrySeq=0;arena.opponent.parryUntil=0;arena.opponent.parryReadyAt=0;
   state='play'; menuOpen=false; aiming=false; rmbAim=false;
   waveMsg='ROUND '+arena.round+' \u2014 GET READY'; waveMsgT=now+2800; sfx('wave');
 }
@@ -1301,6 +1319,7 @@ function arenaSyncTick(wall){
     if(arena.syncAt<wall-ARENA_SYNC_MS) arena.syncAt=wall+ARENA_SYNC_MS;
     const cause=arena.localKoCause;
     arenaSend('state',{x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,utilityOut:!!utilityOut,hp:Math.max(0,player.hp),
+      parrySeq:Math.max(0,Math.floor(+parrySeq||0)),parryMs:clamp(parryUntil-now,0,TWIN_SAI_PARRY_MS),
       tntDamage:activeArenaMapId()==='construction'?arenaTntOwnDamageSnapshot(String(authUser.id)):undefined,
       detonatedTnt:activeArenaMapId()==='construction'?[...arenaDestroyedTnt()]:undefined,
       portalSeq:Math.max(0,Math.floor(+player.portalSeq||0)),koKind:cause&&cause.kind,

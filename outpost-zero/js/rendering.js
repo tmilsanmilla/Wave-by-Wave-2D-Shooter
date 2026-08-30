@@ -83,7 +83,7 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
     ctx.strokeStyle=p.shaft;ctx.lineWidth=3.6;ctx.beginPath();ctx.moveTo(4,5);ctx.lineTo(26,-7);ctx.stroke();
     ctx.fillStyle=p.blade;ctx.save();ctx.translate(26,-7);ctx.rotate(.5);ctx.fillRect(-5,-10,10,20);ctx.restore();
   }else if(key==='twinsai'){
-    const guard=parryActive ? .34 : 0;
+    const guard=parryActive ? .34+Math.sin(now*.02)*.035 : 0;
     for(const side of [-1,1]){
       ctx.save();ctx.rotate(side*guard);ctx.translate(0,side*5);
       ctx.strokeStyle=p.grip;ctx.lineWidth=3.4;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(12,0);ctx.stroke();
@@ -120,16 +120,20 @@ function drawPartyCpuActors(){
     ctx.fillStyle='rgba(0,0,0,.35)';ctx.beginPath();ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU);ctx.fill();
     ctx.fillStyle=ally?'#5b9bd5':'#d05548';ctx.beginPath();ctx.arc(e.x,e.y,r,0,TAU);ctx.fill();
     ctx.strokeStyle=ally?'#9dd7ff':'#ff8b80';ctx.lineWidth=2/zoom;ctx.stroke();
-    if(ally&&clock<(e.parryUntil||0)){
+    const partyParryActive=ally&&clock<(e.parryUntil||0)&&partyCpuMatch.loadouts&&
+      partyCpuMatch.loadouts[e.id]&&partyCpuMatch.loadouts[e.id].melee==='twinsai';
+    if(partyParryActive){
       ctx.strokeStyle='#bfe8ff';ctx.lineWidth=3/zoom;ctx.beginPath();ctx.arc(e.x,e.y,r+10,0,TAU);ctx.stroke();
     }
-    if(wk.melee){
+    if(partyParryActive){
+      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(a);drawMeleeWeaponSilhouette('twinsai',false,true);ctx.restore();
+    }else if(wk.melee){
       ctx.save();ctx.translate(e.x,e.y);ctx.rotate(a);drawMeleeWeaponSilhouette(e.cur,!ally,false);ctx.restore();
     }else{
       ctx.strokeStyle=weaponColor(e.cur,ally?'#bde7ff':'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
       ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6);ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8));ctx.stroke();
     }
-    if(clock<(e.flash||0)){ctx.fillStyle='#ffd98a';ctx.beginPath();ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU);ctx.fill();}
+    if(!partyParryActive&&clock<(e.flash||0)){ctx.fillStyle='#ffd98a';ctx.beginPath();ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU);ctx.fill();}
     // Teammate status helps coordination. Enemy CPUs intentionally expose no
     // name, exact health bar, damage flash, or hit-confirmation information.
     if(ally){
@@ -150,6 +154,7 @@ function drawArenaOpponentWorld(){
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){drawPartyCpuActors();return;}
   if(!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
+  const remoteParryActive=now<(e.parryUntil||0)&&e.loadout&&e.loadout.melee==='twinsai';
   // Exact opponent health is result information, never live combat intel.
   // This applies equally to Casual 1v1 and every local 1v1 bot difficulty.
   const showOpponentHp=arena.phase==='round_end'||arena.phase==='match_end';
@@ -164,10 +169,17 @@ function drawArenaOpponentWorld(){
   ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU); ctx.fill();
   ctx.fillStyle=showOpponentHitFlash&&now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   ctx.strokeStyle='#ff8b80'; ctx.lineWidth=2/zoom; ctx.stroke();
+  if(remoteParryActive){
+    const remain=clamp(((e.parryUntil||0)-now)/TWIN_SAI_PARRY_MS,0,1);
+    ctx.strokeStyle='rgba(255,107,97,'+(0.45+remain*.45)+')';ctx.lineWidth=3/zoom;ctx.beginPath();
+    ctx.arc(e.x,e.y,r+10+Math.sin(now*.018)*2,0,TAU);ctx.stroke();
+  }
   const wk=WEAPONS[e.cur]||WEAPONS.ar, len=Math.min(38,wk.len||24);
   const remoteUtility=e.utilityOut&&e.loadout&&typeof casualArenaUtilityKey==='function'
     ?casualArenaUtilityKey(e.loadout.utility,false):'';
-  if(remoteUtility){
+  if(remoteParryActive){
+    ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette('twinsai',true,true);ctx.restore();
+  }else if(remoteUtility){
     ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawUtilIcon(14,0,remoteUtility,'#ff8bc2',.8);ctx.restore();
   }else if(wk.melee){
     ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,true,false);ctx.restore();
@@ -175,7 +187,7 @@ function drawArenaOpponentWorld(){
     ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
     ctx.beginPath();ctx.moveTo(e.x+Math.cos(weaponAngle)*6,e.y+Math.sin(weaponAngle)*6);ctx.lineTo(e.x+Math.cos(weaponAngle)*(len+8),e.y+Math.sin(weaponAngle)*(len+8));ctx.stroke();
   }
-  if(now<(e.flash||0)){
+  if(!remoteParryActive&&now<(e.flash||0)){
     ctx.fillStyle='#ffd98a'; ctx.beginPath(); ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU); ctx.fill();
   }
   if(swingProgress!==null){
@@ -516,12 +528,12 @@ function drawWorld(){
   drawArenaOpponentWorld();
 
   // player
-  const w=WEAPONS[player.cur], ang=aimAngle();
+  const w=WEAPONS[player.cur], ang=aimAngle(),localParryActive=now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS&&loadout.melee==='twinsai';
   if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){
     ctx.strokeStyle='rgba(191,239,255,0.92)';ctx.lineWidth=4/zoom;ctx.beginPath();
     ctx.arc(player.x,player.y,player.r+12+Math.sin(now*.012)*2,0,TAU);ctx.stroke();
   }
-  if(now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS){ // Twin Sai parry remains visibly active
+  if(localParryActive){                              // Twin Sai parry remains visibly active
     const remain=clamp((parryUntil-now)/TWIN_SAI_PARRY_MS,0,1);
     ctx.strokeStyle='rgba(191,232,255,'+(0.45+remain*0.45)+')';
     ctx.lineWidth=3/zoom; ctx.beginPath();
@@ -560,10 +572,12 @@ function drawWorld(){
       ctx.translate(Math.sin(sw*Math.PI)*3, 0);
     }
   }
-  if(utilityOut){                                // utility in hand
+  if(localParryActive){                         // quick-melee parry keeps both Sai visible for the full guard
+    drawMeleeWeaponSilhouette('twinsai',false,true);
+  } else if(utilityOut){                         // utility in hand
     drawUtilIcon(14, 0, loadout.utility, '#c98fb8', 0.8);
   } else if(w.melee){                            // shared local/remote melee geometry
-    drawMeleeWeaponSilhouette(player.cur,false,now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS);
+    drawMeleeWeaponSilhouette(player.cur,false,false);
   } else if(w.solar){                            // solar rifle: long barrel + glowing solar core
     ctx.fillStyle='#3a3320';                      // stock/body
     ctx.fillRect(-4,-3,10,6);
