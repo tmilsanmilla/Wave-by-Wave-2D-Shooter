@@ -15,10 +15,12 @@ const firstStableKeyRead=sql.indexOf('where b.user_id=u.id');
 const scopeUpgrade=sql.indexOf('do $legacy_bans_shape$');
 const firstJsonScopeRead=sql.indexOf('jsonb_array_elements_text(b.scopes)');
 
-check('Creator seed uses the current public username without a private email',
-  /where sp\.handle_key='tedmils'/.test(sql)&&
-  !/where sp\.handle_key='tmilsanmilla'/.test(sql)&&
-  !/@/.test(sql.slice(0,sql.indexOf('create table if not exists public.bans'))));
+check('Creator seed uses a private session setting without storing an identity',
+  /current_setting\('outpost_zero\.creator_username',true\)/.test(sql)&&
+  /where sp\.handle_key=v_creator_username/.test(sql)&&
+  !/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i.test(
+    sql.slice(0,sql.indexOf('create table if not exists public.bans'))
+  ));
 check('Legacy email-keyed bans gain the UUID key before it is read',
   addStableKey>=0&&firstStableKeyRead>addStableKey);
 check('Legacy UUID key is backfilled without deleting moderation history',

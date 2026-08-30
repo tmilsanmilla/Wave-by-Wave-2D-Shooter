@@ -16,8 +16,9 @@ alter table public.admins force row level security;
 revoke all on table public.admins from public,anon,authenticated;
 
 -- The creator is pinned to an Auth UUID, not an email. On the first run only,
--- resolve that UUID from the creator's public username. The saved UUID remains
--- authoritative if the creator later changes either username or login email.
+-- resolve that UUID from a transaction-local setting supplied privately in the
+-- SQL session. No creator identity is stored in this public deployment file.
+-- Existing installations already have the UUID and do not need the setting.
 create table if not exists public.outpost_zero_admin_config(
   singleton boolean primary key default true check(singleton),
   creator_user_id uuid not null unique references auth.users(id) on delete restrict,
@@ -28,16 +29,25 @@ alter table public.outpost_zero_admin_config force row level security;
 revoke all on table public.outpost_zero_admin_config from public,anon,authenticated;
 
 do $creator_seed$
-declare v_creator uuid;
+declare
+  v_creator uuid;
+  v_creator_username text := lower(btrim(coalesce(
+    current_setting('outpost_zero.creator_username',true),''
+  )));
 begin
   if not exists(select 1 from public.outpost_zero_admin_config where singleton) then
+    if v_creator_username !~ '^[a-z0-9_]{3,32}$' then
+      raise exception 'Set the private transaction-local creator username, then rerun Admin 01'
+        using errcode='P0001',
+              hint='After BEGIN, call set_config for outpost_zero.creator_username in this SQL session.';
+    end if;
     select sp.user_id into v_creator
     from public.social_profiles sp
-    where sp.handle_key='tedmils'
+    where sp.handle_key=v_creator_username
       and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
     order by sp.created_at asc limit 1;
     if v_creator is null then
-      raise exception 'Set the creator public username to tedmils, then rerun Admin 01'
+      raise exception 'The privately supplied creator username does not match an account'
         using errcode='P0001';
     end if;
     insert into public.outpost_zero_admin_config(singleton,creator_user_id)

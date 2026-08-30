@@ -180,11 +180,13 @@ timestamp. Private tables use forced RLS and narrow column/RPC privileges.
 Admin 01 includes the former Appeals setup and the safe internal compatibility
 functions required by its audited wrapper. Private Auth email resolution occurs
 inside Postgres; the current game sends public usernames. On its first run,
-Admin 01 resolves public username `tedmils` once and pins that account's
-Auth UUID in a forced-RLS config row. Later username or login-email changes do
-not change the creator role, and clients cannot read the UUID. Creator and Main
-admins may apply permanent currency/score/ownership edits directly. Testers
-remain unable to call these legacy Admin Menu APIs.
+Admin 01 reads the creator username from the private, transaction-local
+`outpost_zero.creator_username` setting and pins that account's Auth UUID in a
+forced-RLS config row. The public file contains no creator identity. Existing
+installations already have the UUID and need no setting. Later username or
+login-email changes do not change the creator role, and clients cannot read the
+UUID. Creator and Main admins may apply permanent currency/score/ownership
+edits directly. Testers remain unable to call these legacy Admin Menu APIs.
 
 Admin 02 owns the staff roster and update lifecycle. The fixed creator may
 manage every tier. Main admins may manage Co-admins and Testers but cannot
