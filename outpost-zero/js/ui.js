@@ -65,7 +65,10 @@ function weaponDetails(k){
   };
   if(isLocked(k)){
     const shop=GEM_SHOP.find(it=>it.key===k);
-    rows.push(['ACCESS',FALL_KEYS.includes(k)?'\u{1F512} ADMIN TEST MODE ONLY':shop?'\u{1F512} BUY IN SHOP \u00b7 \uD83D\uDC8E '+shop.cost:'\u{1F512} SIGN IN TO UNLOCK']);
+    const shopPublished=shop&&(typeof isWeaponPublished!=='function'||isWeaponPublished(k));
+    rows.push(['ACCESS',FALL_KEYS.includes(k)?'\u{1F512} ADMIN TEST MODE ONLY':shop
+      ? shopPublished?'BUY IN SHOP \u00b7 \uD83D\uDC8E '+shop.cost:'\u{1F512} NOT CURRENTLY LIVE'
+      : '\u{1F512} SIGN IN TO UNLOCK']);
   }
   if(FALL_KEYS.includes(k)) rows.push(['\uD83C\uDF42 NEXT SEASON','admins \u00b7 Test Mode/editor only']);
   const slot=typeof storedLoadoutSlot==='function'?storedLoadoutSlot(k):(VAULT_SLOTS[k]||null);
@@ -944,17 +947,20 @@ function drawShopWeapons(cw, y){
         ctx.fillText(fitLine(statLine, cw-32), x+16, ty+8);
       }
     }
-    const locked = typeof isLocked==='function' && isLocked(it.key);
-    const owned=!!gemOwned[it.key] && !locked;
+    // `isLocked` answers whether the weapon may be equipped. An unowned shop
+    // offer is intentionally equip-locked, but it must remain purchasable after
+    // an admin removes permanent ownership. Publication is the shop boundary.
+    const published=typeof isWeaponPublished!=='function'||isWeaponPublished(it.key);
+    const owned=published&&!!gemOwned[it.key];
     const b2w=112, b2h=Math.min(32,ch-10), b2x=x+cw-b2w-12, b2y=y+ch/2-b2h/2;
-    shopRects.push({x:b2x,y:b2y,w:b2w,h:b2h,item:it,kind:'weapon'});
+    shopRects.push({x:b2x,y:b2y,w:b2w,h:b2h,item:it,kind:'weapon',enabled:published&&!owned});
     const hv=mouse.x>=b2x&&mouse.x<=b2x+b2w&&mouse.y>=b2y&&mouse.y<=b2y+b2h;
-    const can=!owned && gems>=it.cost && !locked;
+    const can=published&&!owned&&gems>=it.cost;
     ctx.fillStyle = owned ? 'rgba(167,193,94,0.25)' : can ? (hv?'#7fd8ff':'rgba(127,216,255,0.2)') : 'rgba(255,255,255,0.06)';
     ctx.fillRect(b2x,b2y,b2w,b2h);
     ctx.strokeStyle= owned ? '#a7c15e' : can ? '#7fd8ff' : '#5a5648'; ctx.strokeRect(b2x+0.5,b2y+0.5,b2w,b2h);
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    const label = owned ? 'OWNED' : can ? '\uD83D\uDC8E '+it.cost+' BUY' : locked ? 'LOCKED' : '\uD83D\uDC8E '+it.cost+' BUY';
+    const label=owned?'OWNED':published?'\uD83D\uDC8E '+it.cost+' BUY':'UNAVAILABLE';
     ctx.fillStyle = owned ? '#a7c15e' : (can&&hv) ? '#101208' : can ? '#cdd6b0' : '#6b7455';
     ctx.font='700 11px ui-monospace,Consolas,monospace';
     ctx.fillText(label, b2x+b2w/2, b2y+b2h/2);
@@ -2267,7 +2273,7 @@ function drawSocial(){
     }
     const pending=typeof publicPartyHostRequests!=='undefined'&&Array.isArray(publicPartyHostRequests)?publicPartyHostRequests:[];
     if(partyIsHost()&&party.publicParty&&pending.length&&cursor<p.y+p.h-70){
-      const titleH=tiny?13:compact?17:20,rowH=tiny?27:compact?34:40;
+      const titleH=tiny?13:compact?17:20,rowH=tiny?44:48;
       ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';ctx.fillText('JOIN REQUESTS',p.x+8,cursor);cursor+=titleH;
       for(const request of pending.slice(0,Math.max(1,Math.min(3,Math.floor((p.y+p.h-cursor-48)/rowH))))){
         const y=cursor,buttonW=Math.min(compact?66:86,p.w*.20),profileW=Math.max(40,p.w-18-buttonW*2-actionGap);
@@ -2638,7 +2644,8 @@ function weaponBrowserKeys(cat){
 }
 function weaponBrowserAccess(k){
   const limited=TEMP_PRIMARY.includes(k)||TEMP_SECONDARY.includes(k)||TEMP_MELEE.includes(k)||TEMP_UTILITY.includes(k);
-  const shop=GEM_SHOP.find(it=>it.key===k), locked=typeof isLocked==='function'&&isLocked(k);
+  const shop=GEM_SHOP.find(it=>it.key===k),locked=typeof isLocked==='function'&&isLocked(k),
+    published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
   const adminTest=typeof fallEligible==='function'&&fallEligible();
   if(FALL_KEYS.includes(k)) return {text:'ADMIN TEST \u00b7 NEXT SEASON',col:'#d0763e',locked:false};
   if(Object.prototype.hasOwnProperty.call(VAULT_SLOTS,k)&&!shop&&adminTest)
@@ -2647,14 +2654,11 @@ function weaponBrowserAccess(k){
     ? {text:'LIMITED \u00b7 SIGN IN',col:'#d05548',locked:true}
     : {text:'LIMITED \u00b7 AVAILABLE',col:'#ff8b4d',locked:false};
   if(shop){
-    if(locked) return {text:gemOwned[k]
-      ? 'LOCKED \u00b7 NOT CURRENTLY LIVE'
-      : 'LOCKED \u00b7 \uD83D\uDC8E '+shop.cost,
-      col:'#d05548',locked:true};
+    if(!published)return {text:'UNAVAILABLE \u00b7 NOT CURRENTLY LIVE',col:'#d05548',locked:true};
     if(gemOwned[k]) return {text:'OWNED \u00b7 LIVE',col:'#a7c15e',locked:false};
     if(typeof testMode!=='undefined'&&testMode) return {text:'TEST ACCESS \u00b7 NOT OWNED',col:'#d0763e',locked:false};
     if(typeof sb==='undefined'||!sb) return {text:'OFFLINE PREVIEW \u00b7 NOT OWNED',col:'#8fb3c9',locked:false};
-    return {text:'AVAILABLE \u00b7 NOT OWNED',col:'#7fd8ff',locked:false};
+    return {text:'BUY IN SHOP \u00b7 \uD83D\uDC8E '+shop.cost,col:'#7fd8ff',locked:false};
   }
   return {text:'LIVE \u00b7 AVAILABLE',col:'#a7c15e',locked:false};
 }

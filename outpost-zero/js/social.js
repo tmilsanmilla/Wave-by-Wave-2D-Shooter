@@ -494,6 +494,17 @@ function socialPartyPresenceSnapshot(ch=socialPartyPresenceChannel){
   socialPartyOnlineHandles=handles.sort((a,b)=>a.localeCompare(b,undefined,{sensitivity:'base'})).slice(0,60);
   return socialPartyOnlineHandles;
 }
+function socialHandlePublicPartyWakeup(message){
+  if(!authUser||typeof partyPublicHandleRealtimeWakeup!=='function')return false;
+  return partyPublicHandleRealtimeWakeup(message&&message.payload||message||{});
+}
+async function socialBroadcastPublicPartyWakeup(username,requestId,status){
+  const target=socialPartyInviteSafeHandle(username),id=String(requestId||'').toLowerCase(),decision=String(status||'');
+  if(!authUser||!target||!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id)||!['pending','accepted','declined'].includes(decision))return false;
+  if(!socialPartyPresenceReady&&!await socialEnsurePartyRealtimePresence(true))return false;
+  const ch=socialPartyPresenceChannel;if(!ch||!socialPartyPresenceReady)return false;
+  try{const result=await ch.send({type:'broadcast',event:'public_party_request_changed',payload:{to:target,requestId:id,status:decision}});return result==='ok'||result===true;}catch(error){return false;}
+}
 function socialDropPartyRealtimePresence(){
   const ch=socialPartyPresenceChannel;
   socialPartyPresenceChannel=null;socialPartyPresencePromise=null;socialPartyPresenceReady=false;
@@ -515,6 +526,7 @@ async function socialEnsurePartyRealtimePresence(force=false){
   const ch=sb.channel('oz-social-party-online-v1',{config:{presence:{key:owner}}});
   socialPartyPresenceChannel=ch;socialPartyPresenceReady=false;
   ch.on('presence',{event:'sync'},()=>{if(ch===socialPartyPresenceChannel)socialPartyPresenceSnapshot(ch);});
+  ch.on('broadcast',{event:'public_party_request_changed'},message=>{if(ch===socialPartyPresenceChannel)socialHandlePublicPartyWakeup(message);});
   const request=new Promise(resolve=>{
     let settled=false;
     const finish=value=>{if(!settled){settled=true;resolve(value);}};
@@ -1050,7 +1062,9 @@ function socialUnreadSummary(){
   if(!authUser)return {friendRequests:0,privateMessages:0,partyInvites:0,partyRequests:0,notifications:0,total:0,hasAny:false};
   const friendRequests=socialIncomingFriendRequestCount(),privateMessages=socialUnreadPrivateMessageCount(),
     partyInvites=socialLiveLegacyPartyInviteCount()+socialLiveCloudPartyInviteCount(),
-    partyRequests=typeof publicPartyHostRequests!=='undefined'&&Array.isArray(publicPartyHostRequests)?publicPartyHostRequests.length:0,
+    hostRequests=typeof publicPartyHostRequests!=='undefined'&&Array.isArray(publicPartyHostRequests)?publicPartyHostRequests.length:0,
+    approvedRequests=typeof publicPartyMyRequests!=='undefined'&&Array.isArray(publicPartyMyRequests)?publicPartyMyRequests.filter(row=>row&&row.status==='accepted'&&row.expiresAt>Date.now()&&row.requestId!==publicPartyAutoJoinRequestId).length:0,
+    partyRequests=hostRequests+approvedRequests,
     notifications=Math.max(0,Number(socialNotificationUnreadCount)||0),total=friendRequests+privateMessages+partyInvites+partyRequests+notifications;
   return {friendRequests,privateMessages,partyInvites,partyRequests,notifications,total,hasAny:total>0};
 }

@@ -14,38 +14,71 @@ function partyPublicOperationId(){
   return h.slice(0,8)+'-'+h.slice(8,12)+'-'+h.slice(12,16)+'-'+h.slice(16,20)+'-'+h.slice(20);
 }
 function partyPublicRpcMissing(error){const text=String(error&&error.message||error||'').toLowerCase();return text.includes('could not find the function')||text.includes('schema cache')||text.includes('pgrst202');}
+function partyPublicSetStatus(message){
+  const text=String(message||'').slice(0,160);if(party)party.status=text;if(typeof socialStatus!=='undefined')socialStatus=text;return text;
+}
 function partyPublicReset(message=''){
   publicPartyRows=[];publicPartyHostRequests=[];publicPartyMyRequests=[];publicPartyPage=0;publicPartySearch='';publicPartyPollAt=0;publicPartyHostPollAt=0;
-  publicPartyPolling=false;publicPartyHostPolling=false;publicPartyActionBusy='';if(message)party.status=message;
+  publicPartyPolling=false;publicPartyHostPolling=false;publicPartyRefreshVersion++;publicPartyHostRefreshVersion++;
+  publicPartyRefreshQueued=false;publicPartyHostRefreshQueued=false;publicPartyActionBusy='';publicPartyAutoJoinRequestId='';if(message)partyPublicSetStatus(message);
 }
 function partyPublicNormalizeRow(row){
   const id=partyPublicUuid(row&&row.party_id),handle=partyCleanName(row&&row.host_username),name=partyCleanPublicName(row&&row.party_name),members=Math.max(1,Math.floor(+row?.member_count||1)),capacity=Math.min(4,Math.max(2,Math.floor(+row?.capacity||4)));
   return id&&handle&&name?{partyId:id,host:handle,name,members:Math.min(members,capacity),capacity,createdAt:Date.parse(row.created_at||'')||0,status:String(row.request_status||'')} : null;
 }
-function partyPublicNormalizeRequest(row,host=false){
+function partyPublicLocalExpiry(row,clock=Date.now()){
+  const expiresAt=Date.parse(row&&row.join_expires_at||''),serverNow=Date.parse(row&&row.server_now||'');if(!Number.isFinite(expiresAt))return 0;
+  if(!Number.isFinite(serverNow))return expiresAt;
+  return clock+Math.max(0,Math.min(PARTY_FRIEND_INVITE_MAX_MS,expiresAt-serverNow));
+}
+function partyPublicNormalizeRequest(row,host=false,clock=Date.now()){
   const requestId=partyPublicUuid(row&&row.request_id);if(!requestId)return null;
   return host?{requestId,username:partyCleanName(row.requester_username),createdAt:Date.parse(row.created_at||'')||0}:
-    {requestId,partyId:partyPublicUuid(row.party_id),host:partyCleanName(row.host_username),status:String(row.status||''),code:String(row.party_code||''),token:String(row.join_token||''),expiresAt:Date.parse(row.join_expires_at||'')||0,createdAt:Date.parse(row.created_at||'')||0};
+    {requestId,partyId:partyPublicUuid(row.party_id),host:partyCleanName(row.host_username),status:String(row.status||''),code:String(row.party_code||''),token:String(row.join_token||''),expiresAt:partyPublicLocalExpiry(row,clock),createdAt:Date.parse(row.created_at||'')||0};
+}
+function partyPublicAcceptedRequest(clock=Date.now()){
+  return publicPartyMyRequests.find(row=>row&&row.status==='accepted'&&/^[A-HJ-NP-Z2-9]{6}$/.test(row.code)&&/^[A-Za-z0-9_-]{20,64}$/.test(row.token)&&row.expiresAt>clock)||null;
+}
+function partyPublicCanAutoJoin(){
+  return !!(authUser&&typeof state!=='undefined'&&state==='select'&&typeof selPage!=='undefined'&&selPage==='social'&&
+    typeof socialView!=='undefined'&&socialView==='party'&&party&&!party.accepted&&!party.channel&&partyServiceAvailable()&&
+    !(typeof formOpen!=='undefined'&&formOpen)&&!(typeof topModal==='function'&&topModal()));
+}
+function partyPublicMaybeAutoJoin(){
+  const row=partyPublicAcceptedRequest();if(!row)return false;
+  if(publicPartyAutoJoinRequestId===row.requestId)return false;
+  partyPublicSetStatus(partyPublicCanAutoJoin()?'PUBLIC PARTY REQUEST APPROVED · JOINING NOW':'PUBLIC PARTY REQUEST APPROVED · OPEN PARTY TO JOIN');
+  if(!partyPublicCanAutoJoin())return false;
+  publicPartyAutoJoinRequestId=row.requestId;const joined=partyPublicJoinAccepted(row.requestId,true);if(!joined)publicPartyAutoJoinRequestId='';return joined;
 }
 async function partyPublicRefresh(force=false){
-  const owner=authUser?String(authUser.id||''):'';if(!sb||!owner||publicPartyPolling||navigator.onLine===false)return false;
-  const clock=Date.now();if(!force&&clock<publicPartyPollAt)return false;publicPartyPollAt=clock+7000;publicPartyPolling=true;
+  const owner=authUser?String(authUser.id||''):'';if(!sb||!owner||navigator.onLine===false)return false;
+  if(publicPartyPolling){if(force){publicPartyRefreshVersion++;publicPartyRefreshQueued=true;publicPartyPollAt=0;}return false;}
+  const clock=Date.now();if(!force&&clock<publicPartyPollAt)return false;publicPartyPollAt=clock+7000;publicPartyPolling=true;const version=++publicPartyRefreshVersion;
   try{
     const [directory,mine]=await Promise.all([sb.rpc('list_outpost_zero_public_parties',{p_limit:30,p_search:publicPartySearch||null}),sb.rpc('list_my_outpost_zero_public_party_requests',{p_limit:20})]);
-    if(!authUser||String(authUser.id||'')!==owner)return false;if(directory.error)throw directory.error;if(mine.error)throw mine.error;
+    if(!authUser||String(authUser.id||'')!==owner||version!==publicPartyRefreshVersion)return false;if(directory.error)throw directory.error;if(mine.error)throw mine.error;
+    const receivedAt=Date.now();
     publicPartyRows=(Array.isArray(directory.data)?directory.data:[]).map(partyPublicNormalizeRow).filter(Boolean);
-    publicPartyMyRequests=(Array.isArray(mine.data)?mine.data:[]).map(row=>partyPublicNormalizeRequest(row,false)).filter(Boolean);
-    publicPartySqlReady=true;return true;
-  }catch(error){if(partyPublicRpcMissing(error)){publicPartySqlReady=false;publicPartyRows=[];publicPartyMyRequests=[];}return false;}
-  finally{if(!authUser||String(authUser.id||'')===owner)publicPartyPolling=false;}
+    publicPartyMyRequests=(Array.isArray(mine.data)?mine.data:[]).map(row=>partyPublicNormalizeRequest(row,false,receivedAt)).filter(Boolean);
+    publicPartyPollAt=receivedAt+(publicPartyMyRequests.some(row=>row.status==='pending')?1500:7000);publicPartySqlReady=true;partyPublicMaybeAutoJoin();return true;
+  }catch(error){if(version===publicPartyRefreshVersion&&partyPublicRpcMissing(error)){publicPartySqlReady=false;publicPartyRows=[];publicPartyMyRequests=[];}return false;}
+  finally{
+    if(!authUser||String(authUser.id||'')===owner){publicPartyPolling=false;if(publicPartyRefreshQueued){publicPartyRefreshQueued=false;publicPartyPollAt=0;void partyPublicRefresh(true);}}
+  }
 }
 async function partyPublicRefreshHost(force=false){
-  const owner=authUser?String(authUser.id||''):'';if(!sb||!owner||!partyIsHost()||!party.publicParty||publicPartyHostPolling)return false;
+  const owner=authUser?String(authUser.id||''):'';if(!sb||!owner||!partyIsHost()||!party.publicParty)return false;
+  if(publicPartyHostPolling){if(force){publicPartyHostRefreshVersion++;publicPartyHostRefreshQueued=true;publicPartyHostPollAt=0;}return false;}
   const clock=Date.now();if(!force&&clock<publicPartyHostPollAt)return false;publicPartyHostPollAt=clock+4000;publicPartyHostPolling=true;
+  const current=party,partyId=String(current.publicPartyId||''),hostId=String(current.hostId||''),hostEpoch=current.hostEpoch,version=++publicPartyHostRefreshVersion;
+  const stillCurrent=()=>!!(authUser&&String(authUser.id||'')===owner&&party===current&&partyIsHost()&&party.publicParty&&String(party.publicPartyId||'')===partyId&&String(party.hostId||'')===hostId&&party.hostEpoch===hostEpoch&&version===publicPartyHostRefreshVersion);
   try{const result=await sb.rpc('list_outpost_zero_public_party_host_requests',{p_limit:20});if(result.error)throw result.error;
-    if(!authUser||String(authUser.id||'')!==owner)return false;publicPartyHostRequests=(Array.isArray(result.data)?result.data:[]).map(row=>partyPublicNormalizeRequest(row,true)).filter(Boolean);publicPartySqlReady=true;return true;
-  }catch(error){if(partyPublicRpcMissing(error)){publicPartySqlReady=false;publicPartyHostRequests=[];}return false;}
-  finally{if(!authUser||String(authUser.id||'')===owner)publicPartyHostPolling=false;}
+    if(!stillCurrent())return false;publicPartyHostRequests=(Array.isArray(result.data)?result.data:[]).map(row=>partyPublicNormalizeRequest(row,true)).filter(Boolean);publicPartySqlReady=true;return true;
+  }catch(error){if(stillCurrent()&&partyPublicRpcMissing(error)){publicPartySqlReady=false;publicPartyHostRequests=[];}return false;}
+  finally{
+    if(!authUser||String(authUser.id||'')===owner){publicPartyHostPolling=false;if(publicPartyHostRefreshQueued){publicPartyHostRefreshQueued=false;publicPartyHostPollAt=0;void partyPublicRefreshHost(true);}}
+  }
 }
 async function partyPublicPublish(force=false){
   if(!sb||!authUser||!partyIsHost()||!party.publicParty||!party.code||party.directCpu)return false;
@@ -61,28 +94,55 @@ async function partyPublicPublish(force=false){
 async function partyPublicClose(partyId){const id=partyPublicUuid(partyId);if(!sb||!authUser||!id)return false;try{const result=await sb.rpc('close_outpost_zero_public_party',{p_party_id:id});return !result.error&&result.data===true;}catch(error){return false;}}
 async function partyPublicRequest(partyId){
   const id=partyPublicUuid(partyId),operationId=partyPublicOperationId();if(!id||!operationId||!authUser||publicPartyActionBusy)return false;
-  publicPartyActionBusy='request:'+id;try{const result=await sb.rpc('request_outpost_zero_public_party',{p_party_id:id,p_operation_id:operationId});if(result.error)throw result.error;
-    const row=Array.isArray(result.data)?result.data[0]:result.data;party.status=row&&row.accepted?'JOIN REQUEST SENT · WAITING FOR HOST':'COULD NOT REQUEST THAT PARTY';await partyPublicRefresh(true);sfx(row&&row.accepted?'pickup':'dry');return !!(row&&row.accepted);
-  }catch(error){party.status='PUBLIC PARTY REQUEST FAILED.';if(partyPublicRpcMissing(error))publicPartySqlReady=false;sfx('dry');return false;}finally{publicPartyActionBusy='';}
+  const host=(publicPartyRows.find(row=>row.partyId===id)||{}).host||'';publicPartyActionBusy='request:'+id;try{const result=await sb.rpc('request_outpost_zero_public_party',{p_party_id:id,p_operation_id:operationId});if(result.error)throw result.error;
+    const row=Array.isArray(result.data)?result.data[0]:result.data,ok=!!(row&&row.accepted);partyPublicSetStatus(ok?'JOIN REQUEST SENT · WAITING FOR HOST':'COULD NOT REQUEST THAT PARTY');
+    if(ok){publicPartyAutoJoinRequestId='';if(typeof socialBroadcastPublicPartyWakeup==='function')void socialBroadcastPublicPartyWakeup(host,row.request_id,'pending');}
+    await partyPublicRefresh(true);sfx(ok?'pickup':'dry');return ok;
+  }catch(error){partyPublicSetStatus('PUBLIC PARTY REQUEST FAILED · TRY AGAIN');if(partyPublicRpcMissing(error))publicPartySqlReady=false;sfx('dry');return false;}finally{publicPartyActionBusy='';}
 }
+function partyPublicRevokeJoinToken(target,token){if(target&&target.friendInviteTokens instanceof Map)target.friendInviteTokens.delete(String(token||''));}
 async function partyPublicDecide(requestId,accept){
-  const id=partyPublicUuid(requestId);if(!id||!partyIsHost()||publicPartyActionBusy)return false;publicPartyActionBusy='decide:'+id;
-  let token='';
+  const id=partyPublicUuid(requestId),current=party,owner=authUser?String(authUser.id||''):'',request=publicPartyHostRequests.find(row=>row.requestId===id);
+  if(!id||!owner||!request||!partyIsHost()||!current.publicParty||publicPartyActionBusy)return false;
+  if(accept&&current.members.length>=PARTY_MAX){partyPublicSetStatus('PARTY FULL · COULD NOT ACCEPT');sfx('dry');return false;}
+  const action='decide:'+id,partyId=String(current.publicPartyId||''),hostId=String(current.hostId||''),hostEpoch=current.hostEpoch;
+  const stillCurrent=()=>!!(authUser&&String(authUser.id||'')===owner&&party===current&&partyIsHost()&&party.publicParty&&String(party.publicPartyId||'')===partyId&&String(party.hostId||'')===hostId&&party.hostEpoch===hostEpoch);
+  publicPartyActionBusy=action;let token='',registered=false;
   try{
-    if(accept){token=partyFriendInviteToken();const expiresAt=Date.now()+2*60*1000;if(!token||!await partyRegisterFriendInvite(token,expiresAt))throw new Error('Could not secure join token');}
+    if(accept){token=partyFriendInviteToken();const expiresAt=Date.now()+2*60*1000;if(!token||!await partyRegisterFriendInvite(token,expiresAt)){partyPublicSetStatus('PARTY INVITE CHANNEL IS NOT READY · TRY AGAIN');throw new Error('JOIN_TOKEN_REGISTRATION_FAILED');}registered=true;}
+    if(!stillCurrent()){if(registered)partyPublicRevokeJoinToken(current,token);return false;}
     const result=await sb.rpc('decide_outpost_zero_public_party_request',{p_request_id:id,p_accept:!!accept,p_join_token:accept?token:null});if(result.error)throw result.error;
+    if(!stillCurrent()){if(registered)partyPublicRevokeJoinToken(current,token);return false;}
     const row=Array.isArray(result.data)?result.data[0]:result.data;
-    if(!row||row.accepted!==true){party.status=row&&row.status==='full'?'PARTY FULL · COULD NOT ACCEPT':'THAT REQUEST IS NO LONGER AVAILABLE';await partyPublicRefreshHost(true);sfx('dry');return false;}
-    party.status=accept?'JOIN REQUEST ACCEPTED':'JOIN REQUEST DECLINED';await partyPublicRefreshHost(true);sfx('swap');return true;
-  }catch(error){party.status='COULD NOT '+(accept?'ACCEPT':'DECLINE')+' THAT REQUEST.';sfx('dry');return false;}finally{publicPartyActionBusy='';}
+    if(!row||row.accepted!==true){if(registered)partyPublicRevokeJoinToken(current,token);partyPublicSetStatus(row&&row.status==='full'?'PARTY FULL · COULD NOT ACCEPT':'THAT REQUEST IS NO LONGER AVAILABLE');await partyPublicRefreshHost(true);sfx('dry');return false;}
+    publicPartyHostRefreshVersion++;publicPartyHostRequests=publicPartyHostRequests.filter(item=>item.requestId!==id);publicPartyHostPollAt=0;
+    partyPublicSetStatus(accept?'JOIN REQUEST ACCEPTED · CONNECTING PLAYER':'JOIN REQUEST DECLINED');
+    if(typeof socialBroadcastPublicPartyWakeup==='function')void socialBroadcastPublicPartyWakeup(request.username,id,accept?'accepted':'declined');
+    await partyPublicRefreshHost(true);sfx('swap');return true;
+  }catch(error){
+    if(registered)partyPublicRevokeJoinToken(current,token);
+    if(stillCurrent()&&String(error&&error.message||'')!=='JOIN_TOKEN_REGISTRATION_FAILED')partyPublicSetStatus(/FULL/i.test(String(error&&error.message||''))?'PARTY FULL · COULD NOT ACCEPT':'COULD NOT '+(accept?'ACCEPT':'DECLINE')+' THAT REQUEST · TRY AGAIN');
+    sfx('dry');return false;
+  }finally{if(publicPartyActionBusy===action)publicPartyActionBusy='';}
 }
 function partyPublicMyRequest(partyId){const id=partyPublicUuid(partyId);return publicPartyMyRequests.find(row=>row.partyId===id)||null;}
-function partyPublicJoinAccepted(requestId){
-  const id=partyPublicUuid(requestId),row=publicPartyMyRequests.find(item=>item.requestId===id);if(!row||row.status!=='accepted'||!/^[A-HJ-NP-Z2-9]{6}$/.test(row.code)||!/^[A-Za-z0-9_-]{20,64}$/.test(row.token)||row.expiresAt<=Date.now()){party.status='THAT APPROVAL EXPIRED · REQUEST AGAIN';void partyPublicRefresh(true);sfx('dry');return false;}
-  return partyConnect(row.code,false,partyDefaultName(),{friendInviteToken:row.token,friendInviteExpiresAt:row.expiresAt});
+function partyPublicJoinAccepted(requestId,automatic=false){
+  const id=partyPublicUuid(requestId),row=publicPartyMyRequests.find(item=>item.requestId===id);if(!row||row.status!=='accepted'||!/^[A-HJ-NP-Z2-9]{6}$/.test(row.code)||!/^[A-Za-z0-9_-]{20,64}$/.test(row.token)||row.expiresAt<=Date.now()){partyPublicSetStatus('THAT APPROVAL EXPIRED · REQUEST AGAIN');void partyPublicRefresh(true);sfx('dry');return false;}
+  publicPartyAutoJoinRequestId=id;partyPublicSetStatus(automatic?'PUBLIC PARTY REQUEST APPROVED · JOINING NOW':'JOINING APPROVED PUBLIC PARTY');
+  const joined=partyConnect(row.code,false,partyDefaultName(),{friendInviteToken:row.token,friendInviteExpiresAt:row.expiresAt});if(!joined)publicPartyAutoJoinRequestId='';return joined;
+}
+function partyPublicHandleRealtimeWakeup(payload){
+  const id=partyPublicUuid(payload&&payload.requestId),status=String(payload&&payload.status||''),target=typeof socialHandleKey==='function'?socialHandleKey(payload&&payload.to):String(payload&&payload.to||'').toLowerCase(),
+    mine=typeof socialHandleKey==='function'?socialHandleKey(socialProfile&&socialProfile.handle):String(socialProfile&&socialProfile.handle||'').toLowerCase();
+  if(!id||!['pending','accepted','declined'].includes(status)||!mine||target!==mine)return false;
+  if(status==='pending'&&partyIsHost()&&party.publicParty){partyPublicSetStatus('NEW PUBLIC PARTY JOIN REQUEST');publicPartyHostPollAt=0;void partyPublicRefreshHost(true);return true;}
+  if(status!=='pending'){partyPublicSetStatus(status==='accepted'?'PUBLIC PARTY REQUEST APPROVED · CONNECTING...':'PUBLIC PARTY REQUEST DECLINED');publicPartyPollAt=0;void partyPublicRefresh(true);return true;}
+  return false;
 }
 function partyPublicTick(clock=Date.now()){
-  if(authUser&&typeof state!=='undefined'&&state==='select'&&typeof selPage!=='undefined'&&selPage==='social'&&typeof socialView!=='undefined'&&socialView==='party')void partyPublicRefresh();
+  if(authUser&&typeof state!=='undefined'&&state==='select'&&typeof selPage!=='undefined'&&selPage==='social'&&typeof socialView!=='undefined'&&socialView==='party'){
+    if(!partyPublicMaybeAutoJoin())void partyPublicRefresh();
+  }
   if(partyIsHost()&&party.publicParty){void partyPublicPublish();void partyPublicRefreshHost();}
 }
 function partyPublicPromptSearch(){
@@ -1141,7 +1201,11 @@ function partyCpuHostStartRound(){
 function partyCpuApplyRoundStart(p){
   if(!partyCpuEnvelope(p,true)) return false;
   const round=Math.max(0,Math.floor(+p.round||0)); if(round<=partyCpuMatch.round) return false;
-  const continuing=isPartyCpuMatch()&&state==='play'&&partyCpuMatch.phase==='round_end';
+  // A host round-start is authoritative for the immediately following round.
+  // Accept it from any active-round phase so a guest that missed or received
+  // the prior result out of order can recover instead of cancelling the match.
+  const continuing=isPartyCpuMatch()&&state==='play'&&round===partyCpuMatch.round+1&&
+    ['countdown','fight','round_end'].includes(partyCpuMatch.phase);
   const expectedPage=party.directCpu?'offlinecpu':'party';
   if(!continuing&&(state!=='select'||selPage!==expectedPage)){
     if(!partyCpuIsHost())partySend('cpu_cancel',{matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,reason:party.directCpu?'A friend left the CPU game setup.':'A party member left the Party menu.'});
@@ -1199,7 +1263,9 @@ function offlineCpu2v2RoundTick(){
     offlineCpu2v2Resolve(arenaTimeoutWinner('allies',alliesHp,'cpus',cpusHp));
   }
   if(partyCpuMatch.phase==='round_end'&&partyCpuMatch.nextRoundAt&&now>=partyCpuMatch.nextRoundAt){
-    partyCpuMatch.nextRoundAt=0;offlineCpu2v2BeginRound();
+    const deadline=partyCpuMatch.nextRoundAt;
+    if(!offlineCpu2v2BeginRound()&&partyCpuMatch.phase==='round_end'&&partyCpuMatch.nextRoundAt===deadline)
+      partyCpuMatch.nextRoundAt=now+PARTY_CPU_ROUND_RETRY_MS;
   }
 }
 function offlineCpu2v2Resolve(winner){
@@ -1534,7 +1600,11 @@ function partyCpuWallTick(clock){
   }
   if(!isPartyCpuMatch()) return;
   if(partyCpuMatch.phase==='countdown'&&clock>=partyCpuMatch.roundStartAt){ partyCpuMatch.phase='fight';arena.phase='fight';waveMsg='FIGHT';waveMsgT=now+800; }
-  if(partyCpuIsHost()&&partyCpuMatch.phase==='round_end'&&partyCpuMatch.nextRoundAt&&clock>=partyCpuMatch.nextRoundAt){ partyCpuMatch.nextRoundAt=0;partyCpuHostStartRound(); }
+  if(partyCpuIsHost()&&partyCpuMatch.phase==='round_end'&&partyCpuMatch.nextRoundAt&&clock>=partyCpuMatch.nextRoundAt){
+    const deadline=partyCpuMatch.nextRoundAt;
+    if(!partyCpuHostStartRound()&&partyCpuMatch.phase==='round_end'&&partyCpuMatch.nextRoundAt===deadline)
+      partyCpuMatch.nextRoundAt=clock+PARTY_CPU_ROUND_RETRY_MS;
+  }
   // Advance authority only through the exact deadline before comparing HP.
   // The old order resolved first and could omit the final pre-timeout step.
   const simLimit=partyCpuMatch.phase==='fight'?Math.min(clock,partyCpuMatch.roundEndAt):clock;

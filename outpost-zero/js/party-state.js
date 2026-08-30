@@ -4,7 +4,7 @@ const PARTY_MIN_PLAYERS=2, PARTY_MAX=4, PARTY_JOIN_MS=6500, PARTY_MISSING_MS=450
 const PARTY_CHAT_MAX=120, PARTY_CHAT_KEEP=24, PARTY_CHAT_RATE_MS=800;
 const PARTY_FRIEND_INVITE_MS=5*60*1000, PARTY_FRIEND_INVITE_MAX_MS=10*60*1000;
 const PARTY_CPU_MODE='partycpu2v2', PARTY_CPU_TARGET=5, PARTY_CPU_HP=250;
-const PARTY_CPU_ROUND_MS=90000, PARTY_CPU_SYNC_MS=50, PARTY_CPU_STEP=1000/60;
+const PARTY_CPU_ROUND_MS=90000, PARTY_CPU_SYNC_MS=50, PARTY_CPU_STEP=1000/60, PARTY_CPU_ROUND_RETRY_MS=350;
 const PARTY_QUEUE_CAPS=Object.freeze({
   arena:1, arena1v1:1, ai1v1:1, ai2v2:1, ranked1v1:1, ranked_1v1:1,
   arena2v2:2, ranked2v2:2, ranked_2v2:2,
@@ -24,4 +24,6 @@ let party=freshParty('Create a party or join with a 6-character code.');
 let partyAuthOwnerId='',partyInviteSendBusy=false,partyInvitePickerBusy=false,partyInvitePickerOp=null,
   partyFriendInviteSendOp=null,partyFriendInviteJoinBusy=false,partyFriendInviteFormOwnerId='';
 let publicPartySqlReady=null,publicPartyRows=[],publicPartyHostRequests=[],publicPartyMyRequests=[],publicPartyPage=0,publicPartySearch='',
-  publicPartyPollAt=0,publicPartyPolling=false,publicPartyHostPollAt=0,publicPartyHostPolling=false,publicPartyActionBusy='';
+  publicPartyPollAt=0,publicPartyPolling=false,publicPartyRefreshVersion=0,publicPartyRefreshQueued=false,
+  publicPartyHostPollAt=0,publicPartyHostPolling=false,publicPartyHostRefreshVersion=0,publicPartyHostRefreshQueued=false,
+  publicPartyActionBusy='',publicPartyAutoJoinRequestId='';
