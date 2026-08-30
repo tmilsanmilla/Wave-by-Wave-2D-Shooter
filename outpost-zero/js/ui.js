@@ -299,7 +299,7 @@ function drawSelect(){
   layoutRects=[];                                         // one registry per frame
   cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; weaponBrowserRects=[]; socialRects=[]; partyRects=[]; partyModeRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; offlineCpuRects=[]; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
-  adminHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
+  adminHubBtnRect=null; suggestionsHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
   // swallow a click meant for the page you are on (stale shop/practice/feed buttons)
   shopRects=[]; shopTabRects=[]; practiceRects=[]; arenaRects=[]; feedXRects=[];
@@ -2874,13 +2874,16 @@ function drawHub(){
   let adminRowShift=0;
   if(isAdmin()){
     const defs=[];
-    defs.push({id:'panel', t:'\u2699 ADMIN TOOLS', st:'\u2699 TOOLS', d:isTester()?'test mode \u00b7 suggest weapons':'edit \u00b7 players \u00b7 modes',
+    defs.push({id:'panel', t:'\u2699 ADMIN TOOLS', st:'\u2699 TOOLS', d:isTester()?'test mode only':'edit \u00b7 players \u00b7 modes',
                f0:'rgba(208,85,72,0.12)', f1:'rgba(208,85,72,0.30)', c:'#d05548', tc:'#e0a8a0'});
     if(isMainAdmin())
       defs.push({id:'admins', t:'\uD83D\uDEE1 ADMINS', st:'\uD83D\uDEE1 ADMINS', d:'manage the team',
                  f0:'rgba(232,182,88,0.12)', f1:'rgba(232,182,88,0.30)', c:'#e8b658', tc:'#e8d9a8'});
-    defs.push({id:'msgs', t:'\u2709 ADMIN INBOX'+(unreadMsgs?' ('+unreadMsgs+')':''), st:'\u2709 ADMIN INBOX'+(unreadMsgs?' ('+unreadMsgs+')':''), d:isMainAdmin()?'admin messages \u00b7 reports \u00b7 admin log':'admin messages \u00b7 archive',
+    defs.push({id:'msgs', t:'\u2709 ADMIN INBOX'+(unreadMsgs?' ('+unreadMsgs+')':''), st:'\u2709 ADMIN INBOX'+(unreadMsgs?' ('+unreadMsgs+')':''), d:'admin messages \u00b7 archive',
                f0:'rgba(167,193,94,0.12)', f1:'rgba(167,193,94,0.30)', c:'#a7c15e', tc:'#cfe0a8'});
+    if(isMainAdmin())
+      defs.push({id:'suggestions',t:'\uD83D\uDCCB SUGGESTIONS',st:'\uD83D\uDCCB SUGGESTIONS',d:'reports \u00b7 admin suggestions \u00b7 log',
+                 f0:'rgba(127,216,255,0.12)',f1:'rgba(127,216,255,0.30)',c:'#7fd8ff',tc:'#bfe8ff'});
     const tightHub = H<640;                         // small phones: icons only, shorter buttons
     const g2=tightHub?6:10, bh2=tightHub?28:46;
     const minBw=tightHub?44:78;
@@ -2909,6 +2912,7 @@ function drawHub(){
       if(d.id==='panel') adminHubBtnRect=r;
       else if(d.id==='admins') adminsHubBtnRect=r;
       else if(d.id==='msgs') msgsHubBtnRect=r;
+      else if(d.id==='suggestions') suggestionsHubBtnRect=r;
       bx+=bw2+g2;
     }
     ctx.textAlign='center';

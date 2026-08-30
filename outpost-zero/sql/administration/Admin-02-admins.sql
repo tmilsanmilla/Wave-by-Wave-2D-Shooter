@@ -813,6 +813,117 @@ begin
 end;
 $function$;
 
+-- Creator/Main save live weapon edits directly. Dynamic relation access keeps
+-- Admin 02 rerunnable before Weapons 01; calling this RPC produces one clear
+-- setup error until that storage file has been run. The definition and legacy
+-- unscaled shop cost are saved atomically in the caller's transaction.
+create or replace function public.save_outpost_zero_weapon_definition(
+  p_weapon_key text,p_stats jsonb,p_price integer,p_published boolean
+)
+returns table(weapon_key text,stats jsonb,price integer,published boolean,updated_by text,updated_at timestamptz)
+language plpgsql volatile security definer set search_path=pg_catalog,public
+as $function$
+declare
+  v_role text:=public._outpost_zero_admin_role();v_key text:=lower(btrim(coalesce(p_weapon_key,'')));
+  v_stats jsonb:='{}'::jsonb;v_field text;v_json jsonb;v_number numeric;v_integer integer;
+  v_actor_label text;v_saved_stats jsonb;v_saved_price integer;v_saved_published boolean;
+  v_saved_by text;v_saved_at timestamptz;
+begin
+  if v_role not in ('creator','main') then
+    raise exception using errcode='42501',message='MAIN_ADMIN_ACCESS_REQUIRED';end if;
+  if to_regclass('public.weapon_defs') is null or to_regclass('public.weapon_prices') is null then
+    raise exception using errcode='55000',message='RUN_WEAPONS_01_BEFORE_SAVING_WEAPONS';end if;
+  if v_key not in (
+    'ar','smg','shotgun','sniper','solarrifle','fireworks','warpwave','railgun',
+    'm9','revolver','g18','volt','dart','timeturner',
+    'chainsaw','knife','scythe','hammer','twinsai','bdaggers','terafists',
+    'medkit','grenade','freezer','redball','beachball','turret','portal','timecapsule'
+  ) then raise exception using errcode='22023',message='VALID_WEAPON_KEY_REQUIRED';end if;
+  if p_published is null then raise exception using errcode='22023',message='PUBLISHED_STATE_REQUIRED';end if;
+  if p_published and v_key in ('warpwave','timeturner','terafists','portal') then
+    raise exception using errcode='22023',message='NEXT_SEASON_WEAPONS_CANNOT_BE_PUBLISHED';end if;
+  if p_price is not null and p_price not between 0 and 9999 then
+    raise exception using errcode='22023',message='WEAPON_PRICE_MUST_BE_0_TO_9999';end if;
+  if p_stats is null or jsonb_typeof(p_stats)<>'object' or pg_column_size(p_stats)>2048 then
+    raise exception using errcode='22023',message='WEAPON_STATS_MUST_BE_A_SMALL_OBJECT';end if;
+
+  for v_field,v_json in select e.key,e.value from jsonb_each(p_stats) e loop
+    if v_field not in ('dmg','fireRate','mag','reload','range','pellets','pierce') then
+      raise exception using errcode='22023',message='UNKNOWN_WEAPON_STAT';end if;
+    if jsonb_typeof(v_json)<>'number' or v_json::text !~ '^[0-9]{1,6}$' then
+      raise exception using errcode='22023',message='WEAPON_STATS_MUST_BE_INTEGERS';end if;
+    v_number:=(v_json::text)::numeric;
+    if (v_field='dmg' and v_number not between 1 and 9999)
+       or (v_field='fireRate' and v_number not between 40 and 3000)
+       or (v_field='mag' and v_number not between 1 and 500)
+       or (v_field='reload' and v_number not between 0 and 6000)
+       or (v_field='range' and v_number not between 20 and 99999)
+       or (v_field='pellets' and v_number not between 1 and 20)
+       or (v_field='pierce' and v_number not between 0 and 20) then
+      raise exception using errcode='22023',message='WEAPON_STAT_OUT_OF_RANGE';end if;
+    v_integer:=v_number::integer;
+    v_stats:=v_stats||jsonb_build_object(v_field,v_integer);
+  end loop;
+
+  select p.handle into v_actor_label from public.social_profiles p where p.user_id=auth.uid();
+  if v_actor_label is null or v_actor_label !~ '^[A-Za-z0-9_]{3,32}$' then v_actor_label:=upper(v_role);end if;
+  execute $sql$
+    insert into public.weapon_defs(key,stats,price,published,updated_by,updated_at)
+    values($1,$2,null,$3,$4,clock_timestamp())
+    on conflict(key) do update set stats=excluded.stats,price=null,published=excluded.published,
+      updated_by=excluded.updated_by,updated_at=excluded.updated_at
+    returning stats,published,updated_by,updated_at
+  $sql$ into v_saved_stats,v_saved_published,v_saved_by,v_saved_at
+  using v_key,v_stats,p_published,v_actor_label;
+  if p_price is not null then
+    execute $sql$
+      insert into public.weapon_prices(key,cost,updated_at) values($1,$2,clock_timestamp())
+      on conflict(key) do update set cost=excluded.cost,updated_at=excluded.updated_at
+    $sql$ using v_key,p_price;
+  end if;
+  execute 'select p.cost from public.weapon_prices p where p.key=$1' into v_saved_price using v_key;
+  perform public._outpost_zero_write_admin_audit(null,'weapon.definition.edit','applied',
+    jsonb_build_object('weapon_key',v_key,'stats',v_stats,'price_cost',v_saved_price,'published',v_saved_published),null);
+  return query select v_key,v_saved_stats,v_saved_price,v_saved_published,v_saved_by,v_saved_at;
+end;
+$function$;
+
+-- Existing projects may still have Weapons 01's former direct-write policy
+-- and column grants. Tighten those tables now when present, while preserving
+-- Admin 02's ability to install before Weapons 01 on a fresh project.
+do $weapon_write_boundary$
+declare v_table text;v_policy record;v_column_grant record;v_grantee_sql text;
+begin
+  foreach v_table in array array['weapon_defs','weapon_prices'] loop
+    if to_regclass('public.'||v_table) is null then continue;end if;
+    for v_policy in
+      select p.policyname from pg_catalog.pg_policies p
+      where p.schemaname='public' and p.tablename=v_table and p.cmd<>'SELECT'
+    loop
+      execute format('drop policy %I on public.%I',v_policy.policyname,v_table);
+    end loop;
+    execute format(
+      'revoke insert,update,delete,truncate,references,trigger on table public.%I from public,anon,authenticated',
+      v_table
+    );
+    -- Legacy Weapons 01 used column-level INSERT/UPDATE grants; a table-level
+    -- REVOKE alone does not reliably remove those independent privileges.
+    for v_column_grant in
+      select cp.grantee,cp.privilege_type,cp.column_name
+      from information_schema.column_privileges cp
+      where cp.table_schema='public' and cp.table_name=v_table
+        and cp.grantee in ('PUBLIC','anon','authenticated')
+        and cp.privilege_type in ('INSERT','UPDATE','REFERENCES')
+    loop
+      v_grantee_sql:=case when v_column_grant.grantee='PUBLIC' then 'public'
+                          else quote_ident(v_column_grant.grantee) end;
+      execute format('revoke %s (%I) on table public.%I from %s',
+        v_column_grant.privilege_type,v_column_grant.column_name,v_table,v_grantee_sql);
+    end loop;
+  end loop;
+end;
+$weapon_write_boundary$;
+
 -- Public-username browser boundary. The admins table intentionally keeps its
 -- private Auth email compatibility key, but no roster or management RPC below
 -- returns or accepts that key.
@@ -950,6 +1061,7 @@ revoke all on function public.add_outpost_zero_admin(text,text) from public,anon
 revoke all on function public.submit_outpost_zero_weapon_suggestion(text,text) from public,anon,authenticated;
 revoke all on function public.list_outpost_zero_weapon_suggestions(integer,text) from public,anon,authenticated;
 revoke all on function public.review_outpost_zero_weapon_suggestion(bigint,text,text) from public,anon,authenticated;
+revoke all on function public.save_outpost_zero_weapon_definition(text,jsonb,integer,boolean) from public,anon,authenticated;
 revoke all on function public.list_outpost_zero_admin_roster() from public,anon,authenticated;
 revoke all on function public.add_outpost_zero_admin(text,text) from public,anon,authenticated;
 revoke all on function public.promote_outpost_zero_admin(text) from public,anon,authenticated;
@@ -967,6 +1079,7 @@ grant execute on function public._outpost_zero_admin_role() to authenticated;
 grant execute on function public._outpost_zero_staff_role() to authenticated;
 grant execute on function public.submit_outpost_zero_weapon_suggestion(text,text) to authenticated;
 grant execute on function public.review_outpost_zero_weapon_suggestion(bigint,text,text) to authenticated;
+grant execute on function public.save_outpost_zero_weapon_definition(text,jsonb,integer,boolean) to authenticated;
 grant execute on function public.list_outpost_zero_admin_roster_by_username() to authenticated;
 grant execute on function public.add_outpost_zero_admin_by_username(text,text) to authenticated;
 grant execute on function public.promote_outpost_zero_admin_by_username(text) to authenticated;

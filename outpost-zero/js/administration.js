@@ -1,7 +1,7 @@
 "use strict";
 
 // MAIN ADMINS have every power; CO-ADMINS have shared staff tools; TESTERS
-// have only Test Mode, the Admin Inbox, and the weapon-suggestion form.
+// have only Test Mode and the Admin Inbox.
 // Legacy attribution callers still use this name. It deliberately returns a
 // public username/role label now, never the signed-in account's Auth email.
 function adminEmail(){return String(adminSelfUsername||adminSelfRole||'staff').toLowerCase();}
@@ -20,19 +20,20 @@ function canManageAdmins(){ return isMainAdmin(); }
 function canPostUpdates(){ return isMainAdmin() || isCoAdmin(); }
 function canUsePlayerTools(){ return isMainAdmin() || isCoAdmin(); }
 function canViewWeaponStorage(){ return isMainAdmin() || isCoAdmin(); }
-function canSuggestWeaponEdits(){ return isTester() || isCoAdmin(); }
 function canReviewWeaponSuggestions(){ return isMainAdmin(); }
 let unrankedRun=false;                              // next-season (early access) weapons -> no leaderboard
 let adminOpen=false, adminUsed=false, adminBtnRect={x:-99,y:-99,w:0,h:0}, adminRects=[];
 let testMode=false;                                 // test mode (all admins); storage is a viewer popout now
-let adminPanelOpen=false, adminHubBtnRect=null, adminPanelRects=[];
+let adminPanelOpen=false, adminHubBtnRect=null, suggestionsHubBtnRect=null, adminPanelRects=[];
 let aiLearningOpen=false, aiLearningRects=[], aiLearningDifficulty=4, aiLearningNotice='',aiLearningSelectedModelId='',aiLearningRestoreBusyId='';
 let adminRoles={};                                  // public username -> staff rank
 let adminRosterRows=[],adminSelfRole='',adminSelfUsername='';
-let banners=[], pendingBanners=[], bannerFetchSeq=0, bannerDraftEpoch=0, updatesFeed={staff:[],player:[]};
-let reportCopyMode='all',reportCopyCustomCount=25,reportCopyBusy=false,reportCopyStatus='';
+let banners=[], pendingBanners=[], bannerFetchSeq=0, bannerDraftEpoch=0, updatesFeed={reports:[]};
+let reportCopyMode='all',reportCopyCustomCount=25,reportCopyBusy=false,reportCopyStatus='',reportBulkAction='copy';
+let reportActionMenuOpen=false,reportAmountMenuOpen=false,reportView='open';
+let reportScroll=0,reportScrollMax=0,reportScrollViewport=null;
 let requestsOpen=false,requestsRects=[],requestsPage=0,requestsBusy=false,requestsStatus='';
-let weaponSuggestions=[],weaponSuggestionsOpen=false,weaponSuggestionsRects=[],weaponSuggestionBusy=false,weaponSuggestionStatus='';
+let weaponSuggestions=[],weaponSuggestionsOpen=false,weaponSuggestionsRects=[],weaponSuggestionBusy=false,weaponSuggestionStatus='',weaponSuggestionPage=0,weaponSuggestionRequestSeq=0;
 let inboxTab='msgs';
 let postOpen=false, postBusy=false, postRequestSeq=0, updatesOpen=false, updatesHubBtnRect=null, updatesRects=[], staffReport=false;
 let adminsOpen=false, msgsOpen=false, adminsHubBtnRect=null, msgsHubBtnRect=null, adminsRects=[], msgsRects=[];
@@ -83,6 +84,17 @@ function adminAuditScrollContains(x,y){
   const r=auditScrollViewport;
   return !!(auditOpen&&r&&x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);
 }
+function resetReportScroll(){reportScroll=0;reportScrollMax=0;reportScrollViewport=null;updatesRects=[];}
+function scrollReportsBy(delta){
+  const before=reportScroll;
+  reportScroll=Math.max(0,Math.min(reportScrollMax,reportScroll+(Number.isFinite(+delta)?+delta:0)));
+  if(reportScroll!==before)updatesRects=[];
+  return reportScroll!==before;
+}
+function reportScrollContains(x,y){
+  const r=reportScrollViewport;
+  return !!(updatesOpen&&r&&x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);
+}
 function currentAuthUserId(){return authUser?String(authUser.id||''):'';}
 function adminPrivacyRequestCurrent(epoch,userId){return epoch===adminPrivacyEpoch&&currentAuthUserId()===String(userId||'');}
 function clearAdminAuditCache(){
@@ -119,9 +131,10 @@ function clearAdminNotificationComposerState(){
 function clearMainOnlyAdminState(){
   const closeStaffReport=!!staffReport;
   bannerDraftEpoch++;pendingBanners=[];
-  reportFetchSeq++;reportResolveBusy.clear();reportLoadStatus='';reportFeedPages={staff:0,player:0};reportArchivePage=0;
-  clearAdminAuditCache();scoreReqs=[];updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];
-  aiLearningOpen=false;adminsOpen=false;storageOpen=false;weaponSuggestionsOpen=false;requestsOpen=false;weaponSuggestions=[];clearPostComposerPrivateState();staffReport=false;
+  reportFetchSeq++;reportResolveBusy.clear();reportLoadStatus='';resetReportScroll();
+  reportCopyBusy=false;reportCopyStatus='';reportCopyMode='all';reportBulkAction='copy';reportActionMenuOpen=reportAmountMenuOpen=false;reportView='open';
+  clearAdminAuditCache();scoreReqs=[];updatesOpen=false;updatesFeed={reports:[]};updatesResolved=[];
+  aiLearningOpen=false;adminsOpen=false;storageOpen=false;weaponSuggestionsOpen=false;requestsOpen=false;weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='';clearPostComposerPrivateState();staffReport=false;
   composePickOpen=false;
   if(msgOpen&&typeof msgKind!=='undefined'&&(msgKind==='admin'||msgKind==='player_notification')){msgOpen=false;msgTo='';}
   clearAdminNotificationComposerState();
@@ -145,8 +158,9 @@ function scrubPrivilegedUiForAccountChange(){
   if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
   if(typeof weaponEditOpen!=='undefined')weaponEditOpen=false;
   if(typeof layoutMode!=='undefined')layoutMode=false;
-  reportFetchSeq++;reportResolveBusy.clear();reportLoadStatus='';reportFeedPages={staff:0,player:0};reportArchivePage=0;
-  inboxTab='msgs';composePickOpen=false;scoreReqs=[];adminMsgs=[];unreadMsgs=0;updatesFeed={staff:[],player:[]};updatesResolved=[];
+  reportFetchSeq++;reportResolveBusy.clear();reportLoadStatus='';resetReportScroll();
+  reportCopyBusy=false;reportCopyStatus='';reportCopyMode='all';reportBulkAction='copy';reportActionMenuOpen=reportAmountMenuOpen=false;reportView='open';
+  inboxTab='msgs';composePickOpen=false;scoreReqs=[];adminMsgs=[];unreadMsgs=0;updatesFeed={reports:[]};updatesResolved=[];weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='';
   clearAdminAuditCache();clearPrivatePlayerEditor();scoreRequestDecisionBusy.clear();
   if(typeof banList!=='undefined')banList=[];if(typeof appealList!=='undefined')appealList=[];
   if(typeof appealDecisionBusy!=='undefined')appealDecisionBusy.clear();if(typeof playerBanActionBusy!=='undefined')playerBanActionBusy.clear();
@@ -686,8 +700,8 @@ async function rejectScoreReq(r){
   scoreRequestDecisionBusy.add(key);const operationId=adminOperationUuid();
   try{ await resolvePlayerEditRequest(r.id,'reject',operationId); }catch(e){}finally{await fetchScoreReqs();scoreRequestDecisionBusy.delete(key);}
 }
-let archOpen=false, archTab='msgs', archRects=[], storageOpen=false, storageRects=[], archHubBtnRect=null;
-let updatesResolved=[],reportFetchSeq=0,reportLoadStatus='',reportFeedPages={staff:0,player:0},reportArchivePage=0;
+let archOpen=false,archRects=[],storageOpen=false,storageRects=[],archHubBtnRect=null;
+let updatesResolved=[],reportFetchSeq=0,reportLoadStatus='';
 const reportResolveBusy=new Set(),REPORT_FETCH_PAGE_SIZE=250,REPORT_FETCH_PAGE_CAP=200;
 let adminMsgs=[], unreadMsgs=0, msgOpen=false, msgTo='',adminMsgOperationId=null;
 function normalizeAdminAuditRow(row){
@@ -708,7 +722,8 @@ const ADMIN_AUDIT_ACTION_TITLES=Object.freeze({
   'player.edit.receipt':'Player edit completed','player_request.submit':'Player edit requested',
   'player_request.approve':'Player edit request approval','player_request.reject':'Player edit request rejection',
   'player_request.resolve':'Player edit request reviewed','ban_appeal.submit':'Ban appeal submitted',
-  'ban_appeal.lift':'Ban appeal approval','ban_appeal.deny':'Ban appeal denial','ban_appeal.resolve':'Ban appeal review'
+  'ban_appeal.lift':'Ban appeal approval','ban_appeal.deny':'Ban appeal denial','ban_appeal.resolve':'Ban appeal review',
+  'weapon.definition.edit':'Weapon settings changed'
 });
 const ADMIN_AUDIT_REASON_TEXT=Object.freeze({
   target_not_found:'that player was not found',creator_approval_required:'creator approval is required',
@@ -736,7 +751,8 @@ const ADMIN_AUDIT_DETAIL_LABELS=Object.freeze({
   previous_expires_at:'Previous expiration',expires_at:'New expiration',note:'Admin note',reason:'Explanation',
   before:'Previous value',after:'New value',gems_before:'Previous gems',gems_after:'New gems',
   coins_before:'Previous coins',coins_after:'New coins',request_id:'Request number',appeal_id:'Appeal number',
-  decision:'Decision',status:'Saved status',scopes:'Ban coverage',until:'Ban ends',summary:'Summary',sqlstate:'Error code'
+  decision:'Decision',status:'Saved status',scopes:'Ban coverage',until:'Ban ends',summary:'Summary',sqlstate:'Error code',
+  stats:'Weapon stats',price_cost:'Gem price',published:'Published'
 });
 const ADMIN_AUDIT_HIDDEN_DETAILS=new Set(['operation','request_fingerprint','target_key','accepted','changed']);
 function adminAuditLabelize(field){
@@ -824,6 +840,13 @@ function adminAuditHumanSummary(row){
     if(failed)return 'Could not remove temporary access to '+weapon+'.'+reason;
     if(result==='no_change')return 'No temporary access to '+weapon+' was active.';
     return 'Removed temporary access to '+weapon+'.';
+  }
+  if(action==='weapon.definition.edit'){
+    const settings=[];
+    if(d.stats&&typeof d.stats==='object')settings.push(adminAuditFormatValue(d.stats,'stats'));
+    if(d.price_cost!==undefined)settings.push('Gem price: '+adminAuditFormatValue(d.price_cost));
+    if(d.published!==undefined)settings.push('Published: '+adminAuditFormatValue(d.published));
+    return 'Changed '+weapon+(settings.length?'. '+settings.join('. '):'')+'.';
   }
   if(action==='ban.apply')return failed?'Could not ban the player.'+reason:d.before===undefined&&d.after===undefined?'Banned the player.':'Banned the player. Ban records changed from '+adminAuditFormatValue(d.before)+' to '+adminAuditFormatValue(d.after)+'.';
   if(action==='ban.unban')return failed?'Could not remove the player\'s ban.'+reason:d.before===undefined&&d.after===undefined?'Removed the player\'s ban.':'Removed the player\'s ban. Ban records changed from '+adminAuditFormatValue(d.before)+' to '+adminAuditFormatValue(d.after)+'.';
@@ -1215,16 +1238,19 @@ async function fetchReportRowsByState(resolved){
 async function fetchUpdatesFeed(){
   const request=++reportFetchSeq;
   if(!sb||!canAccessReports()){
-    updatesFeed={staff:[],player:[]};updatesResolved=[];reportLoadStatus='';return false;
+    updatesFeed={reports:[]};updatesResolved=[];reportLoadStatus='';resetReportScroll();return false;
   }
   const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
   reportLoadStatus='REFRESHING REPORTS…';
   try{
     const [open,resolved]=await Promise.all([fetchReportRowsByState(false),fetchReportRowsByState(true)]);
     if(request!==reportFetchSeq||!adminPrivacyRequestCurrent(epoch,userId)||!canAccessReports())return false;
-    const isStaff=r=>(r.meta&&r.meta.staff) || String(r.message||'').indexOf('[STAFF]')===0;
-    updatesFeed={staff:open.filter(isStaff),player:open.filter(r=>!isStaff(r))};
+    // A report is a report. Staff metadata may still exist server-side for
+    // audit/security purposes, but the reviewer UI never creates a second
+    // class of report from it.
+    updatesFeed={reports:open};
     updatesResolved=resolved;
+    resetReportScroll();
     reportLoadStatus='';
     return true;
   }catch(error){
@@ -1240,20 +1266,20 @@ async function fetchUpdatesFeed(){
 function reportCopyCount(){return reportCopyMode==='custom'?Math.max(1,Math.min(10000,Math.floor(+reportCopyCustomCount||1))):null;}
 function chooseReportCopyAll(){reportCopyMode='all';reportCopyStatus='';}
 function chooseReportCopyCustom(){
-  let raw=null;try{raw=window.prompt('How many of the newest reports should be copied? (1–10,000)',String(reportCopyCustomCount||25));}catch(error){}
+  let raw=null;try{raw=window.prompt('How many of the newest reports should be '+(reportBulkAction==='resolve'?'resolved':'copied')+'? (1–10,000)',String(reportCopyCustomCount||25));}catch(error){}
   if(raw===null)return false;
   const count=Math.floor(+raw);if(!Number.isFinite(count)||count<1||count>10000){reportCopyStatus='CUSTOM MUST BE 1–10,000.';sfx('dry');return false;}
-  reportCopyMode='custom';reportCopyCustomCount=count;reportCopyStatus='READY TO COPY '+count+' REPORT'+(count===1?'':'S')+'.';return true;
+  reportCopyMode='custom';reportCopyCustomCount=count;reportCopyStatus='READY TO '+reportBulkAction.toUpperCase()+' '+count+' REPORT'+(count===1?'':'S')+'.';return true;
 }
 function reportExportText(rows,requested){
   const list=Array.isArray(rows)?rows:[],created=new Date().toISOString();
   const out=['OUTPOST ZERO REPORT EXPORT','EXPORTED: '+created,'SELECTION: '+(requested==null?'ALL REPORTS':'NEWEST '+requested),'COPIED: '+list.length,''];
   list.forEach((row,index)=>{
-    const meta=row&&row.meta&&typeof row.meta==='object'?row.meta:{},staff=!!meta.staff||String(row&&row.message||'').startsWith('[STAFF]'),message=String(row&&row.message||'').replace(/^\[STAFF\]\s*/,'');
+    const meta=row&&row.meta&&typeof row.meta==='object'?row.meta:{},message=String(row&&row.message||'').replace(/^\[STAFF\]\s*/,'');
     // Keep bulk exports focused on the report itself. Reviewer identity and
     // per-row timestamps remain available in the protected Admin Inbox but are
     // intentionally omitted from copied report text.
-    out.push('REPORT '+(index+1),'ID: '+String(row&&row.id!=null?row.id:'unknown'),'TYPE: '+(staff?'STAFF REPORT':'PLAYER REPORT'),'STATUS: '+(row&&row.resolved?'RESOLVED':'OPEN'),'MESSAGE: '+message);
+    out.push('REPORT '+(index+1),'ID: '+String(row&&row.id!=null?row.id:'unknown'),'TYPE: REPORT','STATUS: '+(row&&row.resolved?'RESOLVED':'OPEN'),'MESSAGE: '+message);
     const context=[];
     for(const [key,label] of [['category','CATEGORY'],['screen','SCREEN'],['state','GAME STATE'],['mode','MODE'],['wave','WAVE'],['score','SCORE']])
       if(meta[key]!==undefined&&meta[key]!==null&&String(meta[key])!=='')context.push(label+': '+String(meta[key]));
@@ -1267,11 +1293,11 @@ async function writeReportExport(text){
   try{window.prompt('Copy all of this report export:',text);return true;}catch(error){return false;}
 }
 async function copyOutpostZeroReports(){
-  if(reportCopyBusy||!canAccessReports())return false;
+  if(reportCopyBusy||reportResolveBusy.size||!canAccessReports())return false;
   const requested=reportCopyCount(),owner=currentAuthUserId(),epoch=adminPrivacyEpoch;reportCopyBusy=true;reportCopyStatus='LOADING REPORTS…';
   try{
     let rows=[];
-    if(!sb)rows=[...(updatesFeed.staff||[]),...(updatesFeed.player||[]),...(updatesResolved||[])].sort((a,b)=>(+b.id||0)-(+a.id||0));
+    if(!sb)rows=[...(updatesFeed.reports||[]),...(updatesResolved||[])].sort((a,b)=>(+b.id||0)-(+a.id||0));
     else{
       const result=await sb.rpc('export_outpost_zero_reports',{p_limit:requested});
       if(result.error)throw result.error;
@@ -1289,16 +1315,14 @@ async function copyOutpostZeroReports(){
 }
 function publishResolvedReport(id,savedRow){
   let row=savedRow&&typeof savedRow==='object'?savedRow:null;
-  for(const k of ['staff','player']){
-    const i=updatesFeed[k].findIndex(r=>+r.id===+id);
-    if(i>=0){if(!row)row=updatesFeed[k][i];updatesFeed[k].splice(i,1);}
-  }
+  const i=(updatesFeed.reports||[]).findIndex(r=>+r.id===+id);
+  if(i>=0){if(!row)row=updatesFeed.reports[i];updatesFeed.reports.splice(i,1);}
   if(row){row={...row,resolved:true};updatesResolved=[row,...updatesResolved.filter(r=>+r.id!==+id)];}
   return row;
 }
-async function resolveReport(id){                    // mains: save first, then move it to the archive
+async function resolveReport(id,refresh=true){       // mains: save first, then move it to the archive
   id=Math.floor(+id||0);
-  if(!canAccessReports()||id<1||reportResolveBusy.has(id)) return false;
+  if(reportCopyBusy||!canAccessReports()||id<1||reportResolveBusy.has(id)) return false;
   if(!sb){
     publishResolvedReport(id);return true;
   }
@@ -1313,7 +1337,7 @@ async function resolveReport(id){                    // mains: save first, then 
     reportLoadStatus='REPORT #'+id+' SAVED IN ARCHIVE';
     // Reconcile with the server. If this refresh fails, the confirmed archived
     // row remains visible because fetchUpdatesFeed preserves the prior state.
-    await fetchUpdatesFeed();
+    if(refresh)await fetchUpdatesFeed();
     return true;
   }catch(error){
     if(adminPrivacyRequestCurrent(epoch,userId)&&canAccessReports()){
@@ -1322,6 +1346,39 @@ async function resolveReport(id){                    // mains: save first, then 
     }
     return false;
   }finally{reportResolveBusy.delete(id);}
+}
+async function resolveOutpostZeroReports(){
+  if(reportCopyBusy||reportResolveBusy.size||!canAccessReports())return false;
+  const open=(updatesFeed.reports||[]).filter(row=>row&&Number.isSafeInteger(+row.id)&&+row.id>0),
+    requested=reportCopyCount(),rows=requested==null?open:open.slice(0,requested);
+  if(!rows.length){reportCopyStatus='NO OPEN REPORTS TO RESOLVE.';sfx('dry');return false;}
+  let confirmed=false;
+  const selection=requested==null?'ALL currently open reports':'up to '+requested+' newest open report'+(requested===1?'':'s');
+  try{confirmed=window.confirm('Resolve '+selection+'? They will remain saved under RESOLVED.');}catch(error){}
+  if(!confirmed)return false;
+  const owner=currentAuthUserId(),epoch=adminPrivacyEpoch;reportCopyBusy=true;reportCopyStatus='RESOLVING '+selection.toUpperCase()+'…';
+  try{
+    let changed=0;
+    if(sb){
+      const result=await sb.rpc('resolve_outpost_zero_reports',{p_limit:requested});
+      if(result.error)throw result.error;
+      const payload=Array.isArray(result.data)?result.data[0]:result.data;
+      changed=Math.max(0,Math.floor(+(payload&&payload.resolved_count)||0));
+    }else{
+      for(const row of rows)if(publishResolvedReport(row.id))changed++;
+    }
+    if(!adminPrivacyRequestCurrent(epoch,owner)||!canAccessReports())return false;
+    if(sb)await fetchUpdatesFeed();else resetReportScroll();
+    reportCopyStatus='RESOLVED '+changed+' REPORT'+(changed===1?'':'S')+' · SAVED UNDER RESOLVED.';
+    sfx('pickup');return true;
+  }catch(error){
+    if(adminPrivacyRequestCurrent(epoch,owner)){reportCopyStatus='COULD NOT RESOLVE · RUN ADMIN 03 INBOX, THEN RETRY.';sfx('dry');}
+    return false;
+  }finally{if(adminPrivacyRequestCurrent(epoch,owner))reportCopyBusy=false;}
+}
+function runReportBulkAction(){
+  reportActionMenuOpen=reportAmountMenuOpen=false;
+  return reportBulkAction==='resolve'?resolveOutpostZeroReports():copyOutpostZeroReports();
 }
 function setPostBusy(busy){
   postBusy=!!busy;
@@ -1423,7 +1480,7 @@ async function demoteAdmin(username){
 }
 function addAdmin(){
   if(!canManageAdmins())return false;
-  openForm({title:'ADD ADMIN',hint:'Testers get only Test Mode, Admin Inbox, and weapon suggestions. Co-admins get shared staff tools.',saveLabel:'ADD',
+  openForm({title:'ADD ADMIN',hint:'Testers get only Test Mode and Admin Inbox. Co-admins get shared staff tools.',saveLabel:'ADD',
     fields:[{id:'username',label:'PUBLIC USERNAME',type:'text',placeholder:'player_username'},{id:'role',label:'STARTING TIER',type:'select',value:'tester',options:[{value:'tester',label:'TESTER · LIMITED'},{value:'co',label:'CO-ADMIN · SHARED TOOLS'}]}],
     onSave:async values=>{
       const username=String(values.username||'').trim().replace(/^@/,'').toLowerCase(),role=values.role==='co'?'co':'tester';
@@ -1436,51 +1493,35 @@ function addAdmin(){
       }catch(error){formError(role==='tester'?'Run Admin 02 Admins to add Testers.':'Could not add that admin.');return false;}
     }});return true;
 }
-function weaponSuggestionOptions(){
-  const keys=[...Object.keys(typeof WEAPONS==='object'&&WEAPONS||{}),...Object.keys(typeof UTILITIES==='object'&&UTILITIES||{})],seen=new Set(),rows=[];
-  for(const key of keys){if(seen.has(key)||(typeof isWeaponPublished==='function'&&!isWeaponPublished(key)))continue;seen.add(key);const def=(WEAPONS&&WEAPONS[key])||(UTILITIES&&UTILITIES[key])||{};rows.push({value:key,label:String(def.name||key).toUpperCase()});}
-  return rows.sort((a,b)=>a.label.localeCompare(b.label));
-}
-function openWeaponSuggestionForm(){
-  if(!canSuggestWeaponEdits()){sfx('dry');return false;}
-  const options=weaponSuggestionOptions();if(!options.length){weaponSuggestionStatus='NO PUBLISHED WEAPONS ARE AVAILABLE.';sfx('dry');return false;}
-  openForm({title:'SUGGEST WEAPON EDIT',hint:'Describe the exact stat, behavior, or balance change. This sends a suggestion only; it cannot edit the weapon.',saveLabel:'SEND SUGGESTION',
-    fields:[{id:'weapon',label:'PUBLISHED WEAPON',type:'select',value:options[0].value,options},{id:'suggestion',label:'PROPOSED CHANGE',type:'text',placeholder:'Example: reduce damage from 25 to 22 because…'}],
-    onSave:async values=>{
-      const weapon=String(values.weapon||''),suggestion=String(values.suggestion||'').replace(/[\u0000-\u001f\u007f]/g,' ').replace(/\s+/g,' ').trim();
-      if(!options.some(row=>row.value===weapon)){formError('Choose a published weapon.');return false;}
-      if(suggestion.length<10||suggestion.length>800){formError('Explain the proposed change in 10–800 characters.');return false;}
-      if(!sb){weaponSuggestionStatus='SUGGESTION SAVED IN PREVIEW ONLY.';closeForm();sfx('pickup');return true;}
-      $('formstatus').textContent='sending suggestion…';
-      try{const result=await sb.rpc('submit_outpost_zero_weapon_suggestion',{p_weapon_key:weapon,p_suggestion:suggestion});if(result.error)throw result.error;
-        weaponSuggestionStatus='SUGGESTION SENT TO CREATOR + MAIN ADMINS.';closeForm();sfx('pickup');return true;
-      }catch(error){formError('Could not send · run Admin 02 Admins, then retry.');return false;}
-    }});
-  const input=typeof document!=='undefined'?document.getElementById('ff_suggestion'):null;if(input)input.maxLength=800;return true;
-}
 async function fetchWeaponSuggestions(){
-  if(!canReviewWeaponSuggestions()){weaponSuggestions=[];return false;}
-  if(!sb){weaponSuggestions=[];weaponSuggestionStatus='Suggestions load on the deployed site.';return true;}
+  if(!canReviewWeaponSuggestions()){weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestions=[];weaponSuggestionPage=0;return false;}
+  if(weaponSuggestionBusy)return false;
+  const request=++weaponSuggestionRequestSeq,epoch=adminPrivacyEpoch,owner=currentAuthUserId(),current=()=>request===weaponSuggestionRequestSeq&&adminPrivacyRequestCurrent(epoch,owner)&&canReviewWeaponSuggestions();
+  if(!sb){weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='Suggestions load on the deployed site.';return true;}
   weaponSuggestionBusy=true;weaponSuggestionStatus='LOADING…';
-  try{const result=await sb.rpc('list_outpost_zero_weapon_suggestions_by_username',{p_limit:40,p_status:'pending'});if(result.error)throw result.error;
-    weaponSuggestions=Array.isArray(result.data)?result.data:[];weaponSuggestionStatus=weaponSuggestions.length?weaponSuggestions.length+' PENDING':'NO PENDING SUGGESTIONS';return true;
-  }catch(error){weaponSuggestions=[];weaponSuggestionStatus='RUN ADMINISTRATION 05 TO LOAD SUGGESTIONS.';return false;}
-  finally{weaponSuggestionBusy=false;}
+  try{const result=await sb.rpc('list_outpost_zero_weapon_suggestions_by_username',{p_limit:100,p_status:'pending'});if(result.error)throw result.error;
+    if(!current())return false;
+    weaponSuggestions=Array.isArray(result.data)?result.data:[];weaponSuggestionPage=0;weaponSuggestionStatus=weaponSuggestions.length?weaponSuggestions.length+(weaponSuggestions.length===100?' LOADED':' PENDING'):'NO PENDING SUGGESTIONS';return true;
+  }catch(error){if(current()){weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='RUN ADMIN 02 ADMINS TO LOAD SUGGESTIONS.';}return false;}
+  finally{if(current())weaponSuggestionBusy=false;}
 }
 async function reviewWeaponSuggestion(id,decision){
   if(!canReviewWeaponSuggestions()||weaponSuggestionBusy||!['approved','rejected'].includes(decision))return false;
-  let note='';try{note=String(window.prompt((decision==='approved'?'Approve':'Reject')+' this suggestion. Optional reviewer note:','')||'').trim();}catch(error){}
+  let rawNote=null;try{rawNote=window.prompt((decision==='approved'?'Approve':'Reject')+' this suggestion. Optional reviewer note:','');}catch(error){return false;}
+  if(rawNote===null)return false;
+  const note=String(rawNote).trim();
+  const request=++weaponSuggestionRequestSeq,epoch=adminPrivacyEpoch,owner=currentAuthUserId(),current=()=>request===weaponSuggestionRequestSeq&&adminPrivacyRequestCurrent(epoch,owner)&&canReviewWeaponSuggestions();
   weaponSuggestionBusy=true;
   try{if(sb){const result=await sb.rpc('review_outpost_zero_weapon_suggestion',{p_suggestion_id:+id,p_decision:decision,p_reviewer_note:note.slice(0,500)});if(result.error||result.data!==true)throw result.error||new Error('not changed');}
+    if(!current())return false;
     weaponSuggestions=weaponSuggestions.filter(row=>String(row.id)!==String(id));weaponSuggestionStatus=decision.toUpperCase()+' · '+weaponSuggestions.length+' PENDING';sfx(decision==='approved'?'pickup':'dry');return true;
-  }catch(error){weaponSuggestionStatus='COULD NOT REVIEW THAT SUGGESTION.';sfx('dry');return false;}
-  finally{weaponSuggestionBusy=false;}
+  }catch(error){if(current()){weaponSuggestionStatus='COULD NOT REVIEW THAT SUGGESTION.';sfx('dry');}return false;}
+  finally{if(current())weaponSuggestionBusy=false;}
 }
 function adminRequestRows(){
   const rows=[];
   for(const row of scoreReqs||[])rows.push({kind:'player',row,createdAt:Date.parse(row.created_at||'')||0});
   for(const row of pendingBanners||[])rows.push({kind:'update',row,createdAt:Date.parse(row.created_at||'')||0});
-  for(const row of weaponSuggestions||[])rows.push({kind:'weapon',row,createdAt:Date.parse(row.created_at||'')||0});
   for(const row of appealList||[])if(row&&row.status==='open')rows.push({kind:'appeal',row,createdAt:Date.parse(row.created_at||'')||0});
   return rows.sort((a,b)=>b.createdAt-a.createdAt);
 }
@@ -1488,7 +1529,7 @@ async function refreshAdminRequests(){
   if(!isMainAdmin()){requestsOpen=false;return false;}
   requestsBusy=true;requestsStatus='REFRESHING REQUESTS…';
   try{
-    await Promise.allSettled([fetchScoreReqs(),fetchBanners(),fetchWeaponSuggestions(),fetchPlayersData()]);
+    await Promise.allSettled([fetchScoreReqs(),fetchBanners(),fetchPlayersData()]);
     requestsStatus=adminRequestRows().length?adminRequestRows().length+' PENDING REQUESTS':'NO PENDING REQUESTS';
     return true;
   }finally{requestsBusy=false;}
@@ -1525,11 +1566,6 @@ async function fetchPrices(){
     const { data } = await sb.from('weapon_prices').select('key,cost');
     for(const r of (data||[])) setGemPrice(r.key, r.cost*GEM_PRICE_SCALE);
   }catch(e){}
-}
-async function saveGemPrice(key,cost){
-  if(!setGemPrice(key,cost)) return;
-  if(!sb) return;                                    // preview: local only
-  try{ await sb.from('weapon_prices').upsert({key, cost:Math.round(GEM_SHOP.find(i=>i.key===key).cost/GEM_PRICE_SCALE)}); }catch(e){}
 }
 const DAILY_TASK_DEFS=[
   {id:'kills',  d:'Defeat 40 enemies', goal:40, baseReward:5},

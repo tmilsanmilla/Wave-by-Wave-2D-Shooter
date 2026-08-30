@@ -89,19 +89,18 @@ create table if not exists public.reports(
   message text not null,
   meta jsonb,
   resolved boolean not null default false,
-  reporter_user_id uuid references auth.users(id) on delete set null,
-  reporter_role text
+  reporter_user_id uuid references auth.users(id) on delete set null
 );
 alter table public.reports add column if not exists resolved boolean not null default false;
 alter table public.reports add column if not exists reporter_user_id uuid references auth.users(id) on delete set null;
-alter table public.reports add column if not exists reporter_role text;
-alter table public.reports drop constraint if exists outpost_zero_reports_role_allowed;
-alter table public.reports add constraint outpost_zero_reports_role_allowed
-  check(reporter_role is null or reporter_role in ('player','creator','main','co','tester'));
+-- Some shared installs may still have a legacy reporter_role column. Leave
+-- shared schema intact, but Outpost Zero never writes or returns that marker.
 -- Separate active/archive reads use this stable keyset index. New reports can
 -- no longer crowd resolved history out of the Archive query.
 create index if not exists outpost_zero_reports_resolved_id_idx
   on public.reports(resolved,id desc);
+create index if not exists outpost_zero_reports_game_resolved_id_idx
+  on public.reports(game,resolved,id desc);
 create index if not exists outpost_zero_reports_actor_rate_idx
   on public.reports(reporter_user_id,created_at desc)
   where reporter_user_id is not null;
@@ -1130,13 +1129,29 @@ begin
 end;
 $function$;
 
+-- Consolidate legacy staff/player report shapes without deleting a report.
+-- Private email-like legacy labels are discarded, staff prefixes are removed,
+-- and the old client-only staff flag is removed from stored metadata.
+update public.reports r set
+  name=case
+    when coalesce(r.name,'') ~* '[[:alnum:]._%+-]+@[[:alnum:].-]+[.][[:alpha:]]{2,}' then 'LEGACY REPORTER'
+    else nullif(btrim(regexp_replace(coalesce(r.name,''),'^(CO-ADMIN|STAFF)[[:space:]·:|-]+','','i')),'')
+  end,
+  message=regexp_replace(r.message,'^\[STAFF\][[:space:]]*','','i'),
+  meta=case when jsonb_typeof(r.meta)='object' then r.meta-'staff' else r.meta end
+where r.game='outpost-zero' and (
+  coalesce(r.name,'') ~* '^(CO-ADMIN|STAFF)'
+  or coalesce(r.name,'') ~* '[[:alnum:]._%+-]+@[[:alnum:].-]+[.][[:alpha:]]{2,}'
+  or r.message ~* '^\[STAFF\]'
+  or (jsonb_typeof(r.meta)='object' and r.meta ? 'staff')
+);
+
 create or replace function public._outpost_zero_sanitized_report_meta(p_meta jsonb)
 returns jsonb language plpgsql immutable set search_path=pg_catalog,public
 as $function$
 declare v jsonb:=case when jsonb_typeof(p_meta)='object' then p_meta else '{}'::jsonb end;
 begin
   return jsonb_strip_nulls(jsonb_build_object(
-    'staff',case when jsonb_typeof(v->'staff')='boolean' and (v->>'staff')::boolean then true end,
     'category',case when v->>'category' in ('player','gameplay','account','social','party','admin','general','bug') then v->>'category' end,
     'reported_username',case when v->>'reported_username' ~ '^[A-Za-z0-9_]{3,32}$' then v->>'reported_username' end,
     'wave',case when jsonb_typeof(v->'wave')='number' and v->>'wave' ~ '^[0-9]{1,9}$' then (v->>'wave')::integer end,
@@ -1217,14 +1232,13 @@ begin
     -- The lock closes the two-tab race: at most one ordinary-player report can
     -- pass the following time check for this account in a 30-second window.
     perform pg_advisory_xact_lock(hashtext('outpost-zero-report:'||v_actor::text)::bigint);
-    if exists(select 1 from public.reports r where r.reporter_user_id=v_actor
+    if exists(select 1 from public.reports r where r.game='outpost-zero' and r.reporter_user_id=v_actor
               and r.created_at>clock_timestamp()-interval '30 seconds') then
       raise exception using errcode='P0001',message='REPORT_RATE_LIMIT';
     end if;
   end if;
 
   v_meta:=jsonb_strip_nulls(jsonb_build_object(
-    'staff',case when v_role<>'player' then true end,
     'category',case when v_target_username is not null then 'player' else v_context->>'category' end,
     'reported_username',v_target_username,
     'wave',case when v_context ? 'wave' then (v_context->>'wave')::integer end,
@@ -1235,8 +1249,8 @@ begin
     'dpr',case when v_context ? 'dpr' then (v_context->>'dpr')::numeric end,
     'ua',v_context->>'ua'
   ));
-  insert into public.reports(game,name,message,meta,resolved,reporter_user_id,reporter_role,created_at)
-  values('outpost-zero',v_username,v_message,v_meta,false,v_actor,v_role,clock_timestamp()) returning * into v_row;
+  insert into public.reports(game,name,message,meta,resolved,reporter_user_id,created_at)
+  values('outpost-zero',v_username,v_message,v_meta,false,v_actor,clock_timestamp()) returning * into v_row;
   return query select v_row.id,v_row.created_at;
 end;
 $function$;
@@ -1258,7 +1272,8 @@ begin
     public._outpost_zero_redact_report_text(r.message),r.created_at,
     public._outpost_zero_sanitized_report_meta(r.meta),r.resolved
   from public.reports r
-  where r.resolved=coalesce(p_resolved,false) and (p_before_id is null or r.id<p_before_id)
+  where r.game='outpost-zero' and r.resolved=coalesce(p_resolved,false)
+    and (p_before_id is null or r.id<p_before_id)
   order by r.id desc limit v_limit;
 end;
 $function$;
@@ -1271,14 +1286,40 @@ declare v_row public.reports%rowtype;
 begin
   if public._outpost_zero_admin_role() not in ('creator','main') then
     raise exception using errcode='42501',message='REPORT_ACCESS_REQUIRED';end if;
-  select r.* into v_row from public.reports r where r.id=p_report_id for update;
+  select r.* into v_row from public.reports r where r.game='outpost-zero' and r.id=p_report_id for update;
   if not found then raise exception using errcode='22023',message='REPORT_NOT_FOUND';end if;
   if not v_row.resolved then
-    update public.reports r set resolved=true where r.id=p_report_id returning r.* into v_row;
+    update public.reports r set resolved=true where r.game='outpost-zero' and r.id=p_report_id returning r.* into v_row;
   end if;
   return query select v_row.id,public._outpost_zero_report_public_name(v_row.name,v_row.reporter_user_id),
     public._outpost_zero_redact_report_text(v_row.message),v_row.created_at,
     public._outpost_zero_sanitized_report_meta(v_row.meta),v_row.resolved;
+end;
+$function$;
+
+-- Resolve the newest open reports in one transaction. NULL means all;
+-- CUSTOM uses a bounded positive count. A server lock serializes concurrent
+-- bulk actions; the bounded response is only a count, and the client refreshes
+-- the sanitized report feed afterward.
+create or replace function public.resolve_outpost_zero_reports(p_limit integer default null)
+returns jsonb language plpgsql volatile security definer set search_path=pg_catalog,public
+as $function$
+declare v_changed integer:=0;v_limit integer:=p_limit;
+begin
+  if public._outpost_zero_admin_role() not in ('creator','main') then
+    raise exception using errcode='42501',message='REPORT_ACCESS_REQUIRED';end if;
+  if v_limit is not null and v_limit not between 1 and 10000 then
+    raise exception using errcode='22023',message='REPORT_LIMIT_MUST_BE_1_TO_10000';end if;
+  perform pg_advisory_xact_lock(hashtext('outpost-zero-report-bulk-resolve')::bigint);
+  with targets as (
+    select r.id from public.reports r where r.game='outpost-zero' and not r.resolved
+    order by r.id desc limit v_limit for update
+  ), changed as (
+    update public.reports r set resolved=true from targets t
+    where r.game='outpost-zero' and r.id=t.id and not r.resolved returning r.id
+  )
+  select count(*)::integer into v_changed from changed;
+  return jsonb_build_object('resolved_count',v_changed);
 end;
 $function$;
 
@@ -1296,7 +1337,7 @@ begin
       'message',public._outpost_zero_redact_report_text(r.message),'created_at',r.created_at,
       'meta',public._outpost_zero_sanitized_report_meta(r.meta),'resolved',r.resolved
     ) payload
-    from public.reports r order by r.id desc limit bounded
+    from public.reports r where r.game='outpost-zero' order by r.id desc limit bounded
   ) row_data;
   return payload;
 end;
@@ -1308,10 +1349,12 @@ revoke all on function public._outpost_zero_sanitized_report_meta(jsonb) from pu
 revoke all on function public.submit_outpost_zero_report(text,jsonb,text) from public,anon,authenticated;
 revoke all on function public.list_outpost_zero_reports(boolean,bigint,integer) from public,anon,authenticated;
 revoke all on function public.resolve_outpost_zero_report(bigint) from public,anon,authenticated;
+revoke all on function public.resolve_outpost_zero_reports(integer) from public,anon,authenticated;
 revoke all on function public.export_outpost_zero_reports(integer) from public,anon,authenticated;
 grant execute on function public.submit_outpost_zero_report(text,jsonb,text) to authenticated;
 grant execute on function public.list_outpost_zero_reports(boolean,bigint,integer) to authenticated;
 grant execute on function public.resolve_outpost_zero_report(bigint) to authenticated;
+grant execute on function public.resolve_outpost_zero_reports(integer) to authenticated;
 grant execute on function public.export_outpost_zero_reports(integer) to authenticated;
 
 -- Realtime publishes only a per-recipient revision hint, never a report row.
@@ -1338,7 +1381,17 @@ grant select(recipient_id,revision,updated_at) on public.outpost_zero_report_wak
 create or replace function public._outpost_zero_wake_report_reviewers()
 returns trigger language plpgsql security definer set search_path=pg_catalog,public
 as $function$
+declare v_relevant boolean:=false;
 begin
+  if tg_op='INSERT' then
+    select exists(select 1 from outpost_zero_report_new_rows r where r.game='outpost-zero') into v_relevant;
+  elsif tg_op='UPDATE' then
+    select exists(
+      select 1 from outpost_zero_report_new_rows n join outpost_zero_report_old_rows o using(id)
+      where n.game='outpost-zero' and n.resolved is distinct from o.resolved
+    ) into v_relevant;
+  end if;
+  if not v_relevant then return null;end if;
   insert into public.outpost_zero_report_wakeups as wake(recipient_id,revision,updated_at)
   select recipient_id,1,clock_timestamp()
   from (
@@ -1348,13 +1401,18 @@ begin
     where lower(btrim(coalesce(a.role,'')))='main'
   ) reviewers where recipient_id is not null
   on conflict(recipient_id) do update set revision=wake.revision+1,updated_at=excluded.updated_at;
-  return new;
+  return null;
 end;
 $function$;
 revoke all on function public._outpost_zero_wake_report_reviewers() from public,anon,authenticated;
 drop trigger if exists outpost_zero_report_wakeup_trigger on public.reports;
-create trigger outpost_zero_report_wakeup_trigger
-after insert or update of resolved on public.reports for each row
+drop trigger if exists outpost_zero_report_insert_wakeup_trigger on public.reports;
+drop trigger if exists outpost_zero_report_update_wakeup_trigger on public.reports;
+create trigger outpost_zero_report_insert_wakeup_trigger after insert on public.reports
+referencing new table as outpost_zero_report_new_rows for each statement
+execute function public._outpost_zero_wake_report_reviewers();
+create trigger outpost_zero_report_update_wakeup_trigger after update on public.reports
+referencing old table as outpost_zero_report_old_rows new table as outpost_zero_report_new_rows for each statement
 execute function public._outpost_zero_wake_report_reviewers();
 
 alter table public.outpost_zero_admin_msg_wakeups replica identity full;

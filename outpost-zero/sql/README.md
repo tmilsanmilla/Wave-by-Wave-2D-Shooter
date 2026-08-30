@@ -128,9 +128,14 @@ game that shares the table.
 
 Run `weapons/Weapons-01-weapons.sql` after Admin 01. It owns both
 `weapon_prices` and `weapon_defs`: storage, forced RLS, narrow browser grants,
-creator/Main write policies, and Realtime publication for the game subscribers.
+RPC-only Creator/Main writes, and Realtime publication for game subscribers.
 This includes `weapon_defs`, which the old miscellaneous Realtime query omitted.
 Unpublished-weapon ownership remains enforced by the shipped game code.
+After Admin 02 is installed, Creator and Main save validated definitions plus
+the legacy/unscaled shop cost atomically through
+`save_outpost_zero_weapon_definition`. Existing Co-admin/Tester suggestions
+remain reviewable, while the current game no longer shows the old Admin Tools
+suggestion composer.
 
 The saved `Realtime 01` query is now legacy only. Admin, Social, Leaderboards,
 and Weapons each own their own security and Realtime rules; do not rerun the
@@ -148,8 +153,9 @@ into the SQL Editor.
 
 ## Administration
 
-Administration is installed as exactly three rerunnable SQL files, one for
-each in-game section. Run them in this order after Social 01 and the base
+Administration is installed as exactly three rerunnable SQL files. Inbox and
+Suggestions share Admin 03 so the new fourth UI section does not create another
+database script. Run them in this order after Social 01 and the base
 profiles/scores tables:
 
 1. `administration/Admin-01-admin-menu.sql`
@@ -160,7 +166,7 @@ profiles/scores tables:
 | --- | --- | --- |
 | Admin 01 | Admin Menu | Secure username-based player lookup/editing, temporary and permanent grants, bans, appeals, approval requests, and the append-only audit LOG. |
 | Admin 02 | Admins | Creator/Main/Co/Tester hierarchy, Add/Promote/Demote/Remove, Tester/Co weapon suggestions, heading/details global updates, and non-enumerable promo codes. |
-| Admin 03 | Inbox | Targeted player notifications, one-row global update notifications, staff messages, Archive/read state, Reports, report export, Realtime refresh hints, and LOG access through Admin 01. |
+| Admin 03 | Inbox + Suggestions | Targeted player notifications, one-row global update notifications, staff messages, Archive/read state, Reports, report export, Realtime refresh hints, and LOG access through Admin 01. |
 
 All three files preserve existing rows and can be rerun. Each transaction
 creates its own required Admin tables before installing functions and security.
@@ -183,21 +189,40 @@ alter the creator or another Main. Co-admin updates remain drafts until a
 creator/Main approves them. Approved updates are canonical `banners` rows;
 Admin 03 turns each into one shared Inbox notification instead of copying a
 row per player. Home/Inbox lists show the short heading and the full reader
-shows details. Every signed-in account may redeem each promo code once; their
-code catalog has
-no player-readable table policy.
+shows details. Creator/Main can read and review the Suggestions queue and save
+strictly validated weapon edits directly; the save function gives a clear
+call-time setup error when Weapons 01 has not been installed yet. Every
+signed-in account may redeem each promo code once; their code catalog has no
+player-readable table policy.
 
-Admin 03 owns both notification surfaces inside the Inbox section. Player
-notifications use recipient-private/global rows and per-account read receipts.
-The staff Inbox uses `admin_msgs`; Testers may read/archive only their own
-messages, while only creator/Main may send. Signed-in reports use a
+Admin 03 owns the private Admin Inbox plus the report data shown in Suggestions.
+Player notifications use recipient-private/global rows and per-account read
+receipts. The staff Inbox uses `admin_msgs`; Testers may read/archive only their
+own messages, while only creator/Main may send. Signed-in reports use a
 server-attributed submission RPC; ordinary accounts have a transactional
 30-second limit while staff do not. Raw report rows have no browser access.
 Creator/Main list, resolve, and export only sanitized rows through bounded
-RPCs, and a recipient-private Realtime wakeup replaces publication of report
-contents. The LOG remains the append-only Admin 01 audit table and is exposed
-only through its bounded RPC. Realtime subscriptions are refresh hints; RLS
-and RPC checks remain authority.
+RPCs. New Outpost Zero reports neither store nor return a staff/player tier;
+any legacy column used by another game is left intact. Bulk Resolve All/Custom
+is an atomic newest-open operation scoped to Outpost Zero. A recipient-private
+Realtime wakeup replaces publication of report contents. The LOG remains the
+append-only Admin 01 audit table and is exposed only through its bounded RPC.
+Realtime subscriptions are refresh
+hints; RLS and RPC checks remain authority.
+
+For the Suggestions/direct-weapon-edit update, rerun only these files in order:
+
+1. `administration/Admin-02-admins.sql` — installs the Creator/Main Suggestions
+   review boundary and validated atomic weapon-save RPC. If the weapon tables
+   already exist, it also removes their legacy direct browser write policies
+   and grants.
+2. `administration/Admin-03-inbox.sql` — unifies reports, installs bulk
+   Resolve All/Custom, and keeps list/export/Realtime private.
+
+Both preserve report, suggestion, and weapon-definition rows when rerun. The
+checked-in `Weapons-01-weapons.sql` also contains the RPC-only perimeter for
+future fresh installs, but it does not need to be rerun for this update because
+Admin 02 tightens already-existing weapon tables conditionally.
 
 The old Admin 04–08 and Appeals 01 snippets are superseded by these three files
 and must not be rerun after consolidation.

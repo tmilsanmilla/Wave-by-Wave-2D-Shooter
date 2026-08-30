@@ -45,13 +45,14 @@ check('Official update composer and readers use heading for lists and details fo
   /String\(b\.heading\|\|b\.message/.test(adminUi)&&/String\(row\.details\|\|row\.message/.test(ui)&&
   /new\.heading, new\.details/.test(admin03)&&/char_length\(message\) between 1 and 4000/.test(admin03));
 
-check('Unified Requests page aggregates all four review queues',
-  /kind:'player'/.test(admin)&&/kind:'update'/.test(admin)&&/kind:'weapon'/.test(admin)&&/kind:'appeal'/.test(admin)&&
-  /PLAYER EDITS .* UPDATE APPROVALS .* WEAPON SUGGESTIONS .* BAN APPEALS/.test(adminUi)&&
+check('Requests aggregates edits, updates, and appeals while suggestions stay separate',
+  /kind:'player'/.test(admin)&&/kind:'update'/.test(admin)&&!/kind:'weapon'/.test(admin)&&/kind:'appeal'/.test(admin)&&
+  /PLAYER EDITS .* UPDATE APPROVALS .* BAN APPEALS/.test(adminUi)&&/ADMIN SUGGESTIONS/.test(adminUi)&&
   /k:'requests'.*drawAdminRequests\(\).*adminRequestsClick\(\)/.test(input));
 check('Requests retain type-correct approval and rejection actions',
   /approveScoreReq\(row\).*rejectScoreReq\(row\)/s.test(adminUi)&&/approveBanner\(row\.id\).*rejectBanner\(row\.id\)/s.test(adminUi)&&
-  /reviewWeaponSuggestion\(row\.id/.test(adminUi)&&/resolveAppeal\(row\.id/.test(adminUi));
+  !/reviewWeaponSuggestion\(row\.id/.test(adminUi)&&/resolveAppeal\(row\.id/.test(adminUi)&&
+  /reviewWeaponSuggestion\(r\.suggestionId/.test(adminUi));
 
 check('Main admins apply permanent player edits directly in client and server',
   /if\(hasPermanent&&isMainAdmin\(\)\)\{await applyPlayerEdit/.test(admin)&&

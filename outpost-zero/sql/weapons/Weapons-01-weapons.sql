@@ -58,32 +58,17 @@ create policy outpost_zero_weapon_prices_read
 on public.weapon_prices for select to anon, authenticated
 using (true);
 
-create policy outpost_zero_weapon_prices_manage
-on public.weapon_prices for all to authenticated
-using (public.admin_role() in ('creator', 'main'))
-with check (public.admin_role() in ('creator', 'main'));
-
 create policy outpost_zero_weapon_defs_read
 on public.weapon_defs for select to anon, authenticated
 using (true);
-
-create policy outpost_zero_weapon_defs_manage
-on public.weapon_defs for all to authenticated
-using (public.admin_role() in ('creator', 'main'))
-with check (public.admin_role() in ('creator', 'main'));
 
 revoke all on table public.weapon_prices, public.weapon_defs
   from public, anon, authenticated;
 grant select on table public.weapon_prices, public.weapon_defs
   to anon, authenticated;
-grant insert(key, cost) on table public.weapon_prices to authenticated;
-grant update(cost, updated_at) on table public.weapon_prices to authenticated;
-grant delete on table public.weapon_prices to authenticated;
-grant insert(key, stats, price, published, updated_by)
-  on table public.weapon_defs to authenticated;
-grant update(stats, price, published, updated_by, updated_at)
-  on table public.weapon_defs to authenticated;
-grant delete on table public.weapon_defs to authenticated;
+-- Live edits are deliberately RPC-only. Admin 02's
+-- save_outpost_zero_weapon_definition derives the actor, validates every
+-- field, and atomically updates these two tables for Creator/Main.
 
 -- Both tables have live client subscribers. Realtime only delivers rows that
 -- the subscriber may SELECT under the forced RLS policies above.

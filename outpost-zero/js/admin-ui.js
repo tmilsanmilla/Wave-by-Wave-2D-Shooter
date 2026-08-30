@@ -1,7 +1,7 @@
 "use strict";
 
-// Admin Inbox pages are workspaces, not pop-up cards. Keep only a thin safe
-// edge so Messages, Reports, Log, Archive, and their reader use the canvas.
+// Admin Inbox and Suggestions pages are workspaces, not pop-up cards. Keep a
+// thin safe edge so each main-admin review screen can use the whole canvas.
 function adminInboxBounds(){
   const edge=Math.max(2,Math.min(6,Math.floor(Math.min(W,H)/20)));
   return {pw:Math.max(1,W-edge*2),ph:Math.max(1,H-edge*2),px:edge,py:edge};
@@ -233,12 +233,11 @@ function readerClick(){
     }
   }
 }
-// the two admin inboxes share one screen; this draws the tab strip and returns the new y
+// Messages and their archive are the Admin Inbox. Reports, admin suggestions,
+// and the audit log live in the separate main-only Suggestions workspace.
 function drawInboxTabs(px,py,pw,y,rects){
   const TABS=[];
   if(isAdmin())     TABS.push(['msgs','\u2709 MESSAGES'+(unreadMsgs?' ('+unreadMsgs+')':'')]);
-  if(canAccessReports()) TABS.push(['updates','\uD83D\uDCE5 REPORTS']);
-  if(isMainAdmin()) TABS.push(['log','\uD83D\uDCDC ADMIN AUDIT LOG']);
   if(isAdmin())     TABS.push(['archive','\uD83D\uDDC3 ARCHIVE']);
   if(TABS.length<2) return y;                       // nothing to switch between
   const gap=pw<500?4:8,tw=Math.max(1,(pw-32-gap*(TABS.length-1))/TABS.length),th=pw<500?26:32;
@@ -261,233 +260,150 @@ function inboxTabClick(id){
   if(String(id).indexOf('itab:')!==0) return false;
   const t=String(id).slice(5);
   inboxTab=t;
-  msgsOpen=updatesOpen=auditOpen=archOpen=false;
+  msgsOpen=archOpen=false;
   if(t==='msgs'){ msgsOpen=true; fetchMsgs().then(ok=>{if(ok)markMsgsRead();}); }
-  else if(t==='updates'){ updatesOpen=true; fetchUpdatesFeed(); }
-  else if(t==='log'&&isMainAdmin()){ auditOpen=true; fetchAdminAuditLog(true); }
-  else if(t==='archive'){ archOpen=true; archTab='msgs'; fetchMsgs(); fetchUpdatesFeed(); }
+  else if(t==='archive'){ archOpen=true; fetchMsgs(); }
   else {inboxTab='msgs';msgsOpen=true;fetchMsgs().then(ok=>{if(ok)markMsgsRead();});}
   sfx('aim');
   return true;
 }
+function drawSuggestionsTabs(px,py,pw,y,rects){
+  if(!isMainAdmin())return y;
+  const tabs=[['reports','\uD83D\uDCE5 REPORTS'],['admin','\uD83D\uDCCB ADMIN SUGGESTIONS'],['log','\uD83D\uDCDC LOG']],
+    gap=pw<500?4:8,tw=Math.max(1,(pw-32-gap*(tabs.length-1))/tabs.length),th=pw<500?27:32;
+  let tx=px+16;
+  for(const [id,label] of tabs){
+    const on=id==='reports'?updatesOpen:id==='admin'?weaponSuggestionsOpen:auditOpen;
+    rects.push({x:tx,y,w:tw,h:th,id:'stab:'+id});
+    const hot=mouse.x>=tx&&mouse.x<=tx+tw&&mouse.y>=y&&mouse.y<=y+th;
+    ctx.fillStyle=on?'#e8b658':hot?'rgba(232,182,88,.22)':'rgba(0,0,0,.35)';ctx.fillRect(tx,y,tw,th);
+    ctx.strokeStyle='#e8b658';ctx.strokeRect(tx+.5,y+.5,tw,th);
+    ctx.fillStyle=on?'#101208':'#e8d9a8';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 '+(pw<500?7:10)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(label,tw-6),tx+tw/2,y+th/2);tx+=tw+gap;
+  }
+  ctx.textBaseline='alphabetic';return y+th+9;
+}
+function openSuggestionsSection(tab='reports'){
+  if(!isMainAdmin()){sfx('dry');return false;}
+  updatesOpen=weaponSuggestionsOpen=auditOpen=false;
+  reportActionMenuOpen=reportAmountMenuOpen=false;
+  if(tab==='admin'){weaponSuggestionsOpen=true;void fetchWeaponSuggestions();}
+  else if(tab==='log'){auditOpen=true;void fetchAdminAuditLog(true);}
+  else{updatesOpen=true;reportView='open';resetReportScroll();void fetchUpdatesFeed();}
+  return true;
+}
+function suggestionsTabClick(id){
+  if(String(id).indexOf('stab:')!==0)return false;
+  const tab=String(id).slice(5);openSuggestionsSection(tab);sfx('aim');return true;
+}
 function drawUpdates(){
-  if(!canAccessReports()){updatesOpen=false;updatesFeed={staff:[],player:[]};updatesResolved=[];return;}
-  ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
-  const {pw,ph,px,py}=adminInboxBounds();
-  const compactReports=ph<420;
-  ctx.fillStyle='#080c0e'; ctx.fillRect(px,py,pw,ph);
-  ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
-  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-  ctx.fillStyle='#bfe8ff'; ctx.font='700 17px ui-monospace,Consolas,monospace';
-  ctx.fillText('\uD83D\uDCE5 REPORTS', W/2, py+26);
-  ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText(sb?'staff reports first, then player reports':'reports live on the deployed site \u2014 preview shows none', W/2, py+42);
+  if(!canAccessReports()){updatesOpen=false;updatesFeed={reports:[]};updatesResolved=[];resetReportScroll();return;}
+  ctx.fillStyle='rgba(4,6,3,.97)';ctx.fillRect(0,0,W,H);
+  const {pw,ph,px,py}=adminInboxBounds(),compact=ph<430||pw<520,x0=px+(compact?8:16),rw=pw-(compact?16:32);
+  ctx.fillStyle='#080c0e';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#e8b658';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#ffe0a0';ctx.font='700 '+(compact?14:18)+'px ui-monospace,Consolas,monospace';ctx.fillText('SUGGESTIONS',W/2,py+(compact?21:27));
+  ctx.fillStyle='#8a9268';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText(sb?'MAIN / CREATOR ONLY \u00b7 REPORT REVIEW':'REPORTS LIVE ON THE DEPLOYED SITE',W/2,py+(compact?37:44));
   updatesRects=[];
-  const x0=px+18, rw=pw-36; let y=drawInboxTabs(px,py,pw,py+52,updatesRects);
-  const section=(title,rows,tint,key)=>{
-    const pageSize=compactReports?1:Math.max(3,Math.floor((ph-260)/70)),totalPages=Math.max(1,Math.ceil(rows.length/pageSize));
-    reportFeedPages[key]=Math.max(0,Math.min(totalPages-1,Math.floor(+reportFeedPages[key]||0)));
-    const page=reportFeedPages[key],shown=rows.slice(page*pageSize,(page+1)*pageSize);
-    ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText(title+(totalPages>1?'  \u00b7 PAGE '+(page+1)+'/'+totalPages:''), x0, y+8); y+=14;
-    if(!rows.length){
-      ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
-      ctx.fillText('nothing here yet', x0+4, y+8); y+=18; return;
-    }
-    for(const r of shown){
-      const h=compactReports?27:30, rbw=52;
-      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
-      ctx.strokeStyle=tint; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
-      ctx.textBaseline='middle';
-      ctx.fillStyle=tint; ctx.font='700 8px ui-monospace,Consolas,monospace';
-      const when=String(r.created_at||'').slice(5,16).replace('T',' ');
-      ctx.fillText(String(r.name||'?').slice(0,26)+(when?'  \u00b7  '+when:''), x0+8, y+9);
-      ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
-      const msg=String(r.message||'').replace('[STAFF] ','');
-      const clipped=fitLine(msg, rw-28-rbw*2);
-      ctx.fillText(clipped, x0+8, y+21);
-      // the whole row opens the full text, so nothing is unreadable
-      updatesRects.push({x:x0,y,w:rw-rbw*2-8,h,id:'rd:'+(r.id!=null?r.id:'x'),
-                         read:{t:String(r.name||'report'), m:when, b:msg}});
-      {                                              // READ button
-        const bx3=x0+rw-rbw*2-6;
-        const hv3=mouse.x>=bx3&&mouse.x<=bx3+rbw&&mouse.y>=y+5&&mouse.y<=y+h-5;
-        ctx.fillStyle=hv3?'rgba(127,216,255,0.34)':'rgba(127,216,255,0.16)'; ctx.fillRect(bx3,y+5,rbw,h-10);
-        ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(bx3+0.5,y+5.5,rbw,h-10);
-        ctx.textAlign='center'; ctx.font='700 7px ui-monospace,Consolas,monospace';
-        ctx.fillStyle='#bfe8ff'; ctx.fillText('READ', bx3+rbw/2, y+h/2);
-        ctx.textAlign='left';
-        updatesRects.push({x:bx3,y:y+5,w:rbw,h:h-10,id:'rd2:'+(r.id!=null?r.id:'x'),
-                           read:{t:String(r.name||'report'), m:when, b:msg}});
-      }
-      if(r.id!=null){                                // RESOLVE: saves first, then moves into the archive
-        const bx2=x0+rw-rbw-4;
-        const saving=reportResolveBusy.has(+r.id);
-        if(!saving)updatesRects.push({x:bx2,y:y+5,w:rbw,h:h-10,id:'rs:'+r.id});
-        const hv=!saving&&mouse.x>=bx2&&mouse.x<=bx2+rbw&&mouse.y>=y+5&&mouse.y<=y+h-5;
-        ctx.fillStyle=hv?'rgba(167,193,94,0.34)':'rgba(167,193,94,0.16)'; ctx.fillRect(bx2,y+5,rbw,h-10);
-        ctx.strokeStyle='#a7c15e'; ctx.strokeRect(bx2+0.5,y+5.5,rbw,h-10);
-        ctx.textAlign='center'; ctx.font='700 7px ui-monospace,Consolas,monospace';
-        ctx.fillStyle='#cfe0a8'; ctx.fillText(saving?'SAVING\u2026':'RESOLVE', bx2+rbw/2, y+h/2);
-        ctx.textAlign='left';
-      }
-      ctx.textBaseline='alphabetic';
-      y+=h+5;
-    }
-    if(totalPages>1){
-      const navW=60,navH=16,gap=6,nx=x0+rw-navW*2-gap;
-      for(const [id,bx,label,enabled] of [['rp:'+key+':prev',nx,'\u25c0 PREV',page>0],['rp:'+key+':next',nx+navW+gap,'NEXT \u25b6',page<totalPages-1]]){
-        if(enabled)updatesRects.push({x:bx,y,w:navW,h:navH,id});
-        const hv=enabled&&mouse.x>=bx&&mouse.x<=bx+navW&&mouse.y>=y&&mouse.y<=y+navH;
-        ctx.fillStyle=hv?'rgba(127,216,255,.25)':'rgba(255,255,255,.04)';ctx.fillRect(bx,y,navW,navH);ctx.strokeStyle=enabled?'#7fd8ff':'#42463b';ctx.strokeRect(bx+.5,y+.5,navW,navH);
-        ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=enabled?'#bfe8ff':'#5a5648';ctx.font='700 7px ui-monospace,Consolas,monospace';ctx.fillText(label,bx+navW/2,y+navH/2);
-      }
-      ctx.textAlign='left';ctx.textBaseline='alphabetic';y+=navH+3;
-    }
-    y+=4;
-  };
-  section('\u26A0 STAFF REPORTS'+(updatesFeed.staff.length?' ('+updatesFeed.staff.length+')':''), updatesFeed.staff, '#e0a8a0','staff');
-  section('\uD83D\uDC65 PLAYER REPORTS'+(updatesFeed.player.length?' ('+updatesFeed.player.length+')':''), updatesFeed.player, '#8a9268','player');
-  const copyY=py+ph-78,copyH=30,copyGap=8,modeW=Math.min(120,Math.max(70,rw*.16)),copyW=rw-modeW*2-copyGap*2;
-  const visibleReportStatus=reportLoadStatus||reportCopyStatus;
-  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle=/FAILED|COULD NOT|MUST/.test(visibleReportStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(visibleReportStatus||'COPY AN EXPLICIT, READABLE REPORT EXPORT',rw),W/2,copyY-5);
-  const copyButtons=[
-    {id:'report_copy_all',x:x0,w:modeW,label:'ALL',col:'#7fd8ff',active:reportCopyMode==='all',enabled:!reportCopyBusy},
-    {id:'report_copy_custom',x:x0+modeW+copyGap,w:modeW,label:'CUSTOM',col:'#e8b658',active:reportCopyMode==='custom',enabled:!reportCopyBusy},
-    {id:'report_copy',x:x0+modeW*2+copyGap*2,w:copyW,label:reportCopyBusy?'COPYING…':reportCopyMode==='custom'?'COPY '+reportCopyCustomCount:'COPY ALL',col:'#a7c15e',active:false,enabled:!reportCopyBusy}
-  ];
-  for(const b of copyButtons){
-    updatesRects.push({x:b.x,y:copyY,w:b.w,h:copyH,id:b.id,enabled:b.enabled});const hv=b.enabled&&mouse.x>=b.x&&mouse.x<=b.x+b.w&&mouse.y>=copyY&&mouse.y<=copyY+copyH;
-    ctx.fillStyle=b.active?b.col:hv?b.col:'rgba(255,255,255,.06)';ctx.fillRect(b.x,copyY,b.w,copyH);ctx.strokeStyle=b.col;ctx.strokeRect(b.x+.5,copyY+.5,b.w,copyH);
-    ctx.fillStyle=b.active||hv?'#101208':'#cdd6b0';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.textBaseline='middle';ctx.fillText(fitLine(b.label,b.w-6),b.x+b.w/2,copyY+copyH/2);
+  const tabsBottom=drawSuggestionsTabs(px,py,pw,py+(compact?44:52),updatesRects),filterH=compact?23:27,filterGap=6,filterW=Math.min(170,(rw-filterGap)/2),filterX=W/2-filterW-filterGap/2;
+  for(const [id,label,on,bx] of [['open','OPEN \u00b7 '+(updatesFeed.reports||[]).length,reportView==='open',filterX],['resolved','RESOLVED \u00b7 '+updatesResolved.length,reportView==='resolved',filterX+filterW+filterGap]]){
+    updatesRects.push({x:bx,y:tabsBottom,w:filterW,h:filterH,id:'report_view:'+id});
+    const hot=mouse.x>=bx&&mouse.x<=bx+filterW&&mouse.y>=tabsBottom&&mouse.y<=tabsBottom+filterH;
+    ctx.fillStyle=on?'#7fd8ff':hot?'rgba(127,216,255,.22)':'rgba(255,255,255,.04)';ctx.fillRect(bx,tabsBottom,filterW,filterH);ctx.strokeStyle='#7fd8ff';ctx.strokeRect(bx+.5,tabsBottom+.5,filterW,filterH);
+    ctx.fillStyle=on?'#101208':'#bfe8ff';ctx.font='700 '+(compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.textBaseline='middle';ctx.fillText(label,bx+filterW/2,tabsBottom+filterH/2);
   }
-  const bw2=Math.min(150,Math.max(110,rw*.2)), bh2=32, gap2=10;
-  const rx=W/2-bw2-gap2/2, cx=W/2+gap2/2, byy=py+ph-34;
-  updatesRects.push({x:rx,y:byy,w:bw2,h:bh2,id:'refresh'});
-  updatesRects.push({x:cx,y:byy,w:bw2,h:bh2,id:'close'});
-  for(const [bx2,lbl,st] of [[rx,'\u21BB REFRESH','#7fd8ff'],[cx,'CLOSE','#d05548']]){
-    const hv=mouse.x>=bx2&&mouse.x<=bx2+bw2&&mouse.y>=byy&&mouse.y<=byy+bh2;
-    ctx.fillStyle=hv?st:'rgba(255,255,255,0.06)'; ctx.fillRect(bx2,byy,bw2,bh2);
-    ctx.strokeStyle=st; ctx.strokeRect(bx2+0.5,byy+0.5,bw2,bh2);
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle=hv?'#101208':'#cdd6b0'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-    ctx.fillText(lbl, bx2+bw2/2, byy+bh2/2);
-    ctx.textBaseline='alphabetic';
+  if(reportView==='resolved'&&reportBulkAction==='resolve')reportBulkAction='copy';
+  const footerY=py+ph-(compact?29:34),footerH=compact?24:28,bulkH=compact?25:29,bulkY=footerY-bulkH-7,statusY=bulkY-6,
+    viewTop=tabsBottom+filterH+7,viewBottom=statusY-8,rows=reportView==='resolved'?updatesResolved:(updatesFeed.reports||[]),rowH=compact?34:40,rowGap=4;
+  reportScrollViewport={x:x0,y:viewTop,w:rw,h:Math.max(1,viewBottom-viewTop)};
+  const rowStride=rowH+rowGap;
+  reportScrollMax=Math.max(0,rows.length*rowStride-reportScrollViewport.h);reportScroll=Math.max(0,Math.min(reportScroll,reportScrollMax));
+  const fixedRectCount=updatesRects.length;
+  ctx.save();ctx.beginPath();ctx.rect(x0,viewTop,rw,reportScrollViewport.h);ctx.clip();
+  const firstVisible=Math.max(0,Math.floor(reportScroll/rowStride)),lastVisible=Math.min(rows.length,Math.ceil((reportScroll+reportScrollViewport.h)/rowStride)+1);
+  let y=viewTop+firstVisible*rowStride-reportScroll;
+  if(!rows.length){ctx.fillStyle='#5a5648';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText(reportView==='resolved'?'NO RESOLVED REPORTS':'NO OPEN REPORTS',W/2,viewTop+24);}
+  for(let index=firstVisible;index<lastVisible;index++){
+    const r=rows[index];
+    const resolved=reportView==='resolved',rbw=compact?47:58,actionCount=resolved?1:2,actionsW=actionCount*(rbw+4)+4,
+      when=String(r.created_at||'').slice(5,16).replace('T',' '),msg=String(r.message||'').replace(/^\[STAFF\]\s*/,''),
+      read={t:'REPORT #'+String(r.id!=null?r.id:'?')+' \u00b7 @'+String(r.name||'?'),m:when,b:msg};
+    ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(127,216,255,.055)';ctx.fillRect(x0,y,rw,rowH);ctx.strokeStyle=resolved?'#6b7455':'#7fd8ff';ctx.strokeRect(x0+.5,y+.5,rw,rowH);
+    ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=resolved?'#8a9268':'#bfe8ff';ctx.font='700 '+(compact?7:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((resolved?'\u2713 ':'')+'@'+String(r.name||'?')+(when?' \u00b7 '+when:''),rw-actionsW-18),x0+7,y+11);
+    ctx.fillStyle='#cdd6b0';ctx.font=(compact?8:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(msg,rw-actionsW-18),x0+7,y+rowH-11);
+    const readX=x0+rw-actionsW,buttonY=y+6,buttonH=rowH-12;
+    for(const [id,label,col,bx,enabled] of [['read','READ','#7fd8ff',readX,true],['resolve','RESOLVE','#a7c15e',readX+rbw+4,!resolved&&!reportCopyBusy&&!reportResolveBusy.has(+r.id)]]){
+      if(id==='resolve'&&resolved)continue;
+      const hot=enabled&&mouse.x>=bx&&mouse.x<=bx+rbw&&mouse.y>=buttonY&&mouse.y<=buttonY+buttonH;
+      ctx.fillStyle=hot?col:'rgba(255,255,255,.05)';ctx.fillRect(bx,buttonY,rbw,buttonH);ctx.strokeStyle=enabled?col:'#42463b';ctx.strokeRect(bx+.5,buttonY+.5,rbw,buttonH);
+      ctx.textAlign='center';ctx.fillStyle=hot?'#101208':enabled?col:'#5a5648';ctx.font='700 '+(compact?6:7)+'px ui-monospace,Consolas,monospace';ctx.fillText(id==='resolve'&&!enabled?'SAVING\u2026':label,bx+rbw/2,y+rowH/2);
+      if(enabled)updatesRects.push({x:bx,y:buttonY,w:rbw,h:buttonH,id:id==='read'?'rd:'+r.id:'rs:'+r.id,read:id==='read'?read:null});
+    }
+    updatesRects.push({x:x0,y,w:Math.max(1,rw-actionsW-3),h:rowH,id:'rdrow:'+r.id,read});y+=rowStride;
   }
-  ctx.textAlign='left';
+  ctx.restore();
+  const visible=updatesRects.slice(0,fixedRectCount),vt=viewTop,vb=viewBottom;
+  for(const rect of updatesRects.slice(fixedRectCount)){const top=Math.max(vt,rect.y),bottom=Math.min(vb,rect.y+rect.h);if(bottom>top)visible.push(Object.assign({},rect,{y:top,h:bottom-top}));}
+  updatesRects=visible;
+  if(reportScrollMax>0){const sx=x0+rw-3,sh=reportScrollViewport.h-4,thumbH=Math.max(18,sh*(reportScrollViewport.h/(reportScrollViewport.h+reportScrollMax))),thumbY=viewTop+2+(sh-thumbH)*(reportScroll/reportScrollMax);ctx.fillStyle='rgba(127,216,255,.12)';ctx.fillRect(sx,viewTop+2,2,sh);ctx.fillStyle='#7fd8ff';ctx.fillRect(sx-1,thumbY,4,thumbH);}
+  const copyY=bulkY,copyH=bulkH,copyGap=compact?4:7,controlW=(rw-copyGap*2)/3,visibleStatus=reportLoadStatus||reportCopyStatus;
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle=/FAILED|COULD NOT|MUST/.test(visibleStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(visibleStatus||'CHOOSE AN ACTION AND AMOUNT, THEN RUN IT',rw),W/2,statusY);
+  const amountText=reportCopyMode==='custom'?String(reportCopyCustomCount):'ALL',working=reportCopyBusy||reportResolveBusy.size>0,controls=[
+    {id:'report_action_menu',x:x0,label:reportBulkAction.toUpperCase()+' \u25BE',col:'#7fd8ff'},
+    {id:'report_amount_menu',x:x0+controlW+copyGap,label:'AMOUNT: '+amountText+' \u25BE',col:'#e8b658'},
+    {id:'report_run',x:x0+(controlW+copyGap)*2,label:working?'WORKING\u2026':'RUN '+reportBulkAction.toUpperCase()+' \u00b7 '+amountText,col:reportBulkAction==='resolve'?'#d05548':'#a7c15e'}];
+  for(const b of controls){const enabled=!working;updatesRects.push({x:b.x,y:copyY,w:controlW,h:copyH,id:b.id,enabled});const hot=enabled&&mouse.x>=b.x&&mouse.x<=b.x+controlW&&mouse.y>=copyY&&mouse.y<=copyY+copyH;ctx.fillStyle=hot?b.col:'rgba(255,255,255,.06)';ctx.fillRect(b.x,copyY,controlW,copyH);ctx.strokeStyle=enabled?b.col:'#42463b';ctx.strokeRect(b.x+.5,copyY+.5,controlW,copyH);ctx.fillStyle=hot?'#101208':enabled?'#cdd6b0':'#5a5648';ctx.font='700 '+(compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.textBaseline='middle';ctx.fillText(fitLine(b.label,controlW-6),b.x+controlW/2,copyY+copyH/2);}
+  const gap2=8,bw2=Math.min(170,(rw-gap2)/2),rx=W/2-bw2-gap2/2,cx=W/2+gap2/2,byy=footerY;
+  for(const [id,bx,label,col] of [['refresh',rx,'\u21BB REFRESH','#7fd8ff'],['close',cx,'CLOSE','#d05548']]){updatesRects.push({x:bx,y:byy,w:bw2,h:footerH,id});const hot=mouse.x>=bx&&mouse.x<=bx+bw2&&mouse.y>=byy&&mouse.y<=byy+footerH;ctx.fillStyle=hot?col:'rgba(255,255,255,.06)';ctx.fillRect(bx,byy,bw2,footerH);ctx.strokeStyle=col;ctx.strokeRect(bx+.5,byy+.5,bw2,footerH);ctx.fillStyle=hot?'#101208':'#cdd6b0';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.fillText(label,bx+bw2/2,byy+footerH/2);}
+  const drawMenu=(open,bx,items)=>{if(!open)return;const mh=compact?23:27;items.forEach((item,index)=>{const my=copyY-mh*(items.length-index),enabled=item.enabled!==false;updatesRects.push({x:bx,y:my,w:controlW,h:mh,id:item.id,enabled});const hot=enabled&&mouse.x>=bx&&mouse.x<=bx+controlW&&mouse.y>=my&&mouse.y<=my+mh;ctx.fillStyle=hot?item.col:'#111716';ctx.fillRect(bx,my,controlW,mh);ctx.strokeStyle=enabled?item.col:'#42463b';ctx.strokeRect(bx+.5,my+.5,controlW,mh);ctx.fillStyle=hot?'#101208':enabled?'#e8d9a8':'#5a5648';ctx.font='700 '+(compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(item.label,bx+controlW/2,my+mh/2);});};
+  drawMenu(reportActionMenuOpen,x0,[{id:'report_action_copy',label:'COPY',col:'#7fd8ff'},{id:'report_action_resolve',label:'RESOLVE',col:'#d05548',enabled:reportView==='open'}]);
+  drawMenu(reportAmountMenuOpen,x0+controlW+copyGap,[{id:'report_amount_all',label:'ALL',col:'#e8b658'},{id:'report_amount_custom',label:'CUSTOM',col:'#e8b658'}]);
+  ctx.textAlign='left';ctx.textBaseline='alphabetic';
 }
 function updatesClick(){
-  for(const r of updatesRects){
+  for(let i=updatesRects.length-1;i>=0;i--){
+    const r=updatesRects[i];
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
-      if(inboxTabClick(r.id)) return;
-      if(r.id==='close'){ updatesOpen=false; sfx('swap'); }
+      const id=String(r.id||''),menuControl=/^report_(action|amount)/.test(id);
+      if((reportActionMenuOpen||reportAmountMenuOpen)&&!menuControl){reportActionMenuOpen=reportAmountMenuOpen=false;sfx('aim');return;}
+      if(suggestionsTabClick(r.id))return;
+      if(r.enabled===false){sfx('dry');return;}
+      if(r.id==='close'){ updatesOpen=false;reportActionMenuOpen=reportAmountMenuOpen=false;sfx('swap'); }
       else if(r.id==='refresh'){ fetchUpdatesFeed(); sfx('swap'); }
-      else if(r.id==='report_copy_all'){chooseReportCopyAll();sfx('aim');}
-      else if(r.id==='report_copy_custom'){if(chooseReportCopyCustom())sfx('aim');}
-      else if(r.id==='report_copy'){void copyOutpostZeroReports();}
-      else if(String(r.id).indexOf('rp:')===0){const [,key,dir]=String(r.id).split(':');if(reportFeedPages[key]!=null)reportFeedPages[key]=Math.max(0,reportFeedPages[key]+(dir==='next'?1:-1));sfx('aim');}
+      else if(String(r.id).indexOf('report_view:')===0){reportView=String(r.id).slice(12);reportCopyStatus='';reportActionMenuOpen=reportAmountMenuOpen=false;resetReportScroll();sfx('aim');}
+      else if(r.id==='report_action_menu'){reportActionMenuOpen=!reportActionMenuOpen;reportAmountMenuOpen=false;sfx('aim');}
+      else if(r.id==='report_amount_menu'){reportAmountMenuOpen=!reportAmountMenuOpen;reportActionMenuOpen=false;sfx('aim');}
+      else if(r.id==='report_action_copy'){reportBulkAction='copy';reportCopyStatus='';reportActionMenuOpen=false;sfx('aim');}
+      else if(r.id==='report_action_resolve'){reportBulkAction='resolve';reportCopyStatus='';reportActionMenuOpen=false;sfx('aim');}
+      else if(r.id==='report_amount_all'){chooseReportCopyAll();reportAmountMenuOpen=false;sfx('aim');}
+      else if(r.id==='report_amount_custom'){if(chooseReportCopyCustom())sfx('aim');reportAmountMenuOpen=false;}
+      else if(r.id==='report_run'){void runReportBulkAction();}
       else if(String(r.id).indexOf('rs:')===0){ resolveReport(+String(r.id).slice(3)); sfx('pickup'); }
       else if(r.read){ openReader(r.read.t, r.read.m, r.read.b,'main'); sfx('swap'); }
       return;
     }
   }
+  if(reportActionMenuOpen||reportAmountMenuOpen){reportActionMenuOpen=reportAmountMenuOpen=false;sfx('aim');}
 }
 function drawArchive(){
-  if(!isAdmin()){archOpen=false;adminMsgs=[];updatesResolved=[];return;}
-  ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
-  const {pw,ph,px,py}=adminInboxBounds();
-  ctx.fillStyle='#0c0b07'; ctx.fillRect(px,py,pw,ph);
-  ctx.strokeStyle='#e8b658'; ctx.lineWidth=1.5; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
-  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
-  ctx.fillStyle='#e8d9a8'; ctx.font='700 17px ui-monospace,Consolas,monospace';
-  ctx.fillText('\u2709 INBOX \u00b7 ARCHIVE', W/2, py+26);
-  ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText('read messages land here after 7 days \u00b7 resolved reports stay saved', W/2, py+42);
-  archRects=[];
-  const inboxY=drawInboxTabs(px,py,pw,py+50,archRects);
-  const x0=px+16, rw=pw-32;
-  let y=inboxY,resolvedPageSize=1;
-  // sub-sections: old messages | resolved reports (reports only for mains)
-  if(!isMainAdmin()) archTab='msgs';
-  const tabs=[['msgs','OLD MESSAGES']].concat(isMainAdmin()?[['reports','RESOLVED REPORTS']]:[]);
-  const tw=Math.min(220,(rw-10)/2), th=28;
-  let tx=W/2 - (tabs.length*tw + (tabs.length-1)*8)/2;
-  for(const [id,lbl] of tabs){
-    archRects.push({x:tx,y,w:tw,h:th,id:'tab:'+id});
-    const on=archTab===id;
-    const hv=mouse.x>=tx&&mouse.x<=tx+tw&&mouse.y>=y&&mouse.y<=y+th;
-    ctx.fillStyle= on ? '#e8b658' : hv?'rgba(232,182,88,0.2)':'rgba(0,0,0,0.35)';
-    ctx.fillRect(tx,y,tw,th);
-    ctx.strokeStyle='#e8b658'; ctx.lineWidth=1; ctx.strokeRect(tx+0.5,y+0.5,tw,th);
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillStyle= on ? '#101208' : '#e8d9a8'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-    ctx.fillText(lbl, tx+tw/2, y+th/2);
-    ctx.textBaseline='alphabetic';
-    tx+=tw+8;
+  if(!isAdmin()){archOpen=false;adminMsgs=[];return;}
+  ctx.fillStyle='rgba(4,6,3,.96)';ctx.fillRect(0,0,W,H);
+  const {pw,ph,px,py}=adminInboxBounds(),x0=px+16,rw=pw-32;
+  ctx.fillStyle='#0c0b07';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#e8b658';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#e8d9a8';ctx.font='700 17px ui-monospace,Consolas,monospace';ctx.fillText('\u2709 ADMIN INBOX',W/2,py+26);
+  ctx.fillStyle='#8a9268';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText('ARCHIVED ADMIN MESSAGES',W/2,py+42);
+  archRects=[];let y=drawInboxTabs(px,py,pw,py+50,archRects);
+  const list=adminMsgs.filter(msgArchived),h=38,maxRows=Math.max(1,Math.floor((py+ph-50-y)/(h+5)));
+  if(!list.length){ctx.fillStyle='#5a5648';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText('NOTHING ARCHIVED YET',W/2,y+20);}
+  for(const m of list.slice(0,maxRows)){
+    if(y+h>py+ph-44)break;
+    const when=String(m.created_at||'').slice(5,16).replace('T',' '),body=String(m.message||'');
+    ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(x0,y,rw,h);ctx.strokeStyle='#5a5648';ctx.strokeRect(x0+.5,y+.5,rw,h);
+    ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('@'+String(m.from_username||'STAFF')+' \u2192 @'+String(m.to_username||'STAFF')+(when?' \u00b7 '+when:''),rw-16),x0+8,y+10);
+    ctx.fillStyle='#a9b28f';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(body,rw-16),x0+8,y+24);
+    archRects.push({x:x0,y,w:rw,h,id:'archived_message',read:{t:'@'+String(m.from_username||'STAFF'),m:when,b:body}});y+=h+5;
   }
-  y+=th+10;
-  if(archTab==='msgs'){
-    const list=adminMsgs.filter(msgArchived);
-    if(!list.length){
-      ctx.textAlign='center'; ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
-      ctx.fillText('nothing archived yet', W/2, y+14);
-    }
-    const h=38,maxRows=Math.max(1,Math.floor((py+ph-52-y)/(h+5)));
-    for(const m of list.slice(0,maxRows)){
-      if(y+h>py+ph-46) break;
-      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
-      ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
-      ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.fillStyle='#8a9268'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-      const when=String(m.created_at||'').slice(5,16).replace('T',' ');
-      ctx.fillText(('@'+String(m.from_username||'STAFF')).slice(0,24)+' \u2192 '+('@'+String(m.to_username||'STAFF')).slice(0,24)+(when?'  \u00b7 '+when:''), x0+8, y+10);
-      ctx.fillStyle='#a9b28f'; ctx.font='9px ui-monospace,Consolas,monospace';
-      ctx.fillText(String(m.message||'').slice(0, Math.floor((rw-16)/5.6)), x0+8, y+24);
-      ctx.textBaseline='alphabetic';
-      y+=h+5;
-    }
-  } else {
-    const list=updatesResolved;
-    if(reportLoadStatus){ctx.textAlign='center';ctx.fillStyle=/FAILED|COULD NOT/.test(reportLoadStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(reportLoadStatus,rw),W/2,y+8);y+=14;}
-    const pageSize=resolvedPageSize=Math.max(1,Math.floor((py+ph-56-y)/35)),totalPages=Math.max(1,Math.ceil(list.length/pageSize));reportArchivePage=Math.max(0,Math.min(totalPages-1,Math.floor(+reportArchivePage||0)));
-    if(!list.length){
-      ctx.textAlign='center'; ctx.fillStyle='#5a5648'; ctx.font='9px ui-monospace,Consolas,monospace';
-      ctx.fillText('no resolved reports yet', W/2, y+14);
-    }
-    for(const r of list.slice(reportArchivePage*pageSize,(reportArchivePage+1)*pageSize)){
-      const h=30;
-      if(y+h>py+ph-46) break;
-      const staff=(r.meta&&r.meta.staff) || String(r.message||'').indexOf('[STAFF]')===0;
-      ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.fillRect(x0,y,rw,h);
-      ctx.strokeStyle= staff?'#e0a8a0':'#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
-      ctx.textAlign='left'; ctx.textBaseline='middle';
-      ctx.fillStyle= staff?'#e0a8a0':'#8a9268'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-      ctx.fillText('\u2713 '+String(r.name||'?').slice(0,26), x0+8, y+9);
-      ctx.fillStyle='#a9b28f'; ctx.font='9px ui-monospace,Consolas,monospace';
-      ctx.fillText(String(r.message||'').replace('[STAFF] ','').slice(0, Math.floor((rw-16)/5.6)), x0+8, y+21);
-      ctx.textBaseline='alphabetic';
-      y+=h+5;
-    }
-    if(totalPages>1){
-      const navY=py+ph-39,navW=88,navH=31;
-      for(const [id,bx,label,enabled] of [['reports_prev',x0, '\u25c0 PREV',reportArchivePage>0],['reports_next',x0+rw-navW,'NEXT \u25b6',reportArchivePage<totalPages-1]]){
-        if(enabled)archRects.push({x:bx,y:navY,w:navW,h:navH,id});const hv=enabled&&mouse.x>=bx&&mouse.x<=bx+navW&&mouse.y>=navY&&mouse.y<=navY+navH;
-        ctx.fillStyle=hv?'rgba(232,182,88,.24)':'rgba(255,255,255,.04)';ctx.fillRect(bx,navY,navW,navH);ctx.strokeStyle=enabled?'#e8b658':'#42463b';ctx.strokeRect(bx+.5,navY+.5,navW,navH);ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=enabled?'#e8d9a8':'#5a5648';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(label,bx+navW/2,navY+navH/2);
-      }
-      ctx.fillStyle='#8a9268';ctx.fillText('PAGE '+(reportArchivePage+1)+'/'+totalPages,W/2,navY-4);ctx.textBaseline='alphabetic';
-    }
-  }
-  const reportsPaged=archTab==='reports'&&updatesResolved.length>resolvedPageSize;
-  const cbw=reportsPaged?120:170, cbh=34, cbx=W/2-cbw/2, cby=py+ph-40;
-  archRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
-  const chv=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;
-  ctx.fillStyle=chv?'#e8b658':'rgba(232,182,88,0.14)'; ctx.fillRect(cbx,cby,cbw,cbh);
-  ctx.strokeStyle='#e8b658'; ctx.strokeRect(cbx+0.5,cby+0.5,cbw,cbh);
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle=chv?'#101208':'#e8d9a8'; ctx.font='700 11px ui-monospace,Consolas,monospace';
-  ctx.fillText('CLOSE', W/2, cby+cbh/2);
-  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
+  const cbw=170,cbh=34,cbx=W/2-cbw/2,cby=py+ph-40;archRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
+  const hot=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;ctx.fillStyle=hot?'#e8b658':'rgba(232,182,88,.14)';ctx.fillRect(cbx,cby,cbw,cbh);ctx.strokeStyle='#e8b658';ctx.strokeRect(cbx+.5,cby+.5,cbw,cbh);ctx.fillStyle=hot?'#101208':'#e8d9a8';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 11px ui-monospace,Consolas,monospace';ctx.fillText('CLOSE',W/2,cby+cbh/2);ctx.textAlign='left';ctx.textBaseline='alphabetic';
 }
 function archReadable(r){ return !!r.read; }
 function archClick(){
@@ -501,9 +417,7 @@ function archClick(){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       const id=String(r.id||'');
       if(id==='close'){ archOpen=false; sfx('swap'); return; }
-      if(id.indexOf('tab:')===0){ archTab=id.slice(4);reportArchivePage=0;sfx('aim'); return; }
-      if(id==='reports_prev'){reportArchivePage=Math.max(0,reportArchivePage-1);sfx('aim');return;}
-      if(id==='reports_next'){reportArchivePage++;sfx('aim');return;}
+      if(r.read){openReader(r.read.t,r.read.m,r.read.b,'admin');sfx('swap');return;}
       return;
     }
   }
@@ -697,18 +611,20 @@ async function saveWeaponEdit(){
   $('formstatus').textContent='saving...';
   try{
     if(sb){
-      const {error}=await sb.from('weapon_defs').upsert(row,{onConflict:'key'});
-      if(error) throw error;
-      if(typeof d.price==='number' && d.price!==weaponPrice(k)) await saveGemPrice(k,d.price);
-    } else if(typeof d.price==='number' && d.price!==weaponPrice(k)) setGemPrice(k,d.price);
-    if(sb){
-      const refreshed=await fetchWeaponDefs();
-      if(refreshed===false){                          // the write succeeded; use it locally until polling recovers
-        weaponDefsRequestVersion++;
-        weaponDefs[k]=row;
-        applyWeaponDef(row);
-      }
+      const result=await sb.rpc('save_outpost_zero_weapon_definition',{
+        p_weapon_key:k,p_stats:stats,
+        p_price:typeof d.price==='number'?Math.round(d.price/GEM_PRICE_SCALE):null,
+        p_published:row.published
+      });
+      if(result.error)throw result.error;
+      const raw=Array.isArray(result.data)?result.data[0]:result.data;
+      const returnedKey=String(raw&&(raw.weapon_key||raw.key)||'').toLowerCase();
+      if(!raw||returnedKey!==k)throw new Error('WEAPON_SAVE_NOT_CONFIRMED');
+      const saved=Object.assign({},raw,{key:returnedKey});
+      weaponDefsRequestVersion++;weaponDefs[k]=saved;applyWeaponDef(saved);
+      if(typeof saved.price==='number')setGemPrice(k,saved.price*GEM_PRICE_SCALE);
     }else{
+      if(typeof d.price==='number'&&d.price!==weaponPrice(k))setGemPrice(k,d.price);
       weaponDefsRequestVersion++;
       weaponDefs[k]=row;
       applyWeaponDef(row);
@@ -718,7 +634,7 @@ async function saveWeaponEdit(){
     sfx('pickup');
   }catch(e){
     const msg=String((e&&e.message)||e||'save failed');
-    formError('SAVE FAILED: '+msg.slice(0,120)); sfx('dry');
+    formError(/save_outpost_zero_weapon_definition|PGRST202|42883/i.test(msg)?'SAVE FAILED · RUN ADMIN 02 ADMINS, THEN RETRY.':'SAVE FAILED: '+msg.slice(0,120)); sfx('dry');
   }
 }
 function drawWeaponEdit(){
@@ -1757,15 +1673,18 @@ function adminsClick(){
   }
 }
 function drawWeaponSuggestions(){
-  if(!canReviewWeaponSuggestions()){weaponSuggestionsOpen=false;weaponSuggestions=[];return;}
+  if(!canReviewWeaponSuggestions()){weaponSuggestionsOpen=false;weaponSuggestions=[];weaponSuggestionPage=0;return;}
   ctx.fillStyle='rgba(4,6,3,0.96)';ctx.fillRect(0,0,W,H);
-  const pw=Math.min(560,W-24),ph=Math.min(520,H-24),px=W/2-pw/2,py=H/2-ph/2,x0=px+14,rw=pw-28;
-  ctx.fillStyle='#0b0d0b';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#a7c15e';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
-  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#cfe0a8';ctx.font='700 16px ui-monospace,Consolas,monospace';ctx.fillText('\uD83D\uDCCB WEAPON SUGGESTIONS',W/2,py+25);
-  ctx.fillStyle=/COULD NOT|RUN ADMIN/.test(weaponSuggestionStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(weaponSuggestionStatus||'TESTER + CO-ADMIN IDEAS · REVIEW DOES NOT AUTO-EDIT STATS',pw-26),W/2,py+41);
-  weaponSuggestionsRects=[];let y=py+52;
-  const room=ph-104,rowH=58,maxRows=Math.max(1,Math.floor(room/rowH)),rows=weaponSuggestions.slice(0,maxRows);
-  if(!rows.length&&!weaponSuggestionBusy){ctx.fillStyle='#5a5648';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText('NO PENDING WEAPON SUGGESTIONS',W/2,y+24);}
+  const {pw,ph,px,py}=adminInboxBounds(),tiny=ph<430||pw<520,x0=px+(tiny?8:16),rw=pw-(tiny?16:32);
+  ctx.fillStyle='#0b0d0b';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#e8b658';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
+  ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#ffe0a0';ctx.font='700 '+(tiny?14:18)+'px ui-monospace,Consolas,monospace';ctx.fillText('SUGGESTIONS',W/2,py+(tiny?21:27));
+  ctx.fillStyle=/COULD NOT|RUN ADMIN/.test(weaponSuggestionStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(weaponSuggestionStatus||'STORED ADMIN WEAPON SUGGESTIONS',pw-26),W/2,py+(tiny?37:44));
+  weaponSuggestionsRects=[];let y=drawSuggestionsTabs(px,py,pw,py+(tiny?44:52),weaponSuggestionsRects);
+  const footerH=tiny?24:28,footerY=py+ph-footerH-6,rowH=tiny?48:58,room=footerY-y-7,maxRows=Math.max(1,Math.floor(room/rowH)),
+    pages=Math.max(1,Math.ceil(weaponSuggestions.length/maxRows));
+  weaponSuggestionPage=Math.max(0,Math.min(pages-1,Math.floor(+weaponSuggestionPage||0)));
+  const rows=weaponSuggestions.slice(weaponSuggestionPage*maxRows,(weaponSuggestionPage+1)*maxRows);
+  if(!rows.length&&!weaponSuggestionBusy){ctx.fillStyle='#5a5648';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText('NO PENDING ADMIN SUGGESTIONS',W/2,y+24);}
   for(let index=0;index<rows.length;index++){
     const row=rows[index],h=rowH-5,buttonW=Math.min(58,Math.max(44,rw*.14)),buttonsW=buttonW*3+8,contentW=rw-buttonsW-12;
     ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(255,255,255,.055)';ctx.fillRect(x0,y,rw,h);ctx.strokeStyle='#566047';ctx.strokeRect(x0+.5,y+.5,rw,h);
@@ -1777,17 +1696,25 @@ function drawWeaponSuggestions(){
       ctx.fillStyle=hv?def[2]:'rgba(255,255,255,.05)';ctx.fillRect(x,by,buttonW,bh);ctx.strokeStyle=def[2];ctx.strokeRect(x+.5,by+.5,buttonW,bh);ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=hv?'#101208':'#d9dec9';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(def[1],x+buttonW/2,by+bh/2);});
     y+=rowH;
   }
-  const bh=28,gap=8,bw=120,fy=py+ph-bh-8;
-  for(const def of [{id:'ws_refresh',label:'\u21BB REFRESH',x:W/2-bw-gap/2,col:'#7fd8ff'},{id:'ws_close',label:'CLOSE',x:W/2+gap/2,col:'#d05548'}]){
-    weaponSuggestionsRects.push({x:def.x,y:fy,w:bw,h:bh,id:def.id,enabled:!weaponSuggestionBusy});const hv=!weaponSuggestionBusy&&mouse.x>=def.x&&mouse.x<=def.x+bw&&mouse.y>=fy&&mouse.y<=fy+bh;
-    ctx.fillStyle=hv?def.col:'rgba(255,255,255,.05)';ctx.fillRect(def.x,fy,bw,bh);ctx.strokeStyle=def.col;ctx.strokeRect(def.x+.5,fy+.5,bw,bh);ctx.fillStyle=hv?'#101208':'#d9dec9';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.fillText(def.label,def.x+bw/2,fy+bh/2);
-  }
+  const bh=footerH,gap=5,bw=(rw-gap*3)/4,fy=footerY,defs=[
+    {id:'ws_newer',label:'\u2039 NEWER',col:'#7fd8ff',enabled:weaponSuggestionPage>0},
+    {id:'ws_older',label:'OLDER \u203a',col:'#7fd8ff',enabled:weaponSuggestionPage+1<pages},
+    {id:'ws_refresh',label:'\u21BB REFRESH',col:'#a7c15e',enabled:!weaponSuggestionBusy},
+    {id:'ws_close',label:'CLOSE',col:'#d05548',enabled:true}
+  ];
+  defs.forEach((def,index)=>{const x=x0+index*(bw+gap),enabled=def.enabled&&!weaponSuggestionBusy;
+    weaponSuggestionsRects.push({x,y:fy,w:bw,h:bh,id:def.id,enabled});const hv=enabled&&mouse.x>=x&&mouse.x<=x+bw&&mouse.y>=fy&&mouse.y<=fy+bh;
+    ctx.fillStyle=hv?def.col:'rgba(255,255,255,.05)';ctx.fillRect(x,fy,bw,bh);ctx.strokeStyle=enabled?def.col:'#42463b';ctx.strokeRect(x+.5,fy+.5,bw,bh);ctx.fillStyle=hv?'#101208':enabled?'#d9dec9':'#5a5648';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 '+(tiny?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(def.label,x+bw/2,fy+bh/2);
+  });
   ctx.textAlign='left';ctx.textBaseline='alphabetic';
 }
 function weaponSuggestionsClick(){
   for(const r of weaponSuggestionsRects){
     if(mouse.x<r.x||mouse.x>r.x+r.w||mouse.y<r.y||mouse.y>r.y+r.h)continue;if(r.enabled===false){sfx('dry');return;}
+    if(suggestionsTabClick(r.id))return;
     if(r.id==='ws_close'){weaponSuggestionsOpen=false;sfx('swap');return;}
+    if(r.id==='ws_newer'){weaponSuggestionPage=Math.max(0,weaponSuggestionPage-1);sfx('aim');return;}
+    if(r.id==='ws_older'){weaponSuggestionPage++;sfx('aim');return;}
     if(r.id==='ws_refresh'){void fetchWeaponSuggestions();sfx('swap');return;}
     if(r.id==='ws_read'){const row=r.row||{};openReader('WEAPON SUGGESTION',String(row.weapon_key||'WEAPON').toUpperCase()+' · '+String(row.author_role||'STAFF').toUpperCase(),String(row.suggestion||''),'main');sfx('swap');return;}
     if(r.id==='ws_approve'){void reviewWeaponSuggestion(r.suggestionId,'approved');return;}
@@ -1800,20 +1727,18 @@ function drawAdminRequests(){
   const {pw,ph,px,py}=adminInboxBounds(),tiny=ph<420||pw<520;
   ctx.fillStyle='#0b0c0e';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#e8b658';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
   ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#ffe0a0';ctx.font='700 '+(tiny?14:18)+'px ui-monospace,Consolas,monospace';ctx.fillText('REQUESTS',W/2,py+(tiny?21:28));
-  ctx.fillStyle='#8a9268';ctx.font=(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('PLAYER EDITS · UPDATE APPROVALS · WEAPON SUGGESTIONS · BAN APPEALS',pw-20),W/2,py+(tiny?36:45));
+  ctx.fillStyle='#8a9268';ctx.font=(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('PLAYER EDITS · UPDATE APPROVALS · BAN APPEALS',pw-20),W/2,py+(tiny?36:45));
   requestsRects=[];const rows=adminRequestRows(),x0=px+(tiny?7:16),rw=pw-(tiny?14:32),top=py+(tiny?48:58),footerY=py+ph-(tiny?31:40),
     rowH=tiny?47:58,gap=tiny?3:5,pageSize=Math.max(1,Math.floor((footerY-top-8)/(rowH+gap))),pages=Math.max(1,Math.ceil(rows.length/pageSize));
   requestsPage=Math.max(0,Math.min(pages-1,Math.floor(+requestsPage||0)));
-  const shown=rows.slice(requestsPage*pageSize,(requestsPage+1)*pageSize),typeText={player:'PLAYER EDIT',update:'OFFICIAL UPDATE',weapon:'WEAPON EDIT',appeal:'BAN APPEAL'};
+  const shown=rows.slice(requestsPage*pageSize,(requestsPage+1)*pageSize),typeText={player:'PLAYER EDIT',update:'OFFICIAL UPDATE',appeal:'BAN APPEAL'};
   if(!shown.length){ctx.fillStyle='#5a5648';ctx.font='10px ui-monospace,Consolas,monospace';ctx.fillText(requestsBusy?'LOADING…':'NO REQUESTS WAITING',W/2,top+40);}
   shown.forEach((item,index)=>{
     const row=item.row||{},y=top+index*(rowH+gap),buttonW=tiny?42:58,buttonGap=4,actionSpan=buttonW*3+buttonGap*2,contentW=rw-actionSpan-18,
       title=item.kind==='player'?'@'+String(row.target_username||'UNKNOWN'):
-        item.kind==='update'?String(row.heading||row.message||'UPDATE'):
-        item.kind==='weapon'?String(row.weapon_key||'WEAPON').toUpperCase():'@'+String(row.player_username||'UNKNOWN'),
+        item.kind==='update'?String(row.heading||row.message||'UPDATE'):'@'+String(row.player_username||'UNKNOWN'),
       body=item.kind==='player'?patchSummary(row.patch)+' · by @'+String(row.requested_by||'?'):
         item.kind==='update'?String(row.details||row.message||'')+' · by '+String(row.author||'STAFF'):
-        item.kind==='weapon'?String(row.suggestion||'')+' · by @'+String(row.author_username||'STAFF'):
         String(row.message||'');
     ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(232,182,88,.07)';ctx.fillRect(x0,y,rw,rowH);ctx.strokeStyle='#65552f';ctx.strokeRect(x0+.5,y+.5,rw,rowH);
     ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(typeText[item.kind]+' · '+fitLine(title,contentW-90),x0+7,y+6);
@@ -1839,14 +1764,13 @@ function adminRequestsClick(){
     if(hit.id==='refresh'){void refreshAdminRequests();sfx('aim');return;}
     const item=hit.item||{},row=item.row||{};
     if(hit.id==='read'){
-      const title=item.kind==='update'?String(row.heading||row.message||'OFFICIAL UPDATE'):item.kind==='weapon'?String(row.weapon_key||'WEAPON').toUpperCase():item.kind==='appeal'?'BAN APPEAL · @'+String(row.player_username||'PLAYER'):'PLAYER EDIT · @'+String(row.target_username||'PLAYER'),
-        body=item.kind==='update'?String(row.details||row.message||''):item.kind==='weapon'?String(row.suggestion||''):item.kind==='appeal'?String(row.message||''):patchSummary(row.patch);
+      const title=item.kind==='update'?String(row.heading||row.message||'OFFICIAL UPDATE'):item.kind==='appeal'?'BAN APPEAL · @'+String(row.player_username||'PLAYER'):'PLAYER EDIT · @'+String(row.target_username||'PLAYER'),
+        body=item.kind==='update'?String(row.details||row.message||''):item.kind==='appeal'?String(row.message||''):patchSummary(row.patch);
       openReader(title,String(row.created_at||''),body,'main');sfx('swap');return;
     }
     let action=null;
     if(item.kind==='player')action=hit.id==='approve'?approveScoreReq(row):rejectScoreReq(row);
     else if(item.kind==='update')action=hit.id==='approve'?approveBanner(row.id):rejectBanner(row.id);
-    else if(item.kind==='weapon')action=reviewWeaponSuggestion(row.id,hit.id==='approve'?'approved':'rejected');
     else if(item.kind==='appeal')action=resolveAppeal(row.id,hit.id==='approve'?'lift':'deny');
     if(action)void Promise.resolve(action).then(()=>{requestsStatus=adminRequestRows().length+' PENDING REQUESTS';});return;
   }
@@ -1954,16 +1878,16 @@ function msgsClick(){
   }
 }
 function drawAdminAuditLog(){
-  if(!isMainAdmin()){auditOpen=false;inboxTab='msgs';return;}
+  if(!isMainAdmin()){auditOpen=false;return;}
   ctx.fillStyle='rgba(4,6,3,0.97)';ctx.fillRect(0,0,W,H);
   const tiny=W<520||H<480,{pw,ph,px,py}=adminInboxBounds();
   ctx.fillStyle='#080c0e';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#7fd8ff';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
   ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#bfe8ff';ctx.font='700 '+(tiny?15:18)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('\u2709 INBOX \u00b7 ADMIN LOG',W/2,py+25);
+  ctx.fillText('SUGGESTIONS',W/2,py+25);
   ctx.fillStyle='#8a9268';ctx.font=(tiny?7:9)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine('MAIN / CREATOR ONLY \u00b7 GIFTS, BANS, EDITS, REQUESTS AND DECISIONS',pw-20),W/2,py+42);
   auditRects=[];
-  const x0=px+(tiny?10:16),rw=pw-(tiny?20:32),tabsBottom=drawInboxTabs(px,py,pw,py+50,auditRects);
+  const x0=px+(tiny?10:16),rw=pw-(tiny?20:32),tabsBottom=drawSuggestionsTabs(px,py,pw,py+50,auditRects);
   const headerY=tabsBottom,headerH=22,footerY=py+ph-38,viewTop=headerY+headerH,viewBottom=footerY-6;
   ctx.fillStyle='rgba(127,216,255,.10)';ctx.fillRect(x0,headerY,rw,headerH);ctx.strokeStyle='#315568';ctx.strokeRect(x0+.5,headerY+.5,rw,headerH);
   ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#bfe8ff';ctx.font='700 '+(tiny?7:8)+'px ui-monospace,Consolas,monospace';
@@ -2028,7 +1952,7 @@ function adminAuditClick(){
   if(!isMainAdmin()){auditOpen=false;return;}
   for(const r of auditRects){
     if(mouse.x<r.x||mouse.x>r.x+r.w||mouse.y<r.y||mouse.y>r.y+r.h)continue;
-    if(inboxTabClick(r.id))return;
+    if(suggestionsTabClick(r.id))return;
     if(r.enabled===false){sfx('dry');return;}
     if(r.id==='close'){auditOpen=false;sfx('swap');return;}
     if(r.id==='refresh'){void fetchAdminAuditLog(true);sfx('swap');return;}
@@ -2123,7 +2047,7 @@ function drawAdminPanel(){
   ctx.fillStyle='#e0a8a0'; ctx.font='700 17px ui-monospace,Consolas,monospace';
   ctx.fillText('\u2699 ADMIN TOOLS', W/2, py+(compactAdmin?20:26));
   ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
-  ctx.fillText(isMainAdmin()?'MAIN ADMIN \u00b7 full access':isCoAdmin()?'CO-ADMIN \u00b7 shared powers':'TESTER \u00b7 test + suggest only', W/2, py+(compactAdmin?34:42));
+  ctx.fillText(isMainAdmin()?'MAIN ADMIN \u00b7 full access':isCoAdmin()?'CO-ADMIN \u00b7 shared powers':'TESTER \u00b7 test mode only', W/2, py+(compactAdmin?34:42));
   ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
   ctx.fillText('test mode taints the run \u2014 it will not be ranked', W/2, py+(compactAdmin?47:56));
 
@@ -2160,7 +2084,7 @@ function drawAdminPanel(){
 
   // Testers deliberately skip reports, player lookup, posts, logs, and every
   // editor. Co-admins keep their existing shared staff tools.
-  if(isCoAdmin() && !isMainAdmin()) actionBtn('staffreport','\u26A0 STAFF REPORT \u2014 flag a problem to the mains');
+  if(isCoAdmin() && !isMainAdmin()) actionBtn('staffreport','\u26A0 REPORT A PROBLEM \u2014 send to the mains');
   if(canPostUpdates())actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 Home + every Inbox'+(isMainAdmin()?'':' (needs approval)'));
   if(canUsePlayerTools())actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up'+(isMainAdmin()?' \u00b7 edit \u00b7 ban':' \u00b7 view only'));
   if(isMainAdmin()) actionBtn('layout','\u2194 LAYOUT EDITOR \u2014 move home page sections');
@@ -2169,8 +2093,7 @@ function drawAdminPanel(){
   toggle('testmode','\uD83E\uDDEA TEST MODE \u2014 all weapons \u00b7 no gems', testMode, true);
   if(canViewWeaponStorage())actionBtn('storage', isMainAdmin() ? '\u2699 WEAPON EDITOR \u2014 stats \u00b7 price \u00b7 publish'
                                      : '\u2699 WEAPON EDITOR \u2014 view every weapon');
-  if(canSuggestWeaponEdits())actionBtn('suggest_weapon','\u270E SUGGEST WEAPON EDIT \u2014 sends to mains');
-  if(isMainAdmin())actionBtn('requests','\uD83D\uDCCB REQUESTS \u2014 edits \u00b7 updates \u00b7 weapons \u00b7 appeals');
+  if(isMainAdmin())actionBtn('requests','\uD83D\uDCCB REQUESTS \u2014 edits \u00b7 updates \u00b7 appeals');
 
   const cbw=140, cbh=compactAdmin?24:28, cbx=W/2-cbw/2, cby=py+ph-cbh-8;
   adminPanelRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
@@ -2197,9 +2120,7 @@ function adminPanelClick(){
       }
       if(id==='testmode'){ setTestMode(!testMode); sfx('swap'); return; }
       if(id==='storage'){ if(!canViewWeaponStorage()){sfx('dry');return;}adminPanelOpen=false; storageOpen=true; sfx('swap'); return; }
-      if(id==='suggest_weapon'){openWeaponSuggestionForm();sfx('swap');return;}
       if(id==='requests'){openAdminRequests();sfx('swap');return;}
-      if(id==='weapon_suggestions'){if(!canReviewWeaponSuggestions()){sfx('dry');return;}adminPanelOpen=false;weaponSuggestionsOpen=true;void fetchWeaponSuggestions();sfx('swap');return;}
       if(id.indexOf('appr:')===0){ approveBanner(+id.slice(5)); sfx('pickup'); return; }
       if(id.indexOf('rej:')===0){ rejectBanner(+id.slice(4)); sfx('dry'); return; }
       return;

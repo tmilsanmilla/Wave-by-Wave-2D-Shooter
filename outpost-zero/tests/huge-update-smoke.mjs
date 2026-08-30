@@ -33,12 +33,12 @@ check('Player profile offers secure Block and targeted Report actions',/set_outp
 check('Profile reader renders all four profile actions in a responsive grid',/slice\(0,4\)/.test(adminUi)&&/buttonRows=Math\.ceil\(actions\.length\/buttonCols\)/.test(adminUi));
 
 check('Tester is a real client role',/function isTester\(\)/.test(admin)&&/adminSelfRole==='tester'/.test(admin));
-check('Tester tools are restricted to test and suggestion paths',/TESTER .* test \+ suggest only/.test(adminUi)&&/if\(canPostUpdates\(\)\)actionBtn\('post'/.test(adminUi)&&/if\(canUsePlayerTools\(\)\)actionBtn\('players'/.test(adminUi));
-check('Co-admin and Tester can suggest while mains review',/function canSuggestWeaponEdits\(\).*isTester\(\).*isCoAdmin\(\)/.test(admin)&&/function canReviewWeaponSuggestions\(\).*isMainAdmin\(\)/.test(admin));
+check('Tester tools are restricted to Test Mode and Admin Inbox',/TESTER .* test mode only/.test(adminUi)&&/if\(canPostUpdates\(\)\)actionBtn\('post'/.test(adminUi)&&/if\(canUsePlayerTools\(\)\)actionBtn\('players'/.test(adminUi)&&!/suggest_weapon/.test(adminUi));
+check('Mains review stored Admin Suggestions in their separate workspace',/function canReviewWeaponSuggestions\(\).*isMainAdmin\(\)/.test(admin)&&/ADMIN SUGGESTIONS/.test(adminUi)&&!/openWeaponSuggestionForm/.test(admin));
 check('Admin roster exposes Promote, Demote, and Kick',/PROMOTE/.test(adminUi)&&/DEMOTE/.test(adminUi)&&/KICK/.test(adminUi)&&/demoteAdmin/.test(adminUi));
 check('Client setup guidance uses the consolidated Admin modules',!/Administration 04|Administration 05/.test(admin)&&/Admin 02 Admins/.test(admin));
 
-check('Reports screen has All, Custom, and Copy X controls',/report_copy_all/.test(adminUi)&&/report_copy_custom/.test(adminUi)&&/COPY '\+reportCopyCustomCount/.test(adminUi));
+check('Reports screen has Action and Amount dropdowns for Copy or Resolve',/report_action_menu/.test(adminUi)&&/report_amount_menu/.test(adminUi)&&/report_action_copy/.test(adminUi)&&/report_action_resolve/.test(adminUi)&&/report_amount_all/.test(adminUi)&&/report_amount_custom/.test(adminUi));
 check('Report export uses explicit labeled fields',/OUTPOST ZERO REPORT EXPORT/.test(admin)&&/TYPE: /.test(admin)&&/STATUS: /.test(admin)&&/MESSAGE: /.test(admin));
 check('Copied reports omit per-report usernames and timestamps',!/'FROM: '/.test(reportExportSection)&&!/'CREATED: '/.test(reportExportSection));
 check('Report identity and staff role are derived by the server',/submit_outpost_zero_report/.test(read('js/networking.js'))&&
@@ -52,7 +52,7 @@ check('Report refresh failures preserve the last confirmed lists',/REFRESH FAILE
 check('Resolve waits for a confirmed sanitized RPC row before archiving',/REPORT_RESOLVE_NOT_SAVED/.test(admin)&&/publishResolvedReport\(id,saved\)/.test(admin)&&/resolve_outpost_zero_report/.test(admin)&&/REPORT WAS NOT REMOVED/.test(admin));
 check('Report Realtime uses a privacy-safe reviewer wakeup',/table:'outpost_zero_report_wakeups'/.test(read('js/networking.js'))&&!/table:'reports'/.test(read('js/networking.js')));
 check('Report state index protects separate active and archive reads',/outpost_zero_reports_resolved_id_idx/.test(admin03Sql)&&/reports\(resolved,id desc\)/.test(admin03Sql));
-check('Older active and archived reports remain reachable with pages',/rp:'\+key\+':next/.test(adminUi)&&/reports_next/.test(adminUi)&&/reportArchivePage\*pageSize/.test(adminUi));
+check('Older active and resolved reports remain reachable with a virtual scroller',/report_view:'\+id/.test(adminUi)&&/firstVisible=Math\.max/.test(adminUi)&&/lastVisible=Math\.min/.test(adminUi)&&/scrollReportsBy/.test(input));
 check('Every Admin Inbox canvas and its reader use the full-screen frame',(adminUi.match(/adminInboxBounds\(\)/g)||[]).length>=6&&/privateInboxReader\?adminInboxBounds\(\)/.test(adminUi));
 check('Admin Inbox tabs span the workspace instead of staying a small centered strip',/tw=Math\.max\(1,\(pw-32-gap\*\(TABS\.length-1\)\)\/TABS\.length\)/.test(adminUi)&&/let tx=px\+16/.test(adminUi));
 check('Admin Inbox rows and message composer expand with the viewport',/maxRows=Math\.max\(1,Math\.floor\(\(py\+ph-54-y\)\/.+\)\)/.test(adminUi)&&/width:calc\(100vw - 20px\);height:calc\(100dvh - 20px\)/.test(styles));

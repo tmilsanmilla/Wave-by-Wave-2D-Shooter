@@ -91,7 +91,7 @@ addEventListener('keydown', e=>{
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
   if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
   if(layoutMode && e.key==='Escape'){ layoutMode=false; layoutDrag=null; layoutPick=null; sfx('swap'); return; }
-  if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||weaponSuggestionsOpen||requestsOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; weaponSuggestionsOpen=false;requestsOpen=false;adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
+  if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||weaponSuggestionsOpen||requestsOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); if(updatesOpen)resetReportScroll();reportActionMenuOpen=reportAmountMenuOpen=false; wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; weaponSuggestionsOpen=false;requestsOpen=false;adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
   if(['w','a','s','d',' '].includes(k)) e.preventDefault();
   keys[k]=true;
@@ -165,14 +165,14 @@ cv.addEventListener('wheel',e=>{
   mouse.x=x; mouse.y=y;
   const modal=typeof topModal==='function'?topModal():null;
   if(!modal)return;
-  const scores=modal.k==='scores'&&playerEditScrollContains(x,y),audit=modal.k==='audit'&&adminAuditScrollContains(x,y);
-  if(!scores&&!audit)return;
-  const viewport=scores?peScrollViewport:auditScrollViewport;
+  const scores=modal.k==='scores'&&playerEditScrollContains(x,y),audit=modal.k==='audit'&&adminAuditScrollContains(x,y),reports=modal.k==='updates'&&reportScrollContains(x,y);
+  if(!scores&&!audit&&!reports)return;
+  const viewport=scores?peScrollViewport:audit?auditScrollViewport:reportScrollViewport;
   const amount=e.deltaMode===1?e.deltaY*20:e.deltaMode===2?e.deltaY*Math.max(1,viewport.h):e.deltaY;
-  if(scores)scrollPlayerEditBy(amount);else scrollAdminAuditBy(amount);
+  if(scores)scrollPlayerEditBy(amount);else if(audit)scrollAdminAuditBy(amount);else scrollReportsBy(amount);
   // Keep a boundary wheel gesture inside the canvas modal instead of letting
   // it scroll/overscroll the surrounding browser page.
-  if((scores?peScrollMax:auditScrollMax)>0)e.preventDefault();
+  if((scores?peScrollMax:audit?auditScrollMax:reportScrollMax)>0)e.preventDefault();
 },{passive:false});
 cv.addEventListener('mousedown', e=>{
   // A press can be the first pointer event after tab focus, a resize, or a
@@ -345,11 +345,12 @@ cv.addEventListener('touchstart', e=>{
     const scrollModal=typeof topModal==='function'?topModal():null;
     const scoreScroll=scrollModal&&scrollModal.k==='scores'&&playerEditScrollContains(x,y);
     const auditScroll=scrollModal&&scrollModal.k==='audit'&&adminAuditScrollContains(x,y);
-    if(!menuOpen&&peScrollTouchId===null&&(scoreScroll||auditScroll)){
+    const reportScrollHit=scrollModal&&scrollModal.k==='updates'&&reportScrollContains(x,y);
+    if(!menuOpen&&peScrollTouchId===null&&(scoreScroll||auditScroll||reportScrollHit)){
       // Defer the row click until touchend. Otherwise beginning a swipe on a
       // +/- weapon button would award/remove it before we know it is a drag.
       mouse.x=x; mouse.y=y; mouse.down=true; peScrollTouchId=t.identifier;
-      peScrollTouchKind=scoreScroll?'scores':'audit';
+      peScrollTouchKind=scoreScroll?'scores':auditScroll?'audit':'updates';
       peScrollTouchStartX=x; peScrollTouchStartY=y; peScrollTouchLastY=y; peScrollTouchMoved=false;
       continue;
     }
@@ -413,9 +414,9 @@ cv.addEventListener('touchmove', e=>{
       mouse.x=x; mouse.y=y;
       if(!peScrollTouchMoved&&Math.hypot(x-peScrollTouchStartX,y-peScrollTouchStartY)>=7){
         peScrollTouchMoved=true;
-        if(peScrollTouchKind==='scores')scrollPlayerEditBy(peScrollTouchStartY-y);else scrollAdminAuditBy(peScrollTouchStartY-y);
+        if(peScrollTouchKind==='scores')scrollPlayerEditBy(peScrollTouchStartY-y);else if(peScrollTouchKind==='audit')scrollAdminAuditBy(peScrollTouchStartY-y);else scrollReportsBy(peScrollTouchStartY-y);
       } else if(peScrollTouchMoved){
-        if(peScrollTouchKind==='scores')scrollPlayerEditBy(peScrollTouchLastY-y);else scrollAdminAuditBy(peScrollTouchLastY-y);
+        if(peScrollTouchKind==='scores')scrollPlayerEditBy(peScrollTouchLastY-y);else if(peScrollTouchKind==='audit')scrollAdminAuditBy(peScrollTouchLastY-y);else scrollReportsBy(peScrollTouchLastY-y);
       }
       peScrollTouchLastY=y;
       continue;
@@ -446,7 +447,8 @@ function touchEnd(e,cancelled){
       const modal=typeof topModal==='function'?topModal():null;
       const tap=!cancelled&&!peScrollTouchMoved&&modal&&modal.k===peScrollTouchKind&&
         (peScrollTouchKind==='scores'?playerEditScrollContains(peScrollTouchStartX,peScrollTouchStartY):
-          adminAuditScrollContains(peScrollTouchStartX,peScrollTouchStartY));
+          peScrollTouchKind==='audit'?adminAuditScrollContains(peScrollTouchStartX,peScrollTouchStartY):
+          reportScrollContains(peScrollTouchStartX,peScrollTouchStartY));
       peScrollTouchId=null; peScrollTouchMoved=false;peScrollTouchKind='';mouse.down=false;
       if(tap){ mouse.x=peScrollTouchStartX; mouse.y=peScrollTouchStartY; clickSelect(); }
       continue;
@@ -560,6 +562,7 @@ function clickSelect(){
   if(isAdmin() && inR(adminHubBtnRect)){ adminPanelOpen=true; fetchAdmins(); fetchBanners(); sfx('swap'); return; }
   if(isMainAdmin() && inR(adminsHubBtnRect)){ adminsOpen=true; fetchAdmins(); sfx('swap'); return; }
   if(isAdmin() && inR(msgsHubBtnRect)){ inboxTab='msgs';msgsOpen=true; fetchMsgs().then(ok=>{if(ok)markMsgsRead();}); sfx('swap'); return; }
+  if(isMainAdmin()&&inR(suggestionsHubBtnRect)){openSuggestionsSection('reports');sfx('swap');return;}
   if(detailKey){
     if(inR(detailRects.close) || !inR(detailRects.panel)){ detailKey=null; sfx('swap'); }
     return;
