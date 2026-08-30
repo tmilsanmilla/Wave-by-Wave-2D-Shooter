@@ -1472,6 +1472,15 @@ function arenaSendHit(dmg,kind,meta){
   arena.pendingHitFeedback.set(id,{dmg:hit,kind:hitKind,at:Date.now()});
   if(arena.pendingHitFeedback.size>500)arena.pendingHitFeedback=new Map([...arena.pendingHitFeedback].slice(-250));
   arenaSend('hit',packet);
+  // Broadcast delivery is not acknowledged by the opponent. Repeat the same
+  // id while it is unconfirmed; their seenHits set makes every retry harmless
+  // if the first packet arrived, while a dropped first packet still deals its
+  // intended damage.
+  const channel=arena.matchChannel,epoch=arena.matchEpoch,round=arena.round;
+  for(const wait of [180,520])setTimeout(()=>{
+    if(arena.matchChannel===channel&&arena.matchEpoch===epoch&&arena.round===round&&
+       arena.pendingHitFeedback instanceof Map&&arena.pendingHitFeedback.has(id))arenaSend('hit',packet);
+  },wait);
   return id;
 }
 function arenaTakeHit(p){

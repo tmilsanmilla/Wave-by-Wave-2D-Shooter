@@ -795,8 +795,12 @@ function update(dtms){
           const hitKey='arena:'+String(target.id||'opponent');
           if(bl.hits.has(hitKey)) continue;
           if(dist2(target.x,target.y,bl.x,bl.y)<((target.r||15)+8)*((target.r||15)+8)){
-            arenaMeleeSpecialHit(target,40*perks.dmg*wm('bdaggers').dmg,'bdaggers');
-            bl.hits.add(hitKey); burst(bl.x,bl.y,'#ff8a2e',5,3);
+            // Validate from the flying blade, not from the player's body. At
+            // a corner the player-to-target line can be blocked even though
+            // the blade made a legitimate contact on the target's side.
+            if(arenaMeleeSpecialHit(target,40*perks.dmg*wm('bdaggers').dmg,'bdaggers',bl.x,bl.y)){
+              bl.hits.add(hitKey); burst(bl.x,bl.y,'#ff8a2e',5,3);
+            }
           }
         }
       }
