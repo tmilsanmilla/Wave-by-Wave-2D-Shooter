@@ -1144,26 +1144,72 @@ async function sendMsg(){
   }catch(err){ $('msgstatus').textContent='could not send \u2014 try again'; }
 }
 let bannerXRect=null, hubPostsRect=null, bannerDismissed=+((typeof localStorage!=='undefined'&&localStorage.getItem('oz_banner_dismiss'))||0);
+function adminServerRoleValue(data){
+  let value=Array.isArray(data)?data[0]:data;
+  if(value&&typeof value==='object')value=value.role??value._outpost_zero_staff_role??value.admin_role??'';
+  value=String(value||'').trim().toLowerCase();
+  return ['creator','main','co','tester'].includes(value)?value:'';
+}
+function adminSelfPublicHandle(){
+  if(!authUser||typeof socialProfile==='undefined'||!socialProfile||
+     String(socialProfile.user_id||'')!==String(authUser.id||''))return '';
+  const value=String(socialProfile.handle||'').trim().replace(/^@/,'');
+  if(!/^[A-Za-z0-9_]{3,32}$/.test(value))return '';
+  if(typeof usernameIsChosenForUser==='function'&&!usernameIsChosenForUser(value,authUser.id))return '';
+  return value;
+}
+async function fetchAdminSelfRoleFallback(stillCurrent){
+  for(const rpcName of ['_outpost_zero_staff_role','admin_role']){
+    try{
+      const result=await sb.rpc(rpcName);
+      if(!stillCurrent())return null;
+      if(result&&result.error)continue;
+      const role=adminServerRoleValue(result&&result.data);
+      if(role)return {role,username:adminSelfPublicHandle()};
+    }catch(error){if(!stillCurrent())return null;}
+  }
+  return {role:'',username:''};
+}
 async function fetchAdmins(){
   if(!sb || !authUser) return;
   const request=++adminRosterFetchSeq,epoch=adminPrivacyEpoch,userId=currentAuthUserId(),previousRank=myRank();
+  const stillCurrent=()=>request===adminRosterFetchSeq&&adminPrivacyRequestCurrent(epoch,userId);
+  let roles={},rows=[],selfRole='',selfUsername='';
   try{
     const {data,error}=await sb.rpc('list_outpost_zero_admin_roster_by_username');
     if(error)throw error;
-    if(request!==adminRosterFetchSeq||!adminPrivacyRequestCurrent(epoch,userId))return;
-    adminRoles={};adminRosterRows=[];adminSelfRole='';adminSelfUsername='';
+    if(!stillCurrent())return;
     for(const value of data||[]){
       const username=String(value&&value.username||'').trim(),role=String(value&&value.role||'').toLowerCase(),isSelf=!!(value&&value.is_self);
       if(!['creator','main','co','tester'].includes(role))continue;
-      if(isSelf){adminSelfRole=role;adminSelfUsername=username;}
-      if(!/^[A-Za-z0-9_]{3,32}$/.test(username))continue;
-      adminRoles[username.toLowerCase()]=role;adminRosterRows.push({username,rank:role,isSelf});
+      const publicUsername=/^[A-Za-z0-9_]{3,32}$/.test(username)?username:'';
+      if(isSelf){selfRole=role;selfUsername=publicUsername;}
+      if(!publicUsername)continue;
+      roles[publicUsername.toLowerCase()]=role;rows.push({username:publicUsername,rank:role,isSelf});
+    }
+    if(!selfRole){
+      const fallback=await fetchAdminSelfRoleFallback(stillCurrent);if(!fallback||!stillCurrent())return;
+      selfRole=fallback.role;selfUsername=fallback.username;
+    }else if(!selfUsername)selfUsername=adminSelfPublicHandle();
+    if(selfRole&&selfUsername){
+      const key=selfUsername.toLowerCase(),existing=rows.findIndex(row=>row.username.toLowerCase()===key);
+      roles[key]=selfRole;
+      if(existing<0)rows.push({username:selfUsername,rank:selfRole,isSelf:true});
+      else rows[existing]={username:selfUsername,rank:selfRole,isSelf:true};
     }
   }catch(e){
-    if(request!==adminRosterFetchSeq||!adminPrivacyRequestCurrent(epoch,userId))return;
-    adminRoles={};adminRosterRows=[];adminSelfRole='';adminSelfUsername=''; // role refresh failures fail closed
+    if(!stillCurrent())return;
+    const fallback=await fetchAdminSelfRoleFallback(stillCurrent);if(!fallback||!stillCurrent())return;
+    selfRole=fallback.role;selfUsername=fallback.username;
+    // A failed roster may recover only this signed-in account. Never retain or
+    // reconstruct other staff rows from browser data, and never expose email.
+    if(selfRole&&selfUsername){
+      roles[selfUsername.toLowerCase()]=selfRole;
+      rows=[{username:selfUsername,rank:selfRole,isSelf:true}];
+    }
   }
-  if(request!==adminRosterFetchSeq||!adminPrivacyRequestCurrent(epoch,userId))return;
+  if(!stillCurrent())return;
+  adminRoles=roles;adminRosterRows=rows;adminSelfRole=selfRole;adminSelfUsername=selfUsername;
   const nextRank=myRank();
   if(nextRank!==previousRank)adminPrivacyEpoch++;
   enforceAdminRolePrivacy(previousRank);

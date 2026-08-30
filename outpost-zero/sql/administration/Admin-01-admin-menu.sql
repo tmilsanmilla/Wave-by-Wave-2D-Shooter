@@ -33,11 +33,11 @@ begin
   if not exists(select 1 from public.outpost_zero_admin_config where singleton) then
     select sp.user_id into v_creator
     from public.social_profiles sp
-    where sp.handle_key='tmilsanmilla'
+    where sp.handle_key='tedmils'
       and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
     order by sp.created_at asc limit 1;
     if v_creator is null then
-      raise exception 'Set the creator public username to tmilsanmilla, then rerun Admin 01'
+      raise exception 'Set the creator public username to tedmils, then rerun Admin 01'
         using errcode='P0001';
     end if;
     insert into public.outpost_zero_admin_config(singleton,creator_user_id)
@@ -69,9 +69,90 @@ create table if not exists public.bans(
   banned_by text,
   created_at timestamptz default now(),
   user_email text,
-  check(jsonb_typeof(scopes)='array'),
+  constraint outpost_zero_bans_scopes_array check(jsonb_typeof(scopes)='array'),
   check(note is null or char_length(note)<=600)
 );
+
+-- The live pre-consolidation table identified accounts by user_email and kept
+-- scopes as text[]. CREATE TABLE IF NOT EXISTS does not add columns or change
+-- types on that table, so upgrade that exact shape before any later statement
+-- dereferences user_id or calls a JSONB function on scopes. All legacy rows are
+-- retained; an unknown scopes type aborts instead of guessing and weakening a
+-- ban.
+alter table public.bans
+  add column if not exists user_id uuid references auth.users(id) on delete cascade,
+  add column if not exists user_email text,
+  add column if not exists scopes jsonb;
+
+do $legacy_bans_shape$
+declare
+  v_user_id_type text;
+  v_scopes_type text;
+begin
+  select pg_catalog.format_type(a.atttypid,a.atttypmod)
+    into v_user_id_type
+  from pg_catalog.pg_attribute a
+  where a.attrelid='public.bans'::regclass and a.attname='user_id' and not a.attisdropped;
+  if v_user_id_type is distinct from 'uuid' then
+    raise exception 'public.bans.user_id must be uuid, found %',coalesce(v_user_id_type,'missing')
+      using errcode='42804';
+  end if;
+
+  select pg_catalog.format_type(a.atttypid,a.atttypmod)
+    into v_scopes_type
+  from pg_catalog.pg_attribute a
+  where a.attrelid='public.bans'::regclass and a.attname='scopes' and not a.attisdropped;
+
+  if v_scopes_type='text[]' then
+    execute 'alter table public.bans alter column scopes drop default';
+    execute $sql$alter table public.bans alter column scopes type jsonb
+      using coalesce(pg_catalog.to_jsonb(scopes),'["account"]'::jsonb)$sql$;
+  elsif v_scopes_type='json' then
+    execute 'alter table public.bans alter column scopes drop default';
+    execute $sql$alter table public.bans alter column scopes type jsonb
+      using coalesce(scopes::jsonb,'["account"]'::jsonb)$sql$;
+  elsif v_scopes_type is distinct from 'jsonb' then
+    raise exception 'public.bans.scopes must be text[], json, or jsonb, found %',coalesce(v_scopes_type,'missing')
+      using errcode='42804';
+  end if;
+end;
+$legacy_bans_shape$;
+
+update public.bans set scopes='["account"]'::jsonb where scopes is null;
+do $legacy_bans_scopes$
+begin
+  if exists(select 1 from public.bans where jsonb_typeof(scopes) is distinct from 'array') then
+    raise exception 'public.bans.scopes contains a non-array value; no rows were changed'
+      using errcode='23514';
+  end if;
+end;
+$legacy_bans_scopes$;
+alter table public.bans alter column scopes set default '["account"]'::jsonb;
+alter table public.bans alter column scopes set not null;
+do $legacy_bans_constraint$
+begin
+  if not exists(
+    select 1 from pg_catalog.pg_constraint c
+    where c.conrelid='public.bans'::regclass
+      and c.conname='outpost_zero_bans_scopes_array'
+  ) then
+    alter table public.bans add constraint outpost_zero_bans_scopes_array
+      check(jsonb_typeof(scopes)='array') not valid;
+  end if;
+end;
+$legacy_bans_constraint$;
+alter table public.bans validate constraint outpost_zero_bans_scopes_array;
+
+-- Preserve the email compatibility key while adding the stable Auth key. A
+-- deleted or device-only legacy row may legitimately remain without user_id.
+update public.bans b set user_id=u.id
+from auth.users u
+where b.user_id is null and nullif(btrim(b.user_email),'') is not null
+  and lower(btrim(b.user_email))=lower(btrim(u.email))
+  and not (b.scopes ? 'device' and not (b.scopes ? 'account') and not (b.scopes ? 'leaderboard'));
+update public.bans b set user_email=lower(btrim(u.email))
+from auth.users u
+where b.user_id=u.id and nullif(btrim(b.user_email),'') is null;
 
 create table if not exists public.player_requests(
   id bigint generated always as identity primary key,
@@ -85,6 +166,7 @@ create table if not exists public.player_requests(
   operation_id uuid,
   requester_user_id uuid references auth.users(id) on delete set null
 );
+alter table public.player_requests add column if not exists decided_at timestamptz;
 
 -- Older installs created PostgreSQL's default constraint without `failed`,
 -- which made a rejected permanent edit roll back the intended failure record.
@@ -102,10 +184,6 @@ create table if not exists public.ban_appeals(
   operation_id uuid,
   requester_user_id uuid references auth.users(id) on delete set null
 );
-
-alter table public.bans add column if not exists user_email text;
-update public.bans b set user_email=lower(btrim(u.email))
-from auth.users u where b.user_id=u.id and b.user_email is null;
 
 alter table public.bans enable row level security;
 alter table public.bans force row level security;

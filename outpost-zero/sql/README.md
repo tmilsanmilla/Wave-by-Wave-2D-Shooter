@@ -180,7 +180,7 @@ timestamp. Private tables use forced RLS and narrow column/RPC privileges.
 Admin 01 includes the former Appeals setup and the safe internal compatibility
 functions required by its audited wrapper. Private Auth email resolution occurs
 inside Postgres; the current game sends public usernames. On its first run,
-Admin 01 resolves public username `tmilsanmilla` once and pins that account's
+Admin 01 resolves public username `tedmils` once and pins that account's
 Auth UUID in a forced-RLS config row. Later username or login-email changes do
 not change the creator role, and clients cannot read the UUID. Creator and Main
 admins may apply permanent currency/score/ownership edits directly. Testers

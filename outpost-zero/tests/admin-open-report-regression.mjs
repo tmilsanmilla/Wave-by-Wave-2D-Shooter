@@ -79,7 +79,7 @@ const activeAdminText=[admin,adminUi,input,ui,progress,admin01,admin02,admin03].
 check('Active Admin code contains no creator private-email literal',!/tmilsanmilla@gmail\.com/i.test(activeAdminText));
 check('Creator authority is pinned once from public username to a private UUID config',
   /create table if not exists public\.outpost_zero_admin_config/.test(admin01)&&
-  /where sp\.handle_key='tmilsanmilla'/.test(admin01)&&/on conflict\(singleton\) do nothing/.test(admin01)&&
+  /where sp\.handle_key='tedmils'/.test(admin01)&&/on conflict\(singleton\) do nothing/.test(admin01)&&
   /_outpost_zero_creator_user_id\(\)/.test(admin01)&&
   /revoke all on table public\.outpost_zero_admin_config from public,anon,authenticated/.test(admin01)&&
   /v_user_id = public\._outpost_zero_creator_user_id\(\)/.test(admin01));
