@@ -25,6 +25,8 @@ check('Dropdown hit testing prioritizes topmost options',/for\(let i=updatesRect
 check('Admin Tools no longer exposes weapon suggestion submission',!/suggest_weapon/.test(adminUi)&&!/openWeaponSuggestionForm|SUGGEST WEAPON EDIT/.test(admin)&&!/kind:'weapon'/.test(admin));
 check('Requests keeps edits, updates, and appeals only',/PLAYER EDITS · UPDATE APPROVALS · BAN APPEALS/.test(adminUi)&&!/PLAYER EDITS · UPDATE APPROVALS · WEAPON/.test(adminUi));
 check('Admin Suggestions uses every visible row and exposes older pages',/Math\.floor\(room\/rowH\)/.test(adminUi)&&/weaponSuggestionPage\*maxRows/.test(adminUi)&&/ws_newer/.test(adminUi)&&/ws_older/.test(adminUi)&&/p_limit:100/.test(admin));
+check('Suggestion load errors offer an in-game retry instead of SQL instructions',/COULD NOT LOAD ADMIN SUGGESTIONS \\u00b7 TRY REFRESH/.test(admin)&&!/RUN ADMIN 02 ADMINS TO LOAD SUGGESTIONS/.test(admin));
+check('Inbox and Suggestions button rows have desktop width caps',/adminControlStrip\(px,pw,520\)/.test(adminUi)&&/adminControlStrip\(px,pw,720\)/.test(adminUi)&&/adminControlStrip\(px,pw,620/.test(adminUi)&&/adminControlStrip\(px,pw,680/.test(adminUi));
 check('Cancelling an Admin Suggestion decision makes no change',/if\(rawNote===null\)return false/.test(admin)&&/catch\(error\)\{return false;\}/.test(admin));
 check('Account changes invalidate report and suggestion work in flight',/reportCopyBusy=false;reportCopyStatus='';reportCopyMode='all';reportBulkAction='copy'/.test(admin)&&
   /weaponSuggestionRequestSeq\+\+;weaponSuggestionBusy=false/.test(admin)&&/request===weaponSuggestionRequestSeq&&adminPrivacyRequestCurrent/.test(admin));

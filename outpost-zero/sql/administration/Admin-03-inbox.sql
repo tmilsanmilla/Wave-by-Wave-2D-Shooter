@@ -1432,4 +1432,9 @@ begin
 end;
 $realtime$;
 
+-- Make the newly installed Inbox/Reports RPC signatures visible immediately.
+-- This NOTIFY is transactional, so a failed Admin 03 run cannot advertise a
+-- partial schema to PostgREST.
+notify pgrst, 'reload schema';
+
 commit;

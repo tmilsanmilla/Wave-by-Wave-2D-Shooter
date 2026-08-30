@@ -2868,4 +2868,10 @@ begin
 end;
 $realtime$;
 
+-- PostgREST normally notices DDL automatically, but a long-lived schema cache
+-- can otherwise keep returning PGRST202 after this query installs/replaces the
+-- LOG RPCs. The notification is transactional and is delivered only if every
+-- Admin 01 statement commits successfully.
+notify pgrst, 'reload schema';
+
 commit;

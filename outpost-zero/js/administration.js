@@ -704,6 +704,10 @@ let archOpen=false,archRects=[],storageOpen=false,storageRects=[],archHubBtnRect
 let updatesResolved=[],reportFetchSeq=0,reportLoadStatus='';
 const reportResolveBusy=new Set(),REPORT_FETCH_PAGE_SIZE=250,REPORT_FETCH_PAGE_CAP=200;
 let adminMsgs=[], unreadMsgs=0, msgOpen=false, msgTo='',adminMsgOperationId=null;
+function adminRpcMissing(error){
+  const code=String(error&&error.code||'').toUpperCase(),message=String(error&&error.message||'');
+  return code==='PGRST202'||code==='42883'||/could not find (?:the )?function/i.test(message);
+}
 function normalizeAdminAuditRow(row){
   const r=row&&typeof row==='object'?row:{};
   return {eventId:/^\d+$/.test(String(r.event_id||''))?String(r.event_id):'',actor:String(r.actor_username||'STAFF'),target:String(r.target_username||'SYSTEM'),
@@ -915,7 +919,9 @@ async function fetchAdminAuditLog(reset=false){
     return true;
   }catch(error){
     if(!adminPrivacyRequestCurrent(epoch,userId))return false;
-    adminAuditError=String(error&&error.message||'Audit log unavailable.');
+    adminAuditError=adminRpcMissing(error)
+      ?'LOG NOT CONNECTED · RUN ADMIN 01 ADMIN MENU, THEN REFRESH'
+      :String(error&&error.message||'Audit log unavailable.');
     adminAuditHasMore=false; return false;
   }finally{if(adminPrivacyRequestCurrent(epoch,userId))adminAuditLoading=false;}
 }
@@ -1303,7 +1309,9 @@ async function fetchUpdatesFeed(){
     // A connection hiccup must not make saved reports appear deleted. Keep the
     // last confirmed lists and make the stale state explicit to the reviewer.
     if(request===reportFetchSeq&&adminPrivacyRequestCurrent(epoch,userId)&&canAccessReports()){
-      reportLoadStatus='REFRESH FAILED · SHOWING LAST SAVED REPORT LIST';
+      reportLoadStatus=adminRpcMissing(error)
+        ?'REPORTS NOT CONNECTED · RUN ADMIN 03 INBOX, THEN REFRESH'
+        :'REFRESH FAILED · SHOWING LAST SAVED REPORT LIST';
       console.warn('report refresh failed',error);
     }
     return false;
@@ -1548,7 +1556,7 @@ async function fetchWeaponSuggestions(){
   try{const result=await sb.rpc('list_outpost_zero_weapon_suggestions_by_username',{p_limit:100,p_status:'pending'});if(result.error)throw result.error;
     if(!current())return false;
     weaponSuggestions=Array.isArray(result.data)?result.data:[];weaponSuggestionPage=0;weaponSuggestionStatus=weaponSuggestions.length?weaponSuggestions.length+(weaponSuggestions.length===100?' LOADED':' PENDING'):'NO PENDING SUGGESTIONS';return true;
-  }catch(error){if(current()){weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='RUN ADMIN 02 ADMINS TO LOAD SUGGESTIONS.';}return false;}
+  }catch(error){if(current()){weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='COULD NOT LOAD ADMIN SUGGESTIONS \u00b7 TRY REFRESH';}return false;}
   finally{if(current())weaponSuggestionBusy=false;}
 }
 async function reviewWeaponSuggestion(id,decision){

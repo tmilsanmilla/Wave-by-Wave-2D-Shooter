@@ -181,7 +181,7 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   #msgmsg{width:100%;box-sizing:border-box;flex:1 1 auto;min-height:140px;height:auto;resize:none;background:rgba(0,0,0,.5);
     border:1px solid #4a4634;color:#cdd6b0;font:12px ui-monospace,Consolas,monospace;padding:9px;margin-bottom:10px;
     user-select:text;-webkit-user-select:text;-webkit-touch-callout:default}
-  #msgbox .btn{display:block;width:100%;min-height:44px;margin-bottom:9px;padding:10px}
+  #msgbox .btn{display:block;width:min(100%,360px);align-self:center;min-height:44px;margin-bottom:9px;padding:10px}
   #msgstatus{color:#a7c15e;font-size:11px;min-height:15px;margin-top:2px}
   #formwrap{inset:0;background:rgba(8,9,5,.94);display:none;align-items:center;justify-content:center;z-index:62}
   #formbox{background:#101208;border:1px solid #7fd8ff;padding:22px;width:min(520px,94vw);

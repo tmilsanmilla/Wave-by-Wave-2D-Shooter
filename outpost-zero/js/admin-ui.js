@@ -1,10 +1,26 @@
 "use strict";
 
-// Admin Inbox and Suggestions pages are workspaces, not pop-up cards. Keep a
-// thin safe edge so each main-admin review screen can use the whole canvas.
+// Admin Inbox and Suggestions pages are workspaces, not pop-up cards. On wide
+// Home screens their outer edges meet the inner edges of the two ad rails, so
+// the ads never sit on top of the workspace. Phones keep the thin safe edge.
 function adminInboxBounds(){
   const edge=Math.max(2,Math.min(6,Math.floor(Math.min(W,H)/20)));
-  return {pw:Math.max(1,W-edge*2),ph:Math.max(1,H-edge*2),px:edge,py:edge};
+  let px=edge,pw=Math.max(1,W-edge*2);
+  const geo=typeof sideAdMetrics==='function'?sideAdMetrics():null;
+  if(geo){
+    let railLeft=geo.edge+geo.aw,railRight=W-geo.edge-geo.aw;
+    if(typeof adLeftRect!=='undefined'&&adLeftRect&&Number.isFinite(adLeftRect.x)&&Number.isFinite(adLeftRect.w))
+      railLeft=adLeftRect.x+adLeftRect.w;
+    if(typeof adRightRect!=='undefined'&&adRightRect&&Number.isFinite(adRightRect.x))
+      railRight=adRightRect.x;
+    const railWidth=railRight-railLeft;
+    if(railWidth>=Math.min(360,pw)){px=railLeft;pw=railWidth;}
+  }
+  return {pw,ph:Math.max(1,H-edge*2),px,py:edge};
+}
+function adminControlStrip(px,pw,maxWidth,padding=16){
+  const available=Math.max(1,pw-padding*2),w=Math.min(available,maxWidth);
+  return {x:px+(pw-w)/2,w};
 }
 
 let feedXRects=[],feedReadRects=[];
@@ -240,8 +256,8 @@ function drawInboxTabs(px,py,pw,y,rects){
   if(isAdmin())     TABS.push(['msgs','\u2709 MESSAGES'+(unreadMsgs?' ('+unreadMsgs+')':'')]);
   if(isAdmin())     TABS.push(['archive','\uD83D\uDDC3 ARCHIVE']);
   if(TABS.length<2) return y;                       // nothing to switch between
-  const gap=pw<500?4:8,tw=Math.max(1,(pw-32-gap*(TABS.length-1))/TABS.length),th=pw<500?26:32;
-  let tx=px+16;
+  const strip=adminControlStrip(px,pw,520),gap=pw<500?4:8,tw=Math.max(1,(strip.w-gap*(TABS.length-1))/TABS.length),th=pw<500?26:32;
+  let tx=strip.x;
   for(const [id,lbl] of TABS){
     rects.push({x:tx,y,w:tw,h:th,id:'itab:'+id});
     const on=inboxTab===id;
@@ -270,8 +286,8 @@ function inboxTabClick(id){
 function drawSuggestionsTabs(px,py,pw,y,rects){
   if(!isMainAdmin())return y;
   const tabs=[['reports','\uD83D\uDCE5 REPORTS'],['admin','\uD83D\uDCCB ADMIN SUGGESTIONS'],['log','\uD83D\uDCDC LOG']],
-    gap=pw<500?4:8,tw=Math.max(1,(pw-32-gap*(tabs.length-1))/tabs.length),th=pw<500?27:32;
-  let tx=px+16;
+    strip=adminControlStrip(px,pw,720),gap=pw<500?4:8,tw=Math.max(1,(strip.w-gap*(tabs.length-1))/tabs.length),th=pw<500?27:32;
+  let tx=strip.x;
   for(const [id,label] of tabs){
     const on=id==='reports'?updatesOpen:id==='admin'?weaponSuggestionsOpen:auditOpen;
     rects.push({x:tx,y,w:tw,h:th,id:'stab:'+id});
@@ -345,18 +361,19 @@ function drawUpdates(){
   for(const rect of updatesRects.slice(fixedRectCount)){const top=Math.max(vt,rect.y),bottom=Math.min(vb,rect.y+rect.h);if(bottom>top)visible.push(Object.assign({},rect,{y:top,h:bottom-top}));}
   updatesRects=visible;
   if(reportScrollMax>0){const sx=x0+rw-3,sh=reportScrollViewport.h-4,thumbH=Math.max(18,sh*(reportScrollViewport.h/(reportScrollViewport.h+reportScrollMax))),thumbY=viewTop+2+(sh-thumbH)*(reportScroll/reportScrollMax);ctx.fillStyle='rgba(127,216,255,.12)';ctx.fillRect(sx,viewTop+2,2,sh);ctx.fillStyle='#7fd8ff';ctx.fillRect(sx-1,thumbY,4,thumbH);}
-  const copyY=bulkY,copyH=bulkH,copyGap=compact?4:7,controlW=(rw-copyGap*2)/3,visibleStatus=reportLoadStatus||reportCopyStatus;
+  const bulkStrip=adminControlStrip(px,pw,720,compact?8:16),copyY=bulkY,copyH=bulkH,copyGap=compact?4:7,
+    controlW=(bulkStrip.w-copyGap*2)/3,visibleStatus=reportLoadStatus||reportCopyStatus;
   ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle=/FAILED|COULD NOT|MUST/.test(visibleStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(visibleStatus||'CHOOSE AN ACTION AND AMOUNT, THEN RUN IT',rw),W/2,statusY);
   const amountText=reportCopyMode==='custom'?String(reportCopyCustomCount):'ALL',working=reportCopyBusy||reportResolveBusy.size>0,controls=[
-    {id:'report_action_menu',x:x0,label:reportBulkAction.toUpperCase()+' \u25BE',col:'#7fd8ff'},
-    {id:'report_amount_menu',x:x0+controlW+copyGap,label:'AMOUNT: '+amountText+' \u25BE',col:'#e8b658'},
-    {id:'report_run',x:x0+(controlW+copyGap)*2,label:working?'WORKING\u2026':'RUN '+reportBulkAction.toUpperCase()+' \u00b7 '+amountText,col:reportBulkAction==='resolve'?'#d05548':'#a7c15e'}];
+    {id:'report_action_menu',x:bulkStrip.x,label:reportBulkAction.toUpperCase()+' \u25BE',col:'#7fd8ff'},
+    {id:'report_amount_menu',x:bulkStrip.x+controlW+copyGap,label:'AMOUNT: '+amountText+' \u25BE',col:'#e8b658'},
+    {id:'report_run',x:bulkStrip.x+(controlW+copyGap)*2,label:working?'WORKING\u2026':'RUN '+reportBulkAction.toUpperCase()+' \u00b7 '+amountText,col:reportBulkAction==='resolve'?'#d05548':'#a7c15e'}];
   for(const b of controls){const enabled=!working;updatesRects.push({x:b.x,y:copyY,w:controlW,h:copyH,id:b.id,enabled});const hot=enabled&&mouse.x>=b.x&&mouse.x<=b.x+controlW&&mouse.y>=copyY&&mouse.y<=copyY+copyH;ctx.fillStyle=hot?b.col:'rgba(255,255,255,.06)';ctx.fillRect(b.x,copyY,controlW,copyH);ctx.strokeStyle=enabled?b.col:'#42463b';ctx.strokeRect(b.x+.5,copyY+.5,controlW,copyH);ctx.fillStyle=hot?'#101208':enabled?'#cdd6b0':'#5a5648';ctx.font='700 '+(compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.textBaseline='middle';ctx.fillText(fitLine(b.label,controlW-6),b.x+controlW/2,copyY+copyH/2);}
   const gap2=8,bw2=Math.min(170,(rw-gap2)/2),rx=W/2-bw2-gap2/2,cx=W/2+gap2/2,byy=footerY;
   for(const [id,bx,label,col] of [['refresh',rx,'\u21BB REFRESH','#7fd8ff'],['close',cx,'CLOSE','#d05548']]){updatesRects.push({x:bx,y:byy,w:bw2,h:footerH,id});const hot=mouse.x>=bx&&mouse.x<=bx+bw2&&mouse.y>=byy&&mouse.y<=byy+footerH;ctx.fillStyle=hot?col:'rgba(255,255,255,.06)';ctx.fillRect(bx,byy,bw2,footerH);ctx.strokeStyle=col;ctx.strokeRect(bx+.5,byy+.5,bw2,footerH);ctx.fillStyle=hot?'#101208':'#cdd6b0';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.fillText(label,bx+bw2/2,byy+footerH/2);}
   const drawMenu=(open,bx,items)=>{if(!open)return;const mh=compact?23:27;items.forEach((item,index)=>{const my=copyY-mh*(items.length-index),enabled=item.enabled!==false;updatesRects.push({x:bx,y:my,w:controlW,h:mh,id:item.id,enabled});const hot=enabled&&mouse.x>=bx&&mouse.x<=bx+controlW&&mouse.y>=my&&mouse.y<=my+mh;ctx.fillStyle=hot?item.col:'#111716';ctx.fillRect(bx,my,controlW,mh);ctx.strokeStyle=enabled?item.col:'#42463b';ctx.strokeRect(bx+.5,my+.5,controlW,mh);ctx.fillStyle=hot?'#101208':enabled?'#e8d9a8':'#5a5648';ctx.font='700 '+(compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(item.label,bx+controlW/2,my+mh/2);});};
-  drawMenu(reportActionMenuOpen,x0,[{id:'report_action_copy',label:'COPY',col:'#7fd8ff'},{id:'report_action_resolve',label:'RESOLVE',col:'#d05548',enabled:reportView==='open'}]);
-  drawMenu(reportAmountMenuOpen,x0+controlW+copyGap,[{id:'report_amount_all',label:'ALL',col:'#e8b658'},{id:'report_amount_custom',label:'CUSTOM',col:'#e8b658'}]);
+  drawMenu(reportActionMenuOpen,bulkStrip.x,[{id:'report_action_copy',label:'COPY',col:'#7fd8ff'},{id:'report_action_resolve',label:'RESOLVE',col:'#d05548',enabled:reportView==='open'}]);
+  drawMenu(reportAmountMenuOpen,bulkStrip.x+controlW+copyGap,[{id:'report_amount_all',label:'ALL',col:'#e8b658'},{id:'report_amount_custom',label:'CUSTOM',col:'#e8b658'}]);
   ctx.textAlign='left';ctx.textBaseline='alphabetic';
 }
 function updatesClick(){
@@ -1678,7 +1695,7 @@ function drawWeaponSuggestions(){
   const {pw,ph,px,py}=adminInboxBounds(),tiny=ph<430||pw<520,x0=px+(tiny?8:16),rw=pw-(tiny?16:32);
   ctx.fillStyle='#0b0d0b';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#e8b658';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
   ctx.textAlign='center';ctx.textBaseline='alphabetic';ctx.fillStyle='#ffe0a0';ctx.font='700 '+(tiny?14:18)+'px ui-monospace,Consolas,monospace';ctx.fillText('SUGGESTIONS',W/2,py+(tiny?21:27));
-  ctx.fillStyle=/COULD NOT|RUN ADMIN/.test(weaponSuggestionStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(weaponSuggestionStatus||'STORED ADMIN WEAPON SUGGESTIONS',pw-26),W/2,py+(tiny?37:44));
+  ctx.fillStyle=/COULD NOT|UNAVAILABLE/.test(weaponSuggestionStatus)?'#d05548':'#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(weaponSuggestionStatus||'STORED ADMIN WEAPON SUGGESTIONS',pw-26),W/2,py+(tiny?37:44));
   weaponSuggestionsRects=[];let y=drawSuggestionsTabs(px,py,pw,py+(tiny?44:52),weaponSuggestionsRects);
   const footerH=tiny?24:28,footerY=py+ph-footerH-6,rowH=tiny?48:58,room=footerY-y-7,maxRows=Math.max(1,Math.floor(room/rowH)),
     pages=Math.max(1,Math.ceil(weaponSuggestions.length/maxRows));
@@ -1696,13 +1713,13 @@ function drawWeaponSuggestions(){
       ctx.fillStyle=hv?def[2]:'rgba(255,255,255,.05)';ctx.fillRect(x,by,buttonW,bh);ctx.strokeStyle=def[2];ctx.strokeRect(x+.5,by+.5,buttonW,bh);ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=hv?'#101208':'#d9dec9';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(def[1],x+buttonW/2,by+bh/2);});
     y+=rowH;
   }
-  const bh=footerH,gap=5,bw=(rw-gap*3)/4,fy=footerY,defs=[
+  const footerStrip=adminControlStrip(px,pw,620,tiny?8:16),bh=footerH,gap=5,bw=(footerStrip.w-gap*3)/4,fy=footerY,defs=[
     {id:'ws_newer',label:'\u2039 NEWER',col:'#7fd8ff',enabled:weaponSuggestionPage>0},
     {id:'ws_older',label:'OLDER \u203a',col:'#7fd8ff',enabled:weaponSuggestionPage+1<pages},
     {id:'ws_refresh',label:'\u21BB REFRESH',col:'#a7c15e',enabled:!weaponSuggestionBusy},
     {id:'ws_close',label:'CLOSE',col:'#d05548',enabled:true}
   ];
-  defs.forEach((def,index)=>{const x=x0+index*(bw+gap),enabled=def.enabled&&!weaponSuggestionBusy;
+  defs.forEach((def,index)=>{const x=footerStrip.x+index*(bw+gap),enabled=def.enabled&&!weaponSuggestionBusy;
     weaponSuggestionsRects.push({x,y:fy,w:bw,h:bh,id:def.id,enabled});const hv=enabled&&mouse.x>=x&&mouse.x<=x+bw&&mouse.y>=fy&&mouse.y<=fy+bh;
     ctx.fillStyle=hv?def.col:'rgba(255,255,255,.05)';ctx.fillRect(x,fy,bw,bh);ctx.strokeStyle=enabled?def.col:'#42463b';ctx.strokeRect(x+.5,fy+.5,bw,bh);ctx.fillStyle=hv?'#101208':enabled?'#d9dec9':'#5a5648';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 '+(tiny?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(def.label,x+bw/2,fy+bh/2);
   });
@@ -1789,11 +1806,11 @@ function drawMsgs(){
   msgsRects=[];
   const x0=px+16, rw=pw-32; let y=drawInboxTabs(px,py,pw,py+50,msgsRects);
   if(isMainAdmin()){                                 // COMPOSE: start a message from here
-    const cbh=28;
-    msgsRects.push({x:x0,y,w:rw,h:cbh,id:'compose'});
-    const hv=mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+cbh;
-    ctx.fillStyle=hv?'rgba(167,193,94,0.32)':'rgba(167,193,94,0.14)'; ctx.fillRect(x0,y,rw,cbh);
-    ctx.strokeStyle='#a7c15e'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,cbh);
+    const composeStrip=adminControlStrip(px,pw,520),cbh=28;
+    msgsRects.push({x:composeStrip.x,y,w:composeStrip.w,h:cbh,id:'compose'});
+    const hv=mouse.x>=composeStrip.x&&mouse.x<=composeStrip.x+composeStrip.w&&mouse.y>=y&&mouse.y<=y+cbh;
+    ctx.fillStyle=hv?'rgba(167,193,94,0.32)':'rgba(167,193,94,0.14)'; ctx.fillRect(composeStrip.x,y,composeStrip.w,cbh);
+    ctx.strokeStyle='#a7c15e'; ctx.lineWidth=1; ctx.strokeRect(composeStrip.x+0.5,y+0.5,composeStrip.w,cbh);
     ctx.textAlign='center'; ctx.textBaseline='middle';
     ctx.fillStyle='#cfe0a8'; ctx.font='700 11px ui-monospace,Consolas,monospace';
     ctx.fillText('\u270E COMPOSE', W/2, y+cbh/2);
@@ -1847,8 +1864,8 @@ function drawMsgs(){
     ctx.textBaseline='alphabetic';
     y+=h+5;
   }
-  const gap2=10,bw2=(rw-gap2)/2,bh2=34;
-  const rx=x0,cx2=x0+bw2+gap2,byy=py+ph-40;
+  const footerStrip=adminControlStrip(px,pw,370),gap2=10,bw2=(footerStrip.w-gap2)/2,bh2=34;
+  const rx=footerStrip.x,cx2=footerStrip.x+bw2+gap2,byy=py+ph-40;
   msgsRects.push({x:rx,y:byy,w:bw2,h:bh2,id:'refresh'});
   msgsRects.push({x:cx2,y:byy,w:bw2,h:bh2,id:'close'});
   for(const [bx2,lbl,st] of [[rx,'\u21BB REFRESH','#a7c15e'],[cx2,'CLOSE','#d05548']]){
@@ -1937,7 +1954,7 @@ function drawAdminAuditLog(){
   }
   const defs=[['newer','\u2039 NEWER',adminAuditPage>0,'#7fd8ff'],['older','OLDER \u203a',adminAuditHasMore,'#7fd8ff'],
     ['refresh','\u21BB REFRESH',!adminAuditLoading,'#a7c15e'],['close','CLOSE',true,'#d05548']];
-  const gap2=5,bw=(rw-gap2*(defs.length-1))/defs.length,bh=27;let bx=x0;
+  const footerStrip=adminControlStrip(px,pw,680,tiny?10:16),gap2=5,bw=(footerStrip.w-gap2*(defs.length-1))/defs.length,bh=27;let bx=footerStrip.x;
   for(const [id,label,enabled,col] of defs){
     const r={x:bx,y:footerY,w:bw,h:bh,id,enabled};auditRects.push(r);
     const hot=enabled&&mouse.x>=bx&&mouse.x<=bx+bw&&mouse.y>=footerY&&mouse.y<=footerY+bh;
