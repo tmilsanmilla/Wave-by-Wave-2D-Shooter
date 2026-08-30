@@ -350,10 +350,13 @@ async function fetchOwnBest(){
   if(!sb || !authUser) return;
   const userId=String(authUser.id||''),requestVersion=authProfileRequestVersion;
   try{
-    const { data } = await sb.from('scores').select('score')
-      .eq('user_id',userId).eq('game','outpost-zero').maybeSingle();
+    const { data,error } = await sb.from('scores').select('game,score')
+      .eq('user_id',userId).in('game',['outpost-zero','outpost-zero-arena-wins']);
+    if(error)throw error;
     if(!authUser||String(authUser.id||'')!==userId||profileOwnerUserId!==userId||requestVersion!==authProfileRequestVersion)return;
-    if(data && typeof data.score==='number' && data.score>hiScore){ hiScore=data.score; saveMetaLocal(); }
+    const rows=Array.isArray(data)?data:[],endless=rows.find(row=>row.game==='outpost-zero'),wins=rows.find(row=>row.game==='outpost-zero-arena-wins');
+    arenaOwnWinTotal=Math.max(0,Math.floor(+(wins&&wins.score)||0));
+    if(endless&&typeof endless.score==='number'&&endless.score>hiScore){hiScore=endless.score;saveMetaLocal();}
   }catch(e){}
 }
 async function fetchProfile(expectedUserId,requestVersion){

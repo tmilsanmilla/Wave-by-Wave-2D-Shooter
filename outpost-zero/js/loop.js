@@ -69,9 +69,11 @@ function frame(){
     // realtime pushes changes; polling stays only as a safety net (rare when live)
     if(sb){
       if(rtStatus==='down' && rtRetryT && Date.now()>rtRetryT){ rtRetryT=0; setupRealtime(); }
-      const every = rtStatus==='live' ? 180000 : 30000;     // 3 min when live, 30s when it isn't
-      if(Date.now()-boardT > every){
-        boardT=Date.now(); fetchBoard(); fetchBanners(); fetchPrices(); fetchWeaponDefs(); if(authUser) fetchAdmins(); if(isAdmin()) fetchMsgs();
+      // Signed-out viewers cannot receive raw score-row Realtime events under
+      // the privacy policy, so keep their public RPC board on the short poll.
+      const every = rtStatus==='live'&&authUser ? 180000 : 30000;
+      if(Date.now()-Math.max(boardT,boardRequestT) > every){
+        fetchBoard(); fetchBanners(); fetchPrices(); fetchWeaponDefs(); if(authUser) fetchAdmins(); if(isAdmin()) fetchMsgs();
       }
     }
     drawSelect();

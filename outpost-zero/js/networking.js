@@ -15,11 +15,18 @@ const SUPABASE_URL = 'https://edvurrilylypgfyvjyas.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
 const PUBLIC_BOARD_LIMIT=5;
-let sb = null, authUser = null, board = [], arenaBoard = [], boardT = 0, recovering = false;
+let sb = null, authUser = null, board = [], arenaBoard = [], boardT = 0, boardRequestT = 0, recovering = false;
 let leaderboardFetchVersion=0;
+const leaderboardAppliedVersion={endless:0,arena:0};
+const leaderboardFailedVersion={endless:0,arena:0};
 const leaderboardReadState={endless:'idle',arena:'idle'};
+let leaderboardRetryTimer=null,leaderboardRetryLevel=0;
 let arenaAuthPending=false, arena=null;
 let leaderboardRowRects=[];
+const ARENA_WIN_RECEIPT_PREFIX='oz_arena_win_receipt_v1:';
+const ARENA_WIN_RETRY_MS=Object.freeze([1500,5000,15000,60000]);
+let arenaWinMemoryQueue=new Map(),arenaWinFlushPromise=null,arenaWinFlushRequested=false;
+let arenaWinRetryTimer=null,arenaWinRetryLevel=0,arenaOwnWinTotal=null;
 const ONBOARDING_VERSION=1;
 let onboardingVersion=ONBOARDING_VERSION;
 let firstAccountTutorialUserId='', firstAccountWelcomeOpen=false, firstAccountWelcomeRects=[];
@@ -120,6 +127,7 @@ async function initAuth(){
       const initialUser=data.session?data.session.user:null,initialPreviousUserId=authUser?String(authUser.id||''):'',
         initialNextUserId=initialUser?String(initialUser.id||''):'';
       if(initialPreviousUserId!==initialNextUserId){
+        arenaOwnWinTotal=null;
         if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange(initialNextUserId);
         if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange(initialNextUserId);
         if(typeof closeAccountMenu==='function')closeAccountMenu(true);
@@ -127,6 +135,7 @@ async function initAuth(){
         if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange(initialNextUserId);
       }
       authUser = initialUser;
+      if(authUser)void flushArenaWinReceipts();
       prepareSocialForAccount(authUser?String(authUser.id):'');
       if(authUser) beginUsernameClaimCheck();
       const initialProfileUserId=authUser?String(authUser.id):'',initialAccountChanged=
@@ -148,6 +157,7 @@ async function initAuth(){
         const previousAuthUserId=authUser?String(authUser.id||''):'',nextAuthUser=sess?sess.user:null,
           nextAuthUserId=nextAuthUser?String(nextAuthUser.id||''):'';
         if(previousAuthUserId!==nextAuthUserId){
+          arenaOwnWinTotal=null;
           if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange(nextAuthUserId);
           if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange(nextAuthUserId);
           if(typeof closeAccountMenu==='function')closeAccountMenu(true);
@@ -212,6 +222,7 @@ async function initAuth(){
         setupRealtime();                              // re-subscribe: RLS scope changes with the signed-in user
         if(authUser&&!recovering) beginUsernameClaimCheck();
         if(authUser) fetchSocial(true);
+        if(authUser)void flushArenaWinReceipts();
         if(_e==='PASSWORD_RECOVERY'){
           closeUsernameClaim();
           $('authwrap').style.display='flex';
@@ -254,6 +265,7 @@ function setupRealtime(){
       // their gift. The login check below remains the fallback when Realtime is
       // unavailable or the project does not expose row payloads to this client.
       const changed=payload&&payload.new&&payload.new.game;
+      if(authUser&&changed==='outpost-zero-arena-wins'&&String(payload.new.user_id||'')===String(authUser.id))fetchOwnBest();
       if(authUser && changed==='outpost-zero-referral:'+authUser.id) payReferralClaims();
     });
     ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_prices'}, ()=>{ rtBump(); fetchPrices(); });
@@ -269,7 +281,7 @@ function setupRealtime(){
     // opaque revision, and a timestamp.
     ch=ch.on('postgres_changes',{event:'*',schema:'public',table:'outpost_zero_report_wakeups'},()=>{rtBump();if(isMainAdmin())fetchUpdatesFeed();});
     ch.subscribe((st)=>{
-      if(st==='SUBSCRIBED'){ rtStatus='live'; rtRetry=0; rtBump(); }
+      if(st==='SUBSCRIBED'){ rtStatus='live'; rtRetry=0; rtBump();if(authUser)void flushArenaWinReceipts(); }
       else if(st==='CHANNEL_ERROR' || st==='TIMED_OUT' || st==='CLOSED'){
         rtStatus='down';
         rtRetry=Math.min(rtRetry+1, 6);
@@ -301,26 +313,121 @@ async function submitScore(sc){
     fetchBoard();
   }catch(err){ console.warn('score submit failed', err); }
 }
-async function submitArenaWin(){
-  if(typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()) return;
-  if(banBlocksBoard()||unrankedRun||adminUsed||!sb||!authUser) return;
+function arenaWinOwnerId(value){
+  value=String(value||'').trim().toLowerCase();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value)?value:'';
+}
+function arenaWinMatchId(value){
+  value=String(value||'').trim();
+  return value.length<=240&&/^arena-win-v1:[A-Za-z0-9:_-]{16,220}$/.test(value)?value:'';
+}
+function arenaWinResultId(match=arena,user=authUser){
+  const owner=arenaWinOwnerId(user&&user.id),opponent=arenaWinOwnerId(match&&match.opponent&&match.opponent.id);
+  if(!owner||!opponent)return '';
+  const participants=[owner,opponent].sort(),vote=String(match&&match.mapVoteId||'').replace(/[^A-Za-z0-9:_-]/g,'').slice(0,100),
+    fallback=[String(match&&match.room||''),Math.floor(+match?.matchEpoch||0)].join(':').replace(/[^A-Za-z0-9:_-]/g,'').slice(0,100),
+    seed=vote||fallback;
+  return arenaWinMatchId(['arena-win-v1',seed,participants[0],participants[1]].join(':'));
+}
+function normalizeArenaWinReceipt(raw){
+  if(!raw||typeof raw!=='object'||Array.isArray(raw)||raw.v!==1)return null;
+  const owner=arenaWinOwnerId(raw.owner),matchId=arenaWinMatchId(raw.matchId),queuedAt=Number(raw.queuedAt);
+  if(!owner||!matchId||!Number.isSafeInteger(queuedAt)||queuedAt<=0)return null;
+  return {v:1,owner,matchId,queuedAt};
+}
+function arenaWinReceiptKey(owner,matchId){return ARENA_WIN_RECEIPT_PREFIX+arenaWinOwnerId(owner)+':'+arenaWinMatchId(matchId);}
+function readArenaWinReceipts(){
+  const rows=new Map(arenaWinMemoryQueue);
   try{
-    const game='outpost-zero-arena-wins';
-    const {data,error:readError}=await sb.from('scores').select('score')
-      .eq('user_id',authUser.id).eq('game',game).maybeSingle();
-    if(readError) throw readError;
-    const wins=Math.max(0,Math.floor(+(data&&data.score)||0))+1;
-    const {error}=await sb.from('scores').upsert(
-      {user_id:authUser.id,name:displayName(authUser),game,score:wins},
-      {onConflict:'user_id,game'});
-    if(error) throw error;
-    fetchBoard();
-  }catch(err){ console.warn('arena win submit failed',err); }
+    for(let i=0;i<localStorage.length;i++){
+      const key=localStorage.key(i);if(!key||!key.startsWith(ARENA_WIN_RECEIPT_PREFIX))continue;
+      let raw=null;try{raw=JSON.parse(localStorage.getItem(key)||'null');}catch(e){}
+      const entry=normalizeArenaWinReceipt(raw);if(entry)rows.set(arenaWinReceiptKey(entry.owner,entry.matchId),entry);
+    }
+  }catch(e){}
+  return [...rows.values()].sort((a,b)=>a.queuedAt-b.queuedAt||a.matchId.localeCompare(b.matchId));
+}
+function persistArenaWinReceipt(raw){
+  const entry=normalizeArenaWinReceipt(raw);if(!entry)return false;
+  const key=arenaWinReceiptKey(entry.owner,entry.matchId),serialized=JSON.stringify(entry);arenaWinMemoryQueue.set(key,entry);
+  try{localStorage.setItem(key,serialized);if(localStorage.getItem(key)===serialized)return true;}catch(e){}
+  return arenaWinMemoryQueue.has(key);
+}
+function removeArenaWinReceipt(owner,matchId){
+  const key=arenaWinReceiptKey(owner,matchId);arenaWinMemoryQueue.delete(key);
+  try{localStorage.removeItem(key);}catch(e){}
+  return !readArenaWinReceipts().some(entry=>entry.owner===owner&&entry.matchId===matchId);
+}
+function enqueueArenaWinReceipt(owner,matchId,clock=Date.now()){
+  owner=arenaWinOwnerId(owner);matchId=arenaWinMatchId(matchId);clock=Math.floor(+clock||0);
+  if(!owner||!matchId||!Number.isSafeInteger(clock)||clock<=0)return false;
+  const existing=readArenaWinReceipts().find(entry=>entry.owner===owner&&entry.matchId===matchId);
+  return existing?true:persistArenaWinReceipt({v:1,owner,matchId,queuedAt:clock});
+}
+function scheduleArenaWinRetry(){
+  if(arenaWinRetryTimer||!sb||!authUser)return false;
+  const delay=ARENA_WIN_RETRY_MS[Math.min(arenaWinRetryLevel,ARENA_WIN_RETRY_MS.length-1)];
+  arenaWinRetryLevel=Math.min(arenaWinRetryLevel+1,ARENA_WIN_RETRY_MS.length-1);
+  arenaWinRetryTimer=setTimeout(()=>{arenaWinRetryTimer=null;void flushArenaWinReceipts();},delay);return true;
+}
+async function flushArenaWinReceipts(){
+  if(arenaWinFlushPromise){arenaWinFlushRequested=true;return arenaWinFlushPromise;}
+  const owner=arenaWinOwnerId(authUser&&authUser.id);if(!sb||!owner)return false;
+  arenaWinFlushPromise=(async()=>{
+    let saved=false,failed=false;
+    for(const entry of readArenaWinReceipts().filter(row=>row.owner===owner)){
+      if(arenaWinOwnerId(authUser&&authUser.id)!==owner){failed=true;break;}
+      try{
+        const {data,error}=await sb.rpc('record_outpost_zero_arena_win',{p_match_id:entry.matchId,p_expected_user_id:owner});
+        if(error)throw error;
+        const row=Array.isArray(data)?data[0]:data,wins=Number(row&&row.wins);
+        if(!row||typeof row.applied!=='boolean'||!Number.isSafeInteger(wins)||wins<0)throw new Error('Invalid Arena win receipt response.');
+        if(!removeArenaWinReceipt(owner,entry.matchId))throw new Error('Could not acknowledge saved Arena win receipt.');
+        arenaOwnWinTotal=wins;saved=true;
+      }catch(error){failed=true;console.warn('arena win sync failed',error);break;}
+    }
+    if(saved)await fetchBoard();
+    if(failed)scheduleArenaWinRetry();
+    else{
+      arenaWinRetryLevel=0;
+      if(arenaWinRetryTimer){clearTimeout(arenaWinRetryTimer);arenaWinRetryTimer=null;}
+    }
+    return saved&&!failed;
+  })();
+  try{return await arenaWinFlushPromise;}
+  finally{
+    arenaWinFlushPromise=null;
+    if(arenaWinFlushRequested){arenaWinFlushRequested=false;queueMicrotask(()=>void flushArenaWinReceipts());}
+  }
+}
+async function submitArenaWin(matchId=arenaWinResultId()){
+  if(typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay())return false;
+  if(banBlocksBoard()||unrankedRun||adminUsed||!sb||!authUser)return false;
+  const owner=arenaWinOwnerId(authUser.id),receipt=arenaWinMatchId(matchId);
+  if(!owner||!receipt||!enqueueArenaWinReceipt(owner,receipt))return false;
+  return flushArenaWinReceipts();
+}
+if(typeof window!=='undefined')window.addEventListener('online',()=>void flushArenaWinReceipts());
+if(typeof document!=='undefined')document.addEventListener('visibilitychange',()=>{
+  if(document.visibilityState==='visible')void flushArenaWinReceipts();
+});
+function scheduleLeaderboardRetry(){
+  if(leaderboardRetryTimer||!sb)return false;
+  const delay=Math.min(30000,1500*Math.pow(2,Math.min(leaderboardRetryLevel,4)));
+  leaderboardRetryLevel=Math.min(leaderboardRetryLevel+1,4);
+  leaderboardRetryTimer=setTimeout(()=>{leaderboardRetryTimer=null;void fetchBoard();},delay);return true;
+}
+function syncLeaderboardRetry(){
+  const pending=Object.keys(leaderboardFailedVersion).some(key=>leaderboardFailedVersion[key]>leaderboardAppliedVersion[key]);
+  if(pending)return scheduleLeaderboardRetry();
+  leaderboardRetryLevel=0;if(leaderboardRetryTimer){clearTimeout(leaderboardRetryTimer);leaderboardRetryTimer=null;}return false;
 }
 async function fetchBoard(){
   if(!sb) return false;
+  boardRequestT=Date.now();
   const requestVersion=++leaderboardFetchVersion;
-  leaderboardReadState.endless='loading'; leaderboardReadState.arena='loading';
+  if(!leaderboardAppliedVersion.endless)leaderboardReadState.endless='loading';
+  if(!leaderboardAppliedVersion.arena)leaderboardReadState.arena='loading';
   const read=async game=>{
     try{
       const {data,error}=await sb.rpc('get_outpost_zero_leaderboard',{p_game:game,p_limit:PUBLIC_BOARD_LIMIT});
@@ -335,18 +442,24 @@ async function fetchBoard(){
     }catch(error){ console.warn(game+' board fetch failed',error); return {game,error}; }
   };
   const results=await Promise.all([read('outpost-zero'),read('outpost-zero-arena-wins')]);
-  // Auth, Realtime, and the 30-second refresh can overlap. Only the newest
-  // request may publish results, otherwise a slower old response can put a
-  // temporary username or old score back on screen.
-  if(requestVersion!==leaderboardFetchVersion) return false;
   let anySuccess=false;
   for(const result of results){
     const arenaResult=result.game==='outpost-zero-arena-wins', key=arenaResult?'arena':'endless';
-    if(result.error){ leaderboardReadState[key]=leaderboardReadFailure(result.error); continue; }
+    if(result.error){
+      leaderboardFailedVersion[key]=Math.max(leaderboardFailedVersion[key],requestVersion);
+      if(requestVersion>=leaderboardAppliedVersion[key])leaderboardReadState[key]=leaderboardReadFailure(result.error);
+      continue;
+    }
+    // A successful response may publish unless a newer successful response
+    // already did. A newer failed request never invalidates useful older data.
+    if(requestVersion<leaderboardAppliedVersion[key])continue;
     if(arenaResult) arenaBoard=result.rows; else board=result.rows;
+    leaderboardAppliedVersion[key]=requestVersion;
+    if(requestVersion>=leaderboardFailedVersion[key])leaderboardFailedVersion[key]=0;
     leaderboardReadState[key]='ready'; anySuccess=true;
   }
-  boardT=Date.now(); syncFallAccess();
+  if(anySuccess){boardT=Date.now();syncFallAccess();}
+  syncLeaderboardRetry();
   return anySuccess;
 }
 // ---- report a problem: signed-in, server-attributed report RPC ----
@@ -418,7 +531,7 @@ async function cancelPasswordRecoverySession(){
   if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange('');
   if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange('');
   if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange('');
-  authUser=null;authProfileRequestVersion++;postUsernameGateUserId='';prepareLocalGuestAfterAuthLoss();
+  authUser=null;arenaOwnWinTotal=null;authProfileRequestVersion++;postUsernameGateUserId='';prepareLocalGuestAfterAuthLoss();
   if(typeof resetSocialState==='function')resetSocialState('SIGNED OUT');
   paintUserbar();recovering=false;
   $('resetbox').style.display='none';
@@ -578,7 +691,7 @@ async function toggleAuth(options){
     if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange('');
     if(typeof partyPrepareForAuthChange==='function')partyPrepareForAuthChange('');
     if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange('');
-    authUser=null;authProfileRequestVersion++;postUsernameGateUserId='';
+    authUser=null;arenaOwnWinTotal=null;authProfileRequestVersion++;postUsernameGateUserId='';
     closeAccountMenu(true);prepareLocalGuestAfterAuthLoss();
     if(typeof resetSocialState==='function')resetSocialState('SIGNED OUT');
     else if(typeof closeUsernameClaim==='function')closeUsernameClaim(true);

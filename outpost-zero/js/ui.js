@@ -2814,7 +2814,7 @@ function drawHomeLeaderboards(x,y,w,h){
   ctx.fillStyle='#e8b658'; ctx.font='700 '+(h<90?9:11)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('\uD83C\uDFC6 TOP '+PUBLIC_BOARD_LIMIT+' LEADERBOARDS',x+w/2,y+titleH/2);
   const panels=[
-    {x,title:'ONLINE',metric:'1v1 WINS',rows:arenaBoard,col:'#d05548',empty:emptyLabel('arena',onlineServiceAvailable()?'NO WINS YET':'NO CONNECTION')},
+    {x,title:'ONLINE',metric:authUser&&Number.isSafeInteger(arenaOwnWinTotal)?('YOUR WINS '+arenaOwnWinTotal):'1v1 WINS',rows:arenaBoard,col:'#d05548',empty:emptyLabel('arena',onlineServiceAvailable()?'NO WINS YET':'NO CONNECTION')},
     {x:x+panelW+gap,title:'OFFLINE',metric:'ENDLESS SCORE',rows:board,col:'#a7c15e',empty:emptyLabel('endless',sb?'NO SCORES YET':'BOARD OFFLINE')}
   ];
   for(const panel of panels){

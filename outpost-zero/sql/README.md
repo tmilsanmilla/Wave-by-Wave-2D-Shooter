@@ -110,7 +110,10 @@ It also blocks old browser tabs from recreating those JSON rows and removes
 anonymous direct reads of the raw score table. Signed-in score saving and
 referrals retain authenticated access through the forced-RLS rules in
 Leaderboards 03. That file also owns the `scores` Realtime publication used to
-refresh live boards and referral claims.
+refresh live boards and referral claims. It also owns the private, idempotent
+Arena-win receipts and the atomic `record_outpost_zero_arena_win` RPC. Rerun
+Leaderboards 03 when deploying the reliable Wins leaderboard update; no new
+SQL category or extra numbered script is required.
 
 This script is rerunnable. It exposes only user ID, username, and score, and it
 hard-limits requests to the two public Outpost Zero boards and five rows.

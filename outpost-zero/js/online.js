@@ -783,7 +783,7 @@ function arenaApplyForfeitResult(p){
   arena.mapVoteStartPending=false; arena.rematchVotes=new Set(); arena.forfeitResultId=resultId;
   arena.forfeitPacket={room:arena.room,epoch:arena.matchEpoch,round:arena.round,resultId,winner,loser,
     reason:String(p.reason||'disconnect').slice(0,24)};
-  if(winner===me&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(); }
+  if(winner===me&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(arenaWinResultId(arena,authUser)); }
   if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
   if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
   practiceMode=null; state='select'; selPage='arena'; menuOpen=false; aiming=false; rmbAim=false;
@@ -1602,7 +1602,7 @@ function arenaApplyRoundResult(p){
   arena.nextRoundAt=p.matchOver?0:Date.now()+nextDelay;
   if(p.matchOver){
     arena.phase='match_end'; arena.active=false; arena.rematchVotes=new Set();
-    if(p.winner===authUser.id&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(); }
+    if(p.winner===authUser.id&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(arenaWinResultId(arena,authUser)); }
     if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
     practiceMode=null; state='select'; selPage='arena'; menuOpen=false;
