@@ -2365,7 +2365,109 @@ begin
 end;
 $block$;
 
--- Username-addressed wrappers: private Auth emails never cross the browser boundary.
+-- Creator/Main-only account labels. A chosen public username always wins; an
+-- exact Auth email is returned only when that account still has no chosen
+-- username. These helpers are private so ordinary authenticated callers cannot
+-- use them to probe account identifiers.
+create or replace function public._outpost_zero_admin_identity_label(p_user_id uuid)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare v_label text;
+begin
+  if not public._outpost_zero_is_admin_main() then
+    raise exception 'creator or main-admin access required' using errcode='42501';
+  end if;
+  if p_user_id is null then return null;end if;
+  select sp.handle::text into v_label
+  from public.social_profiles sp
+  where sp.user_id=p_user_id
+    and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
+    and sp.handle_key not in ('username_not_set','usernamenotset')
+    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
+    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
+  limit 1;
+  if v_label is not null then return v_label;end if;
+  select lower(btrim(u.email))::text into v_label
+  from auth.users u
+  where u.id=p_user_id and nullif(btrim(coalesce(u.email,'')),'') is not null
+  limit 1;
+  return v_label;
+end;
+$function$;
+
+create or replace function public._outpost_zero_admin_identity_kind(p_user_id uuid)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+begin
+  if not public._outpost_zero_is_admin_main() then
+    raise exception 'creator or main-admin access required' using errcode='42501';
+  end if;
+  if p_user_id is null then return 'unknown';end if;
+  if exists(
+    select 1 from public.social_profiles sp
+    where sp.user_id=p_user_id
+      and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
+      and sp.handle_key not in ('username_not_set','usernamenotset')
+      and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
+      and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
+  ) then return 'username';end if;
+  if exists(
+    select 1 from auth.users u
+    where u.id=p_user_id and nullif(btrim(coalesce(u.email,'')),'') is not null
+  ) then return 'email';end if;
+  return 'unknown';
+end;
+$function$;
+
+create or replace function public.list_outpost_zero_admin_identity_labels(p_user_ids uuid[])
+returns table(user_id uuid,identity_label text,identity_kind text)
+language plpgsql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare v_count integer:=coalesce(cardinality(p_user_ids),0);
+begin
+  if not public._outpost_zero_is_admin_main() then
+    raise exception 'creator or main-admin access required' using errcode='42501';
+  end if;
+  if v_count not between 1 and 100
+     or exists(
+       select 1
+       from unnest(coalesce(p_user_ids,array[]::uuid[])) as supplied(user_id)
+       where supplied.user_id is null
+     ) then
+    raise exception '1 to 100 account ids are required' using errcode='22023';
+  end if;
+  return query
+  with requested as (
+    select value as requested_user_id,min(ordinality) as first_position
+    from unnest(p_user_ids) with ordinality as input(value,ordinality)
+    group by value
+  )
+  select r.requested_user_id,
+    coalesce(public._outpost_zero_admin_identity_label(r.requested_user_id),'UNKNOWN PLAYER')::text,
+    public._outpost_zero_admin_identity_kind(r.requested_user_id)::text
+  from requested r order by r.first_position;
+end;
+$function$;
+
+revoke all on function public._outpost_zero_admin_identity_label(uuid) from public,anon,authenticated;
+revoke all on function public._outpost_zero_admin_identity_kind(uuid) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_admin_identity_labels(uuid[]) from public,anon,authenticated;
+grant execute on function public.list_outpost_zero_admin_identity_labels(uuid[]) to authenticated;
+
+-- Username-addressed wrappers keep Auth emails server-side. Creator/Main may
+-- also supply the exact email of an account that has no chosen username;
+-- Co-admins retain username lookup only.
 do $preflight$
 begin
   if to_regclass('public.social_profiles') is null then
@@ -2392,20 +2494,40 @@ security definer
 set search_path = pg_catalog, public
 as $function$
 declare
+  v_input text := btrim(coalesce(p_target_username, ''));
   v_key text := lower(btrim(coalesce(p_target_username, '')));
+  v_actor_role text := public._outpost_zero_admin_role();
   v_email text;
 begin
-  if public._outpost_zero_admin_role() not in ('creator', 'main', 'co') then
+  if v_actor_role not in ('creator', 'main', 'co') then
     raise exception 'admin access required' using errcode = '42501';
   end if;
-  if v_key !~ '^[a-z0-9_]{3,32}$' then
+  if v_key ~ '^[a-z0-9_]{3,32}$' then
+    select lower(btrim(u.email)) into v_email
+    from public.social_profiles sp
+    join auth.users u on u.id=sp.user_id
+    where sp.handle_key=v_key
+      and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
+      and sp.handle_key not in ('username_not_set','usernamenotset')
+      and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
+      and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
+    limit 1;
+    return v_email;
+  end if;
+  if v_actor_role not in ('creator','main')
+     or char_length(v_input) not between 3 and 320
+     or v_input !~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
     return null;
   end if;
-  select lower(btrim(u.email))
-    into v_email
-  from public.social_profiles as sp
-  join auth.users as u on u.id = sp.user_id
-  where sp.handle_key = v_key
+  select lower(btrim(u.email)) into v_email
+  from auth.users u
+  left join public.social_profiles chosen on chosen.user_id=u.id
+    and chosen.handle ~ '^[A-Za-z0-9_]{3,32}$'
+    and chosen.handle_key not in ('username_not_set','usernamenotset')
+    and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),20)
+    and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),8)
+  where lower(btrim(u.email))=lower(v_input)
+    and chosen.user_id is null
   limit 1;
   return v_email;
 end;
@@ -2469,13 +2591,8 @@ begin
   where lower(btrim(u.email))=v_email limit 1;
   return query
   select g.weapon_key,g.granted_at,g.expires_at,
-         coalesce(sp.handle,'STAFF')::text,v_now
+         coalesce(public._outpost_zero_admin_identity_label(g.granted_by),'STAFF')::text,v_now
   from public.outpost_zero_weapon_grants g
-  left join public.social_profiles sp on sp.user_id=g.granted_by
-    and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and sp.handle_key not in ('username_not_set','usernamenotset')
-    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
-    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
   where g.target_user_id=v_target_user_id and g.expires_at>v_now
   order by g.expires_at,g.weapon_key;
 end;
@@ -2595,22 +2712,12 @@ begin
   end if;
   return query
   select r.id::bigint,
-         coalesce(requester.handle, 'STAFF')::text,
-         coalesce(target.handle, 'UNKNOWN PLAYER')::text,
+         coalesce(public._outpost_zero_admin_identity_label(r.requester_user_id), 'STAFF')::text,
+         coalesce(public._outpost_zero_admin_identity_label(target_user.id), 'UNKNOWN PLAYER')::text,
          r.patch::jsonb, r.status::text, r.created_at
   from public.player_requests as r
   left join auth.users as target_user
     on lower(btrim(target_user.email)) = lower(btrim(r.target_email))
-  left join public.social_profiles as target on target.user_id = target_user.id
-    and target.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and target.handle_key not in ('username_not_set','usernamenotset')
-    and target.handle_key <> 'op_'||left(replace(target.user_id::text,'-',''),20)
-    and target.handle_key <> 'op_'||left(replace(target.user_id::text,'-',''),8)
-  left join public.social_profiles as requester on requester.user_id = r.requester_user_id
-    and requester.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and requester.handle_key not in ('username_not_set','usernamenotset')
-    and requester.handle_key <> 'op_'||left(replace(requester.user_id::text,'-',''),20)
-    and requester.handle_key <> 'op_'||left(replace(requester.user_id::text,'-',''),8)
   where r.status = 'pending'
   order by r.id desc
   limit least(greatest(coalesce(p_limit,20),1),50);
@@ -2669,10 +2776,10 @@ begin
   end if;
   return query
   select b.id::bigint,
-         coalesce(public._outpost_zero_public_username(coalesce(b.user_id,target_user.id)),'UNKNOWN PLAYER')::text,
+         coalesce(public._outpost_zero_admin_identity_label(coalesce(b.user_id,target_user.id)),'UNKNOWN PLAYER')::text,
          b.until,b.note::text,
          coalesce(array(select jsonb_array_elements_text(b.scopes)),array['account']::text[]),
-         coalesce(public._outpost_zero_public_username(actor_user.id),'STAFF')::text,
+         coalesce(public._outpost_zero_admin_identity_label(actor_user.id),'STAFF')::text,
          b.created_at
   from public.bans b
   left join auth.users target_user on lower(btrim(target_user.email))=lower(btrim(b.user_email))
@@ -2744,7 +2851,7 @@ begin
   end if;
   return query
   select a.id::bigint,
-         coalesce(public._outpost_zero_public_username(coalesce(a.requester_user_id,u.id)),'UNKNOWN PLAYER')::text,
+         coalesce(public._outpost_zero_admin_identity_label(coalesce(a.requester_user_id,u.id)),'UNKNOWN PLAYER')::text,
          a.message::text,a.status::text,a.created_at
   from public.ban_appeals a
   left join auth.users u on lower(btrim(u.email))=lower(btrim(a.player_email))
@@ -2798,12 +2905,12 @@ begin
   end if;
   return query
   select a.event_id,
-         coalesce(public._outpost_zero_public_username(a.actor_user_id),
+         coalesce(public._outpost_zero_admin_identity_label(a.actor_user_id),
            case a.actor_role when 'creator' then 'CREATOR' when 'main' then 'MAIN ADMIN'
              when 'co' then 'CO-ADMIN' else 'PLAYER' end)::text,
          a.actor_role::text,
          case when a.target_user_id is null then 'SYSTEM'
-           else coalesce(public._outpost_zero_public_username(a.target_user_id),'UNKNOWN PLAYER') end::text,
+           else coalesce(public._outpost_zero_admin_identity_label(a.target_user_id),'UNKNOWN PLAYER') end::text,
          a.action::text,a.result::text,
          public._outpost_zero_scrub_private_admin_json(a.details),a.created_at
   from public.outpost_zero_admin_audit a
@@ -2825,6 +2932,9 @@ revoke all on function public.list_outpost_zero_bans(integer) from public,anon,a
 revoke all on function public.list_outpost_zero_ban_appeals(integer) from public,anon,authenticated;
 revoke all on function public.list_outpost_zero_admin_audit(bigint,integer) from public,anon,authenticated;
 revoke all on function public._outpost_zero_public_username(uuid) from public,anon,authenticated;
+revoke all on function public._outpost_zero_admin_identity_label(uuid) from public,anon,authenticated;
+revoke all on function public._outpost_zero_admin_identity_kind(uuid) from public,anon,authenticated;
+revoke all on function public.list_outpost_zero_admin_identity_labels(uuid[]) from public,anon,authenticated;
 revoke all on function public._outpost_zero_scrub_private_admin_json(jsonb) from public,anon,authenticated;
 revoke all on function public.list_outpost_zero_bans_by_username(integer) from public,anon,authenticated;
 revoke all on function public.unban_outpost_zero_ban(bigint,uuid) from public,anon,authenticated;
@@ -2835,6 +2945,7 @@ grant execute on function public.list_outpost_zero_bans_by_username(integer) to 
 grant execute on function public.unban_outpost_zero_ban(bigint,uuid) to authenticated;
 grant execute on function public.list_outpost_zero_ban_appeals_by_username(integer) to authenticated;
 grant execute on function public.list_outpost_zero_admin_audit_by_username(bigint,integer) to authenticated;
+grant execute on function public.list_outpost_zero_admin_identity_labels(uuid[]) to authenticated;
 
 -- REALTIME OWNERSHIP
 -- Admin Menu storage is private RPC-only state. Explicitly remove every table

@@ -12,6 +12,10 @@ begin
   if to_regprocedure('public._outpost_zero_write_admin_audit(uuid,text,text,jsonb,uuid)') is null then
     raise exception 'Run the current Admin 01 before Admin 02 so staff changes are audited';
   end if;
+  if to_regprocedure('public._outpost_zero_admin_identity_label(uuid)') is null
+     or to_regprocedure('public.list_outpost_zero_admin_identity_labels(uuid[])') is null then
+    raise exception 'Run the current Admin 01 before Admin 02 so private identity fallbacks stay role-gated';
+  end if;
 end;
 $prerequisites$;
 
@@ -924,9 +928,10 @@ begin
 end;
 $weapon_write_boundary$;
 
--- Public-username browser boundary. The admins table intentionally keeps its
--- private Auth email compatibility key, but no roster or management RPC below
--- returns or accepts that key.
+-- Browser-safe staff identity boundary. Chosen usernames remain primary. An
+-- exact Auth email may be accepted only by Creator/Main for an account without
+-- a chosen username; roster output exposes that fallback only to Creator/Main
+-- or to the same non-main staff account viewing itself.
 create or replace function public._outpost_zero_staff_target_email_for_username(p_username text)
 returns text
 language plpgsql
@@ -939,14 +944,30 @@ begin
   if public._outpost_zero_staff_role() not in ('creator','main') then
     raise exception 'creator or main-admin access required' using errcode='42501';
   end if;
-  if v_key !~ '^[a-z0-9_]{3,32}$' then return null;end if;
+  if v_key ~ '^[a-z0-9_]{3,32}$' then
+    select lower(btrim(u.email)) into v_email
+    from public.social_profiles sp join auth.users u on u.id=sp.user_id
+    where sp.handle_key=v_key
+      and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
+      and sp.handle_key not in ('username_not_set','usernamenotset')
+      and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
+      and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
+    limit 1;
+    return v_email;
+  end if;
+  if char_length(btrim(coalesce(p_username,''))) not between 3 and 320
+     or btrim(coalesce(p_username,'')) !~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
+    return null;
+  end if;
   select lower(btrim(u.email)) into v_email
-  from public.social_profiles sp join auth.users u on u.id=sp.user_id
-  where sp.handle_key=v_key
-    and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and sp.handle_key not in ('username_not_set','usernamenotset')
-    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
-    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
+  from auth.users u
+  left join public.social_profiles chosen on chosen.user_id=u.id
+    and chosen.handle ~ '^[A-Za-z0-9_]{3,32}$'
+    and chosen.handle_key not in ('username_not_set','usernamenotset')
+    and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),20)
+    and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),8)
+  where lower(btrim(u.email))=lower(btrim(p_username))
+    and chosen.user_id is null
   limit 1;
   return v_email;
 end;
@@ -963,7 +984,11 @@ declare v_actor_role text:=public._outpost_zero_staff_role();
 begin
   if v_actor_role='' then return;end if;
   return query
-  select sp.handle::text,
+  select case when v_actor_role in ('creator','main')
+                then coalesce(public._outpost_zero_admin_identity_label(u.id),'UNKNOWN STAFF')
+              -- Non-main staff see only their own roster row, so an email
+              -- fallback here cannot enumerate any other account.
+              else coalesce(sp.handle,lower(btrim(u.email)),'UNKNOWN STAFF') end::text,
          case when u.id=public._outpost_zero_creator_user_id() then 'creator'
               else lower(btrim(a.role)) end::text,
          (u.id=auth.uid())::boolean
@@ -980,7 +1005,8 @@ begin
   order by case when u.id=public._outpost_zero_creator_user_id() then 0
                 when lower(btrim(a.role))='main' then 1
                 when lower(btrim(a.role))='co' then 2 else 3 end,
-           lower(coalesce(sp.handle,''));
+           lower(coalesce(sp.handle,u.email,''))
+  limit 200;
 end;
 $function$;
 
@@ -996,7 +1022,7 @@ as $function$
 declare v_email text:=public._outpost_zero_staff_target_email_for_username(p_username);v_row record;
 begin
   if v_email is null then
-    raise exception 'chosen username was not found' using errcode='22023';
+    raise exception 'staff identity was not found' using errcode='22023';
   end if;
   select * into v_row from public.add_outpost_zero_admin(v_email,p_role) limit 1;
   return query select btrim(p_username)::text,v_row.role::text;
@@ -1042,14 +1068,10 @@ begin
     raise exception using errcode='22023',message='INVALID_STATUS';
   end if;
   return query
-  select s.id,coalesce(sp.handle,'STAFF')::text,s.author_role,s.weapon_key,
+  select s.id,coalesce(public._outpost_zero_admin_identity_label(s.author_user_id),'STAFF')::text,
+         s.author_role,s.weapon_key,
          s.suggestion,s.status,s.created_at,s.reviewer_note,s.reviewed_at
   from public.outpost_zero_weapon_suggestions s
-  left join public.social_profiles sp on sp.user_id=s.author_user_id
-    and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and sp.handle_key not in ('username_not_set','usernamenotset')
-    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
-    and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
   where s.status=clean_status order by s.id desc
   limit least(greatest(coalesce(p_limit,40),1),100);
 end;
@@ -1227,5 +1249,9 @@ grant execute on function public.save_outpost_zero_promo_code(text,integer,integ
 grant execute on function public.set_outpost_zero_promo_active(text,boolean) to authenticated;
 grant execute on function public.delete_outpost_zero_promo_code(text) to authenticated;
 grant execute on function public.redeem_promo(text) to authenticated;
+
+-- Publish the replaced roster/suggestion signatures only after the entire
+-- Admin 02 transaction succeeds.
+notify pgrst, 'reload schema';
 
 commit;

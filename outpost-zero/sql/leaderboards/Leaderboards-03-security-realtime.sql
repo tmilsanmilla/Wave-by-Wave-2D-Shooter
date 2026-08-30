@@ -87,10 +87,20 @@ begin
   end if;
 
   select case
-           when sp.handle_key in (
-             'op_' || left(replace(v_uid::text, '-', ''), 20),
-             'op_' || left(replace(v_uid::text, '-', ''), 8)
-           ) then 'USERNAME_NOT_SET'
+           when nullif(btrim(sp.handle), '') is null
+             or btrim(coalesce(sp.handle, '')) !~ '^[A-Za-z0-9_]{3,32}$'
+             or lower(btrim(coalesce(sp.handle_key, ''))) in (
+               'username_not_set',
+               'usernamenotset',
+               'op_' || left(replace(v_uid::text, '-', ''), 20),
+               'op_' || left(replace(v_uid::text, '-', ''), 8)
+             )
+             or lower(btrim(coalesce(sp.handle, ''))) in (
+               'username_not_set',
+               'usernamenotset',
+               'op_' || left(replace(v_uid::text, '-', ''), 20),
+               'op_' || left(replace(v_uid::text, '-', ''), 8)
+             ) then 'USERNAME_NOT_SET'
            else sp.handle
          end
   into v_name
@@ -140,5 +150,7 @@ begin
   end if;
 end;
 $realtime$;
+
+notify pgrst, 'reload schema';
 
 commit;

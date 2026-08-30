@@ -2,9 +2,13 @@
 
 // MAIN ADMINS have every power; CO-ADMINS have shared staff tools; TESTERS
 // have only Test Mode and the Admin Inbox.
-// Legacy attribution callers still use this name. It deliberately returns a
-// public username/role label now, never the signed-in account's Auth email.
-function adminEmail(){return String(adminSelfUsername||adminSelfRole||'staff').toLowerCase();}
+// Legacy layout attribution must remain public-safe. The roster may use a
+// private email fallback for Creator/Main display, but shared layout storage
+// receives only a chosen username or a generic role label.
+function adminEmail(){
+  const username=String(adminSelfUsername||'').trim();
+  return (/^[A-Za-z0-9_]{3,32}$/.test(username)?username:(adminSelfRole||'staff')).toLowerCase();
+}
 function isCreator(){ return !sb || adminSelfRole==='creator'; }
 function isMainAdmin(){ return isCreator() || adminSelfRole==='main'; }
 function isCoAdmin(){ return adminSelfRole==='co'; }
@@ -13,6 +17,12 @@ function myRank(){ return isCreator()?'creator' : isMainAdmin()?'main' : isCoAdm
 function adminRoster(){
   if(!sb)return [{username:'preview',rank:'creator',isSelf:true}];
   return adminRosterRows.slice();
+}
+function adminAccountIdentifier(value){
+  return typeof cleanAccountIdentity==='function'?cleanAccountIdentity(value):String(value||'').trim().replace(/^@/,'');
+}
+function adminAccountLabel(value,fallback='UNKNOWN PLAYER'){
+  return typeof accountIdentityLabel==='function'?accountIdentityLabel(value,fallback):('@'+String(value||fallback));
 }
 function isAdmin(){ return isMainAdmin() || isCoAdmin() || isTester(); }   // any staff tier (preview !sb -> main)
 function canAccessReports(){ return isMainAdmin(); }
@@ -26,7 +36,7 @@ let adminOpen=false, adminUsed=false, adminBtnRect={x:-99,y:-99,w:0,h:0}, adminR
 let testMode=false;                                 // test mode (all admins); storage is a viewer popout now
 let adminPanelOpen=false, adminHubBtnRect=null, suggestionsHubBtnRect=null, adminPanelRects=[];
 let aiLearningOpen=false, aiLearningRects=[], aiLearningDifficulty=4, aiLearningNotice='',aiLearningSelectedModelId='',aiLearningRestoreBusyId='';
-let adminRoles={};                                  // public username -> staff rank
+let adminRoles={};                                  // visible account identifier -> staff rank
 let adminRosterRows=[],adminSelfRole='',adminSelfUsername='';
 let banners=[], pendingBanners=[], bannerFetchSeq=0, bannerDraftEpoch=0, updatesFeed={reports:[]};
 let reportCopyMode='all',reportCopyCustomCount=25,reportCopyBusy=false,reportCopyStatus='',reportBulkAction='copy';
@@ -128,6 +138,12 @@ function clearAdminNotificationComposerState(){
     if(message)message.disabled=false;if(send)send.disabled=false;if(cancel)cancel.disabled=false;
   }
 }
+function clearAdminIdentityFallbackCache(){
+  for(const rows of [typeof board!=='undefined'?board:null,typeof arenaBoard!=='undefined'?arenaBoard:null]){
+    if(!Array.isArray(rows))continue;
+    for(const row of rows)if(row&&typeof row==='object')delete row.adminIdentityLabel;
+  }
+}
 function clearMainOnlyAdminState(){
   const closeStaffReport=!!staffReport;
   bannerDraftEpoch++;pendingBanners=[];
@@ -167,23 +183,34 @@ function scrubPrivilegedUiForAccountChange(){
   if(typeof appealOperationReceipt!=='undefined')appealOperationReceipt=null;if(typeof appealSubmitBusy!=='undefined')appealSubmitBusy=false;
   if(typeof clearReaderState==='function')clearReaderState();
   msgOpen=false;msgTo='';adminMsgOperationId=null;clearPostComposerPrivateState();staffReport=false;if(typeof appealOpen!=='undefined')appealOpen=false;
+  clearAdminIdentityFallbackCache();
   clearAdminNotificationComposerState();
   if(typeof document!=='undefined')for(const id of ['scorewrap','msgwrap','appealwrap','postwrap','repwrap']){const el=document.getElementById(id);if(el)el.style.display='none';}
 }
 function enforceAdminRolePrivacy(previousRank=''){
   if(!isMainAdmin()){
+    const lostMain=previousRank==='main'||previousRank==='creator';
+    if(lostMain){
+      // Main-only feeds can contain exact fallback emails. Remove them before
+      // the first Co/Tester frame; fresh RPC reads repopulate only that role's
+      // viewer-scoped data.
+      adminMsgs=[];unreadMsgs=0;
+      if(typeof banList!=='undefined')banList=[];
+      if(typeof appealList!=='undefined')appealList=[];
+      clearAdminIdentityFallbackCache();
+    }
     clearMainOnlyAdminState();
     // Main-only temporary-gift rows and edit controls must not survive a
     // demotion to co-admin. A co-admin may reopen a fresh view-only lookup.
-    if(previousRank==='main'||previousRank==='creator')clearPrivatePlayerEditor();
+    if(lostMain)clearPrivatePlayerEditor();
   }
   if(!canUsePlayerTools())clearCoAndMainAdminState();
   if(!isAdmin()&&previousRank)scrubPrivilegedUiForAccountChange();
   else if(typeof enforceReaderAccess==='function')enforceReaderAccess();
 }
 let lookupBtnRect=null;
-// Every player target is a public username. Admin-only RPCs resolve that
-// username to Auth privately on the server before returning protected state.
+// Player targets use a username, or an email only for legacy accounts that do
+// not yet have one. Admin-only RPCs validate and resolve the identifier.
 function canSeeStats(){ return canUsePlayerTools(); }
 function canEditPlayer(){ return isMainAdmin(); }
 function canEditLoadedPlayer(){ return canEditPlayer()&&peData&&!peData.publicOnly; }
@@ -338,13 +365,14 @@ async function lookupPlayer(target){
     const q=String(target||'').trim();
     const privateLookup=typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin();
     if(privateLookup){
-      if(!/^[A-Za-z0-9_]{3,32}$/.test(q))throw new Error('invalid username');
-      const {data,error}=await sb.rpc('outpost_zero_admin_get_player_by_username',{p_target_username:q});
+      const identifier=adminAccountIdentifier(q);
+      if(!identifier||(typeof cleanAccountEmail==='function'&&cleanAccountEmail(identifier)&&!isMainAdmin()))throw new Error('invalid player identifier');
+      const {data,error}=await sb.rpc('outpost_zero_admin_get_player_by_username',{p_target_username:identifier});
       if(error) throw error;
       if(session!==peEditorSession)return;
       const d=Array.isArray(data)?data[0]:data; if(!d) throw new Error('not found');
       peData=normalizedPlayerData(d,false);
-      peTarget=q.toLowerCase();
+      peTarget=identifier.toLowerCase();
       if(isMainAdmin()){
         try{
           const grants=await sb.rpc('admin_list_outpost_zero_weapon_grants_by_username',{p_target_username:peTarget});
@@ -572,7 +600,7 @@ function openScoreEdit(){
   $('pban').value='';
   $('pscope_account').checked=true; $('pscope_device').checked=false; $('pscope_board').checked=false;
   const banning = peMode==='ban';
-  // Lookup, edits, grants, and bans all use the same public username.
+  // Username-less legacy accounts may be selected by their account email.
   for(const id of ['scoreval','pgems','pcoins','pgrant','prevoke']) $(id).style.display='none';
   $('pban').style.display   = banning?'':'none';
   $('pscopes').style.display= banning?'':'none';
@@ -584,10 +612,11 @@ function openScoreEdit(){
   targetInput.inputMode='text';
   targetInput.autocomplete='off';
   targetInput.autocapitalize='none';
-  $('scorehint').textContent = banning
-    ? 'Enter the player\u2019s username, then choose the ban details.'
+  const privateLookup=typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin(),allowEmail=isMainAdmin();
+  $('scorehint').textContent = allowEmail
+    ? (banning?'Enter the username, or the email if no username exists, then choose the ban details.':'Enter the username, or the email if that account has no username.')
     : 'Enter the player\u2019s username.';
-  targetInput.placeholder='username';
+  targetInput.placeholder=allowEmail?'username or no-username email':'username';
   $('scoresend').textContent = banning ? (canBan()?'BAN':'REQUEST BAN') : 'LOOK UP';
   scoreEditBusy=false;scoreEditOperationReceipt=null;$('scoresend').disabled=false;
   try{ $('scoreemail').focus(); }catch(e){}
@@ -596,8 +625,8 @@ function itemList(v){
   return String(v||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean).slice(0,20);
 }
 function buildPatch(){                                // read the form into a patch, or return an error
-  const username=String($('scoreemail').value||'').trim().replace(/^@/,'');
-  if(!/^[A-Za-z0-9_]{3,32}$/.test(username)) return {err:'enter a valid username'};
+  const username=adminAccountIdentifier($('scoreemail').value);
+  if(!username) return {err:'enter a username, or an email for an account without one'};
   const num=(id,cap)=>{ const raw=String($(id).value||'').trim();
     if(raw==='') return null; return Math.max(0, Math.min(cap, Math.round(+raw||0))); };
   const pt={};
@@ -649,9 +678,12 @@ function closeScoreEdit(){
 async function submitScoreEdit(){
   if(scoreEditBusy)return;
   if(peMode!=='ban'){
-    const query=String($('scoreemail').value||'').trim().replace(/^@/,'');
-    if(typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin()){
-      if(!/^[A-Za-z0-9_]{3,32}$/.test(query)){ $('scorestatus').textContent='enter a valid username'; return; }
+    const rawQuery=String($('scoreemail').value||'').trim(),privateLookup=typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin(),
+      query=privateLookup?adminAccountIdentifier(rawQuery):rawQuery.replace(/^@/,'');
+    if(privateLookup){
+      if(!query||(typeof cleanAccountEmail==='function'&&cleanAccountEmail(query)&&!isMainAdmin())){
+        $('scorestatus').textContent=isMainAdmin()?'enter a username or no-username account email':'enter a valid username';return;
+      }
     } else if(!/^[A-Za-z0-9_]{3,32}$/.test(query)){
       $('scorestatus').textContent='enter a valid username'; return;
     }
@@ -659,7 +691,7 @@ async function submitScoreEdit(){
     $('scorestatus').textContent='looking up...';setScoreEditBusy(true);
     try{
       await lookupPlayer(query);
-      if(!peData){ $('scorestatus').textContent='username not found'; return; }
+      if(!peData){ $('scorestatus').textContent='player account not found'; return; }
     }finally{setScoreEditBusy(false);}
     closeScoreEdit(); scoresOpen=true; peStep='panel';
     return;
@@ -682,7 +714,7 @@ async function submitScoreEdit(){
     }
     completed=true;scoreEditOperationReceipt=null;
     setTimeout(()=>{setScoreEditBusy(false);closeScoreEdit();},1200);
-  }catch(err){ $('scorestatus').textContent='failed \u2014 check the username and try again'; }
+  }catch(err){ $('scorestatus').textContent='failed \u2014 check the username/email and try again'; }
   finally{if(!completed)setScoreEditBusy(false);}
 }
 async function approveScoreReq(r){
@@ -986,7 +1018,7 @@ function drawComposePick(){
   ctx.fillText('pick an admin to message', W/2, py+42);
   msgsRects=[];                                      // the picker owns the rects while it is up
   const x0=px+16, rw=pw-32; let y=py+56;
-  const list=adminRoster().filter(r=>!r.isSelf&&r.username);
+  const list=adminRoster().filter(r=>!r.isSelf&&adminAccountIdentifier(r.username));
   if(!list.length){
     ctx.fillStyle='#5a5648'; ctx.fillText('no other admins yet', W/2, y+14);
   }
@@ -999,9 +1031,9 @@ function drawComposePick(){
     ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
     ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine('@'+r.username, rw-90), x0+10, y+h/2);
+    ctx.fillText(fitLine(adminAccountLabel(r.username), rw-90), x0+10, y+h/2);
     ctx.textAlign='right'; ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
-    ctx.fillText(r.rank==='creator'?'CREATOR':r.rank==='main'?'MAIN':'CO', x0+rw-10, y+h/2);
+    ctx.fillText(r.rank==='creator'?'CREATOR':r.rank==='main'?'MAIN':r.rank==='co'?'CO':'TESTER', x0+rw-10, y+h/2);
     ctx.textBaseline='alphabetic';
     y+=h+5;
   }
@@ -1016,7 +1048,7 @@ function drawComposePick(){
   ctx.textAlign='left'; ctx.textBaseline='top';
 }
 function openMsgCompose(to){
-  msgTo=String(to||'').toLowerCase(); if(!msgTo) return;
+  msgTo=adminAccountIdentifier(to).toLowerCase(); if(!msgTo) return;
   adminMsgOperationId=adminOperationUuid();
   msgKind='admin'; socialMessageTo=null;
   clearAdminNotificationComposerState();
@@ -1024,13 +1056,13 @@ function openMsgCompose(to){
   $('msgwrap').style.display='flex'; $('msgstatus').textContent='';
   $('msgmsg').value='';
   $('msgmsg').maxLength=500;
-  $('msgto').textContent='to: '+msgTo;
+  $('msgto').textContent='to: '+adminAccountLabel(msgTo);
   const title=$('msgbox').querySelector('h2'); if(title) title.textContent='✉ MESSAGE';
   try{ $('msgmsg').focus(); }catch(e){}
 }
 function adminNotificationUsername(value){
-  const username=String(value||'').trim().replace(/^@/,'');
-  return /^[A-Za-z0-9_]{3,32}$/.test(username)&&!/^(?:username_?not_?set|usernamenotset)$/i.test(username)?username:'';
+  const username=adminAccountIdentifier(value);
+  return username&&!/^(?:username_?not_?set|usernamenotset)$/i.test(username)?username:'';
 }
 function adminNotificationRpcMissing(error){
   const text=[error&&error.code,error&&error.message,error&&error.details,error&&error.hint].filter(Boolean).join(' ').toLowerCase();
@@ -1051,19 +1083,19 @@ function adminOpenPlayerTargetMessage(username=''){
   if(!target){
     const owner=currentAuthUserId(),epoch=adminPrivacyEpoch;
     adminNotificationTargetFormOpen=true;
-    openForm({title:'MESSAGE A PLAYER',hint:'Enter the player’s chosen public username. Account emails and IDs are never shown here.',saveLabel:'WRITE MESSAGE',
-      fields:[{id:'username',label:'PLAYER USERNAME',type:'text',placeholder:'operator_7'}],onSave:values=>{
+    openForm({title:'MESSAGE A PLAYER',hint:'Enter the username, or the account email only when that player has no username.',saveLabel:'WRITE MESSAGE',
+      fields:[{id:'username',label:'USERNAME OR NO-USERNAME EMAIL',type:'text',placeholder:'operator_7 or account email'}],onSave:values=>{
         if(!adminPrivacyRequestCurrent(epoch,owner)||!isMainAdmin()){adminNotificationTargetFormOpen=false;closeForm();return false;}
-        const chosen=adminNotificationUsername(values.username);if(!chosen){formError('Enter a chosen username (3–32 letters, numbers, or _).');return false;}
+        const chosen=adminNotificationUsername(values.username);if(!chosen){formError('Enter a username, or an email for an account without one.');return false;}
         adminNotificationTargetFormOpen=false;closeForm();return adminOpenPlayerTargetMessage(chosen);
       },onCancel:()=>{adminNotificationTargetFormOpen=false;}});return true;
   }
   clearAdminNotificationComposerState();
   adminNotificationTargetUsername=target;adminNotificationComposerEpoch++;
-  msgKind='player_notification';socialMessageTo=null;msgTo='@'+target;msgOpen=true;adminsOpen=false;
+  msgKind='player_notification';socialMessageTo=null;msgTo=target;msgOpen=true;adminsOpen=false;
   $('msgwrap').style.display='flex';$('msgstatus').textContent='';$('msgmsg').value='';$('msgmsg').maxLength=600;
   const subject=$('msgsubject');subject.hidden=false;subject.disabled=false;subject.value='';
-  $('msgto').textContent='private Inbox notice to: @'+target;
+  $('msgto').textContent='private Inbox notice to: '+adminAccountLabel(target);
   const title=$('msgbox').querySelector('h2');if(title)title.textContent='✉ MESSAGE PLAYER';
   try{subject.focus();}catch(error){}
   return true;
@@ -1079,7 +1111,7 @@ async function sendAdminPlayerNotification(){
   const contextCurrent=()=>adminPrivacyRequestCurrent(epoch,owner)&&isMainAdmin()&&msgOpen&&msgKind==='player_notification'&&
     adminNotificationComposerEpoch===composerEpoch&&adminNotificationTargetUsername===target;
   if(!contextCurrent()||!adminNotificationComposerAvailable()){$('msgstatus').textContent='Admin 03 Inbox or creator/main access is required.';return false;}
-  if(!target){$('msgstatus').textContent='Choose a valid player username.';return false;}
+  if(!target){$('msgstatus').textContent='Choose a valid username or no-username account email.';return false;}
   if(subject.length<1||subject.length>80){$('msgstatus').textContent='Subject must be 1–80 characters.';return false;}
   if(message.length<1||message.length>600){$('msgstatus').textContent='Message must be 1–600 characters.';return false;}
   const fingerprint=target.toLowerCase()+'\n'+subject+'\n'+message;
@@ -1104,8 +1136,8 @@ async function sendAdminPlayerNotification(){
     const notificationKey=typeof socialNotificationKey==='function'?socialNotificationKey(answer.notification_key):'',recipient=adminNotificationUsername(answer.recipient_username),
       createdAt=Date.parse(answer.created_at||'');
     if(!notificationKey||!recipient||recipient.toLowerCase()!==target.toLowerCase()||!Number.isFinite(createdAt))throw new Error('Invalid message receipt.');
-    adminNotificationRetryReceipt=null;peNotice='PRIVATE INBOX MESSAGE SENT TO @'+recipient;
-    $('msgstatus').textContent='sent to @'+recipient;if(typeof socialNotificationPollAt!=='undefined')socialNotificationPollAt=0;
+    adminNotificationRetryReceipt=null;peNotice='PRIVATE INBOX MESSAGE SENT TO '+adminAccountLabel(recipient);
+    $('msgstatus').textContent='sent to '+adminAccountLabel(recipient);if(typeof socialNotificationPollAt!=='undefined')socialNotificationPollAt=0;
     if(typeof socialPollNotifications==='function')void socialPollNotifications(true);
     if(adminNotificationSendOp===op)adminNotificationSendOp=null;
     closeMsgCompose();return true;
@@ -1113,7 +1145,7 @@ async function sendAdminPlayerNotification(){
     if(!contextCurrent()||adminNotificationSendOp!==op)return false;
     const text=String(error&&error.message||error||'').toUpperCase();
     $('msgstatus').textContent=/RATE_LIMIT/.test(text)?'Too many messages. Try again later.':
-      /TARGET_UNAVAILABLE/.test(text)?'That chosen username is unavailable.':
+      /TARGET_UNAVAILABLE/.test(text)?'That username or no-username account email is unavailable.':
       /ADMIN 03 INBOX/.test(text)?'Run Admin 03 Inbox before sending player messages.':'Could not send. Review the message and try again.';
     return false;
   }finally{
@@ -1160,9 +1192,9 @@ function adminSelfPublicHandle(){
   if(!authUser||typeof socialProfile==='undefined'||!socialProfile||
      String(socialProfile.user_id||'')!==String(authUser.id||''))return '';
   const value=String(socialProfile.handle||'').trim().replace(/^@/,'');
-  if(!/^[A-Za-z0-9_]{3,32}$/.test(value))return '';
-  if(typeof usernameIsChosenForUser==='function'&&!usernameIsChosenForUser(value,authUser.id))return '';
-  return value;
+  if(/^[A-Za-z0-9_]{3,32}$/.test(value)&&
+     (typeof usernameIsChosenForUser!=='function'||usernameIsChosenForUser(value,authUser.id)))return value;
+  return typeof cleanAccountEmail==='function'?cleanAccountEmail(authUser.email):'';
 }
 async function fetchAdminSelfRoleFallback(stillCurrent){
   for(const rpcName of ['_outpost_zero_staff_role','admin_role']){
@@ -1186,12 +1218,11 @@ async function fetchAdmins(){
     if(error)throw error;
     if(!stillCurrent())return;
     for(const value of data||[]){
-      const username=String(value&&value.username||'').trim(),role=String(value&&value.role||'').toLowerCase(),isSelf=!!(value&&value.is_self);
+      const username=adminAccountIdentifier(value&&value.username),role=String(value&&value.role||'').toLowerCase(),isSelf=!!(value&&value.is_self);
       if(!['creator','main','co','tester'].includes(role))continue;
-      const publicUsername=/^[A-Za-z0-9_]{3,32}$/.test(username)?username:'';
-      if(isSelf){selfRole=role;selfUsername=publicUsername;}
-      if(!publicUsername)continue;
-      roles[publicUsername.toLowerCase()]=role;rows.push({username:publicUsername,rank:role,isSelf});
+      if(isSelf){selfRole=role;selfUsername=username;}
+      if(!username)continue;
+      roles[username.toLowerCase()]=role;rows.push({username,rank:role,isSelf});
     }
     if(!selfRole){
       const fallback=await fetchAdminSelfRoleFallback(stillCurrent);if(!fallback||!stillCurrent())return;
@@ -1208,7 +1239,8 @@ async function fetchAdmins(){
     const fallback=await fetchAdminSelfRoleFallback(stillCurrent);if(!fallback||!stillCurrent())return;
     selfRole=fallback.role;selfUsername=fallback.username;
     // A failed roster may recover only this signed-in account. Never retain or
-    // reconstruct other staff rows from browser data, and never expose email.
+    // reconstruct other staff rows; only the caller's own Auth email may be a
+    // fallback when that account has no chosen username.
     if(selfRole&&selfUsername){
       roles[selfUsername.toLowerCase()]=selfRole;
       rows=[{username:selfUsername,rank:selfRole,isSelf:true}];
@@ -1223,6 +1255,7 @@ async function fetchAdmins(){
   if(nextRank&&nextRank!==previousRank){
     void fetchMsgs();if(typeof fetchPlayersData==='function')void fetchPlayersData();
     if(isMainAdmin()){void fetchScoreReqs();void fetchUpdatesFeed();}
+    if(isMainAdmin()&&typeof fetchBoard==='function')void fetchBoard();
   }
 }
 async function fetchBanners(){
@@ -1526,7 +1559,7 @@ async function demoteAdmin(username){
   if(!canManageAdmins())return;
   username=String(username||'').trim().toLowerCase();if(!username)return;
   const current=adminRoles[username],next=current==='main'?'co':current==='co'?'tester':'';if(!next)return;
-  let ok=false;try{ok=typeof window.confirm!=='function'||window.confirm('Demote @'+username+' from '+current.toUpperCase()+' to '+next.toUpperCase()+'?');}catch(error){}
+  let ok=false;try{ok=typeof window.confirm!=='function'||window.confirm('Demote '+adminAccountLabel(username)+' from '+current.toUpperCase()+' to '+next.toUpperCase()+'?');}catch(error){}
   if(!ok)return;
   if(!sb){adminRoles[username]=next;return;}
   try{const {data,error}=await sb.rpc('demote_outpost_zero_admin_by_username',{p_username:username});if(error)throw error;if(data!==true)return;}catch(error){return;}
@@ -1534,11 +1567,11 @@ async function demoteAdmin(username){
 }
 function addAdmin(){
   if(!canManageAdmins())return false;
-  openForm({title:'ADD ADMIN',hint:'Testers get only Test Mode and Admin Inbox. Co-admins get shared staff tools.',saveLabel:'ADD',
-    fields:[{id:'username',label:'PUBLIC USERNAME',type:'text',placeholder:'player_username'},{id:'role',label:'STARTING TIER',type:'select',value:'tester',options:[{value:'tester',label:'TESTER · LIMITED'},{value:'co',label:'CO-ADMIN · SHARED TOOLS'}]}],
+  openForm({title:'ADD ADMIN',hint:'Use the public username, or the account email only if no username exists. Testers get Test Mode and Admin Inbox.',saveLabel:'ADD',
+    fields:[{id:'username',label:'USERNAME OR NO-USERNAME EMAIL',type:'text',placeholder:'player_username or account email'},{id:'role',label:'STARTING TIER',type:'select',value:'tester',options:[{value:'tester',label:'TESTER · LIMITED'},{value:'co',label:'CO-ADMIN · SHARED TOOLS'}]}],
     onSave:async values=>{
-      const username=String(values.username||'').trim().replace(/^@/,'').toLowerCase(),role=values.role==='co'?'co':'tester';
-      if(!/^[a-z0-9_]{3,32}$/.test(username)){formError('Enter that player\'s public username.');return false;}
+      const username=adminAccountIdentifier(values.username).toLowerCase(),role=values.role==='co'?'co':'tester';
+      if(!username){formError('Enter a username, or an email for an account without one.');return false;}
       if(!sb){adminRoles[username]=role;closeForm();return true;}
       $('formstatus').textContent='adding '+role+'…';
       try{

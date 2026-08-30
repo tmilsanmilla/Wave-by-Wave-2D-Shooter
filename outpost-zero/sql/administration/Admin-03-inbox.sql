@@ -22,9 +22,9 @@ alter table public.admin_msgs add column if not exists to_user_id uuid reference
 alter table public.admin_msgs add column if not exists operation_id uuid;
 alter table public.admin_msgs add column if not exists request_fingerprint text;
 
--- Preserve the old Inbox while moving its browser boundary off private email.
--- Rows whose deleted account cannot be resolved stay private and are simply
--- omitted from the username-only feed.
+-- Preserve the old Inbox while keeping raw private columns behind RPCs. Rows
+-- whose deleted account cannot be resolved stay private and are omitted from
+-- the viewer-aware identity feed.
 update public.admin_msgs m set from_user_id=u.id
 from auth.users u
 where m.from_user_id is null and lower(btrim(u.email))=lower(btrim(m.from_email));
@@ -116,7 +116,8 @@ begin
   end if;
   if to_regclass('public.outpost_zero_admin_audit') is null
      or to_regprocedure('public._outpost_zero_admin_role()') is null
-     or to_regprocedure('public._outpost_zero_creator_user_id()') is null then
+     or to_regprocedure('public._outpost_zero_creator_user_id()') is null
+     or to_regprocedure('public._outpost_zero_admin_identity_label(uuid)') is null then
     raise exception 'Administration 03 requires Administration 01';
   end if;
   if to_regclass('public.banners') is null
@@ -211,6 +212,23 @@ alter table public.outpost_zero_notifications
 alter table public.outpost_zero_notifications
   add constraint outpost_zero_notifications_message_length
     check(char_length(message) between 1 and 4000);
+
+-- Creator/Main may address a username-less account by its exact Auth email.
+-- Preserve the historical column name for compatibility, but widen only the
+-- manual admin-message label shape; every other notification still requires a
+-- public username or NULL.
+alter table public.outpost_zero_notifications
+  drop constraint if exists outpost_zero_notifications_recipient_username;
+alter table public.outpost_zero_notifications
+  add constraint outpost_zero_notifications_recipient_username check (
+    recipient_username_at_send is null
+    or recipient_username_at_send ~ '^[A-Za-z0-9_]{3,32}$'
+    or (
+      kind='admin_message'
+      and char_length(recipient_username_at_send) between 3 and 320
+      and recipient_username_at_send ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$'
+    )
+  );
 
 -- Reruns upgrade the short-lived preview without deleting any event.
 alter table public.outpost_zero_notifications
@@ -601,8 +619,64 @@ create trigger outpost_zero_notify_friendship_trigger
 after insert or update of status on public.friendships
 for each row execute function public._outpost_zero_notify_friendship();
 
--- Creator/main-only targeted staff message. Recipient resolution uses a chosen
--- public username; the caller cannot submit or receive an email/account UUID.
+-- Resolve one Creator/Main-supplied identity without ever making email search
+-- public. Usernames are preferred. An exact email is accepted only when that
+-- account has no chosen username; optional staff scoping protects Admin Inbox.
+create or replace function public._outpost_zero_admin_target_user_id(
+  p_identity text,
+  p_staff_only boolean default false
+)
+returns uuid
+language plpgsql
+stable
+security definer
+set search_path=pg_catalog,public
+as $function$
+declare
+  v_input text:=btrim(coalesce(p_identity,''));
+  v_key text:=lower(btrim(coalesce(p_identity,'')));
+  v_target uuid;
+begin
+  if public._outpost_zero_admin_role() not in ('creator','main') then
+    raise exception 'creator or main-admin access required' using errcode='42501';
+  end if;
+  if v_key ~ '^[a-z0-9_]{3,32}$' then
+    select sp.user_id into v_target
+    from public.social_profiles sp
+    where sp.handle_key=v_key
+      and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
+      and sp.handle_key not in ('username_not_set','usernamenotset')
+      and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),20)
+      and sp.handle_key <> 'op_'||left(replace(sp.user_id::text,'-',''),8)
+    limit 1;
+  elsif char_length(v_input) between 3 and 320
+        and v_input ~ '^[^[:space:]@]+@[^[:space:]@]+[.][^[:space:]@]+$' then
+    select u.id into v_target
+    from auth.users u
+    left join public.social_profiles chosen on chosen.user_id=u.id
+      and chosen.handle ~ '^[A-Za-z0-9_]{3,32}$'
+      and chosen.handle_key not in ('username_not_set','usernamenotset')
+      and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),20)
+      and chosen.handle_key <> 'op_'||left(replace(chosen.user_id::text,'-',''),8)
+    where lower(btrim(u.email))=lower(v_input)
+      and chosen.user_id is null
+    limit 1;
+  end if;
+  if v_target is null or not coalesce(p_staff_only,false) then return v_target;end if;
+  if v_target=public._outpost_zero_creator_user_id() or exists(
+    select 1 from public.admins a join auth.users u
+      on lower(btrim(u.email))=lower(btrim(a.email))
+    where u.id=v_target and lower(btrim(coalesce(a.role,''))) in ('main','co','tester')
+  ) then return v_target;end if;
+  return null;
+end;
+$function$;
+
+revoke all on function public._outpost_zero_admin_target_user_id(text,boolean)
+  from public,anon,authenticated;
+
+-- Creator/main-only targeted message. The recipient may be a chosen username
+-- or the exact email of an account that has no chosen username.
 -- One operation UUID is exact-once for one actor and exact payload.
 create or replace function public.send_outpost_zero_admin_notification(
   p_recipient_username text,
@@ -650,9 +724,6 @@ begin
      or char_length(v_message) not between 1 and 600 then
     raise exception 'invalid notification subject or message' using errcode = '22023';
   end if;
-  if v_username !~ '^[A-Za-z0-9_]{3,32}$' then
-    raise exception 'NOTIFICATION_TARGET_UNAVAILABLE' using errcode = 'P0001';
-  end if;
   v_fingerprint := md5(lower(v_username) || E'\n' || v_subject || E'\n' || v_message);
 
   perform pg_advisory_xact_lock(
@@ -673,15 +744,12 @@ begin
     return;
   end if;
 
-  select sp.user_id, sp.handle into v_target, v_username
-  from public.social_profiles sp
-  where sp.handle_key = lower(v_username)
-    and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and sp.handle_key not in ('username_not_set', 'usernamenotset')
-    and sp.handle_key <> 'op_' || left(replace(sp.user_id::text, '-', ''), 20)
-    and sp.handle_key <> 'op_' || left(replace(sp.user_id::text, '-', ''), 8)
-  limit 1;
+  v_target:=public._outpost_zero_admin_target_user_id(v_username,false);
   if v_target is null then
+    raise exception 'NOTIFICATION_TARGET_UNAVAILABLE' using errcode = 'P0001';
+  end if;
+  v_username:=public._outpost_zero_admin_identity_label(v_target);
+  if v_username is null then
     raise exception 'NOTIFICATION_TARGET_UNAVAILABLE' using errcode = 'P0001';
   end if;
 
@@ -917,7 +985,7 @@ grant execute on function public.mark_my_outpost_zero_notifications_read(text[])
 -- Staff Inbox and Reports are separate protected tables inside this one Inbox
 -- module. Admin messages are RPC-only: even a modified staff client cannot
 -- select the internal from_email/to_email columns or receive them over
--- Realtime. Every visible identity is a chosen public username.
+-- Realtime. Visible email fallbacks are resolved per viewer inside the RPC.
 alter table public.admin_msgs enable row level security;
 alter table public.admin_msgs force row level security;
 do $policies$
@@ -948,6 +1016,37 @@ as $function$
   limit 1
 $function$;
 
+-- Staff Inbox labels are viewer-aware. Creator/Main may see the exact email
+-- fallback for a username-less participant; Co/Tester may see that fallback
+-- only for their own account and cannot enumerate another staff member's
+-- private email.
+create or replace function public._outpost_zero_admin_message_identity_label(p_user_id uuid)
+returns text
+language plpgsql
+stable
+security definer
+set search_path=pg_catalog,public
+as $function$
+declare
+  v_actor uuid:=auth.uid();
+  v_role text:=public._outpost_zero_staff_role();
+  v_label text;
+begin
+  if v_actor is null or v_role not in ('creator','main','co','tester') then
+    raise exception 'staff access required' using errcode='42501';
+  end if;
+  if p_user_id is null then return null;end if;
+  v_label:=public._outpost_zero_admin_message_username(p_user_id);
+  if v_label is not null then return v_label;end if;
+  if v_role not in ('creator','main') and p_user_id<>v_actor then return null;end if;
+  select lower(btrim(u.email)) into v_label
+  from auth.users u
+  where u.id=p_user_id and nullif(btrim(coalesce(u.email,'')),'') is not null
+  limit 1;
+  return v_label;
+end;
+$function$;
+
 create or replace function public.list_my_outpost_zero_admin_messages(p_limit integer default 30)
 returns table(
   message_id bigint,from_username text,to_username text,message text,read boolean,
@@ -963,8 +1062,8 @@ begin
   select lower(btrim(u.email)) into v_email from auth.users u where u.id=v_actor;
   return query
   select m.id,
-         coalesce(public._outpost_zero_admin_message_username(coalesce(m.from_user_id,fu.id)),'STAFF')::text,
-         coalesce(public._outpost_zero_admin_message_username(coalesce(m.to_user_id,tu.id)),'STAFF')::text,
+         coalesce(public._outpost_zero_admin_message_identity_label(coalesce(m.from_user_id,fu.id)),'STAFF')::text,
+         coalesce(public._outpost_zero_admin_message_identity_label(coalesce(m.to_user_id,tu.id)),'STAFF')::text,
          m.message::text,m.read,m.read_at,m.archived,m.created_at,
          (coalesce(m.to_user_id,tu.id)=v_actor)::boolean
   from public.admin_msgs m
@@ -986,6 +1085,7 @@ language plpgsql volatile security definer set search_path=pg_catalog,public
 as $function$
 declare
   v_actor uuid:=auth.uid();v_role text:=public._outpost_zero_staff_role();
+  v_identity text:=btrim(coalesce(p_recipient_username,''));
   v_key text:=lower(btrim(coalesce(p_recipient_username,'')));v_message text;
   v_target uuid;v_actor_email text;v_target_email text;v_target_username text;
   v_fingerprint text;v_prior public.admin_msgs%rowtype;v_row public.admin_msgs%rowtype;
@@ -995,8 +1095,9 @@ begin
   end if;
   if p_operation_id is null then raise exception 'operation id required' using errcode='22004';end if;
   v_message:=regexp_replace(btrim(coalesce(p_message,'')),'[[:space:]]+',' ','g');
-  if v_key !~ '^[a-z0-9_]{3,32}$' or char_length(v_message) not between 1 and 500 then
-    raise exception 'valid staff username and message required' using errcode='22023';
+  if char_length(v_identity) not between 3 and 320
+     or char_length(v_message) not between 1 and 500 then
+    raise exception 'valid staff identity and message required' using errcode='22023';
   end if;
   v_fingerprint:=md5(v_key||E'\n'||v_message);
   perform pg_advisory_xact_lock(hashtextextended('outpost-zero-admin-message:'||v_actor::text,0));
@@ -1007,19 +1108,18 @@ begin
       raise exception 'ADMIN_MESSAGE_OPERATION_CONFLICT' using errcode='P0001';
     end if;
     return query select v_prior.id,
-      coalesce(public._outpost_zero_admin_message_username(v_prior.to_user_id),'STAFF'),
+      coalesce(public._outpost_zero_admin_identity_label(v_prior.to_user_id),'STAFF'),
       v_prior.created_at,true;
     return;
   end if;
-  select sp.user_id,sp.handle,u.email into v_target,v_target_username,v_target_email
-  from public.social_profiles sp join auth.users u on u.id=sp.user_id
-  left join public.admins a on lower(btrim(a.email))=lower(btrim(u.email))
-  where sp.handle_key=v_key and sp.handle ~ '^[A-Za-z0-9_]{3,32}$'
-    and (sp.user_id=public._outpost_zero_creator_user_id()
-         or lower(btrim(coalesce(a.role,''))) in ('main','co','tester'))
-  limit 1;
-  if v_target is null then raise exception 'STAFF_USERNAME_NOT_FOUND' using errcode='P0001';end if;
+  v_target:=public._outpost_zero_admin_target_user_id(v_identity,true);
+  if v_target is null then raise exception 'STAFF_IDENTITY_NOT_FOUND' using errcode='P0001';end if;
   if v_target=v_actor then raise exception 'CANNOT_MESSAGE_SELF' using errcode='22023';end if;
+  v_target_username:=public._outpost_zero_admin_identity_label(v_target);
+  select u.email into v_target_email from auth.users u where u.id=v_target;
+  if v_target_username is null or nullif(btrim(coalesce(v_target_email,'')),'') is null then
+    raise exception 'STAFF_IDENTITY_NOT_FOUND' using errcode='P0001';
+  end if;
   if (select count(*) from public.admin_msgs m where m.from_user_id=v_actor
       and m.created_at>clock_timestamp()-interval '1 day')>=100 then
     raise exception 'ADMIN_MESSAGE_RATE_LIMITED' using errcode='P0001';
@@ -1071,6 +1171,8 @@ end;
 $function$;
 
 revoke all on function public._outpost_zero_admin_message_username(uuid) from public,anon,authenticated;
+revoke all on function public._outpost_zero_admin_message_identity_label(uuid) from public,anon,authenticated;
+revoke all on function public._outpost_zero_admin_target_user_id(text,boolean) from public,anon,authenticated;
 revoke all on function public.list_my_outpost_zero_admin_messages(integer) from public,anon,authenticated;
 revoke all on function public.send_outpost_zero_admin_message(text,text,uuid) from public,anon,authenticated;
 revoke all on function public.mark_my_outpost_zero_admin_messages_read(bigint[]) from public,anon,authenticated;
@@ -1115,11 +1217,11 @@ $function$;
 create or replace function public._outpost_zero_report_public_name(p_name text,p_reporter_user_id uuid)
 returns text language plpgsql stable security definer set search_path=pg_catalog,public
 as $function$
-declare v_username text;v_label text;v_redacted text;
+declare v_label text;v_redacted text;
 begin
   if p_reporter_user_id is not null then
-    select p.handle into v_username from public.social_profiles p where p.user_id=p_reporter_user_id;
-    if v_username ~ '^[A-Za-z0-9_]{3,32}$' then return v_username;end if;
+    v_label:=public._outpost_zero_admin_identity_label(p_reporter_user_id);
+    if v_label is not null then return v_label;end if;
   end if;
   v_label:=btrim(coalesce(p_name,''));
   v_redacted:=btrim(public._outpost_zero_redact_report_text(v_label));

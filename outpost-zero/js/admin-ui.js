@@ -342,9 +342,9 @@ function drawUpdates(){
     const r=rows[index];
     const resolved=reportView==='resolved',rbw=compact?47:58,actionCount=resolved?1:2,actionsW=actionCount*(rbw+4)+4,
       when=String(r.created_at||'').slice(5,16).replace('T',' '),msg=String(r.message||'').replace(/^\[STAFF\]\s*/,''),
-      read={t:'REPORT #'+String(r.id!=null?r.id:'?')+' \u00b7 @'+String(r.name||'?'),m:when,b:msg};
+      read={t:'REPORT #'+String(r.id!=null?r.id:'?')+' \u00b7 '+adminAccountLabel(r.name,'UNKNOWN REPORTER'),m:when,b:msg};
     ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(127,216,255,.055)';ctx.fillRect(x0,y,rw,rowH);ctx.strokeStyle=resolved?'#6b7455':'#7fd8ff';ctx.strokeRect(x0+.5,y+.5,rw,rowH);
-    ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=resolved?'#8a9268':'#bfe8ff';ctx.font='700 '+(compact?7:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((resolved?'\u2713 ':'')+'@'+String(r.name||'?')+(when?' \u00b7 '+when:''),rw-actionsW-18),x0+7,y+11);
+    ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=resolved?'#8a9268':'#bfe8ff';ctx.font='700 '+(compact?7:8)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((resolved?'\u2713 ':'')+adminAccountLabel(r.name,'UNKNOWN REPORTER')+(when?' \u00b7 '+when:''),rw-actionsW-18),x0+7,y+11);
     ctx.fillStyle='#cdd6b0';ctx.font=(compact?8:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(msg,rw-actionsW-18),x0+7,y+rowH-11);
     const readX=x0+rw-actionsW,buttonY=y+6,buttonH=rowH-12;
     for(const [id,label,col,bx,enabled] of [['read','READ','#7fd8ff',readX,true],['resolve','RESOLVE','#a7c15e',readX+rbw+4,!resolved&&!reportCopyBusy&&!reportResolveBusy.has(+r.id)]]){
@@ -415,9 +415,9 @@ function drawArchive(){
     if(y+h>py+ph-44)break;
     const when=String(m.created_at||'').slice(5,16).replace('T',' '),body=String(m.message||'');
     ctx.fillStyle='rgba(0,0,0,.35)';ctx.fillRect(x0,y,rw,h);ctx.strokeStyle='#5a5648';ctx.strokeRect(x0+.5,y+.5,rw,h);
-    ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('@'+String(m.from_username||'STAFF')+' \u2192 @'+String(m.to_username||'STAFF')+(when?' \u00b7 '+when:''),rw-16),x0+8,y+10);
+    ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle='#8a9268';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(adminAccountLabel(m.from_username,'STAFF')+' \u2192 '+adminAccountLabel(m.to_username,'STAFF')+(when?' \u00b7 '+when:''),rw-16),x0+8,y+10);
     ctx.fillStyle='#a9b28f';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(body,rw-16),x0+8,y+24);
-    archRects.push({x:x0,y,w:rw,h,id:'archived_message',read:{t:'@'+String(m.from_username||'STAFF'),m:when,b:body}});y+=h+5;
+    archRects.push({x:x0,y,w:rw,h,id:'archived_message',read:{t:adminAccountLabel(m.from_username,'STAFF'),m:when,b:body}});y+=h+5;
   }
   const cbw=170,cbh=34,cbx=W/2-cbw/2,cby=py+ph-40;archRects.push({x:cbx,y:cby,w:cbw,h:cbh,id:'close'});
   const hot=mouse.x>=cbx&&mouse.x<=cbx+cbw&&mouse.y>=cby&&mouse.y<=cby+cbh;ctx.fillStyle=hot?'#e8b658':'rgba(232,182,88,.14)';ctx.fillRect(cbx,cby,cbw,cbh);ctx.strokeStyle='#e8b658';ctx.strokeRect(cbx+.5,cby+.5,cbw,cbh);ctx.fillStyle=hot?'#101208':'#e8d9a8';ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='700 11px ui-monospace,Consolas,monospace';ctx.fillText('CLOSE',W/2,cby+cbh/2);ctx.textAlign='left';ctx.textBaseline='alphabetic';
@@ -1105,7 +1105,7 @@ function drawPlayers(){
         ctx.strokeStyle='#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
         ctx.textAlign='left'; ctx.textBaseline='middle';
         ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-        ctx.fillText(fitLine('@'+String(r.target_username||'unknown'), rw-2*bw2-24), x0+8, y+9);
+        ctx.fillText(fitLine(adminAccountLabel(r.target_username,'UNKNOWN PLAYER'), rw-2*bw2-24), x0+8, y+9);
         ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
         ctx.fillText(fitLine(patchSummary(r.patch)+'  by '+String(r.requested_by||'?'), rw-2*bw2-24), x0+8, y+20);
         if(isMainAdmin()){
@@ -1131,12 +1131,12 @@ function drawPlayers(){
       ctx.strokeStyle='#d05548'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
       ctx.textAlign='left'; ctx.textBaseline='middle';
       ctx.fillStyle='#e0a8a0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-      const who='@'+String(b.target_username||'UNKNOWN PLAYER');
+      const who=adminAccountLabel(b.target_username,'UNKNOWN PLAYER');
       ctx.fillText(fitLine(who, rw-bw2-100), x0+8, y+10);
       ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
       const scopes=Array.isArray(b.scopes)?b.scopes.join('+'):'account';
       ctx.fillText(fitLine('['+scopes+'] '+(b.until?('until '+String(b.until).slice(0,10)):'permanent')+
-                           '  by @'+String(b.banned_by_username||'STAFF'), rw-bw2-24), x0+8, y+21);
+                           '  by '+adminAccountLabel(b.banned_by_username,'STAFF'), rw-bw2-24), x0+8, y+21);
       ctx.fillStyle='#6b7455';
       ctx.fillText(fitLine(b.note||'', rw-bw2-24), x0+8, y+31);
       if(canBan()){
@@ -1160,7 +1160,7 @@ function drawPlayers(){
       ctx.strokeStyle= open?'#e8b658':'#5a5648'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,rw,h);
       ctx.textAlign='left'; ctx.textBaseline='middle';
       ctx.fillStyle= open?'#e8d9a8':'#8a9268'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine('@'+String(a.player_username||'UNKNOWN PLAYER')+'  \u00b7  '+String(a.created_at||'').slice(5,16).replace('T',' '), rw-2*bw2-24), x0+8, y+11);
+      ctx.fillText(fitLine(adminAccountLabel(a.player_username,'UNKNOWN PLAYER')+'  \u00b7  '+String(a.created_at||'').slice(5,16).replace('T',' '), rw-2*bw2-24), x0+8, y+11);
       ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
       wrapTextClamped(String(a.message||''), x0+8, y+24, rw-2*bw2-24, 11, 2);
       if(open && canBan()){
@@ -1278,7 +1278,7 @@ function drawScores(){
       big('go_ban','\u26D4 BAN','temporary or permanent \u00b7 account / device / leaderboard',
           ['rgba(208,85,72,0.14)','rgba(208,85,72,0.32)','#d05548','#e0a8a0']);
     if(typeof adminNotificationComposerAvailable==='function'&&adminNotificationComposerAvailable())
-      big('go_message','\u2709 MESSAGE PLAYER','send a private Inbox notice by chosen username',
+      big('go_message','\u2709 MESSAGE PLAYER','send by username or no-username account email',
           ['rgba(191,168,255,0.14)','rgba(191,168,255,0.32)','#bfa8ff','#e5dcff']);
     y+=4;
     if(!canEditPlayer()) return peFooter(px,py,pw,ph);
@@ -1297,7 +1297,7 @@ function drawScores(){
       ctx.textAlign='left'; ctx.textBaseline='middle';
       const room=isMainAdmin()? rw-2*bw2-24 : rw-24;
       ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine('@'+String(r.target_username||'unknown'), room), x0+8, y+11);
+      ctx.fillText(fitLine(adminAccountLabel(r.target_username,'UNKNOWN PLAYER'), room), x0+8, y+11);
       ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
       ctx.fillText(fitLine(patchSummary(r.patch)+'   by '+String(r.requested_by||'?'), room), x0+8, y+23);
       if(isMainAdmin()){
@@ -1612,7 +1612,7 @@ function drawAdminsMenu(){
   let y=py+56;
   // header
   ctx.textAlign='left'; ctx.fillStyle='#6b7455'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-  ctx.fillText('USERNAME', x0+6, y+8);
+  ctx.fillText('ACCOUNT', x0+6, y+8);
   ctx.fillText('RANK', x0+Math.floor(rw*0.46), y+8);
   ctx.textAlign='right'; ctx.fillText('ACTIONS', x0+rw-6, y+8);
   y+=14;
@@ -1629,7 +1629,7 @@ function drawAdminsMenu(){
     const actW=nAct*(bw2+bg);
     const rankW=Math.min(84, Math.max(26, rw-actW-120));
     const rankX=x0+rw-actW-rankW-4;
-    ctx.fillText(fitLine('@'+row.username, Math.max(40, rankX-x0-12)), x0+6, y+h/2);
+    ctx.fillText(fitLine(adminAccountLabel(row.username,'UNKNOWN STAFF'), Math.max(40, rankX-x0-12)), x0+6, y+h/2);
     // rank
     const rl = row.rank==='creator' ? (row.isSelf?'CREATOR (ME)':'CREATOR') : row.rank==='main' ? 'MAIN ADMIN' : row.rank==='co'?'CO-ADMIN':'TESTER';
     ctx.fillStyle= row.rank==='creator' ? '#e8b658' : row.rank==='main' ? '#e0a8a0' : row.rank==='co'?'#a7c15e':'#7fd8ff';
@@ -1707,7 +1707,7 @@ function drawWeaponSuggestions(){
     ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(255,255,255,.055)';ctx.fillRect(x0,y,rw,h);ctx.strokeStyle='#566047';ctx.strokeRect(x0+.5,y+.5,rw,h);
     ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 9px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.weapon_key||'WEAPON').toUpperCase()+' · '+String(row.author_role||'STAFF').toUpperCase(),contentW-8),x0+7,y+5);
     ctx.fillStyle='#cdd6b0';ctx.font='8px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(String(row.suggestion||''),contentW-8),x0+7,y+20);
-    ctx.fillStyle='#777f68';ctx.font='7px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('@'+String(row.author_username||'STAFF')+' · '+String(row.created_at||'').slice(0,16).replace('T',' '),contentW-8),x0+7,y+36);
+    ctx.fillStyle='#777f68';ctx.font='7px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(adminAccountLabel(row.author_username,'STAFF')+' · '+String(row.created_at||'').slice(0,16).replace('T',' '),contentW-8),x0+7,y+36);
     const bx=x0+rw-buttonsW-4,by=y+9,bh=h-18,defs=[['ws_read','READ','#7fd8ff'],['ws_approve','OK','#a7c15e'],['ws_reject','NO','#d05548']];
     defs.forEach((def,i)=>{const x=bx+i*(buttonW+4),enabled=!weaponSuggestionBusy;weaponSuggestionsRects.push({x,y:by,w:buttonW,h:bh,id:def[0],suggestionId:row.id,row,enabled});const hv=enabled&&mouse.x>=x&&mouse.x<=x+buttonW&&mouse.y>=by&&mouse.y<=by+bh;
       ctx.fillStyle=hv?def[2]:'rgba(255,255,255,.05)';ctx.fillRect(x,by,buttonW,bh);ctx.strokeStyle=def[2];ctx.strokeRect(x+.5,by+.5,buttonW,bh);ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=hv?'#101208':'#d9dec9';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.fillText(def[1],x+buttonW/2,by+bh/2);});
@@ -1752,9 +1752,9 @@ function drawAdminRequests(){
   if(!shown.length){ctx.fillStyle='#5a5648';ctx.font='10px ui-monospace,Consolas,monospace';ctx.fillText(requestsBusy?'LOADING…':'NO REQUESTS WAITING',W/2,top+40);}
   shown.forEach((item,index)=>{
     const row=item.row||{},y=top+index*(rowH+gap),buttonW=tiny?42:58,buttonGap=4,actionSpan=buttonW*3+buttonGap*2,contentW=rw-actionSpan-18,
-      title=item.kind==='player'?'@'+String(row.target_username||'UNKNOWN'):
-        item.kind==='update'?String(row.heading||row.message||'UPDATE'):'@'+String(row.player_username||'UNKNOWN'),
-      body=item.kind==='player'?patchSummary(row.patch)+' · by @'+String(row.requested_by||'?'):
+      title=item.kind==='player'?adminAccountLabel(row.target_username,'UNKNOWN PLAYER'):
+        item.kind==='update'?String(row.heading||row.message||'UPDATE'):adminAccountLabel(row.player_username,'UNKNOWN PLAYER'),
+      body=item.kind==='player'?patchSummary(row.patch)+' · by '+adminAccountLabel(row.requested_by,'UNKNOWN STAFF'):
         item.kind==='update'?String(row.details||row.message||'')+' · by '+String(row.author||'STAFF'):
         String(row.message||'');
     ctx.fillStyle=index%2?'rgba(255,255,255,.025)':'rgba(232,182,88,.07)';ctx.fillRect(x0,y,rw,rowH);ctx.strokeStyle='#65552f';ctx.strokeRect(x0+.5,y+.5,rw,rowH);
@@ -1781,7 +1781,7 @@ function adminRequestsClick(){
     if(hit.id==='refresh'){void refreshAdminRequests();sfx('aim');return;}
     const item=hit.item||{},row=item.row||{};
     if(hit.id==='read'){
-      const title=item.kind==='update'?String(row.heading||row.message||'OFFICIAL UPDATE'):item.kind==='appeal'?'BAN APPEAL · @'+String(row.player_username||'PLAYER'):'PLAYER EDIT · @'+String(row.target_username||'PLAYER'),
+      const title=item.kind==='update'?String(row.heading||row.message||'OFFICIAL UPDATE'):item.kind==='appeal'?'BAN APPEAL · '+adminAccountLabel(row.player_username,'PLAYER'):'PLAYER EDIT · '+adminAccountLabel(row.target_username,'PLAYER'),
         body=item.kind==='update'?String(row.details||row.message||''):item.kind==='appeal'?String(row.message||''):patchSummary(row.patch);
       openReader(title,String(row.created_at||''),body,'main');sfx('swap');return;
     }
@@ -1832,14 +1832,14 @@ function drawMsgs(){
     ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.fillStyle= unread ? '#cfe0a8' : '#8a9268'; ctx.font='700 8px ui-monospace,Consolas,monospace';
     const when=String(m.created_at||'').slice(5,16).replace('T',' ');
-    ctx.fillText(fitLine((unread?'\u25CF ':'')+'@'+String(m.from_username||'STAFF')+' \u2192 @'+String(m.to_username||'STAFF')+(when?'  \u00b7 '+when:''), rw-120), x0+8, y+10);
+    ctx.fillText(fitLine((unread?'\u25CF ':'')+adminAccountLabel(m.from_username,'STAFF')+' \u2192 '+adminAccountLabel(m.to_username,'STAFF')+(when?'  \u00b7 '+when:''), rw-120), x0+8, y+10);
     ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
     const abw=m.is_incoming?50:0;
     const body=String(m.message||'');
     ctx.fillText(fitLine(body, rw-24-abw-52), x0+8, y+24);
     // row + READ open the whole message
     msgsRects.push({x:x0,y,w:rw-abw-56,h,id:'rd',
-                    read:{t:'@'+String(m.from_username||'STAFF'), m:when, b:body}});
+                    read:{t:adminAccountLabel(m.from_username,'STAFF'), m:when, b:body}});
     {
       const rbw=48, bx3=x0+rw-abw-rbw-6;
       const hv3=mouse.x>=bx3&&mouse.x<=bx3+rbw&&mouse.y>=y+6&&mouse.y<=y+h-6;
@@ -1849,7 +1849,7 @@ function drawMsgs(){
       ctx.fillStyle='#bfe8ff'; ctx.fillText('READ', bx3+rbw/2, y+h/2);
       ctx.textAlign='left';
       msgsRects.push({x:bx3,y:y+6,w:rbw,h:h-12,id:'rd2',
-                      read:{t:'@'+String(m.from_username||'STAFF'), m:when, b:body}});
+                      read:{t:adminAccountLabel(m.from_username,'STAFF'), m:when, b:body}});
     }
     if(m.is_incoming){                               // ARCHIVE now instead of waiting the 7 days
       const bx2=x0+rw-abw-4;

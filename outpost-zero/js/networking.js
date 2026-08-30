@@ -44,10 +44,26 @@ const $ = id => document.getElementById(id);
 function cleanUsername(value){
   return String(value||'').trim().replace(/^@/,'').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
 }
+function cleanAccountEmail(value){
+  const email=String(value||'').trim().toLowerCase().slice(0,254);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)?email:'';
+}
+function cleanAccountIdentity(value){
+  const raw=String(value||'').trim(),email=cleanAccountEmail(raw);
+  if(email)return email;
+  const username=raw.replace(/^@/,'');
+  return /^[A-Za-z0-9_]{3,32}$/.test(username)?username:'';
+}
+function accountIdentityLabel(value,fallback='UNKNOWN PLAYER'){
+  const identity=cleanAccountIdentity(value);
+  return identity?(cleanAccountEmail(identity)?identity:'@'+identity):String(fallback||'UNKNOWN PLAYER');
+}
 function leaderboardNeedsUsername(row){
   if(!row) return false;
   if(row.needsUsername===true) return true;
-  const username=cleanUsername(row.username!=null?row.username:row.name).toLowerCase();
+  const raw=String(row.username!=null?row.username:row.name||'').trim();
+  const username=cleanUsername(raw).toLowerCase();
+  if(!/^[A-Za-z0-9_]{3,32}$/.test(raw)||!username||cleanAccountEmail(raw)) return true;
   // Newer database migrations may return this explicit marker instead of the
   // deterministic op_<uuid> transport fallback. Treat both spellings as the
   // same unfinished identity so the owner is routed to Choose Username.
@@ -83,11 +99,13 @@ function displayName(u){
 function leaderboardUsername(row){
   if(leaderboardNeedsUsername(row)){
     const mine=authUser&&String(row.user_id!=null?row.user_id:row.userId||'')===String(authUser.id||'');
-    // The signed-in owner already received this email from Supabase Auth, so
-    // it is safe to use as their private fallback. Never put another player's
-    // email on the public board: the leaderboard RPC deliberately does not
-    // return Auth email addresses.
-    if(mine) return String(authUser.email||'').trim().slice(0,160)||'CHOOSE USERNAME';
+    // Public board RPCs remain email-free. Creator/main clients may separately
+    // enrich unfinished rows through a role-checked Admin 01 RPC; everyone
+    // else can see only their own Auth-session email.
+    const adminFallback=(typeof isMainAdmin==='function'&&isMainAdmin())
+      ?cleanAccountEmail(row&&row.adminIdentityLabel):'';
+    if(adminFallback)return adminFallback;
+    if(mine) return cleanAccountEmail(authUser.email)||'CHOOSE USERNAME';
     return 'NEW OPERATOR';
   }
   return cleanUsername(row&&((row.username!=null?row.username:row.name)))||'NEW OPERATOR';
@@ -442,6 +460,20 @@ async function fetchBoard(){
     }catch(error){ console.warn(game+' board fetch failed',error); return {game,error}; }
   };
   const results=await Promise.all([read('outpost-zero'),read('outpost-zero-arena-wins')]);
+  if(authUser&&typeof isMainAdmin==='function'&&isMainAdmin()){
+    const identityOwner=String(authUser.id||'');
+    const ids=[...new Set(results.filter(result=>!result.error).flatMap(result=>result.rows||[])
+      .filter(leaderboardNeedsUsername).map(row=>String(row.user_id||''))
+      .filter(id=>/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)))].slice(0,10);
+    if(ids.length)try{
+      const identityResult=await sb.rpc('list_outpost_zero_admin_identity_labels',{p_user_ids:ids});
+      if(!identityResult.error&&authUser&&String(authUser.id||'')===identityOwner&&isMainAdmin()){
+        const labels=new Map((identityResult.data||[]).map(row=>[String(row.user_id||''),
+          String(row.identity_kind||'')==='email'?cleanAccountEmail(row.identity_label):'']));
+        for(const result of results)for(const row of result.rows||[])row.adminIdentityLabel=labels.get(String(row.user_id||''))||'';
+      }
+    }catch(error){}
+  }
   let anySuccess=false;
   for(const result of results){
     const arenaResult=result.game==='outpost-zero-arena-wins', key=arenaResult?'arena':'endless';
@@ -574,10 +606,10 @@ function syncAccountMenu(){
   if(el.identity)el.identity.textContent=chosen?('@'+username):(email||'USERNAME REQUIRED');
   if(el.email)el.email.textContent=chosen
     ? (email?('PRIVATE EMAIL \u00b7 '+email):'PRIVATE EMAIL UNAVAILABLE')
-    : 'PRIVATE EMAIL \u00b7 shown only to you until you choose a public username';
+    : 'ACCOUNT EMAIL \u00b7 visible to you and creator/main staff until you choose a username';
   if(el.detail)el.detail.textContent=chosen
     ? 'Manage your public username and password, or safely sign out of this device.'
-    : 'Choose a public username in Settings before playing. Your email remains private.';
+    : 'Choose a public username in Settings before playing. Until then, creator/main staff may use your email as the account label.';
   if(el.actions)el.actions.hidden=accountMenuConfirming;
   if(el.confirm)el.confirm.hidden=!accountMenuConfirming;
   if(el.warning)el.warning.textContent=accountMenuForfeitWarning();
@@ -951,7 +983,7 @@ function accountSettingsSync(resetInput=false){
   const signedIn=!!authUser, chosen=accountSettingsHasUsername(), profileReady=signedIn&&typeof socialProfile!=='undefined'&&!!socialProfile;
   const email=signedIn?String(authUser.email||'').trim():'';
   if(el.account) el.account.textContent=signedIn
-    ? ('SIGNED IN AS '+(email||'YOUR ACCOUNT')+' · EMAIL IS PRIVATE')
+    ? ('SIGNED IN AS '+(email||'YOUR ACCOUNT')+' · ACCOUNT EMAIL')
     : 'SIGN IN TO MANAGE YOUR ACCOUNT';
   const current=chosen?String(socialProfile.handle||''):'';
   if(el.username&&(resetInput||!el.username.value)) el.username.value=current;
@@ -959,7 +991,7 @@ function accountSettingsSync(resetInput=false){
   if(el.usernameHint) el.usernameHint.textContent=!signedIn
     ? 'Sign in before choosing a public username.'
     : !chosen
-      ? 'Choose the public username shown in matches, parties, friends, messages, and leaderboards. Your first choice is available now.'
+      ? 'Choose the public username shown throughout the game. Until then, creator/main staff may see your email as the fallback account label.'
       : locked
         ? 'Your username is @'+current+'. It can be changed again on '+accountSettingsDate(readyAt)+'.'
         : 'Your username is @'+current+'. After saving a different one, you must wait 21 days before changing it again.';

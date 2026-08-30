@@ -32,7 +32,7 @@ check('Banned-list action uses an opaque ban id',
   /rpc\('unban_outpost_zero_ban'/.test(ui)&&
   /b\.ban_id/.test(adminUi));
 
-check('Admin 02 roster and management are username-only',
+check('Admin 02 roster and management use the protected identity boundary',
   /list_outpost_zero_admin_roster_by_username/.test(admin02)&&
   /add_outpost_zero_admin_by_username/.test(admin02)&&
   /promote_outpost_zero_admin_by_username/.test(admin02)&&
@@ -44,12 +44,12 @@ check('Admin 02 legacy email roster/management are not granted',
   !grantFor(admin02,'promote_outpost_zero_admin\\(text\\)')&&
   !grantFor(admin02,'demote_outpost_zero_admin\\(text\\)')&&
   !grantFor(admin02,'remove_outpost_zero_admin\\(text\\)'));
-check('Weapon suggestion feed returns username, never author email',
+check('Weapon suggestion feed returns the authorized identity label field',
   /list_outpost_zero_weapon_suggestions_by_username/.test(admin02)&&
   /author_username text/.test(admin02)&&
   /row\.author_username/.test(adminUi));
 
-check('Admin messages are RPC-only username records',
+check('Admin messages are RPC-only protected identity records',
   /list_my_outpost_zero_admin_messages/.test(admin03)&&
   /send_outpost_zero_admin_message/.test(admin03)&&
   !/grant\s+select\s*\([^;]*(?:from_email|to_email)[^;]*\)\s+on\s+public\.admin_msgs/i.test(admin03));
@@ -63,7 +63,7 @@ check('Admin message Realtime uses a sanitized wakeup table',
 check('Admin UI no longer consumes private identity fields',
   !/(?:from_email|to_email|author_email|actor_email|target_email|player_email|user_email|granted_by_email|ROOT_ADMIN)/.test(administration+adminUi+ui)&&
   /from_username/.test(adminUi)&&/target_username/.test(adminUi));
-check('Client calls only username-safe admin boundaries',
+check('Client calls only protected admin identity boundaries',
   /list_outpost_zero_admin_roster_by_username/.test(administration)&&
   /list_outpost_zero_admin_audit_by_username/.test(administration)&&
   /list_outpost_zero_weapon_suggestions_by_username/.test(administration)&&

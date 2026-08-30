@@ -47,7 +47,7 @@
 <div id="usernameclaimwrap" class="ui" role="dialog" aria-modal="true" aria-labelledby="usernameclaimtitle">
   <div id="usernameclaimbox">
     <h2 id="usernameclaimtitle">CHOOSE YOUR USERNAME</h2>
-    <p id="usernameclaimhint">Every signed-in operator needs one unique public username. Open Settings to choose it; your sign-in email stays private.</p>
+    <p id="usernameclaimhint">Every signed-in operator needs one unique public username. Until you choose it, creator/main staff may use your email as the account label.</p>
     <input id="usernameclaiminput" type="text" placeholder="operator_7" autocomplete="off"
       minlength="3" maxlength="32" autocapitalize="none" spellcheck="false" aria-label="Choose username">
     <button id="usernameclaimsave" class="btn" type="button">OPEN SETTINGS</button>
@@ -209,8 +209,8 @@
 <div id="scorewrap" class="ui">
   <div id="scorebox">
     <h2 id="scoretitle">✎ PLAYER EDIT</h2>
-    <p id="scorehint">Look up a player by username.</p>
-    <input id="scoreemail" type="text" placeholder="username" autocomplete="off" autocapitalize="none" spellcheck="false">
+    <p id="scorehint">Look up a player by username, or by email when no username exists.</p>
+    <input id="scoreemail" type="text" placeholder="username or no-username email" autocomplete="off" autocapitalize="none" spellcheck="false">
     <input id="scoreval" type="number" placeholder="high score" min="0" step="1">
     <input id="pgems" type="number" placeholder="gems" min="0" step="1">
     <input id="pcoins" type="number" placeholder="coins" min="0" step="1">
@@ -237,23 +237,23 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./outpost-zero/js/networking.js?v=20260830-map-vote-ui"></script>
+<script src="./outpost-zero/js/networking.js?v=20260830-account-labels"></script>
 <script src="./outpost-zero/js/core.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/audio.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/weapons.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/economy-state.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/layout.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/progression.js?v=20260830-map-vote-ui"></script>
-<script src="./outpost-zero/js/administration.js?v=20260830-admin-workspace"></script>
+<script src="./outpost-zero/js/administration.js?v=20260830-account-labels"></script>
 <script src="./outpost-zero/js/persistence.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/world.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/enemies.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/state.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/party-state.js?v=20260830-map-vote-ui"></script>
-<script src="./outpost-zero/js/social.js?v=20260830-map-vote-ui"></script>
+<script src="./outpost-zero/js/social.js?v=20260830-account-labels"></script>
 <script src="./outpost-zero/js/cpu-state.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/upgrades.js?v=20260830-map-vote-ui"></script>
-<script src="./outpost-zero/js/admin-ui.js?v=20260830-admin-workspace"></script>
+<script src="./outpost-zero/js/admin-ui.js?v=20260830-account-labels"></script>
 <script src="./outpost-zero/js/abilities.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/input.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/gameplay.js?v=20260830-map-vote-ui"></script>

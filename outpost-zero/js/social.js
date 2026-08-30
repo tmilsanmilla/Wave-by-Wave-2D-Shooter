@@ -139,8 +139,8 @@ function openUsernameClaim(mode='checking',message='Checking your account userna
   if(el.title) el.title.textContent=mode==='required'?'CHOOSE YOUR USERNAME':mode==='error'?'USERNAME REQUIRED':'CHECKING USERNAME';
   if(el.hint) el.hint.textContent=mode==='required'
     ? (socialAccountSettingsSqlReady===false
-      ? 'The Social 02 database update is required before you can choose or change a username. Your sign-in email remains private.'
-      : 'Open Settings to choose the unique public username shown on leaderboards, parties, friends, and messages. Your sign-in email is visible only in this private setup.')
+      ? 'The Social 02 database update is required before you can choose or change a username.'
+      : 'Open Settings to choose the unique public username shown throughout the game. Until then, creator/main staff may use your email as the account label.')
     : mode==='error'?'Your username could not be verified. Retry the secure profile check or sign out.':'Checking the public username attached to your account.';
   if(el.status) el.status.textContent=usernameClaimPrivateStatus(message);
   if(el.save){ el.save.disabled=mode!=='required'; el.save.textContent='OPEN SETTINGS'; }

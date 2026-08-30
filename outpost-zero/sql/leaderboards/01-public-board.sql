@@ -7,8 +7,8 @@ begin;
 
 -- The signed-out leaderboard receives only user id, username, and score. It
 -- never reads email-bearing profile JSON or trusts scores.name for identity.
--- USERNAME_NOT_SET is the public API sentinel for an account that still has a
--- generated handle; clients should render it as a prompt for the account owner.
+-- USERNAME_NOT_SET is the public API sentinel for a missing, blank, reserved,
+-- or generated handle; clients should render it as a prompt for the owner.
 
 -- Old tabs must not be able to recreate those public JSON snapshots after the
 -- cleanup. Install the guard first so a concurrent old tab cannot race the
@@ -47,13 +47,24 @@ where game = 'outpost-zero-profile';
 -- Replace every Outpost Zero legacy score alias with the canonical username.
 -- Scope this cleanup to the game's own namespace in case another game shares
 -- the scores table. Accounts that have not chosen a username yet, including
--- both generated-handle formats used by older builds, get a clear label.
+-- blank/reserved legacy values and both generated-handle formats, get a clear
+-- label.
 update public.scores s
 set name = case
-  when sp.handle_key in (
-    'op_' || left(replace(sp.user_id::text, '-', ''), 20),
-    'op_' || left(replace(sp.user_id::text, '-', ''), 8)
-  )
+  when nullif(btrim(sp.handle), '') is null
+    or btrim(coalesce(sp.handle, '')) !~ '^[A-Za-z0-9_]{3,32}$'
+    or lower(btrim(coalesce(sp.handle_key, ''))) in (
+      'username_not_set',
+      'usernamenotset',
+      'op_' || left(replace(sp.user_id::text, '-', ''), 20),
+      'op_' || left(replace(sp.user_id::text, '-', ''), 8)
+    )
+    or lower(btrim(coalesce(sp.handle, ''))) in (
+      'username_not_set',
+      'usernamenotset',
+      'op_' || left(replace(sp.user_id::text, '-', ''), 20),
+      'op_' || left(replace(sp.user_id::text, '-', ''), 8)
+    )
     then 'USERNAME_NOT_SET'
   else sp.handle
 end
@@ -61,10 +72,20 @@ from public.social_profiles sp
 where sp.user_id = s.user_id
   and s.game like 'outpost-zero%'
   and s.name is distinct from case
-    when sp.handle_key in (
-      'op_' || left(replace(sp.user_id::text, '-', ''), 20),
-      'op_' || left(replace(sp.user_id::text, '-', ''), 8)
-    )
+    when nullif(btrim(sp.handle), '') is null
+      or btrim(coalesce(sp.handle, '')) !~ '^[A-Za-z0-9_]{3,32}$'
+      or lower(btrim(coalesce(sp.handle_key, ''))) in (
+        'username_not_set',
+        'usernamenotset',
+        'op_' || left(replace(sp.user_id::text, '-', ''), 20),
+        'op_' || left(replace(sp.user_id::text, '-', ''), 8)
+      )
+      or lower(btrim(coalesce(sp.handle, ''))) in (
+        'username_not_set',
+        'usernamenotset',
+        'op_' || left(replace(sp.user_id::text, '-', ''), 20),
+        'op_' || left(replace(sp.user_id::text, '-', ''), 8)
+      )
       then 'USERNAME_NOT_SET'
     else sp.handle
   end;
@@ -94,7 +115,17 @@ as $$
   select s.user_id,
          case
            when sp.user_id is null
-             or sp.handle_key in (
+             or nullif(btrim(sp.handle), '') is null
+             or btrim(coalesce(sp.handle, '')) !~ '^[A-Za-z0-9_]{3,32}$'
+             or lower(btrim(coalesce(sp.handle_key, ''))) in (
+               'username_not_set',
+               'usernamenotset',
+               'op_' || left(replace(s.user_id::text, '-', ''), 20),
+               'op_' || left(replace(s.user_id::text, '-', ''), 8)
+             )
+             or lower(btrim(coalesce(sp.handle, ''))) in (
+               'username_not_set',
+               'usernamenotset',
                'op_' || left(replace(s.user_id::text, '-', ''), 20),
                'op_' || left(replace(s.user_id::text, '-', ''), 8)
              )
@@ -154,7 +185,17 @@ as $$
   select c.user_id,
          case
            when sp.user_id is null
-             or sp.handle_key in (
+             or nullif(btrim(sp.handle), '') is null
+             or btrim(coalesce(sp.handle, '')) !~ '^[A-Za-z0-9_]{3,32}$'
+             or lower(btrim(coalesce(sp.handle_key, ''))) in (
+               'username_not_set',
+               'usernamenotset',
+               'op_' || left(replace(c.user_id::text, '-', ''), 20),
+               'op_' || left(replace(c.user_id::text, '-', ''), 8)
+             )
+             or lower(btrim(coalesce(sp.handle, ''))) in (
+               'username_not_set',
+               'usernamenotset',
                'op_' || left(replace(c.user_id::text, '-', ''), 20),
                'op_' || left(replace(c.user_id::text, '-', ''), 8)
              )
@@ -181,5 +222,9 @@ grant execute on function public.get_outpost_zero_public_player(text) to anon, a
 -- to decide which authenticated rows it may see.
 revoke select on public.scores from public, anon;
 grant select on public.scores to authenticated;
+
+-- Transactional cache refresh: PostgREST sees the replaced public functions
+-- only if this complete leaderboard migration commits successfully.
+notify pgrst, 'reload schema';
 
 commit;

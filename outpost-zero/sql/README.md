@@ -121,9 +121,12 @@ Accounts created before usernames were required use `USERNAME_NOT_SET` as an
 internal RPC marker instead of publishing an email or UUID-like temporary
 label. This covers both the current 20-character generated handle and the
 legacy 8-character version. The signed-in owner may see their own email from
-their private Auth session until they choose a username; everyone else sees a
-non-identifying placeholder. The leaderboard RPC never selects from
-`auth.users` and never returns an email. Cleanup is restricted to score games
+their private Auth session until they choose a username. Creator/Main may also
+request a separately role-checked fallback label for unfinished top-five rows;
+regular and signed-out viewers see a non-identifying placeholder. The public
+leaderboard RPC never selects from `auth.users` and never returns an email.
+Blank, malformed, and email-shaped legacy handles are treated as unfinished.
+Cleanup is restricted to score games
 beginning with `outpost-zero`, so it does not rename rows belonging to another
 game that shares the table.
 
@@ -179,7 +182,9 @@ timestamp. Private tables use forced RLS and narrow column/RPC privileges.
 
 Admin 01 includes the former Appeals setup and the safe internal compatibility
 functions required by its audited wrapper. Private Auth email resolution occurs
-inside Postgres; the current game sends public usernames. On its first run,
+inside Postgres. Creator/Main may use or see the exact account email only when
+that account has no chosen username; Co-admins remain username-only except for
+their own fallback identity. Public and non-admin APIs remain email-free. On its first run,
 Admin 01 reads the creator username from the private, transaction-local
 `outpost_zero.creator_username` setting and pins that account's Auth UUID in a
 forced-RLS config row. The public file contains no creator identity. Existing
