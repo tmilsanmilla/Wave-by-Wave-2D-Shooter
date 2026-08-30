@@ -1377,7 +1377,7 @@ function drawArena(){
           botLadderSyncState==='storage_error'?'Device saving must recover before another ladder match.':'Return to the CPU ladder to finish syncing.';
       y=button(rematchReady?'botrematch':'botwait',!settled?'SAVING RESULT\u2026':rematchReady?'PLAY AGAIN':'LADDER NOT READY',y,'#a7c15e',
         !settled?'Play Again unlocks after this result is safely recorded.':rematchReady?'New first-to-5 match at your current ladder difficulty.':blockedNote,rematchReady);
-      y=button('botloadout','CHANGE WEAPONS',y,'#7fd8ff');
+      y=button('botloadout','SWITCH WEAPONS',y,'#7fd8ff');
       button('botleave','BACK TO OFFLINE \u00b7 ONE DEVICE ONLY',y,'#8a9268');
     }
   } else if(!authUser){
@@ -1406,6 +1406,7 @@ function drawArena(){
     let y=bodyY+(tiny?72:116);
     y=button('rematch',arena.rematchVotes.has(authUser.id)?'REMATCH REQUESTED':'REMATCH',y,'#a7c15e');
     y=button('again','PLAY AGAIN \u00b7 QUICK MATCH',y,'#e8b658');
+    y=button('switchweapons','SWITCH WEAPONS',y,'#7fd8ff');
     button('leave','LEAVE ARENA',y,'#d05548');
   } else {
     let y=bodyY;
@@ -1519,6 +1520,7 @@ function arenaClick(){
     else if(r.id==='cancel') leaveArena('Left matchmaking.',false);
     else if(r.id==='rematch') arenaVoteRematch();
     else if(r.id==='again') arenaPlayAgain();
+    else if(r.id==='switchweapons') arenaSwitchWeapons();
     else if(r.id==='leave') leaveArena('',true);
     else if(r.id==='back'){ leaveArena('',false); selPage=pendingGameMode==='arena'?'loadout':'hub'; }
     sfx('swap'); return;

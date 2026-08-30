@@ -1572,6 +1572,14 @@ function arenaCheckRematch(){
   }
 }
 function arenaPlayAgain(){ leaveArena('',false); arenaQuickMatch(); }
+function arenaSwitchWeapons(){
+  if(!arena||arena.phase!=='match_end'||isBotArena())return false;
+  leaveArena('',false);
+  pendingGameMode='arena';modeBoardMode='arena';loadoutBackPage='modeboard';
+  restoreLastLoadoutForMode('arena');selPage='loadout';
+  modeBoardNotice='SWITCH WEAPONS BEFORE YOUR NEXT 1v1';modeBoardNoticeT=performance.now()+3200;
+  return true;
+}
 function leaveArena(status,toHub){
   if(!arena) return;
   if(typeof isPartyCpuMatch==='function'&&isPartyCpuMatch()){ partyCpuAbort(status||'You left the Party CPU match.',true); return; }
