@@ -1403,7 +1403,7 @@ function arenaBotHitPlayer(dmg){
   if(!isBotArena()||!arenaCanAct()||arena.roundResolved) return;
   const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
   if(now<parryUntil){
-    if(typeof spawnTwinSaiReflection==='function')spawnTwinSaiReflection(player.x,player.y,120);
+    if(typeof spawnTwinSaiReflection==='function')spawnTwinSaiReflection(player.x,player.y,hit);
     burst(player.x,player.y,'#bfe8ff',10,4);addShake(3);sfx('hit');
     waveMsg='TWIN SAI PARRY';waveMsgT=now+900;return;
   }

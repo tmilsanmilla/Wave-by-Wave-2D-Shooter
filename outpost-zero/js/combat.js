@@ -37,8 +37,9 @@ function cycleWeapon(){
   }
   if(loadout.melee&&WEAPONS[loadout.melee]) switchWeapon(loadout.melee);
 }
-function spawnTwinSaiReflection(x,y,damage=120,meta){
+function spawnTwinSaiReflection(x,y,damage,meta){
   meta=meta||{};
+  const reflectedDamage=clamp(+damage||0,0,ARENA_HP);if(!reflectedDamage)return null;
   // A parry is a real projectile, not guaranteed damage. Start it at the
   // interception point and use the live crosshair so changing aim between
   // incoming rounds changes each reflected round's path.
@@ -46,7 +47,7 @@ function spawnTwinSaiReflection(x,y,damage=120,meta){
   target.x=clamp(target.x,bounds.left+1,bounds.right-1);
   target.y=clamp(target.y,bounds.top+1,bounds.bottom-1);
   const a=Math.atan2(target.y-y,target.x-x),rootHitId=String(meta.rootHitId||'').slice(0,120);
-  const reflected={x,y,vx:Math.cos(a)*22,vy:Math.sin(a)*22,dmg:clamp(+damage||0,1,ARENA_HP),pierce:2,
+  const reflected={x,y,vx:Math.cos(a)*22,vy:Math.sin(a)*22,dmg:reflectedDamage,pierce:2,
     life:900,rng:900,dist:0,fall:1,fg:4,col:'#bfe8ff',weapon:'twinsai',parryReflect:true,
     parryRootHitId:rootHitId,parryDepth:1};
   bullets.push(reflected);return reflected;
@@ -760,7 +761,10 @@ function update(dtms){
     meleeSwing(WEAPONS[player.cur], 1);
   }
   // thrown burning daggers: fly out, then home back to the hand; return at t
-  if(daggersOut && now>=daggersOut.end) daggersOut=null;
+  if(daggersOut && now>=daggersOut.end){
+    if(typeof finishMeleeAbilityVisual==='function')finishMeleeAbilityVisual('bdaggers');
+    daggersOut=null;
+  }
   if(daggersOut){
     const back = now>=daggersOut.t;
     for(const bl of daggersOut.blades){
@@ -811,6 +815,7 @@ function update(dtms){
     }
     // once returning blades reach the player, catch them
     if(daggersOut.blades.every(bl=>bl.returning && dist2(bl.x,bl.y,player.x,player.y)<28*28)){
+      if(typeof finishMeleeAbilityVisual==='function')finishMeleeAbilityVisual('bdaggers');
       daggersOut=null;
     }
   }
@@ -1177,7 +1182,7 @@ function update(dtms){
             break;                                      // no damage; bullet flies off deflected
           }
           let hdmg=b.dmg*dmgMul(b), wasCrit=false;
-          if(perks.crit && Math.random()<perks.crit){ hdmg*=3; wasCrit=true; burst(b.x,b.y,'#ffe08a',8,4); }
+          if(!b.parryReflect&&perks.crit && Math.random()<perks.crit){ hdmg*=3; wasCrit=true; burst(b.x,b.y,'#ffe08a',8,4); }
           const beforeHp=Math.max(0,+e.hp||0);
           damageEnemy(e,hdmg*freezeHit(e),{crit:wasCrit}); e.hitT=now+70;
           if(b.fire) igniteEnemy(e, 0.4);            // solar bolts ignite on impact
@@ -1227,7 +1232,8 @@ function update(dtms){
       if(!b.h&&pointInRects(b.x,b.y)){ dead=true; break; }
       if(now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS&&
           dist2(b.x,b.y,player.x,player.y)<(player.r+42)*(player.r+42)){
-        spawnTwinSaiReflection(b.x,b.y,120);
+        const incomingDamage=b.botArena?(b.dmg||WEAPONS.ar.dmg)*dmgMul(b):(b.dmg||ETYPES.gunner.dmg);
+        spawnTwinSaiReflection(b.x,b.y,incomingDamage);
         burst(b.x,b.y,'#bfe8ff',10,4); sfx('hit'); addShake(3);
         dead=true;                                      // the guard remains active for its full timed window
         break;

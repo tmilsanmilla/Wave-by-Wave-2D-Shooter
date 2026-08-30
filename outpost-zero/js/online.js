@@ -69,6 +69,44 @@ function arenaApplyRemoteParryState(actor,packet,clock=now){
   actor.parryReadyAt=actor.parryUntil+ABILITY_CD.twinsai;
   return true;
 }
+function arenaRemoteMeleeFxBlades(packet,clock){
+  if(!Array.isArray(packet&&packet.meleeFxBlades)||packet.meleeFxBlades.length!==2)return null;
+  const bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:0,top:0,right:WORLD.w,bottom:WORLD.h},result=[];
+  for(const raw of packet.meleeFxBlades){
+    if(!raw||typeof raw!=='object'||Array.isArray(raw))return null;
+    const x=+raw.x,y=+raw.y,vx=+raw.vx,vy=+raw.vy,speed=Math.hypot(vx,vy);
+    if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(vx)||!Number.isFinite(vy)||speed>25||
+       x<bounds.left-12||x>bounds.right+12||y<bounds.top-12||y>bounds.bottom+12)return null;
+    result.push({x,y,vx,vy,returning:raw.returning===true,at:clock});
+  }
+  return result;
+}
+function arenaApplyRemoteMeleeAbilityState(actor,packet,remoteLoadout,clock=now){
+  if(!actor||!packet)return false;
+  const seq=+packet.meleeFxSeq,left=+packet.meleeFxMs,oldSeq=Math.max(0,Math.floor(+actor.meleeFxSeq||0));
+  if(!Number.isSafeInteger(seq)||seq<0||seq>1000000000||seq<oldSeq||
+     !Number.isFinite(left)||left<0||left>MELEE_ABILITY_VISUAL_MAX_MS)return false;
+  if(seq===oldSeq){
+    if(left===0&&clock<(actor.meleeFxUntil||0)){actor.meleeFxUntil=clock;actor.meleeFxBlades=[];return true;}
+    if(left>0&&actor.meleeFxKey==='bdaggers'){
+      const blades=arenaRemoteMeleeFxBlades(packet,clock);if(blades){actor.meleeFxBlades=blades;return true;}
+    }
+    return false;
+  }
+  // Remember rejected higher sequences so a forged or delayed activation
+  // cannot become valid later. This state is cosmetic and never causes hits.
+  actor.meleeFxSeq=seq;
+  if(left===0){actor.meleeFxUntil=clock;actor.meleeFxBlades=[];return true;}
+  const key=String(packet.meleeFxKey||''),max=MELEE_ABILITY_VISUAL_MS[key],angle=+packet.meleeFxAngle;
+  const owns=!!(max&&remoteLoadout&&String(remoteLoadout.melee||'')===key&&WEAPONS[key]&&WEAPONS[key].melee&&
+    (typeof isWeaponPublished!=='function'||isWeaponPublished(key)));
+  if(!owns||left>max||!Number.isFinite(angle)||Math.abs(angle)>TAU*1000||clock<(actor.meleeFxReadyAt||0))return false;
+  actor.meleeFxKey=key;actor.meleeFxStart=clock-(max-left);actor.meleeFxUntil=clock+left;
+  actor.meleeFxAngle=Math.atan2(Math.sin(angle),Math.cos(angle));
+  actor.meleeFxBlades=key==='bdaggers'?(arenaRemoteMeleeFxBlades(packet,clock)||[]):[];
+  actor.meleeFxReadyAt=actor.meleeFxStart+Math.max(max,Math.min(120000,+ABILITY_CD[key]||max));
+  return true;
+}
 function arenaGuard(){
   if(!sb||!authUser){
     arenaAuthPending=true; $('aguest').style.display='none';
@@ -213,8 +251,8 @@ function arenaApplyMapVoteOpen(p){
   if(epoch>arena.matchEpoch){
     arena.matchEpoch=epoch; arena.round=0; arena.scores=Object.assign({},p.scores||{});
     arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
-    arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();
-    arena.hitSeq=0; arena.sentHitKinds=new Map(); arena.winRecorded=false;
+    arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();arena.receivedHitDamage=new Map();
+    arena.hitSeq=0; arena.sentHitKinds=new Map();arena.sentHitDamage=new Map();arena.pendingHitFeedback=new Map(); arena.winRecorded=false;
     arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
     arenaResetMapVote('arena');
   }
@@ -377,6 +415,7 @@ function arenaApplyRemoteUtility(p){
       if(Math.hypot(player.x-x,player.y-y)<R+player.r){
         arena.utilityFrozenUntil=now+5000;cancelFanTheHammer();cancelMedHeal();resetFireCadence();
         player.dashUntil=now;fistFlurryUntil=0;sawChargeUntil=0;comboNextT=0;
+        if(['scythe','terafists','chainsaw'].includes(player.meleeFxKey))finishMeleeAbilityVisual(player.meleeFxKey);
         utilityOut=false;waveMsg='FROZEN — FIRST HIT THAWS';waveMsgT=now+1400;sfx('hit');
       }
     };
@@ -1004,7 +1043,7 @@ function arenaConnectRoom(code,wantsHost,mode,expectedIds){
   arena.wantsHost=!!wantsHost; arena.expectedIds=expectedIds; arena.joinedAt=arena.joinedAt||Date.now();
   arena.localReady=mode==='queue'; arena.remoteReady=false;
   const ch=sb.channel('oz-arena-v1-'+code,{config:{broadcast:{self:false,ack:false},presence:{key:authUser.id}}});
-  for(const ev of ['state','shot','melee','firework','utility','hit','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
+  for(const ev of ['state','shot','melee','firework','utility','hit','hit_result','ko','round_start','round_result','ready','rematch','rematch_start','forfeit_result',
                     'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_tnt_hit','map_hazard','map_hazard_ack','leave','room_full'])
     ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload));
   ch.on('presence',{event:'sync'},()=>arenaMatchPresenceSync(ch));
@@ -1054,7 +1093,7 @@ function arenaMatchPresenceSync(ch){
   const remoteKit=typeof arenaRemoteLoadout==='function'?arenaRemoteLoadout(om):
     {primary:om.primary,secondary:om.secondary,melee:om.melee};
   arena.opponent=Object.assign(oldOpp||{x:WORLD.w/2+380,y:WORLD.h/2,tx:WORLD.w/2+380,ty:WORLD.h/2,angle:Math.PI,hp:ARENA_HP,cur:remoteKit&&remoteKit.primary||'ar',utilityOut:false,
-                                 parrySeq:0,parryUntil:0,parryReadyAt:0,lastSeen:Date.now()},
+                                 parrySeq:0,parryUntil:0,parryReadyAt:0,meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:[],lastSeen:Date.now()},
                                {id:om.id,name:om.name||'opponent',loadout:remoteKit||{primary:'ar',secondary:'m9',melee:'knife'},remoteLoadoutValid:!!remoteKit});
   // Stay visible in the quick queue until both confirmed IDs have actually
   // arrived in the match room. This closes the one-sided transition race.
@@ -1167,6 +1206,7 @@ function arenaReceive(event,p){
     r.cur=carried?p.cur:r.cur;
     if(typeof p.utilityOut==='boolean')r.utilityOut=!!(p.utilityOut&&r.loadout&&r.loadout.utility);
     arenaApplyRemoteParryState(r,p,now);
+    arenaApplyRemoteMeleeAbilityState(r,p,r.loadout,now);
     r.hp=clamp(+p.hp||0,0,ARENA_HP); r.lastSeen=Date.now();
     if(authUser.id===arena.hostId&&r.hp<=0){
       if(arenaHazardCauseValid(p)) arenaHostRecordHazardHp(p.hazardEventId,p.hazardTntId,r.id,0);
@@ -1175,6 +1215,7 @@ function arenaReceive(event,p){
     return;
   }
   if(event==='hit'){ arenaTakeHit(p); return; }
+  if(event==='hit_result'){ arenaApplyHitResult(p); return; }
   if(event==='ko' && p.round===arena.round && arena.phase!=='match_end'){
     if(String(p.dead)!==String(p.from)) return;
     if(arenaHazardCauseValid(p)){
@@ -1212,8 +1253,8 @@ function arenaApplyRematchStart(p){
   if(!authUser||!arena.opponent||p.from!==arena.hostId||epoch<=arena.matchEpoch) return false;
   arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
-  arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();
-  arena.hitSeq=0; arena.sentHitKinds=new Map(); arena.pendingUnscopedHits=new Set();
+  arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();arena.receivedHitDamage=new Map();
+  arena.hitSeq=0; arena.sentHitKinds=new Map();arena.sentHitDamage=new Map();arena.pendingHitFeedback=new Map(); arena.pendingUnscopedHits=new Set();
   arena.seenShots=new Set(); arena.shotSeq=0; arena.remoteShots=[];arena.seenMelees=new Set();arena.meleeSeq=0;
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.winRecorded=false;
@@ -1240,7 +1281,8 @@ function arenaApplyRoundStart(p){
   resetWeaponGimmickState();
   clearCameraShake();
   arena.round=p.round; arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=false;
-  arena.seenHits=new Set();arena.receivedHitKinds=new Map();arena.hitSeq=0;arena.sentHitKinds=new Map();
+  arena.seenHits=new Set();arena.receivedHitKinds=new Map();arena.receivedHitDamage=new Map();arena.hitSeq=0;
+  arena.sentHitKinds=new Map();arena.sentHitDamage=new Map();arena.pendingHitFeedback=new Map();
   arena.seenShots=new Set();arena.shotSeq=0;arena.remoteShots=[];arena.seenMelees=new Set();arena.meleeSeq=0;
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.pendingUnscopedHits=new Set();
@@ -1270,6 +1312,7 @@ function arenaApplyRoundStart(p){
   arena.opponent.x=theirs.x; arena.opponent.y=theirs.y; arena.opponent.tx=theirs.x; arena.opponent.ty=theirs.y; arena.opponent.angle=theirs.angle;
   arena.opponent.hp=ARENA_HP; arena.opponent.cur=arena.opponent.loadout.primary||'ar';
   arena.opponent.utilityOut=false;arena.opponent.parrySeq=0;arena.opponent.parryUntil=0;arena.opponent.parryReadyAt=0;
+  resetMeleeAbilityVisual(arena.opponent);
   state='play'; menuOpen=false; aiming=false; rmbAim=false;
   waveMsg='ROUND '+arena.round+' \u2014 GET READY'; waveMsgT=now+2800; sfx('wave');
 }
@@ -1314,12 +1357,19 @@ function arenaWallTick(wall){
 }
 function arenaSyncTick(wall){
   if(!arena||!arena.active||arena.networkHold||isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())) return;
+  const feedbackClock=Date.now();
+  if(arena.pendingHitFeedback instanceof Map)for(const [id,pending] of arena.pendingHitFeedback)
+    if(feedbackClock-(+pending.at||0)>5000)arena.pendingHitFeedback.delete(id);
   if(wall>=arena.syncAt&&arena.matchChannel&&authUser){
     arena.syncAt=arena.syncAt?arena.syncAt+ARENA_SYNC_MS:wall+ARENA_SYNC_MS;
     if(arena.syncAt<wall-ARENA_SYNC_MS) arena.syncAt=wall+ARENA_SYNC_MS;
     const cause=arena.localKoCause;
     arenaSend('state',{x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,utilityOut:!!utilityOut,hp:Math.max(0,player.hp),
       parrySeq:Math.max(0,Math.floor(+parrySeq||0)),parryMs:clamp(parryUntil-now,0,TWIN_SAI_PARRY_MS),
+      meleeFxSeq:Math.max(0,Math.floor(+player.meleeFxSeq||0)),meleeFxKey:String(player.meleeFxKey||''),
+      meleeFxMs:clamp((+player.meleeFxUntil||0)-now,0,MELEE_ABILITY_VISUAL_MAX_MS),
+      meleeFxAngle:Number.isFinite(+player.meleeFxAngle)?+player.meleeFxAngle:0,
+      meleeFxBlades:meleeAbilityVisualBlades(),
       tntDamage:activeArenaMapId()==='construction'?arenaTntOwnDamageSnapshot(String(authUser.id)):undefined,
       detonatedTnt:activeArenaMapId()==='construction'?[...arenaDestroyedTnt()]:undefined,
       portalSeq:Math.max(0,Math.floor(+player.portalSeq||0)),koKind:cause&&cause.kind,
@@ -1342,27 +1392,62 @@ function arenaCelebrateConfirmedUnscopedKill(raw,killerId){
   return triggerUnscopedSniperKillCelebration(1,0,{weapon:'sniper',unscopedShot:true,
     confirmationId:'arena:'+arena.matchEpoch+':'+arena.round+':'+cause.killHitId});
 }
-function arenaRememberSentHit(id,kind){
+function arenaRememberSentHit(id,kind,dmg){
   if(!(arena.sentHitKinds instanceof Map))arena.sentHitKinds=new Map();
-  arena.sentHitKinds.set(String(id),String(kind||'shot'));
-  if(arena.sentHitKinds.size>500)arena.sentHitKinds=new Map([...arena.sentHitKinds].slice(-250));
+  if(!(arena.sentHitDamage instanceof Map))arena.sentHitDamage=new Map();
+  const key=String(id),hit=clamp(+dmg||0,0,ARENA_HP);
+  arena.sentHitKinds.set(key,String(kind||'shot'));arena.sentHitDamage.set(key,hit);
+  if(arena.sentHitKinds.size>500){
+    const keep=[...arena.sentHitKinds.keys()].slice(-250),kinds=new Map(),damage=new Map();
+    for(const value of keep){kinds.set(value,arena.sentHitKinds.get(value));damage.set(value,arena.sentHitDamage.get(value));}
+    arena.sentHitKinds=kinds;arena.sentHitDamage=damage;
+  }
 }
-function arenaRememberReceivedHit(id,kind){
+function arenaRememberReceivedHit(id,kind,dmg){
   if(!(arena.receivedHitKinds instanceof Map))arena.receivedHitKinds=new Map();
-  arena.receivedHitKinds.set(String(id),String(kind||'shot'));
-  if(arena.receivedHitKinds.size>500)arena.receivedHitKinds=new Map([...arena.receivedHitKinds].slice(-250));
+  if(!(arena.receivedHitDamage instanceof Map))arena.receivedHitDamage=new Map();
+  const key=String(id),hit=clamp(+dmg||0,0,ARENA_HP);
+  arena.receivedHitKinds.set(key,String(kind||'shot'));arena.receivedHitDamage.set(key,hit);
+  if(arena.receivedHitKinds.size>500){
+    const keep=[...arena.receivedHitKinds.keys()].slice(-250),kinds=new Map(),damage=new Map();
+    for(const value of keep){kinds.set(value,arena.receivedHitKinds.get(value));damage.set(value,arena.receivedHitDamage.get(value));}
+    arena.receivedHitKinds=kinds;arena.receivedHitDamage=damage;
+  }
 }
 function arenaIncomingParryValid(p){
-  if(!p||String(p.kind||'')!=='parry'||+p.parryDepth!==1||!Number.isSafeInteger(+p.parryDepth)||
-     +p.dmg!==Math.min(120,ARENA_HP))return false;
+  if(!p||String(p.kind||'')!=='parry'||+p.parryDepth!==1||!Number.isSafeInteger(+p.parryDepth))return false;
   const root=String(p.rootHitId||'');
-  if(!root||root.length>120||!(arena.sentHitKinds instanceof Map)||!arena.sentHitKinds.has(root))return false;
-  return arena.sentHitKinds.get(root)!=='parry';          // a reflected bolt can never become a new reflection root
+  if(!root||root.length>120||!(arena.sentHitKinds instanceof Map)||!(arena.sentHitDamage instanceof Map)||
+     !arena.sentHitKinds.has(root)||!arena.sentHitDamage.has(root))return false;
+  const expected=+arena.sentHitDamage.get(root),incoming=+p.dmg;
+  return arena.sentHitKinds.get(root)!=='parry'&&Number.isFinite(expected)&&Number.isFinite(incoming)&&
+    expected>0&&Math.abs(incoming-expected)<1e-6;          // a reflection keeps the root shot's exact damage and cannot recurse
+}
+function arenaSendHitResult(p,dealt,parried){
+  const shotId=String(p&&p.id||''),to=String(p&&p.from||'');
+  if(!shotId||shotId.length>120||!to||!arena.matchChannel)return false;
+  const packet={to,shotId,dealt:parried?0:clamp(+dealt||0,0,ARENA_HP),parried:!!parried},
+    channel=arena.matchChannel,epoch=arena.matchEpoch,round=arena.round;
+  arenaSend('hit_result',packet);
+  for(const wait of [180,520])setTimeout(()=>{
+    if(arena.matchChannel===channel&&arena.matchEpoch===epoch&&arena.round===round)arenaSend('hit_result',packet);
+  },wait);
+  return true;
+}
+function arenaApplyHitResult(p){
+  const shotId=String(p&&p.shotId||''),dealt=+p?.dealt;
+  if(!shotId||shotId.length>120||!(arena.pendingHitFeedback instanceof Map)||!arena.pendingHitFeedback.has(shotId)||
+     typeof p.parried!=='boolean'||!Number.isFinite(dealt))return false;
+  const pending=arena.pendingHitFeedback.get(shotId);
+  if(dealt<0||dealt>pending.dmg+1e-6||(p.parried&&dealt!==0)||(!p.parried&&dealt<=0))return false;
+  arena.pendingHitFeedback.delete(shotId);
+  if(!p.parried&&arena.opponent)addDamageNumber(arena.opponent,dealt,pending.kind==='crit'||pending.kind==='parry');
+  return true;
 }
 function arenaSendHit(dmg,kind,meta){
   meta=meta||{};
   if(!arenaCanAct()||!arena.opponent) return;
-  const hitKind=String(kind||'shot'),hit=hitKind==='parry'?Math.min(120,ARENA_HP):clamp(dmg,1,ARENA_HP);
+  const hitKind=String(kind||'shot'),hit=clamp(dmg,1,ARENA_HP);
   let parryMeta=null;
   if(hitKind==='parry'){
     const root=String(meta&&meta.rootHitId||''),depth=+(meta&&meta.parryDepth);
@@ -1370,11 +1455,11 @@ function arenaSendHit(dmg,kind,meta){
     // may create a reflected hit. This also fixes the reflection depth at one.
     if(depth!==1||!Number.isSafeInteger(depth)||!root||root.length>120||
        !(arena.seenHits instanceof Set)||!arena.seenHits.has(root)||
-       !(arena.receivedHitKinds instanceof Map)||!arena.receivedHitKinds.has(root)||
-       arena.receivedHitKinds.get(root)==='parry')return;
+       !(arena.receivedHitKinds instanceof Map)||!(arena.receivedHitDamage instanceof Map)||
+       !arena.receivedHitKinds.has(root)||!arena.receivedHitDamage.has(root)||arena.receivedHitKinds.get(root)==='parry'||
+       Math.abs(hit-(+arena.receivedHitDamage.get(root)||0))>=1e-6)return;
     parryMeta={rootHitId:root,parryDepth:1};
   }
-  addDamageNumber(arena.opponent,hit,hitKind==='crit'||hitKind==='parry');
   const id=authUser.id+':'+arena.round+':'+(++arena.hitSeq);
   if(hitKind==='unscoped_sniper'){
     if(!(arena.pendingUnscopedHits instanceof Set))arena.pendingUnscopedHits=new Set();
@@ -1382,7 +1467,11 @@ function arenaSendHit(dmg,kind,meta){
     if(arena.pendingUnscopedHits.size>64)arena.pendingUnscopedHits=new Set([...arena.pendingUnscopedHits].slice(-32));
   }
   const packet=Object.assign({to:arena.opponent.id,id,dmg:hit,kind:hitKind},parryMeta||{});
-  arenaRememberSentHit(id,hitKind);arenaSend('hit',packet);
+  arenaRememberSentHit(id,hitKind,hit);
+  if(!(arena.pendingHitFeedback instanceof Map))arena.pendingHitFeedback=new Map();
+  arena.pendingHitFeedback.set(id,{dmg:hit,kind:hitKind,at:Date.now()});
+  if(arena.pendingHitFeedback.size>500)arena.pendingHitFeedback=new Map([...arena.pendingHitFeedback].slice(-250));
+  arenaSend('hit',packet);
   return id;
 }
 function arenaTakeHit(p){
@@ -1392,14 +1481,15 @@ function arenaTakeHit(p){
   arena.seenHits.add(id); if(arena.seenHits.size>500) arena.seenHits=new Set([...arena.seenHits].slice(-250));
   let dmg=clamp(+p.dmg||0,0,ARENA_HP); if(!dmg) return;
   const reflected=String(p.kind||'')==='parry';
-  arenaRememberReceivedHit(id,reflected?'parry':String(p.kind||'shot'));
   if(reflected&&!arenaIncomingParryValid(p))return;
+  arenaRememberReceivedHit(id,reflected?'parry':String(p.kind||'shot'),dmg);
   if(now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS){
     // The stance guards every unique hit for its full 1 second. Ordinary
     // shots become real, aimed projectiles, so a bad crosshair can miss. A
     // depth-one reflection is absorbed here and never bounced a second time.
+    arenaSendHitResult(p,0,true);
     if(!reflected&&typeof spawnTwinSaiReflection==='function')
-      spawnTwinSaiReflection(player.x,player.y,120,{rootHitId:id,parryDepth:1,online:true});
+      spawnTwinSaiReflection(player.x,player.y,dmg,{rootHitId:id,parryDepth:1,online:true});
     burst(player.x,player.y,'#bfe8ff',10,4); addShake(3); sfx('hit');
     waveMsg='TWIN SAI PARRY'; waveMsgT=now+900;
     return;
@@ -1410,7 +1500,8 @@ function arenaTakeHit(p){
   }
   cancelMedHeal();
   const before=Math.max(0,+player.hp||0);
-  damagePlayerHp(dmg); player.hurtFlash=1; player.hurtCd=240; addShake(4); sfx('hurt');
+  const dealt=damagePlayerHp(dmg);arenaSendHitResult(p,dealt,false);
+  player.hurtFlash=1; player.hurtCd=240; addShake(4); sfx('hurt');
   burst(player.x,player.y,'#d05548',8,3);
   if(before>0&&player.hp<=0){
     const shotCause=p.kind==='unscoped_sniper'?{kind:'unscoped_sniper',hitId:p.id}:null;
@@ -1510,6 +1601,7 @@ function leaveArena(status,toHub){
     practiceMode=null;
     enemies=[]; bullets=[]; ebullets=[]; pickups=[]; damageNumbers=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[]; splitBalls=[];
     daggersOut=null; comboStep=0; comboNextT=0; parryUntil=0; parrySeq=0; teraHitCharge=15; fistFlurryUntil=0; sawChargeUntil=0;
+    resetMeleeAbilityVisual(player);
   }
   const msg=status||''; arena=freshArena(msg||'Casual 1v1 ready.');
   if(state==='play'||state==='over'||state==='upgrade') state='select';

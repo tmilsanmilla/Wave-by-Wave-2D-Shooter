@@ -1,5 +1,34 @@
 "use strict";
 
+// Presentation-only windows for melee abilities. Gameplay timing and damage
+// remain owned by the existing ability state; this descriptor only lets every
+// screen show the same readable animation after quick-melee restores a gun.
+const MELEE_ABILITY_VISUAL_MS=Object.freeze({
+  scythe:260,terafists:1600,knife:250,hammer:220,chainsaw:400,bdaggers:3000
+});
+const MELEE_ABILITY_VISUAL_MAX_MS=3000;
+function resetMeleeAbilityVisual(actor=player){
+  if(!actor)return;
+  actor.meleeFxSeq=0;actor.meleeFxKey='';actor.meleeFxStart=0;actor.meleeFxUntil=0;
+  actor.meleeFxAngle=0;actor.meleeFxReadyAt=0;actor.meleeFxBlades=[];
+}
+function beginMeleeAbilityVisual(key,angle){
+  const duration=MELEE_ABILITY_VISUAL_MS[key];
+  if(!duration||!player)return false;
+  const raw=Number.isFinite(+angle)?+angle:aimAngle();
+  player.meleeFxSeq=Math.max(0,Math.floor(+player.meleeFxSeq||0))+1;
+  player.meleeFxKey=key;player.meleeFxStart=now;player.meleeFxUntil=now+duration;
+  player.meleeFxAngle=Math.atan2(Math.sin(raw),Math.cos(raw));
+  return true;
+}
+function finishMeleeAbilityVisual(key){
+  if(!player||!player.meleeFxSeq||(key&&player.meleeFxKey!==key))return false;
+  player.meleeFxUntil=Math.min(+player.meleeFxUntil||now,now);return true;
+}
+function meleeAbilityVisualBlades(){
+  if(player.meleeFxKey!=='bdaggers'||!daggersOut||!Array.isArray(daggersOut.blades))return undefined;
+  return daggersOut.blades.slice(0,2).map(bl=>({x:+bl.x,y:+bl.y,vx:+bl.vx,vy:+bl.vy,returning:!!bl.returning}));
+}
 function meleeAbility(){
   if(state!=='play') return;
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
@@ -116,6 +145,10 @@ function meleeAbility(){
                               returning:false, hits:new Set()});
     }
     sfx('slash');
+  }
+  if(activated&&k!=='twinsai'){
+    const visualAngle=k==='scythe'?Math.atan2(player.ddy||0,player.ddx||1):aimAngle();
+    beginMeleeAbilityVisual(k,visualAngle);
   }
   // Count only an ability that actually activated. A dry/cooldown/out-of-range
   // press returns above and cannot pass the hands-on tutorial drill.

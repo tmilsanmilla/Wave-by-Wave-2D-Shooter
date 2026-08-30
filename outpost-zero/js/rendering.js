@@ -82,6 +82,18 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
   }else if(key==='hammer'){
     ctx.strokeStyle=p.shaft;ctx.lineWidth=3.6;ctx.beginPath();ctx.moveTo(4,5);ctx.lineTo(26,-7);ctx.stroke();
     ctx.fillStyle=p.blade;ctx.save();ctx.translate(26,-7);ctx.rotate(.5);ctx.fillRect(-5,-10,10,20);ctx.restore();
+  }else if(key==='bdaggers'){
+    for(const side of [-1,1]){
+      ctx.save();ctx.translate(0,side*5);ctx.rotate(side*.1);
+      ctx.strokeStyle=p.grip;ctx.lineWidth=3.2;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(11,0);ctx.stroke();
+      ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(10,-2.8);ctx.lineTo(34,0);ctx.lineTo(10,2.8);ctx.closePath();ctx.fill();ctx.restore();
+    }
+  }else if(key==='terafists'){
+    for(const side of [-1,1]){
+      const y=side*6;ctx.fillStyle=p.housing;ctx.fillRect(5,y-4,13,8);ctx.fillStyle=p.bright;
+      for(let i=0;i<3;i++){ctx.beginPath();ctx.arc(19+i*4,y,3.2,0,TAU);ctx.fill();}
+      ctx.strokeStyle=p.edge;ctx.lineWidth=1.6;ctx.strokeRect(6,y-3,10,6);
+    }
   }else if(key==='twinsai'){
     const guard=parryActive ? .34+Math.sin(now*.02)*.035 : 0;
     for(const side of [-1,1]){
@@ -90,12 +102,67 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
       ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(11,-2.5);ctx.lineTo(35,0);ctx.lineTo(11,2.5);ctx.closePath();ctx.fill();
       ctx.strokeStyle=p.edge;ctx.lineWidth=2.2;ctx.beginPath();ctx.moveTo(13,0);ctx.lineTo(18,-6);ctx.moveTo(13,0);ctx.lineTo(18,6);ctx.stroke();ctx.restore();
     }
-  }else{
+  }else if(key==='chainsaw'){
     ctx.fillStyle=p.housing;ctx.fillRect(3,-4.5,11,9);
     ctx.fillStyle=p.bar;ctx.fillRect(14,-2.8,18,5.6);
     ctx.fillStyle=p.teeth;const jig=(!hostile&&typeof player!=='undefined'&&now-player.lastSaw<160)?(now>>5)%2:0;
     for(let i=0;i<4;i++)ctx.fillRect(15+i*4.4,((i+jig)%2?-4.8:2.4),2.6,2.4);
+  }else{
+    ctx.strokeStyle=p.grip;ctx.lineWidth=3.4;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(12,0);ctx.stroke();
+    ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(11,-2.5);ctx.lineTo(31,0);ctx.lineTo(11,2.5);ctx.closePath();ctx.fill();
   }
+}
+function drawMeleeAbilityVisual(actor,clock,hostile=false,localActor=false){
+  if(!actor)return false;
+  const key=String(actor.meleeFxKey||''),max=MELEE_ABILITY_VISUAL_MS[key],until=+actor.meleeFxUntil||0;
+  if(!max||clock>=until)return false;
+  const start=Number.isFinite(+actor.meleeFxStart)?+actor.meleeFxStart:until-max;
+  const elapsed=clamp(clock-start,0,max),progress=clamp(elapsed/max,0,1),fade=1-progress;
+  const x=+actor.x||0,y=+actor.y||0,raw=Number.isFinite(+actor.meleeFxAngle)?+actor.meleeFxAngle:(+actor.angle||0);
+  const angle=Math.atan2(Math.sin(raw),Math.cos(raw)),main=hostile?'255,59,52':'191,232,255';
+  ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
+  if(key==='scythe'){
+    ctx.strokeStyle='rgba('+main+','+(0.25+fade*.55)+')';ctx.lineWidth=5/zoom;ctx.beginPath();
+    ctx.moveTo(x-Math.cos(angle)*12,y-Math.sin(angle)*12);ctx.lineTo(x-Math.cos(angle)*(55+progress*35),y-Math.sin(angle)*(55+progress*35));ctx.stroke();
+    for(let i=1;i<=3;i++){
+      ctx.save();ctx.globalAlpha=Math.max(.12,(.6-i*.12)*fade);ctx.translate(x-Math.cos(angle)*i*14,y-Math.sin(angle)*i*14);
+      ctx.rotate(angle);drawMeleeWeaponSilhouette('scythe',hostile,false);ctx.restore();
+    }
+  }else if(key==='knife'){
+    ctx.strokeStyle='rgba('+main+','+(.85*fade)+')';ctx.lineWidth=4/zoom;ctx.beginPath();ctx.arc(x,y,52+progress*20,0,TAU);ctx.stroke();
+    ctx.translate(x,y);ctx.rotate(angle+progress*TAU);ctx.globalAlpha=.35+.65*fade;drawMeleeWeaponSilhouette('knife',hostile,false);
+  }else if(key==='hammer'){
+    const shock=18+142*Math.sqrt(progress);ctx.strokeStyle='rgba('+main+','+(.9*fade)+')';ctx.lineWidth=(6-2*progress)/zoom;
+    ctx.beginPath();ctx.arc(x,y,shock,0,TAU);ctx.stroke();ctx.translate(x,y);ctx.rotate(angle-.8+progress*1.2);
+    ctx.globalAlpha=.45+.55*fade;drawMeleeWeaponSilhouette('hammer',hostile,false);
+  }else if(key==='chainsaw'){
+    ctx.setLineDash([7/zoom,4/zoom]);ctx.lineDashOffset=-elapsed*.08;ctx.strokeStyle='rgba('+main+','+(.5+.35*fade)+')';ctx.lineWidth=4/zoom;
+    ctx.beginPath();ctx.arc(x,y,70+Math.sin(clock*.05)*3,0,TAU);ctx.stroke();ctx.setLineDash([]);
+    ctx.translate(x,y);ctx.rotate(angle+progress*TAU*2);drawMeleeWeaponSilhouette('chainsaw',hostile,false);
+  }else if(key==='bdaggers'){
+    // Local Hurl already draws the authoritative moving blades. Other screens
+    // receive the two live blade positions; the fallback keeps the cue visible
+    // during the first state packet or when playing against an older client.
+    if(localActor&&typeof daggersOut!=='undefined'&&daggersOut){ctx.restore();return true;}
+    const live=Array.isArray(actor.meleeFxBlades)&&actor.meleeFxBlades.length===2?actor.meleeFxBlades:null;
+    const travel=165*(progress<.5?progress*2:(1-progress)*2),returning=progress>=.5;
+    for(let i=0;i<2;i++){
+      const side=i?1:-1,b=live&&live[i];
+      // Use the most recent validated coordinates without extrapolating them
+      // through a wall between 50 ms state updates.
+      const px=b?b.x:x+Math.cos(angle)*travel+Math.cos(angle+Math.PI/2)*side*7;
+      const py=b?b.y:y+Math.sin(angle)*travel+Math.sin(angle+Math.PI/2)*side*7;
+      const bladeAngle=b?Math.atan2(b.vy,b.vx):angle+(returning?Math.PI:0);
+      ctx.save();ctx.translate(px,py);ctx.rotate(bladeAngle);ctx.fillStyle=hostile?'#ff3b34':'#a9c4d6';
+      ctx.beginPath();ctx.moveTo(10,0);ctx.lineTo(-6,3.5);ctx.lineTo(-6,-3.5);ctx.closePath();ctx.fill();
+      ctx.fillStyle=hostile?'#7a1715':'#5a6b52';ctx.fillRect(-10,-2,-6,4);ctx.restore();
+    }
+  }else if(key==='terafists'){
+    const jab=Math.floor(elapsed/90)%2===0?1:-1,pulse=8+Math.sin(elapsed*.07)*5;
+    ctx.strokeStyle='rgba('+main+','+(.38+.28*fade)+')';ctx.lineWidth=3/zoom;ctx.beginPath();ctx.arc(x,y,38+pulse,0,TAU);ctx.stroke();
+    ctx.translate(x+Math.cos(angle)*pulse,y+Math.sin(angle)*pulse);ctx.rotate(angle+jab*.12);drawMeleeWeaponSilhouette('terafists',hostile,false);
+  }
+  ctx.restore();return true;
 }
 function drawMeleeSwingPath(x,y,angle,arc,range,progress){
   ctx.beginPath();
@@ -134,6 +201,7 @@ function drawPartyCpuActors(){
       ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6);ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8));ctx.stroke();
     }
     if(!partyParryActive&&clock<(e.flash||0)){ctx.fillStyle='#ffd98a';ctx.beginPath();ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU);ctx.fill();}
+    drawMeleeAbilityVisual(e,clock,!ally,false);
     // Teammate status helps coordination. Enemy CPUs intentionally expose no
     // name, exact health bar, damage flash, or hit-confirmation information.
     if(ally){
@@ -190,6 +258,7 @@ function drawArenaOpponentWorld(){
   if(!remoteParryActive&&now<(e.flash||0)){
     ctx.fillStyle='#ffd98a'; ctx.beginPath(); ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU); ctx.fill();
   }
+  drawMeleeAbilityVisual(e,now,true,false);
   if(swingProgress!==null){
     const attackA=Number.isFinite(+e.swingA)?+e.swingA:a,attackArc=e.swingArc||wk.arc||.5,attackR=e.swingR||wk.range||55;
     ctx.strokeStyle='rgba(255,59,52,'+(.8*(1-swingProgress)).toFixed(3)+')';ctx.lineWidth=4/zoom;
@@ -613,6 +682,8 @@ function drawWorld(){
   ctx.fillStyle='#39421f';                       // helmet stripe
   ctx.beginPath(); ctx.arc(0,0,player.r*0.55,-0.9,0.9); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
   ctx.restore();
+
+  drawMeleeAbilityVisual(player,now,false,true);
 
   // Incoming ordnance is deliberately the last world-space combat layer, so
   // enemy bodies, the local player, and dense wave effects cannot cover the

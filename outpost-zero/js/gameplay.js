@@ -226,6 +226,7 @@ function cancelFanTheHammer(clearLock=false){
 function resetWeaponGimmickState(){
   weaponLastShotAt=Object.create(null);
   cancelFanTheHammer(true);
+  if(typeof resetMeleeAbilityVisual==='function')resetMeleeAbilityVisual(player);
 }
 // A voluntary return to the menu is still a completed Endless attempt. Save it
 // before menuClick clears the run. Every non-ranked context is rejected here;

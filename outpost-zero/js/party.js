@@ -623,7 +623,7 @@ function partyConnect(code,creating,name){
   const ch=sb.channel('oz-party-v1-'+clean,{config:{presence:{key:self.id}}}); party.channel=ch;
   ch.on('presence',{event:'sync'},()=>partyPresenceSync(ch));
   for(const event of ['join_request','join_accept','join_reject','state_request','party_state','identity_update','action_request','kick','chat_request','chat_message','friend_invite_register','friend_invite_register_ack','leave',
-                       'cpu_prepare','cpu_ready','cpu_cancel','cpu_abort','cpu_round_start','cpu_player_state','cpu_player_shot','cpu_bot_snapshot','cpu_bot_shot','cpu_reflected_shot','cpu_damage','cpu_hit','cpu_kill_confirm','cpu_round_result'])
+                       'cpu_prepare','cpu_ready','cpu_cancel','cpu_abort','cpu_round_start','cpu_player_state','cpu_player_shot','cpu_bot_snapshot','cpu_bot_shot','cpu_reflected_shot','cpu_reflection_hit','cpu_damage','cpu_hit','cpu_kill_confirm','cpu_round_result'])
     ch.on('broadcast',{event},msg=>{if(ch===party.channel)partyReceive(event,msg&&msg.payload);});
   ch.subscribe(async st=>{
     if(ch!==party.channel) return;
@@ -1084,7 +1084,7 @@ function cpuTeamBeginRound(options){
   arena.round=round;arena.roundStartAt=clock+startDelay;arena.roundEndAt=arena.roundStartAt+PARTY_CPU_ROUND_MS;
   partyCpuMatch.round=round;partyCpuMatch.scores={allies:Math.max(0,Math.floor(+options.scores?.allies||0)),cpus:Math.max(0,Math.floor(+options.scores?.cpus||0))};
   partyCpuMatch.roundStartAt=arena.roundStartAt;partyCpuMatch.roundEndAt=arena.roundEndAt;partyCpuMatch.nextRoundAt=0;
-  partyCpuMatch.roundResolved=false;partyCpuMatch.phase='countdown';partyCpuMatch.seenHits=new Set();partyCpuMatch.seenShots=new Set();partyCpuMatch.seenPlayerShots=new Set();partyCpuMatch.seenReflections=new Set();
+  partyCpuMatch.roundResolved=false;partyCpuMatch.phase='countdown';partyCpuMatch.seenHits=new Set();partyCpuMatch.seenShots=new Set();partyCpuMatch.seenPlayerShots=new Set();partyCpuMatch.seenReflections=new Set();partyCpuMatch.seenReflectionHits=new Set();
   partyCpuMatch.killConfirms=[];partyCpuMatch.seenKillConfirms=new Set();partyCpuMatch.pendingUnscopedHits=new Set();
   partyCpuMatch.shotSeq=0;partyCpuMatch.playerShotSeq=0;partyCpuMatch.shots=[];partyCpuMatch.visualShots=[];partyCpuMatch.humans={};partyCpuMatch.bots=[];
   partyCpuMatch.simAt=clock;partyCpuMatch.simClock=clock;partyCpuMatch.simAcc=0;
@@ -1106,7 +1106,7 @@ function cpuTeamBeginRound(options){
     const spawn=mapSpawns?mapSpawns.allies[Math.min(i,1)]:null,
       x=spawn?spawn.x:cx-500,y=spawn?spawn.y:cy+(count===1?0:(i===0?-125:125)),kit=kits[id];
     partyCpuMatch.humans[id]={id,name:partyCpuMatch.humanNames[id]||'OPERATOR',team:'A',r:15,hp:PARTY_CPU_HP,x,y,tx:x,ty:y,angle:0,cur:kit.primary,
-      parrySeq:0,parryUntil:0,parryReadyAt:0};
+      parrySeq:0,parryUntil:0,parryReadyAt:0,meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:[]};
     if(id===localId){player.x=x;player.y=y;cam.x=x;cam.y=y;}
   });
   const allySpawn=mapSpawns?mapSpawns.allies[1]:{x:cx-500,y:cy+150},
@@ -1241,6 +1241,7 @@ function offlineCpu2v2Leave(status,toHub=false){
   const saved=partyCpuMatch.savedLoadout;
   practiceMode=null;enemies=[];bullets=[];ebullets=[];pickups=[];damageNumbers=[];grenades=[];pearls=[];balls=[];flames=[];freezeFx=[];splitBalls=[];
   daggersOut=null;comboStep=0;comboNextT=0;parryUntil=0;parrySeq=0;fistFlurryUntil=0;sawChargeUntil=0;
+  resetMeleeAbilityVisual(player);
   partyCpuMatch=freshPartyCpuMatch();arena=freshArena(status||'Offline 2v2 vs CPUs ready.');
   if(saved)loadout={primary:saved.primary||null,secondary:saved.secondary||null,melee:saved.melee||null,utility:saved.utility||null};
   if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
@@ -1252,6 +1253,9 @@ function partyCpuSyncLocalActor(){
   const a=partyCpuLocalActor(); if(!a) return;
   a.x=player.x; a.y=player.y; a.tx=player.x; a.ty=player.y; a.angle=aimAngle(); a.cur=WEAPONS[player.cur]?player.cur:a.cur; a.hp=clamp(player.hp,0,PARTY_CPU_HP);
   a.parrySeq=parrySeq; a.parryUntil=now<parryUntil?cpuTeamClock()+Math.max(0,parryUntil-now):0;
+  const clock=cpuTeamClock(),left=clamp((+player.meleeFxUntil||0)-now,0,MELEE_ABILITY_VISUAL_MAX_MS),max=MELEE_ABILITY_VISUAL_MS[player.meleeFxKey]||1;
+  a.meleeFxSeq=Math.max(0,Math.floor(+player.meleeFxSeq||0));a.meleeFxKey=String(player.meleeFxKey||'');
+  a.meleeFxStart=clock-(max-left);a.meleeFxUntil=clock+left;a.meleeFxAngle=Number.isFinite(+player.meleeFxAngle)?+player.meleeFxAngle:0;
 }
 function partyCpuActors(team){
   return Object.values(partyCpuMatch.humans).concat(partyCpuMatch.bots).filter(a=>a.team===team&&a.hp>0);
@@ -1386,7 +1390,7 @@ function partyCpuTakeLocalDamage(dmg){
   if(player.hp<=0){ resetHeldGameplayInput(); bullets=[]; grenades=[]; waveMsg='YOU ARE DOWN — TEAMMATES STILL FIGHTING'; waveMsgT=now+1800; }
   if(cpuTeamIsAuthority()) partyCpuHostEvaluate();
 }
-function partyCpuHostTryParry(target,shot){
+function partyCpuHostTryParry(target,shot,incomingDamage){
   if(!cpuTeamIsAuthority()||!target||!shot) return false;
   const originalId=String(shot.id||'');
   if(!originalId)return false;
@@ -1399,9 +1403,10 @@ function partyCpuHostTryParry(target,shot){
     ? (now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS)
     : (nowMs<(target.parryUntil||0)&&nowMs>=(target.parryUntil||0)-TWIN_SAI_PARRY_MS);
   if(!active) return false;
-  const source=partyCpuMatch.bots.find(b=>b.id===String(shot.ownerId||'')&&b.team==='B');
+  const source=partyCpuMatch.bots.find(b=>b.id===String(shot.ownerId||'')&&b.team==='B'),
+    reflectionDamage=clamp(+incomingDamage||0,0,PARTY_CPU_HP);
   const interceptX=+shot.x,interceptY=+shot.y;
-  if(!source||!Number.isFinite(interceptX)||!Number.isFinite(interceptY))return false;
+  if(!source||!reflectionDamage||!Number.isFinite(interceptX)||!Number.isFinite(interceptY))return false;
   partyCpuMatch.seenReflections.add(originalId);
   if(partyCpuMatch.seenReflections.size>500)partyCpuMatch.seenReflections=new Set([...partyCpuMatch.seenReflections].slice(-250));
   const rawAngle=local?aimAngle():+target.angle,
@@ -1409,12 +1414,12 @@ function partyCpuHostTryParry(target,shot){
     reflectedShot={id:originalId+':reflect',originalShotId:originalId,reflected:true,parrySeq:Math.max(0,Math.floor(local?parrySeq:target.parrySeq||0)),
       ownerId:String(target.id||''),sourceId:source.id,team:'A',targetId:'',x:interceptX,y:interceptY,
       vx:Math.cos(angle)*22,vy:Math.sin(angle)*22,
-      life:1800,dmg:120,dist:0,rng:3000,fall:1};
+      life:1800,dmg:reflectionDamage,dist:0,rng:3000,fall:1};
   partyCpuMatch.shots.push(reflectedShot);
   if(!isLocalCpu2v2()){
     const reflectedPacket={matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,round:partyCpuMatch.round,
       id:reflectedShot.id,shotId:originalId,ownerId:reflectedShot.ownerId,sourceId:source.id,
-      parrySeq:reflectedShot.parrySeq,x:reflectedShot.x,y:reflectedShot.y,angle};
+      parrySeq:reflectedShot.parrySeq,x:reflectedShot.x,y:reflectedShot.y,angle,dmg:reflectionDamage};
     partySend('cpu_reflected_shot',reflectedPacket);
     for(const wait of [180,520])setTimeout(()=>{
       if(party.channel&&partyCpuSessionOpen()&&partyCpuMatch.epoch===reflectedPacket.matchEpoch&&partyCpuMatch.round===reflectedPacket.round)
@@ -1432,7 +1437,7 @@ function partyCpuHostTryParry(target,shot){
 function partyCpuHostDamageHuman(target,shot,dmg){
   if(!cpuTeamIsAuthority()||!target||target.team!=='A'||target.hp<=0||partyCpuMatch.phase!=='fight')return false;
   const hit=clamp(+dmg||0,0,PARTY_CPU_HP);if(!hit)return false;
-  if(partyCpuHostTryParry(target,shot))return true;
+  if(partyCpuHostTryParry(target,shot,hit))return true;
   const before=target.id===cpuTeamLocalId()?Math.max(0,+player.hp||0):Math.max(0,+target.hp||0),dealt=Math.min(before,hit);
   if(typeof recordAiTrainingBotSignalById==='function'){
     recordAiTrainingBotSignalById(shot.ownerId,'bot_hits');recordAiTrainingBotSignalById(shot.ownerId,'bot_damage_dealt',dealt);
@@ -1456,7 +1461,7 @@ function partyCpuApplyDamage(p){
   partyCpuMatch.seenHits.add(id);partyCpuMatch.shots=partyCpuMatch.shots.filter(s=>s.id!==String(p.shotId||''));
   if(p.parried){
     const source=partyCpuMatch.bots.find(b=>b.id===String(p.sourceId||''));
-    const reflected=clamp(+p.reflected||0,0,120); if(source&&reflected) addDamageNumber(source,reflected,true);
+    const reflected=clamp(+p.reflected||0,0,PARTY_CPU_HP); if(source&&reflected) addDamageNumber(source,reflected,true);
     burst(player.x,player.y,'#bfe8ff',8,4);sfx('hit');waveMsg='TWIN SAI PARRY';waveMsgT=now+900;return true;
   }
   const targetHp=Number.isFinite(+p.hp)?clamp(+p.hp,0,PARTY_CPU_HP):Math.max(0,player.hp-dmg);
@@ -1493,7 +1498,18 @@ function partyCpuStepShots(dtms){
             if(target.team==='B'&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(target,'bot_damage_taken',dealt);
             partyCpuRecordThreat(b.ownerId,target.team,dealt,partyCpuAiClock());
             target.lastAttackerId=b.ownerId;cpuAiRegisterIncomingHit(target,partyCpuAiClock());
-            if(b.reflected&&String(b.ownerId||'')===String(cpuTeamLocalId()||''))addDamageNumber(target,dealt,true);
+            if(b.reflected){
+              const reflectionOwner=String(b.ownerId||''),localOwner=String(cpuTeamLocalId()||'');
+              if(reflectionOwner===localOwner)addDamageNumber(target,dealt,true);
+              else if(!isLocalCpu2v2()&&partyCpuMatch.humanIds.includes(reflectionOwner)){
+                const packet={to:reflectionOwner,matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,round:partyCpuMatch.round,
+                  id:String(b.id)+':hit:'+String(target.id),shotId:String(b.id),ownerId:reflectionOwner,targetId:String(target.id),dmg:dealt};
+                partySend('cpu_reflection_hit',packet);for(const wait of [180,520])setTimeout(()=>{
+                  if(party.channel&&partyCpuSessionOpen()&&partyCpuMatch.epoch===packet.matchEpoch&&partyCpuMatch.round===packet.round)
+                    partySend('cpu_reflection_hit',packet);
+                },wait);
+              }
+            }
             dead=true;partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();break;
           }
         }
@@ -1538,7 +1554,10 @@ function partyCpuSyncTick(clock){
   if(clock>=partyCpuMatch.syncAt){
     partyCpuMatch.syncAt=clock+PARTY_CPU_SYNC_MS; partyCpuSyncLocalActor();
     partySend('cpu_player_state',{matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,round:partyCpuMatch.round,
-      x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,hp:Math.max(0,player.hp),parrySeq,parryMs:Math.max(0,parryUntil-now)});
+      x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,hp:Math.max(0,player.hp),parrySeq,parryMs:Math.max(0,parryUntil-now),
+      meleeFxSeq:Math.max(0,Math.floor(+player.meleeFxSeq||0)),meleeFxKey:String(player.meleeFxKey||''),
+      meleeFxMs:clamp((+player.meleeFxUntil||0)-now,0,MELEE_ABILITY_VISUAL_MAX_MS),
+      meleeFxAngle:Number.isFinite(+player.meleeFxAngle)?+player.meleeFxAngle:0,meleeFxBlades:meleeAbilityVisualBlades()});
   }
   if(partyCpuIsHost()&&clock>=partyCpuMatch.snapshotAt){
     partyCpuMatch.snapshotAt=clock+PARTY_CPU_SYNC_MS;
@@ -1555,6 +1574,7 @@ function partyCpuApplyPlayerState(p){
   const kit=partyCpuMatch.loadouts&&partyCpuMatch.loadouts[p.from],remoteKey=String(p.cur||'');
   if(kit&&WEAPONS[remoteKey]&&[kit.primary,kit.secondary,kit.melee].includes(remoteKey)&&
      (typeof isWeaponPublished!=='function'||isWeaponPublished(remoteKey)))h.cur=remoteKey;
+  arenaApplyRemoteMeleeAbilityState(h,p,kit,Date.now());
   const seq=clamp(Math.floor(+p.parrySeq||0),0,1000000000);
   if(seq>h.parrySeq){
     h.parrySeq=seq;
@@ -1621,11 +1641,12 @@ function partyCpuApplyReflectedShot(p){
   if(!partyCpuEnvelope(p,true)||partyCpuIsHost()||p.round!==partyCpuMatch.round||partyCpuMatch.phase!=='fight')return false;
   const originalId=String(p.shotId||''),id=String(p.id||''),prefix=partyCpuMatch.epoch+':'+partyCpuMatch.round+':shot:',
     ownerId=String(p.ownerId||''),sourceId=String(p.sourceId||''),owner=partyCpuMatch.humans[ownerId],source=partyCpuMatch.bots.find(b=>b.id===sourceId&&b.team==='B'),
-    parrySequence=+p.parrySeq,x=+p.x,y=+p.y,rawAngle=+p.angle;
+    parrySequence=+p.parrySeq,x=+p.x,y=+p.y,rawAngle=+p.angle,damage=+p.dmg;
   if(!originalId.startsWith(prefix)||!/^[1-9]\d{0,9}$/.test(originalId.slice(prefix.length))||id!==originalId+':reflect'||id.length>120||
      !owner||owner.team!=='A'||!source||!Number.isSafeInteger(parrySequence)||parrySequence<1||parrySequence>1000000000||
      !partyCpuMatch.loadouts[ownerId]||partyCpuMatch.loadouts[ownerId].melee!=='twinsai'||
-     !Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(rawAngle)||Math.abs(rawAngle)>Math.PI+1e-6)return false;
+     !Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(rawAngle)||Math.abs(rawAngle)>Math.PI+1e-6||
+     !Number.isFinite(damage)||damage<=0||damage>PARTY_CPU_HP)return false;
   const localOwner=ownerId===String(cpuTeamLocalId()||''),knownParrySeq=localOwner?Math.max(0,Math.floor(parrySeq||0)):Math.max(0,Math.floor(owner.parrySeq||0));
   if(localOwner?parrySequence!==knownParrySeq:parrySequence<knownParrySeq)return false;
   const bounds=activeArenaBounds();
@@ -1634,7 +1655,7 @@ function partyCpuApplyReflectedShot(p){
     nearOwner=actorPoints.some(([ox,oy])=>Number.isFinite(+ox)&&Number.isFinite(+oy)&&Math.hypot(x-ox,y-oy)<=160);
   if(!nearOwner)return false;
   const original=partyCpuMatch.shots.find(s=>String(s.id||'')===originalId);
-  if(original&&(String(original.ownerId||'')!==sourceId||original.team!=='B'))return false;
+  if(original&&(String(original.ownerId||'')!==sourceId||original.team!=='B'||damage>(+original.dmg||0)+1e-6))return false;
   if(!(partyCpuMatch.seenReflections instanceof Set))partyCpuMatch.seenReflections=new Set();
   if(partyCpuMatch.seenReflections.has(originalId))return false;
   partyCpuMatch.seenReflections.add(originalId);
@@ -1643,8 +1664,24 @@ function partyCpuApplyReflectedShot(p){
   partyCpuMatch.shots=partyCpuMatch.shots.filter(s=>String(s.id||'')!==originalId);
   partyCpuMatch.shots.push({id,originalShotId:originalId,reflected:true,parrySeq:parrySequence,ownerId,sourceId,team:'A',targetId:'',x,y,
     vx:Math.cos(angle)*22,vy:Math.sin(angle)*22,
-    life:1800,dmg:120,dist:0,rng:3000,fall:1});
+    life:1800,dmg:damage,dist:0,rng:3000,fall:1});
   return true;
+}
+function partyCpuApplyReflectionHit(p){
+  if(!partyCpuEnvelope(p,true)||p.round!==partyCpuMatch.round||!['fight','round_end'].includes(partyCpuMatch.phase)||
+     String(p.to||'')!==String(cpuTeamLocalId()||'')||String(p.ownerId||'')!==String(cpuTeamLocalId()||''))return false;
+  const shotId=String(p.shotId||''),targetId=String(p.targetId||''),id=String(p.id||''),
+    prefix=partyCpuMatch.epoch+':'+partyCpuMatch.round+':shot:',dmg=+p.dmg,
+    target=partyCpuMatch.bots.find(b=>String(b.id||'')===targetId&&b.team==='B');
+  if(!shotId.startsWith(prefix)||!shotId.endsWith(':reflect')||shotId.length>130||id!==shotId+':hit:'+targetId||id.length>180||
+     !target||!partyCpuMatch.loadouts[p.ownerId]||partyCpuMatch.loadouts[p.ownerId].melee!=='twinsai'||
+     !Number.isFinite(dmg)||dmg<=0||dmg>50)return false;
+  if(!(partyCpuMatch.seenReflectionHits instanceof Set))partyCpuMatch.seenReflectionHits=new Set();
+  if(partyCpuMatch.seenReflectionHits.has(id))return false;
+  partyCpuMatch.seenReflectionHits.add(id);
+  if(partyCpuMatch.seenReflectionHits.size>200)partyCpuMatch.seenReflectionHits=new Set([...partyCpuMatch.seenReflectionHits].slice(-100));
+  partyCpuMatch.shots=partyCpuMatch.shots.filter(shot=>String(shot.id||'')!==shotId);
+  addDamageNumber(target,dmg,true);return true;
 }
 function partyCpuHitBot(target,dmg,kind){
   const localId=cpuTeamLocalId();
@@ -1770,6 +1807,7 @@ function partyCpuReceive(event,p){
   if(event==='cpu_bot_snapshot'){partyCpuApplyBotSnapshot(p);return;}
   if(event==='cpu_bot_shot'){partyCpuApplyBotShot(p);return;}
   if(event==='cpu_reflected_shot'){partyCpuApplyReflectedShot(p);return;}
+  if(event==='cpu_reflection_hit'){partyCpuApplyReflectionHit(p);return;}
   if(event==='cpu_damage'){partyCpuApplyDamage(p);return;}
   if(event==='cpu_hit'){partyCpuHostApplyHit(p);return;}
   if(event==='cpu_kill_confirm'){partyCpuApplyKillConfirm(p);return;}
@@ -1782,6 +1820,7 @@ function partyCpuReturnToLobby(message){
   if(isPartyCpuMatch()||practiceMode==='arena'){
     practiceMode=null;enemies=[];bullets=[];ebullets=[];pickups=[];damageNumbers=[];grenades=[];pearls=[];balls=[];flames=[];freezeFx=[];splitBalls=[];
     daggersOut=null;comboStep=0;comboNextT=0;parryUntil=0;parrySeq=0;fistFlurryUntil=0;sawChargeUntil=0;
+    resetMeleeAbilityVisual(player);
   }
   partyCpuMatch=freshPartyCpuMatch();arena=freshArena(direct?'2v2 vs CPUs ready.':'Party 2v2 vs CPUs ready.');pendingGameMode=null;modeBoardMode=null;
   if(saved)loadout={primary:saved.primary||null,secondary:saved.secondary||null,melee:saved.melee||null,utility:saved.utility||null};
