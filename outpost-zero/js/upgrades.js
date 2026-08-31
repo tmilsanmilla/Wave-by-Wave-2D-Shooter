@@ -17,7 +17,10 @@ function wm(k){ return wmods[k] || (wmods[k]={dmg:1,rate:1,mag:1,pellets:0,pierc
 function um(k){ return utilMods[k] || (utilMods[k]={cd:1}); }
 function abilityCdOf(k){ return Math.max(1500, (ABILITY_CD[k]||0) * wm(k).cdAdd); }
 function utilityCdOf(k){ return UTILITIES[k].cd*um(k).cd; }
-function medKillsRequired(){ return Math.max(5,Math.ceil(MED_KILLS_REQUIRED*um('medkit').cd)); }
+function medKillsRequired(){
+  const configured=Math.max(1,Math.min(100,Math.round(+(UTILITIES.medkit&&UTILITIES.medkit.rechargeKills)||MED_KILLS_REQUIRED)));
+  return Math.max(1,Math.ceil(configured*um('medkit').cd));
+}
 function medDropKillsRequired(){ return MED_DROP_KILLS_BASE; }
 function teraHitsRequired(){ return Math.max(8,Math.ceil(TERA_HITS_REQUIRED*wm('terafists').cdAdd)); }
 const ROMAN=['','I','II','III'];

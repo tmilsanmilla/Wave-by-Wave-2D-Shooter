@@ -46,6 +46,7 @@ function freshArena(status){
   return {phase:'menu',mode:null,room:'',status:status||'',queueChannel:null,matchChannel:null,
     expectedIds:null,queueCandidate:null,queueOffer:null,wantsHost:false,hostId:null,opponent:null,localReady:false,remoteReady:false,
     networkHold:false,disconnectAt:0,disconnectTimer:null,disconnectSide:'',departureAnnounced:'',departurePromise:null,forfeitResultId:'',forfeitPacket:null,
+    localBackgrounded:false,backgroundedAt:0,backgroundGameNow:0,presenceSeq:0,resumeNeededUntil:0,resumeRequestAt:0,resumeRequestId:'',
     active:false,matchEpoch:0,round:0,scores:{},roundStartAt:0,roundEndAt:0,nextRoundAt:0,roundResolved:false,winRecorded:false,
     dailyTaskMatchRecorded:false,dailyTaskRounds:new Set(),dailyTaskOwner:'',
     dailyTaskCompletedCount:0,dailyTaskReward:0,dailyTaskResult:'',
@@ -57,7 +58,7 @@ function freshArena(status){
     shotSeq:0,seenShots:new Set(),remoteShots:[],meleeSeq:0,seenMelees:new Set(),fireworkSeq:0,remoteFireworkHighestSeq:0,
     seenFireworks:new Set(),remoteFireworks:[],remoteFireworkFx:[],
     utilitySeq:0,seenUtilities:new Set(),remoteUtilityReadyAt:new Map(),utilityFrozenUntil:0,
-    rematchVotes:new Set(),savedUtility:undefined};
+    rematchVotes:new Set(),lastRoundStartPacket:null,lastRoundResultPacket:null,savedUtility:undefined};
 }
 function arenaResetDailyTaskTracking(match=arena){
   if(!match)return false;

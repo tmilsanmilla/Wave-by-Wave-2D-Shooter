@@ -101,7 +101,7 @@ spreadContext.player.cur='ar';spreadContext.aiming=true;
 assert.ok(spreadContext.effSpread()>WEAPONS.ar.aimSpread,'ordinary aimed guns must retain recoil bloom');
 
 for(const [script,version] of [['input','20260830-sniper-fire-v1'],['gameplay','20260830-freezer-projectile-v1'],
-  ['combat','20260830-freezer-projectile-v1'],['ai','20260830-sniper-fire-v1']])
+  ['combat','20260830-utility-editor-frag-v1'],['ai','20260830-sniper-fire-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('PASS AWM cadence, held-trigger retry, cancellation, and scoped accuracy');

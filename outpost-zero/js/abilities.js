@@ -29,6 +29,20 @@ function meleeAbilityVisualBlades(){
   if(player.meleeFxKey!=='bdaggers'||!daggersOut||!Array.isArray(daggersOut.blades))return undefined;
   return daggersOut.blades.slice(0,2).map(bl=>({x:+bl.x,y:+bl.y,vx:+bl.vx,vy:+bl.vy,returning:!!bl.returning}));
 }
+function twinSaiFireActive(){
+  const mouseFire=typeof mouse!=='undefined'&&!!mouse.down;
+  const touchFire=(typeof aimStickId!=='undefined'&&aimStickId!==null)||
+    (typeof tapShootUntil==='number'&&now<tapShootUntil);
+  const fanFire=typeof fanShots==='number'&&fanShots>0;
+  const liveSwing=!!player&&(+player.swingT||0)>0&&
+    now<(+player.swingT||0)+Math.max(0,+player.swingDur||0);
+  const comboFire=typeof comboNextT==='number'&&comboNextT>0;
+  return mouseFire||touchFire||fanFire||liveSwing||comboFire;
+}
+function rejectTwinSaiWhileFiring(){
+  if(!twinSaiFireActive())return false;
+  sfx('dry');waveMsg='STOP FIRING TO PARRY';waveMsgT=now+1200;return true;
+}
 function meleeAbility(){
   if(state!=='play') return;
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
@@ -113,8 +127,9 @@ function meleeAbility(){
     addShake(10); sfx('die');
     abilityCD[k]=now+abilityCdOf(k);
   } else if(k==='twinsai'){                          // PARRY stance: reflect incoming shots for the full window
-    if(!ready){ sfx('dry'); return; }
+    if(!ready||rejectTwinSaiWhileFiring()){ if(!ready)sfx('dry'); return; }
     activated=true;
+    if(typeof resetFireCadence==='function')resetFireCadence();
     parryUntil=now+TWIN_SAI_PARRY_MS; parrySeq++;    // Party validates one timed activation per cooldown
     // Keep the guard centered on the live crosshair instead of borrowing the
     // chainsaw's full-circle swing animation.

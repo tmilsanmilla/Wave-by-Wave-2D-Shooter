@@ -181,12 +181,12 @@ const VAULT_ACTIVE = {
 const FALL_KEYS=['warpwave','timeturner','terafists','portal'];
 /* utilities: G/RMB to quick-use; equip the Medkit and LMB for its long heal */
 const UTILITIES = {
-  medkit : { name:'FIELD MEDKIT', cd:75000,
+  medkit : { name:'FIELD MEDKIT', cd:75000, rechargeKills:10,
              gimmick:{id:'field_medkit_dual_heal',copy:'Choose a quick 5% heal or an interruptible 20% channel heal.'},
              blurb:'Quick 5% heal, or equip [4] + LMB for a 20% heal over 8s. Recharge by killing enemies.' },
-  grenade: { name:'FRAG GRENADE', cd:20000,
-             gimmick:{id:'frag_center_falloff',copy:'A timed blast deals up to 300 damage at its center.'},
-             blurb:'Tap to throw at your crosshair. Big blast, friendly to you only.' },
+  grenade: { name:'FRAG GRENADE', cd:20000, dmg:300, range:85,
+             gimmick:{id:'frag_center_falloff',copy:'A compact timed blast hits hardest at its center, then falls to zero at its edge.'},
+             blurb:'Tap to throw at your crosshair. Compact blast, friendly to you only.' },
   freezer: { name:'FREEZER',      cd:25000, speed:9, fuseMs:1350, radius:105, freezeMs:2500,
              gimmick:{id:'freezer_brittle_stasis',copy:'Throws a wall-stopped ice charge; frozen targets take half damage and the first hit thaws them.'},
              blurb:'Throws a moving ice charge. Its smaller blast freezes exposed targets — including you — for 2.5s.' },

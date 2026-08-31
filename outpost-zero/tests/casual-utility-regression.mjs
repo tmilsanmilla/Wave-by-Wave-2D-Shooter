@@ -82,8 +82,8 @@ assert.match(ui,/const rows=\(aiMode\|\|partyCpuMode\)\?CATS\.slice\(0,3\):CATS/
   'Casual loadout must show Utility while CPU duel loadouts remain three-slot');
 assert.doesNotMatch(ui,/if\(pendingGameMode==='arena'\)[\s\S]{0,140}loadout\.utility=null/,
   'launching Casual must not erase the selected utility');
-assert.match(combat,/arenaHitOpponent\(300\*falloff,'utility_grenade'\)/,
-  'the grenade owner must authoritatively send its opponent damage');
+assert.match(combat,/arenaHitOpponent\(fragDamageAtDistance\(Math\.sqrt\(d2g\)\),'utility_grenade'\)/,
+  'the grenade owner must authoritatively send its opponent the shared distance-based Frag damage');
 assert.match(combat,/!b\.remoteUtility[\s\S]{0,260}arenaHitOpponent\(\(b\.dmg\|\|8\)/,
   'remote balls must remain visual-only while locally owned balls send hits');
 assert.match(online,/if\(arenaUtilityFrozen\(\)\)[\s\S]{0,180}dmg\*=0\.5/,

@@ -450,7 +450,24 @@ const WFIELDS=[
   {k:'range',    label:'RANGE',         min:20,  max:99999},
   {k:'pellets',  label:'PELLETS',       min:1,   max:20},
   {k:'pierce',   label:'PIERCE',        min:0,   max:20},
+  {k:'cd',            label:'COOLDOWN (ms)',      min:1000,max:120000},
+  {k:'rechargeKills', label:'RECHARGE KILLS',     min:1,   max:100},
+  {k:'speed',         label:'THROW SPEED',         min:1,   max:30},
+  {k:'fuseMs',        label:'FUSE (ms)',           min:100, max:10000},
+  {k:'radius',        label:'BLAST RADIUS',        min:10,  max:500},
+  {k:'freezeMs',      label:'FREEZE TIME (ms)',    min:100, max:15000},
 ];
+const WEAPON_COMMON_EDITOR_FIELDS=new Set(['dmg','fireRate','mag','reload','range','pellets','pierce']);
+const UTILITY_EDITOR_FIELDS=Object.freeze({
+  medkit:new Set(['rechargeKills']),
+  grenade:new Set(['dmg','range','cd']),
+  freezer:new Set(['cd','speed','fuseMs','radius','freezeMs']),
+  redball:new Set(['cd']),
+  beachball:new Set(['cd']),
+  turret:new Set(['cd']),
+  portal:new Set(['cd']),
+  timecapsule:new Set(['cd']),
+});
 const WEAPON_EDITOR_SLOTS={};
 for(const k of PRIMARIES) WEAPON_EDITOR_SLOTS[k]='primary';
 for(const k of SECONDARIES) WEAPON_EDITOR_SLOTS[k]='secondary';
@@ -491,6 +508,12 @@ function savedWeaponPublished(k){
 function weaponIsPublished(k){ return savedWeaponPublished(k); } // Test Mode never changes saved publish state
 function weaponDefOf(k){ return WEAPONS[k] || VAULT_WEAPONS[k] || UTILITIES[k] || VAULT_UTILITIES[k] || null; }
 function weaponPrice(k){ const it=GEM_SHOP.find(i=>i.key===k); return it? it.cost : null; }
+function weaponEditorFieldAllowed(k,field){
+  const key=String(k||''),fieldKey=typeof field==='string'?field:String(field&&field.k||'');
+  if(WEAPON_EDITOR_SLOTS[key]!=='utility')return WEAPON_COMMON_EDITOR_FIELDS.has(fieldKey);
+  const allowed=UTILITY_EDITOR_FIELDS[key];return !!(allowed&&allowed.has(fieldKey));
+}
+function weaponEditorFields(k){return WFIELDS.filter(field=>weaponEditorFieldAllowed(k,field));}
 async function fetchWeaponDefs(){
   if(!sb) return false;
   const requestVersion=++weaponDefsRequestVersion;
@@ -539,7 +562,7 @@ function reconcileWeaponPublication(){
 function applyWeaponDef(r){
   const def=weaponDefOf(r.key); if(!def) return;
   const staleSniperPair=r.key==='sniper'&&r.stats&&r.stats.dmg===204&&r.stats.fireRate===1150;
-  if(r.stats) for(const f of WFIELDS) if(typeof r.stats[f.k]==='number'){
+  if(r.stats) for(const f of weaponEditorFields(r.key)) if(typeof r.stats[f.k]==='number'){
     // Old untouched cloud defaults must not undo the current AWM balance;
     // every genuinely customized value still wins over the source definition.
     const staleSniperDefault=staleSniperPair&&(f.k==='dmg'||f.k==='fireRate');
@@ -581,7 +604,7 @@ function openWeaponEdit(k){
   weaponEditKey=k; storageOpen=false; weaponEditOpen=false;
   const def=weaponDefOf(k)||{};
   weaponEditDraft={};
-  for(const f of WFIELDS) if(typeof def[f.k]==='number') weaponEditDraft[f.k]=def[f.k];
+  for(const f of weaponEditorFields(k)) if(typeof def[f.k]==='number') weaponEditDraft[f.k]=def[f.k];
   const pr=weaponPrice(k); if(pr!==null) weaponEditDraft.price=pr;
   weaponEditDraft.published = FALL_KEYS.includes(k) ? false : savedWeaponPublished(k);
   showWeaponForm();
@@ -591,7 +614,7 @@ function showWeaponForm(){
   const nextSeason=FALL_KEYS.includes(k);
   if(nextSeason) d.published=false;
   const fields=[];
-  for(const f of WFIELDS) if(typeof d[f.k]==='number')
+  for(const f of weaponEditorFields(k)) if(typeof d[f.k]==='number')
     fields.push({id:f.k, label:f.label, min:f.min, max:f.max, value:d[f.k], was:def[f.k]});
   if(typeof d.price==='number')
     fields.push({id:'price', label:'GEM PRICE', min:0, max:9999, value:d.price, was:weaponPrice(k)});
@@ -623,7 +646,7 @@ async function saveWeaponEdit(){
   const k=weaponEditKey, d=weaponEditDraft, nextSeason=FALL_KEYS.includes(weaponEditKey);
   if(nextSeason) d.published=false;
   const stats={};
-  for(const f of WFIELDS) if(typeof d[f.k]==='number') stats[f.k]=d[f.k];
+  for(const f of weaponEditorFields(k)) if(typeof d[f.k]==='number') stats[f.k]=d[f.k];
   const row={key:k,stats,price:null,published:nextSeason?false:!!d.published,updated_by:adminSelfUsername||myRank().toUpperCase()||'STAFF'};
   $('formstatus').textContent='saving...';
   try{
@@ -686,7 +709,7 @@ function drawWeaponEdit(){
     ctx.textBaseline='alphabetic';
     y+=h+5;
   };
-  for(const f of WFIELDS){
+  for(const f of weaponEditorFields(weaponEditKey)){
     if(typeof weaponEditDraft[f.k]!=='number') continue;
     row('f:'+f.k, f.label, weaponEditDraft[f.k]);
   }

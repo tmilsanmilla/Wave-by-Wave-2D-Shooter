@@ -240,6 +240,17 @@ function clearPlayerFreezerFreeze(){
   const was=playerFrozenUntil>now||(arena&&+arena.utilityFrozenUntil>now);
   playerFrozenUntil=0;if(arena)arena.utilityFrozenUntil=0;return !!was;
 }
+function fragBlastRadius(){
+  const configured=UTILITIES&&UTILITIES.grenade?+UTILITIES.grenade.range:NaN;
+  return Number.isFinite(configured)?Math.max(1,configured):85;
+}
+function fragDamageAtDistance(distance,boss=false){
+  const configured=UTILITIES&&UTILITIES.grenade?+UTILITIES.grenade.dmg:NaN,
+    center=Number.isFinite(configured)?Math.max(0,configured):300,
+    d=Number.isFinite(+distance)?Math.max(0,+distance):0,
+    falloff=Math.max(0,1-d/fragBlastRadius());
+  return center*(boss?0.6:1)*falloff;
+}
 function freezerBlastClear(x0,y0,x1,y1){
   return typeof losBlocked!=='function'||!losBlocked(x0,y0,x1,y1);
 }
@@ -347,6 +358,9 @@ function quickMelee(){
   }
   if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); return; }
   if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
+  // Do not let quick-melee cancel an in-progress firing sequence and convert
+  // it into a simultaneous Twin Sai guard.
+  if(loadout.melee==='twinsai'&&typeof rejectTwinSaiWhileFiring==='function'&&rejectTwinSaiWhileFiring())return;
   cancelMedHeal();
   cancelFanTheHammer();
   const stowedUtility=utilityOut;
@@ -390,6 +404,9 @@ function tryFire(carryCadence=false){
   if(state!=='play' || now<fireSuppressT) return false;
   if(practiceMode==='arena' && !arenaCanAct()) return false;
   if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())return false;
+  // Twin Sai's one-second guard and attacking are mutually exclusive. Held
+  // mouse/touch fire may resume only after the guard itself has ended.
+  if(now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS)return false;
   if(typeof isLocked==='function'&&isLocked(player.cur)){
     if(typeof dropExpiredTemporaryLoadout==='function')dropExpiredTemporaryLoadout([player.cur]);
     resetFireCadence();sfx('dry');return false;
@@ -694,14 +711,16 @@ function update(dtms){
     if(now>=g.t || reached){
       const fw=g.firework;
       burst(g.x,g.y, fw?'#ff5a3c':'#e8b658', fw?24:30, fw?6:7); addShake(fw?6:8); sfx('die');
-      const rad=fw?85:170;
+      const rad=fw?85:fragBlastRadius();
       destroyMissilesInRadius(g.x, g.y, rad);        // explosions knock down incoming missiles
       for(let j=enemies.length-1;j>=0;j--){
         const e=enemies[j];
         const d2g=dist2(e.x,e.y,g.x,g.y);
         if(d2g<rad*rad){
-          const falloff=1-Math.sqrt(d2g)/(rad*1.3);
-          damageEnemy(e,(fw ? (ETYPES[e.type].boss?50:75) : (ETYPES[e.type].boss?180:300))*perks.dmg*falloff*freezeHit(e));
+          const distance=Math.sqrt(d2g),blastDamage=fw
+            ?(ETYPES[e.type].boss?50:75)*(1-distance/(rad*1.3))
+            :fragDamageAtDistance(distance,!!ETYPES[e.type].boss);
+          damageEnemy(e,blastDamage*perks.dmg*freezeHit(e));
           e.hitT=now+80;
           if(e.hp<=0) killEnemy(j);
         }
@@ -710,8 +729,7 @@ function update(dtms){
         const d2g=dist2(arena.opponent.x,arena.opponent.y,g.x,g.y),clear=typeof losBlocked!=='function'||
           !losBlocked(g.x,g.y,arena.opponent.x,arena.opponent.y);
         if(clear&&d2g<rad*rad){
-          const falloff=Math.max(0,1-Math.sqrt(d2g)/(rad*1.3));
-          arenaHitOpponent(300*falloff,'utility_grenade');
+          arenaHitOpponent(fragDamageAtDistance(Math.sqrt(d2g)),'utility_grenade');
         }
       } else if(fw&&typeof isCpuTeamArena==='function'&&isCpuTeamArena()&&arenaCanAct()){
         for(const target of partyCpuMatch.bots.filter(b=>b.team==='B'&&b.hp>0)){

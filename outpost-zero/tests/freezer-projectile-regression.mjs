@@ -124,7 +124,10 @@ assert.match(functionSource(online,'arenaApplyRemoteUtility'),/key==='freezer'[\
 assert.doesNotMatch(functionSource(online,'arenaApplyRemoteUtility'),/key==='freezer'[\s\S]{0,600}utilityFrozenUntil\s*=\s*now/,
   'receiving a cast packet must never freeze the player before the projectile arrives');
 
-for(const script of ['weapons','upgrades','gameplay','combat','online','rendering','ui'])
-  assert.match(index,new RegExp(`js/${script}\\.js\\?v=20260830-freezer-projectile-v1`),`${script}.js needs the Freezer cache-buster`);
+for(const [script,version] of [['weapons','20260830-utility-editor-frag-v1'],['upgrades','20260830-utility-editor-frag-v1'],
+  ['gameplay','20260830-freezer-projectile-v1'],['combat','20260830-utility-editor-frag-v1'],
+  ['online','20260830-background-resume-v1'],['rendering','20260830-freezer-projectile-v1'],
+  ['ui','20260830-utility-editor-frag-v1']])
+  assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('PASS Freezer travels, respects walls, self-freezes, and uses the reduced blast');

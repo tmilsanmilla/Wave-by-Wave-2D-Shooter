@@ -852,8 +852,15 @@ begin
     raise exception using errcode='22023',message='WEAPON_STATS_MUST_BE_A_SMALL_OBJECT';end if;
 
   for v_field,v_json in select e.key,e.value from jsonb_each(p_stats) e loop
-    if v_field not in ('dmg','fireRate','mag','reload','range','pellets','pierce') then
-      raise exception using errcode='22023',message='UNKNOWN_WEAPON_STAT';end if;
+    if v_key in ('medkit','grenade','freezer','redball','beachball','turret','portal','timecapsule') then
+      if (v_key='medkit' and v_field not in ('rechargeKills'))
+         or (v_key='grenade' and v_field not in ('dmg','range','cd'))
+         or (v_key='freezer' and v_field not in ('cd','speed','fuseMs','radius','freezeMs'))
+         or (v_key in ('redball','beachball','turret','portal','timecapsule') and v_field not in ('cd')) then
+        raise exception using errcode='22023',message='UNKNOWN_WEAPON_STAT';end if;
+    elsif v_field not in ('dmg','fireRate','mag','reload','range','pellets','pierce') then
+      raise exception using errcode='22023',message='UNKNOWN_WEAPON_STAT';
+    end if;
     if jsonb_typeof(v_json)<>'number' or v_json::text !~ '^[0-9]{1,6}$' then
       raise exception using errcode='22023',message='WEAPON_STATS_MUST_BE_INTEGERS';end if;
     v_number:=(v_json::text)::numeric;
@@ -863,7 +870,13 @@ begin
        or (v_field='reload' and v_number not between 0 and 6000)
        or (v_field='range' and v_number not between 20 and 99999)
        or (v_field='pellets' and v_number not between 1 and 20)
-       or (v_field='pierce' and v_number not between 0 and 20) then
+       or (v_field='pierce' and v_number not between 0 and 20)
+       or (v_field='cd' and v_number not between 1000 and 120000)
+       or (v_field='rechargeKills' and v_number not between 1 and 100)
+       or (v_field='speed' and v_number not between 1 and 30)
+       or (v_field='fuseMs' and v_number not between 100 and 10000)
+       or (v_field='radius' and v_number not between 10 and 500)
+       or (v_field='freezeMs' and v_number not between 100 and 15000) then
       raise exception using errcode='22023',message='WEAPON_STAT_OUT_OF_RANGE';end if;
     v_integer:=v_number::integer;
     v_stats:=v_stats||jsonb_build_object(v_field,v_integer);

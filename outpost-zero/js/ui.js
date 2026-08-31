@@ -54,14 +54,24 @@ function drawGunIcon(x,y,key,col,sc){
   else { ctx.moveTo(-30,0); ctx.lineTo(30,0); ctx.moveTo(-12,0); ctx.lineTo(-15,12); ctx.moveTo(2,-2); ctx.arc(6,-6,5,Math.PI*0.75,Math.PI*2.1); }
   ctx.stroke(); ctx.restore();
 }
+function liveUtilityCopy(k,u){
+  if(k==='grenade'){
+    const radius=typeof fragBlastRadius==='function'?fragBlastRadius():Math.max(1,+u.range||85),
+      damage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0):Math.max(0,+u.dmg||300);
+    return 'A compact '+radius+'-radius timed blast deals up to '+damage+
+      ' damage at its center, then falls to zero at its edge.';
+  }
+  return u&&u.gimmick&&u.gimmick.copy?String(u.gimmick.copy):String(u&&u.blurb||'');
+}
 function weaponDetails(k){
   const rows=[];
   // Keep this formatter local: several lightweight UI paths evaluate the
   // details renderer by itself, and gimmick copy should never be an optional
   // external dependency.
-  const addGimmick=def=>{
+  const addGimmick=(def,copy)=>{
     const gimmick=def&&def.gimmick;
-    if(gimmick&&gimmick.copy) rows.push(['GIMMICK',String(gimmick.copy)]);
+    const text=copy===undefined?(gimmick&&gimmick.copy):copy;
+    if(text) rows.push(['GIMMICK',String(text)]);
   };
   if(isLocked(k)){
     const shop=GEM_SHOP.find(it=>it.key===k);
@@ -74,19 +84,24 @@ function weaponDetails(k){
   const slot=typeof storedLoadoutSlot==='function'?storedLoadoutSlot(k):(VAULT_SLOTS[k]||null);
   if(slot==='utility'||UTILKEYS.includes(k)||TEMP_UTILITY.includes(k)){
     const u=UTILITIES[k]||VAULT_UTILITIES[k];
-    addGimmick(u);
-    rows.push(['RECHARGE',k==='medkit' ? MED_KILLS_REQUIRED+' enemy kills' : (u.cd/1000)+'s']);
+    addGimmick(u,k==='grenade'?liveUtilityCopy(k,u):undefined);
+    rows.push(['RECHARGE',k==='medkit' ? medKillsRequired()+' enemy kills' : (u.cd/1000)+'s']);
     if(k==='medkit') rows.push(['QUICK HEAL','G / utility RMB \u00b7 5% max HP over 1s'],['CHANNEL HEAL','equip + LMB \u00b7 20% max HP over 8s'],
       ['HEAL PENALTY','-10% move speed'],['INTERRUPTED BY','taking damage or switching'],['CHARGES','one ready at a time']);
-    if(k==='grenade') rows.push(['DAMAGE','up to 300 at center'],['VS BOSS','up to 180'],
-      ['BLAST RADIUS','170'],['FUSE','0.95s'],['THROW SPEED','14']);
+    if(k==='grenade'){
+      const radius=typeof fragBlastRadius==='function'?fragBlastRadius():Math.max(1,+u.range||85),
+        damage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0):Math.max(0,+u.dmg||300),
+        bossDamage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0,true):damage*0.6;
+      rows.push(['DAMAGE','up to '+damage+' at center'],['VS BOSS','up to '+bossDamage],
+        ['BLAST RADIUS',''+radius],['FALLOFF','50% halfway · 0 at edge'],['FUSE','0.95s'],['THROW SPEED','14']);
+    }
     if(k==='portal') rows.push(['EFFECT','teleport to crosshair'],['I-FRAMES','0.35s']);
     if(k==='timecapsule') rows.push(['\uD83C\uDF42 FALL','coming update'],['EFFECT','enemies & their shots at 25% speed'],
-      ['ON CAST','clears every enemy projectile'],['DURATION','15s, ends if you move'],['RECHARGE','45s']);
-    if(k==='freezer') rows.push(['EFFECT','throw a moving ice charge'],['BLAST RADIUS','105'],
-      ['FUSE','1.35s'],['THROW SPEED','9'],['FREEZE TIME','2.5s'],
+      ['ON CAST','clears every enemy projectile'],['DURATION','15s, ends if you move'],['RECHARGE',''+u.cd/1000+'s']);
+    if(k==='freezer') rows.push(['EFFECT','throw a moving ice charge'],['BLAST RADIUS',''+u.radius],
+      ['FUSE',''+Math.round(u.fuseMs/10)/100+'s'],['THROW SPEED',''+u.speed],['FREEZE TIME',''+Math.round(u.freezeMs/100)/10+'s'],
       ['WALLS','stop the charge and shield the blast'],['SELF RISK','your blast can freeze you'],
-      ['WHILE FROZEN','take half damage, can\u0027t move'],['ON HIT','first hit thaws'],['RECHARGE','25s']);
+      ['WHILE FROZEN','take half damage, can\u0027t move'],['ON HIT','first hit thaws'],['RECHARGE',''+u.cd/1000+'s']);
     if(k==='redball') rows.push(['LIFETIME','3s'],['TAUNT RADIUS','750'],
       ['CONTACT DMG','8 per 0.28s'],['LURES','all enemies incl. shooters'],['BOSSES','immune to taunt']);
     if(k==='beachball') rows.push(['\uD83D\uDD25 SUMMER','temporary'],['EFFECT','enemies FLEE it'],
@@ -141,7 +156,7 @@ function weaponDetails(k){
               terafists:['E / F / MELEE RMB: FLURRY','1.6s punches \u00b7 lifesteal \u00b7 recharge with '+TERA_HITS_REQUIRED+' normal hits'],
               scythe:['E / F / MELEE RMB: DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 9.6s'],
               hammer:['E / F / MELEE RMB: SLAM','110 dmg \u00b7 radius 160 \u00b7 8s'],
-              twinsai:['E / F / MELEE RMB: PARRY','1s guard \u00b7 reflects every shot toward crosshair \u00b7 returns the shot\'s damage 1:1 \u00b7 2.5s cd after guard'],
+              twinsai:['E / F / MELEE RMB: PARRY','stop firing first \u00b7 cannot attack during 1s guard \u00b7 reflects every shot toward crosshair \u00b7 returns the shot\'s damage 1:1 \u00b7 2.5s cd after guard'],
               bdaggers:['E / F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite']}[k];
     if(ab) rows.push(ab);
     return rows;
@@ -2754,7 +2769,7 @@ function drawWeaponBrowserCard(k,cat,x,y,w,h){
   }
   if(h>=105){
     let summary;
-    if(isUtil) summary=k==='medkit'?'RECHARGE '+MED_KILLS_REQUIRED+' KILLS':'RECHARGE '+Math.round(def.cd/1000)+'s';
+    if(isUtil) summary=k==='medkit'?'RECHARGE '+medKillsRequired()+' KILLS':'RECHARGE '+Math.round(def.cd/1000)+'s';
     else if(def.melee) summary=def.dmg+' DMG \u00b7 '+def.range+' RANGE \u00b7 '+def.fireRate+'ms';
     else summary=(def.dmg*def.pellets)+' DMG \u00b7 '+def.mag+' MAG \u00b7 '+def.fireRate+'ms';
     ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
@@ -2762,7 +2777,7 @@ function drawWeaponBrowserCard(k,cat,x,y,w,h){
   }
   if(h>=145){
     ctx.fillStyle='#6b7455'; ctx.font='8px ui-monospace,Consolas,monospace';
-    const browserCopy=def.gimmick&&def.gimmick.copy?def.gimmick.copy:def.blurb;
+    const browserCopy=isUtil?liveUtilityCopy(k,def):(def.gimmick&&def.gimmick.copy?def.gimmick.copy:def.blurb);
     wrapTextClamped(browserCopy,x+8,y+86,w-16,10,Math.max(1,Math.floor((h-116)/10)));
   }
   ctx.textAlign='right'; ctx.textBaseline='bottom'; ctx.fillStyle=hot?'#e8b658':'#8a9268';
@@ -3334,7 +3349,7 @@ function drawCard(k, cat, slot, x, yb, cw, ch, sc, isTemp){
   } else {
     ctx.fillStyle= locked ? '#4a4634' : '#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
     const ry2=Math.max(yb+Math.round(98*sc), nameY+15);
-    ctx.fillText(k==='medkit' ? 'RECHARGE '+MED_KILLS_REQUIRED+' KILLS' : 'RECHARGE '+(w.cd/1000)+'s', x+cw/2, ry2);
+    ctx.fillText(k==='medkit' ? 'RECHARGE '+medKillsRequired()+' KILLS' : 'RECHARGE '+(w.cd/1000)+'s', x+cw/2, ry2);
     statBottom=ry2+8;
   }
   ctx.fillStyle = locked ? '#3a3a30' : '#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
