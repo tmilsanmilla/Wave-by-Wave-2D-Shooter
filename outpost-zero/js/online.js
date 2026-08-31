@@ -24,7 +24,9 @@ function arenaUtilityUseAllowed(){
   return practiceMode!=='arena'||(isCasualOnlineArena()&&arenaCanAct());
 }
 function arenaUtilityFrozen(){
-  return !!(isCasualOnlineArena()&&now<Math.max(0,+arena.utilityFrozenUntil||0));
+  const localUntil=typeof playerFrozenUntil==='number'?Math.max(0,playerFrozenUntil):0,
+    arenaUntil=isCasualOnlineArena()?Math.max(0,+arena.utilityFrozenUntil||0):0;
+  return now<Math.max(localUntil,arenaUntil);
 }
 function arenaLoadoutReady(){
   const weaponsReady=['primary','secondary','melee'].every(slot=>{
@@ -421,8 +423,8 @@ function arenaBroadcastUtility(key,data={}){
   const packet={id,utility:key};
   if(key==='medkit')packet.action=data.action==='channel'?'channel':'quick';
   else if(key==='freezer'){
-    if(!Number.isFinite(+data.x)||!Number.isFinite(+data.y))return false;
-    packet.x=+data.x;packet.y=+data.y;
+    if(!Number.isFinite(+data.x)||!Number.isFinite(+data.y)||!Number.isFinite(+data.angle))return false;
+    packet.x=+data.x;packet.y=+data.y;packet.angle=Math.atan2(Math.sin(+data.angle),Math.cos(+data.angle));
   }else if(key==='grenade'){
     if(!Number.isFinite(+data.x)||!Number.isFinite(+data.y)||!Number.isFinite(+data.angle))return false;
     packet.x=+data.x;packet.y=+data.y;packet.angle=Math.atan2(Math.sin(+data.angle),Math.cos(+data.angle));
@@ -455,17 +457,9 @@ function arenaApplyRemoteUtility(p){
     if(!inside(x,y,12)||Math.hypot(x-sx,y-sy)>190||!Number.isFinite(a)||Math.abs(a)>TAU*1000)return false;
     apply=()=>grenades.push({x,y,vx:Math.cos(a)*14,vy:Math.sin(a)*14,t:now+950,remoteUtility:true,hostile:true});
   }else if(key==='freezer'){
-    const x=+p.x,y=+p.y,R=WEAPONS.chainsaw.range*2;
-    if(!inside(x,y)||Math.hypot(x-sx,y-sy)>900)return false;
-    apply=()=>{
-      freezeFx.push({x,y,r:R,t:now,remoteUtility:true});
-      if(Math.hypot(player.x-x,player.y-y)<R+player.r){
-        arena.utilityFrozenUntil=now+5000;cancelFanTheHammer();cancelMedHeal();resetFireCadence();
-        player.dashUntil=now;fistFlurryUntil=0;sawChargeUntil=0;comboNextT=0;
-        if(['scythe','terafists','chainsaw'].includes(player.meleeFxKey))finishMeleeAbilityVisual(player.meleeFxKey);
-        utilityOut=false;waveMsg='FROZEN — FIRST HIT THAWS';waveMsgT=now+1400;sfx('hit');
-      }
-    };
+    const x=+p.x,y=+p.y,a=+p.angle;
+    if(!inside(x,y,7)||Math.hypot(x-sx,y-sy)>190||!Number.isFinite(a)||Math.abs(a)>TAU*1000)return false;
+    apply=()=>launchFreezer(a,{x,y,remoteUtility:true,hostile:true,arenaUtility:true});
   }else if(key==='redball'||key==='beachball'){
     const x=+p.x,y=+p.y,vx=+p.vx,vy=+p.vy,speed=Math.hypot(vx,vy),fire=key==='beachball';
     if(!inside(x,y,12)||Math.hypot(x-sx,y-sy)>210||!Number.isFinite(speed)||speed<1||speed>8)return false;
@@ -1322,7 +1316,7 @@ function arenaApplyRematchStart(p){
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.winRecorded=false;
   if(typeof arenaResetDailyTaskTracking==='function')arenaResetDailyTaskTracking(arena);
-  arena.utilitySeq=0;arena.seenUtilities=new Set();arena.remoteUtilityReadyAt=new Map();arena.utilityFrozenUntil=0;
+  arena.utilitySeq=0;arena.seenUtilities=new Set();arena.remoteUtilityReadyAt=new Map();arena.utilityFrozenUntil=0;playerFrozenUntil=0;
   arenaResetTimeoutHp(arena.matchEpoch,arena.round);
   arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
   arenaResetMapVote('arena');
@@ -1351,7 +1345,7 @@ function arenaApplyRoundStart(p){
   arena.seenShots=new Set();arena.shotSeq=0;arena.remoteShots=[];arena.seenMelees=new Set();arena.meleeSeq=0;
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.pendingUnscopedHits=new Set();
-  arena.utilitySeq=0;arena.seenUtilities=new Set();arena.remoteUtilityReadyAt=new Map();arena.utilityFrozenUntil=0;
+  arena.utilitySeq=0;arena.seenUtilities=new Set();arena.remoteUtilityReadyAt=new Map();arena.utilityFrozenUntil=0;playerFrozenUntil=0;
   arenaResetTimeoutHp(arena.matchEpoch,arena.round);
   // Use a relative countdown on each device. Absolute browser clocks can be
   // minutes apart even when both players have a healthy connection.
@@ -1566,7 +1560,7 @@ function arenaTakeHit(p){
     return;
   }
   if(arenaUtilityFrozen()){
-    arena.utilityFrozenUntil=0;dmg*=0.5;
+    clearPlayerFreezerFreeze();dmg*=0.5;
     burst(player.x,player.y,'#bfefff',10,4);waveMsg='THAWED · HIT REDUCED';waveMsgT=now+900;
   }
   cancelMedHeal();
@@ -1612,7 +1606,7 @@ function arenaApplyRoundResult(p){
   arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=true;
   const roundEndReason=p.roundEndReason==='knockout'?'knockout':p.roundEndReason==='timeout'?'timeout':'';
   if(typeof arenaRecordDailyOutcome==='function')arenaRecordDailyOutcome(authUser.id,p.winner,roundEndReason,!!p.matchOver,true);
-  arena.remoteShots=[];arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.utilityFrozenUntil=0;
+  arena.remoteShots=[];arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.utilityFrozenUntil=0;playerFrozenUntil=0;
   medChan=0;medChanHeal=0;medHealPct=0;utilityOut=false;
   arenaCelebrateConfirmedUnscopedKill(p,p.winner);
   arena.pendingUnscopedHits=new Set();
@@ -1683,6 +1677,7 @@ function leaveArena(status,toHub){
   if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
   if(practiceMode==='arena'){
     practiceMode=null;
+    playerFrozenUntil=0;
     enemies=[]; bullets=[]; ebullets=[]; pickups=[]; damageNumbers=[]; grenades=[]; pearls=[]; balls=[]; flames=[]; freezeFx=[]; splitBalls=[];
     daggersOut=null; comboStep=0; comboNextT=0; parryUntil=0; parrySeq=0; teraHitCharge=15; fistFlurryUntil=0; sawChargeUntil=0;
     resetMeleeAbilityVisual(player);

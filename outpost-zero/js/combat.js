@@ -223,6 +223,62 @@ function utilQuick(){         // G (or E/LMB-tap when equipped): instant cast at
   if(loadout.utility==='medkit'){ medQuick(); return; }
   utilCast(loadout.utility);
 }
+function applyPlayerFreezerFreeze(duration=UTILITIES.freezer.freezeMs){
+  const until=now+Math.max(0,+duration||0);
+  playerFrozenUntil=Math.max(playerFrozenUntil,until);
+  if(typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()&&arena)
+    arena.utilityFrozenUntil=Math.max(+arena.utilityFrozenUntil||0,playerFrozenUntil);
+  cancelFanTheHammer();cancelMedHeal();resetFireCadence();
+  player.dashUntil=now;fistFlurryUntil=0;sawChargeUntil=0;comboNextT=0;
+  if(['scythe','terafists','chainsaw'].includes(player.meleeFxKey)&&typeof finishMeleeAbilityVisual==='function')
+    finishMeleeAbilityVisual(player.meleeFxKey);
+  utilityOut=false;aiming=false;rmbAim=false;
+  waveMsg='FROZEN '+(Math.max(0,+duration||0)/1000).toFixed(1)+'s \u00b7 FIRST HIT THAWS';waveMsgT=now+1400;sfx('hit');
+  return playerFrozenUntil;
+}
+function clearPlayerFreezerFreeze(){
+  const was=playerFrozenUntil>now||(arena&&+arena.utilityFrozenUntil>now);
+  playerFrozenUntil=0;if(arena)arena.utilityFrozenUntil=0;return !!was;
+}
+function freezerBlastClear(x0,y0,x1,y1){
+  return typeof losBlocked!=='function'||!losBlocked(x0,y0,x1,y1);
+}
+function launchFreezer(angle,options={}){
+  const u=UTILITIES.freezer,a=Math.atan2(Math.sin(+angle||0),Math.cos(+angle||0)),
+    x=Number.isFinite(+options.x)?+options.x:player.x,y=Number.isFinite(+options.y)?+options.y:player.y;
+  const projectile={x,y,vx:Math.cos(a)*u.speed,vy:Math.sin(a)*u.speed,t:now+u.fuseMs,freezer:true,
+    arenaUtility:!!options.arenaUtility,remoteUtility:!!options.remoteUtility,hostile:!!options.hostile};
+  if(typeof clampProjectileToArena==='function')clampProjectileToArena(projectile,7);
+  grenades.push(projectile);return projectile;
+}
+function updateFreezerProjectile(projectile,dt){
+  if(!projectile||!projectile.freezer)return false;
+  if(now>=projectile.t)return true;
+  const dx=projectile.vx*dt,dy=projectile.vy*dt,steps=Math.max(1,Math.ceil(Math.hypot(dx,dy)/4)),
+    sx=dx/steps,sy=dy/steps;
+  for(let step=0;step<steps;step++){
+    const nx=projectile.x+sx,ny=projectile.y+sy,probe={x:nx,y:ny},
+      blocked=typeof circleHitsRects==='function'?circleHitsRects(nx,ny,7):pointInRects(nx,ny);
+    if(blocked||(typeof projectileOutsideArena==='function'&&projectileOutsideArena(probe,7)))return true;
+    projectile.x=nx;projectile.y=ny;
+  }
+  const drag=Math.pow(0.985,Math.max(0,dt));projectile.vx*=drag;projectile.vy*=drag;
+  return now>=projectile.t;
+}
+function detonateFreezer(projectile){
+  if(!projectile||!projectile.freezer)return false;
+  const u=UTILITIES.freezer,R=Math.max(1,+u.radius||105),freezeMs=Math.max(1,+u.freezeMs||2500);
+  freezeFx.push({x:projectile.x,y:projectile.y,r:R,t:now,wallClipped:true,remoteUtility:!!projectile.remoteUtility});
+  burst(projectile.x,projectile.y,'#9fe6ff',24,6);addShake(5);sfx('pickup');
+  for(const e of enemies){
+    if(dist2(e.x,e.y,projectile.x,projectile.y)<R*R&&freezerBlastClear(projectile.x,projectile.y,e.x,e.y)){
+      e.frozenUntil=Math.max(+e.frozenUntil||0,now+freezeMs);burst(e.x,e.y,'#9fe6ff',6,3);
+    }
+  }
+  if(dist2(player.x,player.y,projectile.x,projectile.y)<R*R&&
+     freezerBlastClear(projectile.x,projectile.y,player.x,player.y))applyPlayerFreezerFreeze(freezeMs);
+  return true;
+}
 function utilCast(u){
   if((typeof arenaUtilityUseAllowed==='function'&&!arenaUtilityUseAllowed())||
      (typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){sfx('dry');return;}
@@ -240,19 +296,12 @@ function utilCast(u){
     utilReadyT=now+utilityCdOf('grenade'); sfx('swap');
     if(tutorialOn&&typeof tutorialRecordUtilityUsed==='function')tutorialRecordUtilityUsed();
   } else if(u==='freezer'){
-    const sw=swayScreen();
-    const t=screenToWorld(mouse.x+sw.x, mouse.y+sw.y);      // freeze lands at the crosshair
-    const bounds=activeArenaBounds();t.x=clamp(t.x,bounds.left,bounds.right);t.y=clamp(t.y,bounds.top,bounds.bottom);
-    const R=WEAPONS.chainsaw.range*2;                        // 2x chainsaw attack range
-    freezeFx.push({x:t.x, y:t.y, r:R, t:now});               // visual ring
-    for(const e of enemies){
-      if(dist2(e.x,e.y,t.x,t.y) < R*R){
-        e.frozenUntil = now+5000;                            // 5s freeze
-        burst(e.x,e.y,'#9fe6ff',6,3);
-      }
-    }
-    if(typeof arenaBroadcastUtility==='function')arenaBroadcastUtility('freezer',{x:t.x,y:t.y});
-    utilReadyT=now+utilityCdOf('freezer'); sfx('pickup');      // 25s recharge
+    const a=aimAngle(),arenaUtility=typeof isCasualOnlineArena==='function'&&isCasualOnlineArena(),
+      thrown=launchFreezer(a,{arenaUtility});
+    if(arenaUtility&&typeof arenaBroadcastUtility==='function')
+      arenaBroadcastUtility('freezer',{x:thrown.x,y:thrown.y,angle:a});
+    utilReadyT=now+utilityCdOf('freezer');sfx('swap');
+    if(tutorialOn&&typeof tutorialRecordUtilityUsed==='function')tutorialRecordUtilityUsed();
   } else if(u==='portal'){
     // ENDER PEARL: hurl a warp pearl toward the crosshair; you teleport to wherever it lands
     const a=aimAngle();
@@ -526,13 +575,14 @@ function update(dtms){
   if(keys['w'])my--; if(keys['s'])my++; if(keys['a'])mx--; if(keys['d'])mx++;
   if(mx||my) player.moveT=now;
   if(sticks.move.id!==null){ mx=sticks.move.dx/STICK_R; my=sticks.move.dy/STICK_R; }
-  if(now < player.dashUntil){
+  const playerIsFrozen=playerFrozenUntil>now||(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen());
+  if(now < player.dashUntil&&!playerIsFrozen){
     const dx=player.ddx*(player.dashSpd||14)*dt,dy=player.ddy*(player.dashSpd||14)*dt;
     let moved=true;
     if(typeof moveActorSwept==='function') moved=moveActorSwept(player,dx,dy);
     else { player.x+=dx;player.y+=dy; }
     if(!moved) player.dashUntil=now;                 // Scythe and other dashes stop at the first wall
-  } else if((mx||my)&&!(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){
+  } else if((mx||my)&&!playerIsFrozen){
     const m=Math.max(1,Math.hypot(mx,my));
     const surgeMul = now<surgeT ? 1.3 : 1;
     const healMul = (medChan||medChanHeal) ? 0.9 : 1;
@@ -629,6 +679,10 @@ function update(dtms){
   // grenades
   for(let i=grenades.length-1;i>=0;i--){
     const g=grenades[i];
+    if(g.freezer){
+      if(updateFreezerProjectile(g,dt)){detonateFreezer(g);grenades.splice(i,1);}
+      continue;
+    }
     g.x+=g.vx*dt; g.y+=g.vy*dt;
     if(!g.firework){ g.vx*=0.94; g.vy*=0.94; }   // grenades slow down; fireworks hold a straight arc to the target
     const edgeHit=bounceProjectileAtArenaEdge(g,12,g.firework?1:0.5);
@@ -1336,7 +1390,12 @@ function hurtPlayer(dmg){
   if(now<invincUntil) return;                       // invincibility powerup: no damage
   cancelMedHeal();                                  // a real hit interrupts both quick and long Medkit heals
   const waveDmg=1+Math.max(0,wave-1)*0.053;
-  damagePlayerHp(dmg*waveDmg*perks.armor*DIFFS[diffMode].dmg); player.hurtCd=550; player.hurtFlash=1;
+  let incoming=dmg*waveDmg*perks.armor*DIFFS[diffMode].dmg;
+  if(playerFrozenUntil>now){
+    clearPlayerFreezerFreeze();incoming*=0.5;
+    burst(player.x,player.y,'#bfefff',10,4);waveMsg='THAWED \u00b7 HIT REDUCED';waveMsgT=now+900;
+  }
+  damagePlayerHp(incoming); player.hurtCd=550; player.hurtFlash=1;
   addShake(6); sfx('hurt');
   if(player.hp<=0){
     cancelFanTheHammer();

@@ -83,8 +83,10 @@ function weaponDetails(k){
     if(k==='portal') rows.push(['EFFECT','teleport to crosshair'],['I-FRAMES','0.35s']);
     if(k==='timecapsule') rows.push(['\uD83C\uDF42 FALL','coming update'],['EFFECT','enemies & their shots at 25% speed'],
       ['ON CAST','clears every enemy projectile'],['DURATION','15s, ends if you move'],['RECHARGE','45s']);
-    if(k==='freezer') rows.push(['EFFECT','freeze enemies at crosshair'],['RADIUS','2\u00d7 chainsaw range'],
-      ['FREEZE TIME','5s'],['WHILE FROZEN','take half damage, can\u0027t move'],['ON HIT','first hit thaws them'],['RECHARGE','25s']);
+    if(k==='freezer') rows.push(['EFFECT','throw a moving ice charge'],['BLAST RADIUS','105'],
+      ['FUSE','1.35s'],['THROW SPEED','9'],['FREEZE TIME','2.5s'],
+      ['WALLS','stop the charge and shield the blast'],['SELF RISK','your blast can freeze you'],
+      ['WHILE FROZEN','take half damage, can\u0027t move'],['ON HIT','first hit thaws'],['RECHARGE','25s']);
     if(k==='redball') rows.push(['LIFETIME','3s'],['TAUNT RADIUS','750'],
       ['CONTACT DMG','8 per 0.28s'],['LURES','all enemies incl. shooters'],['BOSSES','immune to taunt']);
     if(k==='beachball') rows.push(['\uD83D\uDD25 SUMMER','temporary'],['EFFECT','enemies FLEE it'],

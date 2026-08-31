@@ -17,6 +17,7 @@ const arena={matchChannel:{},opponent:{id:'opponent',x:300,y:200,r:15},matchEpoc
 const context={ARENA_HP:250,TWIN_SAI_PARRY_MS:1000,arena,authUser:{id:'shooter'},player:{hp:250,x:100,y:100},
   now:1000,parryUntil:0,waveMsg:'',waveMsgT:0,Math,Number,String,Map,Set,Date,
   clamp:(v,a,b)=>Math.max(a,Math.min(b,v)),arenaCanAct:()=>true,arenaUtilityFrozen:()=>frozen,
+  clearPlayerFreezerFreeze:()=>{frozen=false;},
   arenaSend:(event,payload)=>{sent.push({event,payload});return true;},setTimeout:()=>0,
   addDamageNumber:(target,dmg,crit)=>{numbers.push({target,dmg,crit});},
   spawnTwinSaiReflection:(x,y,dmg,meta)=>{reflections.push({x,y,dmg,meta});},

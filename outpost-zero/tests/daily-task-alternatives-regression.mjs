@@ -292,11 +292,14 @@ assert.match(gameplay,/changed&&typeof sb!=='undefined'&&sb&&authUser.+saveProfi
 assert.match(ui,/arena\.dailyTaskResult\|\|\(typeof dailyDuelTaskProgressText/,'Arena results must visibly explain daily-task progress or rewards');
 assert.match(ui,/CHEST \+'\+r\.gems\+\(r\.taskReward\?' \\u00b7 DAILY TASK \+'/,'the chest modal must distinguish its random gems from task gems');
 assert.match(combat,/chestRewardOpen=\{coins:coinDrop,gems:awardedGems,taskReward/,'the chest modal must receive the task reward amount');
-for(const script of ['networking','administration','persistence','state','online','ui','loop'])
-  assert.match(index,new RegExp(`js/${script}\\.js\\?v=20260830-daily-or-tasks-v2`),`${script}.js needs the daily-task cache-buster`);
+for(const [script,version] of [['networking','20260830-daily-or-tasks-v2'],['administration','20260830-daily-or-tasks-v2'],
+  ['persistence','20260830-daily-or-tasks-v2'],['state','20260830-daily-or-tasks-v2'],['online','20260830-freezer-projectile-v1'],
+  ['ui','20260830-freezer-projectile-v1'],['loop','20260830-daily-or-tasks-v2']])
+  assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current cache-buster`);
 for(const script of ['party'])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=20260830-cpu-combat-v2`),`${script}.js needs the current CPU cache-buster`);
-for(const script of ['gameplay','combat','ai'])
-  assert.match(index,new RegExp(`js/${script}\\.js\\?v=20260830-sniper-fire-v1`),`${script}.js needs the current Sniper cache-buster`);
+for(const [script,version] of [['gameplay','20260830-freezer-projectile-v1'],['combat','20260830-freezer-projectile-v1'],
+  ['ai','20260830-sniper-fire-v1']])
+  assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('SUMMARY PASS daily task alternatives');

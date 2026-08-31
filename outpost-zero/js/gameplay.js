@@ -228,6 +228,7 @@ function cancelFanTheHammer(clearLock=false){
 }
 function resetWeaponGimmickState(){
   weaponLastShotAt=Object.create(null);
+  playerFrozenUntil=0;
   cancelFanTheHammer(true);
   if(typeof resetMeleeAbilityVisual==='function')resetMeleeAbilityVisual(player);
 }

@@ -63,6 +63,11 @@ function drawRemoteFireworkExplosionVisuals(list){
   }
   ctx.restore();
 }
+function freezerVisualReach(x,y,angle,radius){
+  if(typeof pointInRects!=='function')return radius;
+  for(let d=4;d<=radius;d+=4)if(pointInRects(x+Math.cos(angle)*d,y+Math.sin(angle)*d))return Math.max(0,d-4);
+  return radius;
+}
 function meleeWeaponPalette(hostile=false){
   return hostile
     ? {shaft:'#8b201e',blade:'#ff3b34',edge:'#ff8b80',grip:'#5a1111',bright:'#ff6b61',housing:'#731b19',bar:'#ff3b34',teeth:'#40090a'}
@@ -481,6 +486,14 @@ function drawWorld(){
   }
   // grenades
   for(const g of grenades){
+    if(g.freezer){
+      const speed=Math.hypot(g.vx,g.vy)||1,ux=g.vx/speed,uy=g.vy/speed;
+      ctx.strokeStyle=g.remoteUtility?'rgba(136,211,239,.75)':'rgba(191,239,255,.78)';ctx.lineWidth=5/zoom;
+      ctx.beginPath();ctx.moveTo(g.x,g.y);ctx.lineTo(g.x-ux*18,g.y-uy*18);ctx.stroke();
+      ctx.fillStyle=g.remoteUtility?'#79cbe9':'#bfefff';ctx.beginPath();ctx.arc(g.x,g.y,7,0,TAU);ctx.fill();
+      ctx.strokeStyle='#f1fbff';ctx.lineWidth=2/zoom;ctx.beginPath();ctx.arc(g.x,g.y,4,0,TAU);ctx.stroke();
+      continue;
+    }
     // Hostile utility uses a red body, but never a ring/halo (the projectile
     // itself is the cue, consistent with hostile bullets).
     ctx.fillStyle=g.remoteUtility?'#7a302c':'#3a4a2c';
@@ -489,15 +502,19 @@ function drawWorld(){
     ctx.fillStyle = ((now>>7)&1) ? '#e8b658' : '#d05548';
     ctx.beginPath(); ctx.arc(g.x,g.y-9,2.5,0,TAU); ctx.fill();
   }
-  // freeze rings — expanding icy shockwave where the freezer landed
+  // The expanding ice front is ray-clipped by solid geometry, so neither the
+  // blast nor its visual appears on the far side of a wall.
   for(const fz of freezeFx){
     const p=clamp((now-fz.t)/600,0,1);
-    ctx.globalAlpha=(1-p)*0.8;
-    ctx.strokeStyle='#bfefff'; ctx.lineWidth=4/zoom;
-    ctx.beginPath(); ctx.arc(fz.x,fz.y,fz.r*(0.3+0.7*p),0,TAU); ctx.stroke();
-    ctx.strokeStyle='rgba(160,220,255,0.5)'; ctx.lineWidth=2/zoom;
-    ctx.beginPath(); ctx.arc(fz.x,fz.y,fz.r,0,TAU); ctx.stroke();
-    ctx.globalAlpha=1;
+    const wanted=fz.r*(0.18+0.82*p),samples=72;
+    ctx.save();ctx.globalAlpha=(1-p)*0.82;ctx.fillStyle='rgba(130,215,250,.18)';ctx.strokeStyle='#bfefff';ctx.lineWidth=4/zoom;
+    ctx.beginPath();
+    for(let s=0;s<=samples;s++){
+      const a=s/samples*TAU,rr=fz.wallClipped?Math.min(wanted,freezerVisualReach(fz.x,fz.y,a,fz.r)):wanted,
+        x=fz.x+Math.cos(a)*rr,y=fz.y+Math.sin(a)*rr;
+      if(!s)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+    }
+    ctx.closePath();ctx.fill();ctx.stroke();ctx.restore();
   }
   // flame spray
   for(const f of flames){
@@ -841,7 +858,8 @@ function drawHUD(){
     ctx.fillText('MAP \u00b7 '+arenaMapName(hudMapId),W/2,pad+50);ctx.textAlign='left';
     if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){
       ctx.textAlign='center';ctx.fillStyle='#bfefff';ctx.font='700 11px ui-monospace,Consolas,monospace';
-      ctx.fillText('FROZEN '+Math.max(0,(arena.utilityFrozenUntil-now)/1000).toFixed(1)+'s \u00b7 FIRST HIT THAWS',W/2,pad+66);ctx.textAlign='left';
+      const frozenUntil=Math.max(typeof playerFrozenUntil==='number'?playerFrozenUntil:0,+arena.utilityFrozenUntil||0);
+      ctx.fillText('FROZEN '+Math.max(0,(frozenUntil-now)/1000).toFixed(1)+'s \u00b7 FIRST HIT THAWS',W/2,pad+66);ctx.textAlign='left';
     }
   } else {
     ctx.fillStyle='#e8b658'; ctx.font='700 22px ui-monospace,Consolas,monospace';
