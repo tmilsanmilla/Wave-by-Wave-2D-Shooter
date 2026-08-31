@@ -85,7 +85,7 @@ assert.deepEqual(pressure.held,{fire:false,pressure:false},'a recognized guard m
 assert.equal(pressure.after,0);assert.equal(pressure.burstUntil,0);
 
 const parry=JSON.parse(run(`(()=>{
-  const config=botDifficulty(4),bot={id:'bot',x:100,y:100,angle:0,aiRng:77},target={id:'player',x:350,y:100,r:15};
+  const config=botDifficulty(4),bot={id:'bot',x:100,y:100,angle:0,aiRng:77},target={id:'player',x:220,y:100,r:15};
   cpuAiInitBotWeapons(bot,0);bot.aiWeaponThinkAt=0;bot.aiWeaponLockUntil=9000;
   const seen=cpuAiObserveVisibleParry(bot,target,1000,config,true);
   const early=cpuAiObserveVisibleParry(bot,target,1049,config,true);
@@ -100,9 +100,21 @@ assert.equal(parry.seen.holdRanged,false,'an observed guard must keep a fair rea
 assert.equal(parry.early.holdRanged,false);
 assert.deepEqual({hold:parry.reacted.holdRanged,melee:parry.reacted.forceMelee},{hold:true,melee:true});
 assert.deepEqual(parry.weapon,{cur:'knife',equipEnd:1430,lockUntil:2050},
-  'Impossible must counter a nearby visible guard with a real 380ms knife draw and committed switch');
+  'Impossible may counter an extra-close visible guard with a real 380ms knife draw and committed switch');
 assert.equal(parry.ended.holdRanged,true,'the bot may use only a short post-animation caution delay');
 assert.equal(parry.released.holdRanged,false);
+
+const distantGuard=JSON.parse(run(`(()=>{
+  const config=botDifficulty(4),bot={id:'far-bot',x:100,y:100,angle:0,aiRng:77},target={id:'player',x:350,y:100,r:15};
+  cpuAiInitBotWeapons(bot,0);bot.aiWeaponThinkAt=0;bot.aiWeaponLockUntil=0;
+  cpuAiObserveVisibleParry(bot,target,2000,config,true);
+  const reacted=cpuAiObserveVisibleParry(bot,target,2050,config,true);
+  cpuAiChooseBotWeapon(bot,target,2050,config,reacted);
+  return JSON.stringify({reacted,cur:bot.cur,equipEnd:bot.equipEnd});
+})()`));
+assert.deepEqual({hold:distantGuard.reacted.holdRanged,melee:distantGuard.reacted.forceMelee},{hold:true,melee:true});
+assert.equal(distantGuard.cur,'ar',
+  'recognizing Twin Sai must not make the CPU draw melee from 250px away; melee remains extra-close only');
 
 const vanished=JSON.parse(run(`(()=>{
   const config=botDifficulty(4),bot={id:'bot',x:0,y:0,aiRng:9},target={id:'player',x:100,y:0};

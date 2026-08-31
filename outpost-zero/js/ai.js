@@ -13,6 +13,8 @@ const CPU_AI_WEAPON_RULES=Object.freeze({
   m9:Object.freeze({damage:38,fireMs:200,maxRange:440,forgiveness:5}),
   knife:Object.freeze({damage:48,fireMs:380,maxRange:130,forgiveness:0}),
 });
+const CPU_AI_KNIFE_ABILITY_RANGE=70,CPU_AI_KNIFE_ABILITY_DAMAGE=180,
+  CPU_AI_KNIFE_ABILITY_COOLDOWN_MS=4800,CPU_AI_KNIFE_ABILITY_VISUAL_MS=250;
 const CPU_AI_TNT_RETHINK_MS=200,CPU_AI_TNT_SCORE_MIN=45,CPU_AI_TNT_AVOID_PAD=42;
 const CPU_AI_MOVE_MIN_MS=550,CPU_AI_MOVE_MAX_MS=1300,CPU_AI_TRACK_JUMP=180;
 const CPU_AI_NAV_CLEARANCE=10,CPU_AI_NAV_STEP=12,CPU_AI_NAV_REUSE_MS=450,CPU_AI_STUCK_TICKS=3,CPU_AI_STUCK_RECOVERY_MS=900;
@@ -51,12 +53,14 @@ function cpuAiInitBotWeapons(bot,clock=0){
   bot.aiWeaponLastShot={ar:0,m9:0,knife:0};
   bot.aiReloadWeapon='';bot.reloadEnd=0;bot.cur=kit.primary;bot.mag=bot.aiWeaponMags[bot.cur];bot.lastShot=0;
   bot.equipEnd=clock+600;bot.aiWeaponThinkAt=clock;bot.aiWeaponLockUntil=clock;
-  bot.aiWeaponMixAt=clock+1200;bot.aiPrimaryEmptyDecision=-1;bot.aiMeleeOpportunity=false;bot.aiMeleeWillUse=false;
+  bot.aiMeleeAbilityReadyAt=clock;
   bot.aiPressureTargetId='';bot.aiPressureBurstUntil=0;bot.aiPressureShotsLeft=0;bot.aiPressureDecisionAt=clock;
   bot.aiSeenTargetId='';bot.aiSeenTargetX=0;bot.aiSeenTargetY=0;bot.aiSeenTargetAt=-Infinity;
   bot.aiParryTargetId='';bot.aiParryVisible=false;bot.aiParryReactAt=0;bot.aiParryWillRespect=false;
   bot.aiParryWillMelee=false;bot.aiParryReacted=false;bot.aiParryCautionUntil=0;
   bot.aiMeleeSide=1;bot.swingSeq=0;bot.swingT=0;bot.swingA=0;bot.swingArc=0;bot.swingR=0;bot.swingDur=0;bot.swingSide=1;
+  bot.meleeFxSeq=0;bot.meleeFxKey='';bot.meleeFxStart=0;bot.meleeFxUntil=0;
+  bot.meleeFxAngle=0;bot.meleeFxReadyAt=0;bot.meleeFxBlades=[];bot.meleeFxWallRecallSeq=0;
   return bot;
 }
 function cpuAiSyncBotWeaponState(bot){
@@ -104,32 +108,31 @@ function cpuAiChooseBotWeapon(bot,target,clock,config,parryResponse=null){
   if(clock<(+bot.aiWeaponThinkAt||0))return bot.cur;
   bot.aiWeaponThinkAt=clock+Math.max(70,+config.weaponThinkMs||220);
   const kit=cpuAiBotLoadout(bot),distance=Math.hypot(target.x-bot.x,target.y-bot.y),counterMelee=!!parryResponse?.forceMelee,
-    meleeDecisionRange=Math.max(WEAPONS[kit.melee].range+Math.max(1,+target.r||15),+config.meleeCommitRange||155,
-      counterMelee?Math.max(0,+config.parryMeleeRange||0):0),
+    // Draw only when the knife can already connect. Difficulty and a visible
+    // Twin Sai guard may improve decision speed, never create a ranged lunge.
+    meleeDecisionRange=WEAPONS[kit.melee].range+Math.max(1,+target.r||15),
     meleeClear=distance<=meleeDecisionRange&&cpuAiMeleeClear(bot,target);
-  if(counterMelee&&meleeClear){bot.aiMeleeOpportunity=true;bot.aiMeleeWillUse=true;}
-  if(meleeClear&&!bot.aiMeleeOpportunity){
-    bot.aiMeleeOpportunity=true;bot.aiMeleeWillUse=cpuAiNext(bot)<clamp(+config.meleeChance||0,0,1);
-  }else if(!meleeClear&&distance>meleeDecisionRange+45){bot.aiMeleeOpportunity=false;bot.aiMeleeWillUse=false;}
-  if(meleeClear&&bot.aiMeleeWillUse){
+  if(meleeClear){
     if(counterMelee||bot.cur===kit.melee||clock>=(+bot.aiWeaponLockUntil||0))
       cpuAiSwitchBotWeapon(bot,kit.melee,clock,counterMelee?Math.max(760,+config.parryMeleeCommitMs||900):760);
     return bot.cur;
   }
   if(bot.cur===kit.melee){
-    if(clock<(+bot.aiWeaponLockUntil||0)&&distance<=meleeDecisionRange+45&&cpuAiMeleeClear(bot,target))return bot.cur;
-    const fallback=(+bot.aiWeaponMags[kit.primary]||0)>0?kit.primary:kit.secondary;
+    if(clock<(+bot.aiWeaponLockUntil||0)&&distance<=meleeDecisionRange+20&&cpuAiMeleeClear(bot,target))return bot.cur;
+    const fallback=(+bot.aiWeaponMags[kit.primary]||0)>0?kit.primary:
+      ((+bot.aiWeaponMags[kit.secondary]||0)>0?kit.secondary:kit.primary);
     cpuAiSwitchBotWeapon(bot,fallback,clock,520);return bot.cur;
   }
   const current=bot.cur,primaryLeft=Math.max(0,+bot.aiWeaponMags[kit.primary]||0),secondaryLeft=Math.max(0,+bot.aiWeaponMags[kit.secondary]||0);
   if(current===kit.primary&&primaryLeft<1){
-    if(bot.aiPrimaryEmptyDecision<0)bot.aiPrimaryEmptyDecision=cpuAiNext(bot)<clamp(+config.secondaryChance||0,0,1)?1:0;
-    if(secondaryLeft>0&&bot.aiPrimaryEmptyDecision===1&&clock>=(+bot.aiWeaponLockUntil||0)){
-      cpuAiSwitchBotWeapon(bot,kit.secondary,clock,720);return bot.cur;
+    // The M9 is an emergency fallback only. A loaded sidearm is used while
+    // the empty AR needs attention; no stowed/background reload is granted.
+    if(secondaryLeft>0){
+      if(clock>=(+bot.aiWeaponLockUntil||0))cpuAiSwitchBotWeapon(bot,kit.secondary,clock,720);
+      return bot.cur;
     }
     cpuAiStartBotReload(bot,kit.primary,clock);return bot.cur;
   }
-  if(primaryLeft>0)bot.aiPrimaryEmptyDecision=-1;
   if(current===kit.secondary&&secondaryLeft<1){
     if(clock>=(+bot.aiWeaponLockUntil||0)){
       cpuAiSwitchBotWeapon(bot,kit.primary,clock,520);
@@ -137,13 +140,8 @@ function cpuAiChooseBotWeapon(bot,target,clock,config,parryResponse=null){
     }
     return bot.cur;
   }
-  if(clock>=(+bot.aiWeaponMixAt||0)){
-    bot.aiWeaponMixAt=clock+cpuAiRange(bot,1500,2500);
-    const mix=clamp(+config.secondaryMixChance||0,0,1),inSidearmRange=distance<=CPU_AI_WEAPON_RULES.m9.maxRange;
-    if(current===kit.primary&&secondaryLeft>0&&inSidearmRange&&cpuAiNext(bot)<mix){
-      cpuAiSwitchBotWeapon(bot,kit.secondary,clock,720);return bot.cur;
-    }
-  }
+  // A healthy AR always wins the normal weapon decision. This deliberately
+  // removes random sidearm mixups that made the CPU look indecisive.
   if(current===kit.secondary&&clock>=(+bot.aiWeaponLockUntil||0)&&primaryLeft>0)cpuAiSwitchBotWeapon(bot,kit.primary,clock,520);
   cpuAiSyncBotWeaponState(bot);return bot.cur;
 }
@@ -236,6 +234,21 @@ function cpuAiTryBotMelee(bot,target,clock,damage,onHit){
   bot.swingArc=w.arc;bot.swingR=w.range;bot.swingDur=clamp(w.fireRate*.55,90,260);
   if(typeof onHit==='function')onHit(clamp(+damage||rule.damage,0,250),'melee');
   if(typeof sfx==='function')sfx('slash');return true;
+}
+function cpuAiTryBotMeleeAbility(bot,target,clock,onHit){
+  const key=String(bot&&bot.cur||''),w=WEAPONS[key];
+  if(!bot||!target||key!=='knife'||!w||!w.melee||clock<(+bot.equipEnd||0)||bot.reloadEnd||
+     clock<(+bot.aiMeleeAbilityReadyAt||0))return false;
+  const targetRadius=Math.max(1,+target.r||15),distance=Math.hypot(target.x-bot.x,target.y-bot.y);
+  if(distance>CPU_AI_KNIFE_ABILITY_RANGE+targetRadius||!cpuAiMeleeClear(bot,target))return false;
+  bot.aiMeleeAbilityReadyAt=clock+CPU_AI_KNIFE_ABILITY_COOLDOWN_MS;
+  bot.aiWeaponLastShot[key]=clock;bot.lastShot=clock;bot.spinT=clock;
+  bot.swingSeq=Math.max(0,Math.floor(+bot.swingSeq||0))+1;bot.swingT=clock;bot.swingA=0;
+  bot.swingArc=Math.PI*2;bot.swingR=CPU_AI_KNIFE_ABILITY_RANGE+4;bot.swingDur=180;bot.swingSide=1;
+  bot.meleeFxSeq=Math.max(0,Math.floor(+bot.meleeFxSeq||0))+1;bot.meleeFxKey='knife';
+  bot.meleeFxStart=clock;bot.meleeFxUntil=clock+CPU_AI_KNIFE_ABILITY_VISUAL_MS;bot.meleeFxAngle=bot.angle||0;
+  if(typeof onHit==='function')onHit(CPU_AI_KNIFE_ABILITY_DAMAGE,'melee_ability');
+  if(typeof sfx==='function')sfx('crit');return true;
 }
 function cpuAiObstacleContains(o,x,y,r=0){
   return !!(o&&x+r>=o.x&&x-r<=o.x+o.w&&y+r>=o.y&&y-r<=o.y+o.h);
@@ -818,37 +831,37 @@ const BOT_LADDER_QUEUE_RETRY_MS=Object.freeze([2000,10000,30000,120000]),BOT_LAD
 const BOT_DIFFICULTIES=Object.freeze([
   Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'STRONG FOUNDATIONS',detail:'Readable routes with mostly direct, repeatable peeks.',
     reactionMs:670,moveSpeed:2.50,aimNoise:.080,shotJitter:.030,fireAimError:.125,leadFactor:.35,maxLeadMs:150,thinkMs:198,turnRate:.055,
-    secondaryChance:.20,secondaryMixChance:.02,meleeChance:.08,meleeCommitRange:150,weaponThinkMs:360,
+    weaponThinkMs:360,
     pressureAimError:.220,pressureChance:.12,pressureDecisionMs:700,pressureBurstMin:2,pressureBurstMax:2,pressureBurstMs:520,pressureMemoryMs:150,
-    parryReactionMs:360,parryRespectChance:.25,parryMeleeChance:.08,parryMeleeRange:165,parryMeleeCommitMs:850,parryReleaseDelayMs:180,
+    parryReactionMs:360,parryRespectChance:.25,parryMeleeChance:.08,parryMeleeCommitMs:850,parryReleaseDelayMs:180,
     routeVariation:.12,moveCommitMin:1100,moveCommitMax:1700,moveInertia:.60,dodgeChance:.04,dodgeReactionMs:280,dodgeLookaheadMs:300,dodgeCommitMs:190,dodgeCooldownMs:380,dodgeFireHoldMs:160,dodgeSpeedScale:1,dodgeMargin:3,
     peekFakeChance:.03,prefireAdapt:0,peekTimingVariance:.08,peekHoldMin:105,peekHoldMax:145,peekSettleMin:115,peekSettleMax:155,peekCommitSpeed:1}),
   Object.freeze({id:1,key:'easy',name:'EASY',summary:'QUICKER DECISIONS',detail:'Cleaner movement with occasional timing changes and bait peeks.',
     reactionMs:540,moveSpeed:2.65,aimNoise:.060,shotJitter:.022,fireAimError:.100,leadFactor:.52,maxLeadMs:205,thinkMs:160,turnRate:.070,
-    secondaryChance:.40,secondaryMixChance:.06,meleeChance:.20,meleeCommitRange:160,weaponThinkMs:280,
+    weaponThinkMs:280,
     pressureAimError:.180,pressureChance:.30,pressureDecisionMs:560,pressureBurstMin:2,pressureBurstMax:3,pressureBurstMs:600,pressureMemoryMs:250,
-    parryReactionMs:260,parryRespectChance:.50,parryMeleeChance:.22,parryMeleeRange:185,parryMeleeCommitMs:875,parryReleaseDelayMs:160,
+    parryReactionMs:260,parryRespectChance:.50,parryMeleeChance:.22,parryMeleeCommitMs:875,parryReleaseDelayMs:160,
     routeVariation:.36,moveCommitMin:950,moveCommitMax:1500,moveInertia:.52,dodgeChance:.18,dodgeReactionMs:220,dodgeLookaheadMs:380,dodgeCommitMs:210,dodgeCooldownMs:330,dodgeFireHoldMs:135,dodgeSpeedScale:1.02,dodgeMargin:5,
     peekFakeChance:.08,prefireAdapt:.18,peekTimingVariance:.28,peekHoldMin:85,peekHoldMax:180,peekSettleMin:95,peekSettleMax:210,peekCommitSpeed:1.05}),
   Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'COMPLETE TACTICS',detail:'Recognizes punished entries and changes its next peek timing.',
     reactionMs:400,moveSpeed:2.85,aimNoise:.040,shotJitter:.015,fireAimError:.075,leadFactor:.67,maxLeadMs:270,thinkMs:118,turnRate:.090,
-    secondaryChance:.70,secondaryMixChance:.14,meleeChance:.50,meleeCommitRange:175,weaponThinkMs:210,
+    weaponThinkMs:210,
     pressureAimError:.155,pressureChance:.58,pressureDecisionMs:420,pressureBurstMin:3,pressureBurstMax:4,pressureBurstMs:720,pressureMemoryMs:400,
-    parryReactionMs:170,parryRespectChance:.75,parryMeleeChance:.55,parryMeleeRange:225,parryMeleeCommitMs:900,parryReleaseDelayMs:130,
+    parryReactionMs:170,parryRespectChance:.75,parryMeleeChance:.55,parryMeleeCommitMs:900,parryReleaseDelayMs:130,
     routeVariation:.66,moveCommitMin:900,moveCommitMax:1450,moveInertia:.58,dodgeChance:.50,dodgeReactionMs:145,dodgeLookaheadMs:500,dodgeCommitMs:230,dodgeCooldownMs:280,dodgeFireHoldMs:110,dodgeSpeedScale:1.08,dodgeMargin:9,
     peekFakeChance:.08,prefireAdapt:.72,peekTimingVariance:.58,peekHoldMin:70,peekHoldMax:220,peekSettleMin:80,peekSettleMax:260,peekPunishHoldMs:300,peekCommitSpeed:1.13}),
   Object.freeze({id:3,key:'hard',name:'HARD',summary:'RELENTLESS TACTICIAN',detail:'Dodges live fire, varies timing, baits shots, and commits with wide swings.',
     reactionMs:240,moveSpeed:3.18,aimNoise:.022,shotJitter:.006,fireAimError:.047,leadFactor:.85,maxLeadMs:370,thinkMs:78,turnRate:.135,
-    secondaryChance:.95,secondaryMixChance:.28,meleeChance:.85,meleeCommitRange:195,weaponThinkMs:140,
+    weaponThinkMs:140,
     pressureAimError:.130,pressureChance:.88,pressureDecisionMs:300,pressureBurstMin:3,pressureBurstMax:5,pressureBurstMs:850,pressureMemoryMs:550,
-    parryReactionMs:90,parryRespectChance:.95,parryMeleeChance:.90,parryMeleeRange:260,parryMeleeCommitMs:950,parryReleaseDelayMs:90,
+    parryReactionMs:90,parryRespectChance:.95,parryMeleeChance:.90,parryMeleeCommitMs:950,parryReleaseDelayMs:90,
     routeVariation:.90,moveCommitMin:1100,moveCommitMax:1750,moveInertia:.78,dodgeChance:.90,dodgeReactionMs:80,dodgeLookaheadMs:650,dodgeCommitMs:250,dodgeCooldownMs:190,dodgeFireHoldMs:90,dodgeSpeedScale:1.18,dodgeMargin:14,
     peekFakeChance:.42,prefireAdapt:.88,peekTimingVariance:.92,peekHoldMin:45,peekHoldMax:280,peekSettleMin:55,peekSettleMax:300,peekPunishHoldMs:340,peekFakeSpeed:1.12,peekCommitSpeed:1.23}),
   Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'ELITE EVASIVE EXECUTION',detail:'Commits to pressure bursts and routes, counters visible guards, and dodges spawned rounds.',
     reactionMs:100,moveSpeed:3.45,aimNoise:.012,shotJitter:.0020,fireAimError:.040,leadFactor:.95,maxLeadMs:500,thinkMs:40,turnRate:.195,
-    secondaryChance:1,secondaryMixChance:.42,meleeChance:1,meleeCommitRange:215,weaponThinkMs:90,
+    weaponThinkMs:90,
     pressureAimError:.115,pressureChance:1,pressureDecisionMs:240,pressureBurstMin:4,pressureBurstMax:6,pressureBurstMs:950,pressureMemoryMs:700,
-    parryReactionMs:50,parryRespectChance:1,parryMeleeChance:1,parryMeleeRange:290,parryMeleeCommitMs:1000,parryReleaseDelayMs:65,
+    parryReactionMs:50,parryRespectChance:1,parryMeleeChance:1,parryMeleeCommitMs:1000,parryReleaseDelayMs:65,
     routeVariation:1,moveCommitMin:1250,moveCommitMax:1900,moveInertia:.92,dodgeChance:1,dodgeReactionMs:50,dodgeLookaheadMs:800,dodgeCommitMs:260,dodgeCooldownMs:120,dodgeFireHoldMs:60,dodgeSpeedScale:1.30,dodgeMargin:20,
     peekFakeChance:.62,prefireAdapt:1,peekTimingVariance:1,peekHoldMin:30,peekHoldMax:330,peekSettleMin:40,peekSettleMax:340,peekPunishHoldMs:380,peekFakeSpeed:1.18,peekCommitSpeed:1.32}),
 ]);
@@ -1785,7 +1798,7 @@ function arenaBotHitPlayer(dmg,kind='shot'){
   const hit=clamp(+dmg||0,0,ARENA_HP); if(!hit) return;
   // Twin Sai reflects projectiles. A physical knife swing is handled by the
   // normal melee spacing/LOS rules and cannot be converted into a bullet.
-  if(kind!=='melee'&&now<parryUntil){
+  if(!String(kind||'').startsWith('melee')&&now<parryUntil){
     if(typeof spawnTwinSaiReflection==='function')spawnTwinSaiReflection(player.x,player.y,hit);
     burst(player.x,player.y,'#bfe8ff',10,4);addShake(3);sfx('hit');
     waveMsg='TWIN SAI PARRY';waveMsgT=now+900;return;
@@ -1865,6 +1878,7 @@ function updateArenaBot(dtms){
 
   if(now<b.reactionAt||now<(+b.aiDodgeFireUntil||0)||now<(+b.equipEnd||0)||b.reloadEnd||cpuAiPeekWithholdsFire(b))return;
   if(isMelee){
+    if(cpuAiTryBotMeleeAbility(b,player,now,(damage,kind)=>arenaBotHitPlayer(damage,kind)))return;
     cpuAiTryBotMelee(b,player,now,weaponRule.damage,(damage,kind)=>arenaBotHitPlayer(damage,kind));return;
   }
   // A TNT plan is cheap to cache for movement, but its safety is rechecked at

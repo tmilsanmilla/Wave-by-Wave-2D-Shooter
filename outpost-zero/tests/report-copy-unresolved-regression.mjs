@@ -49,6 +49,6 @@ const sqlExport=sql.slice(sql.indexOf('create or replace function public.export_
   sql.indexOf('revoke all on function public._outpost_zero_redact_report_text'));
 assert.match(sqlExport,/where r\.game='outpost-zero' and not r\.resolved/,
   'the Supabase export RPC itself must return unresolved reports only');
-assert.match(index,/outpost-zero\/js\/administration\.js\?v=20260831-unresolved-report-copy-v1/);
+assert.match(index,/outpost-zero\/js\/administration\.js\?v=20260831-admin-archives-v1/);
 
 console.log('PASS Copy All exports every unresolved report and no resolved reports');

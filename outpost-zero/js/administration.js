@@ -43,14 +43,15 @@ let reportCopyMode='all',reportCopyCustomCount=25,reportCopyBusy=false,reportCop
 let reportActionMenuOpen=false,reportAmountMenuOpen=false,reportView='open';
 let reportScroll=0,reportScrollMax=0,reportScrollViewport=null;
 let requestsOpen=false,requestsRects=[],requestsPage=0,requestsBusy=false,requestsStatus='';
-let weaponSuggestions=[],weaponSuggestionsOpen=false,weaponSuggestionsRects=[],weaponSuggestionBusy=false,weaponSuggestionStatus='',weaponSuggestionPage=0,weaponSuggestionRequestSeq=0;
+let weaponSuggestions=[],weaponSuggestionPendingRows=[],weaponSuggestionArchiveRows=[],weaponSuggestionView='pending',weaponSuggestionsOpen=false,weaponSuggestionsRects=[],weaponSuggestionBusy=false,weaponSuggestionStatus='',weaponSuggestionPage=0,weaponSuggestionRequestSeq=0;
 let inboxTab='msgs';
 let postOpen=false, postBusy=false, postRequestSeq=0, updatesOpen=false, updatesHubBtnRect=null, updatesRects=[], staffReport=false;
 let adminsOpen=false, msgsOpen=false, adminsHubBtnRect=null, msgsHubBtnRect=null, adminsRects=[], msgsRects=[];
 let auditOpen=false, auditRects=[], auditScroll=0, auditScrollMax=0, auditScrollViewport=null;
 let adminAuditPages=[], adminAuditPageMore=[], adminAuditPage=0, adminAuditLoading=false, adminAuditError='', adminAuditHasMore=false;
+let adminAuditView='current',adminAuditRequestSeq=0,adminAuditViewNow=0;
 let adminPrivacyEpoch=0,adminRosterFetchSeq=0;
-const ADMIN_AUDIT_PAGE_SIZE=25;
+const ADMIN_AUDIT_PAGE_SIZE=25,ADMIN_AUDIT_ARCHIVE_MS=7*24*60*60*1000,ADMIN_AUDIT_SCAN_PAGE_CAP=400;
 let scoresOpen=false, scoresRects=[], scoreEditOpen=false, scoreEditBusy=false, scoreEditOperationReceipt=null, scoreReqs=[];
 const scoreRequestDecisionBusy=new Set();
 let pePanelTab='items';
@@ -108,7 +109,7 @@ function reportScrollContains(x,y){
 function currentAuthUserId(){return authUser?String(authUser.id||''):'';}
 function adminPrivacyRequestCurrent(epoch,userId){return epoch===adminPrivacyEpoch&&currentAuthUserId()===String(userId||'');}
 function clearAdminAuditCache(){
-  auditOpen=false;adminAuditPages=[];adminAuditPageMore=[];adminAuditPage=0;adminAuditLoading=false;adminAuditError='';adminAuditHasMore=false;
+  adminAuditRequestSeq++;auditOpen=false;adminAuditView='current';adminAuditViewNow=0;adminAuditPages=[];adminAuditPageMore=[];adminAuditPage=0;adminAuditLoading=false;adminAuditError='';adminAuditHasMore=false;
   resetAdminAuditScroll();
 }
 function clearPrivatePlayerEditor(){
@@ -150,7 +151,7 @@ function clearMainOnlyAdminState(){
   reportFetchSeq++;reportResolveBusy.clear();reportLoadStatus='';resetReportScroll();
   reportCopyBusy=false;reportCopyStatus='';reportCopyMode='all';reportBulkAction='copy';reportActionMenuOpen=reportAmountMenuOpen=false;reportView='open';
   clearAdminAuditCache();scoreReqs=[];updatesOpen=false;updatesFeed={reports:[]};updatesResolved=[];
-  aiLearningOpen=false;adminsOpen=false;storageOpen=false;weaponSuggestionsOpen=false;requestsOpen=false;weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='';clearPostComposerPrivateState();staffReport=false;
+  aiLearningOpen=false;adminsOpen=false;storageOpen=false;weaponSuggestionsOpen=false;requestsOpen=false;weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestionView='pending';weaponSuggestions=[];weaponSuggestionPendingRows=[];weaponSuggestionArchiveRows=[];weaponSuggestionPage=0;weaponSuggestionStatus='';clearPostComposerPrivateState();staffReport=false;
   composePickOpen=false;
   if(msgOpen&&typeof msgKind!=='undefined'&&(msgKind==='admin'||msgKind==='player_notification')){msgOpen=false;msgTo='';}
   clearAdminNotificationComposerState();
@@ -176,7 +177,7 @@ function scrubPrivilegedUiForAccountChange(){
   if(typeof layoutMode!=='undefined')layoutMode=false;
   reportFetchSeq++;reportResolveBusy.clear();reportLoadStatus='';resetReportScroll();
   reportCopyBusy=false;reportCopyStatus='';reportCopyMode='all';reportBulkAction='copy';reportActionMenuOpen=reportAmountMenuOpen=false;reportView='open';
-  inboxTab='msgs';composePickOpen=false;scoreReqs=[];adminMsgs=[];unreadMsgs=0;updatesFeed={reports:[]};updatesResolved=[];weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='';
+  inboxTab='msgs';composePickOpen=false;scoreReqs=[];adminMsgs=[];unreadMsgs=0;updatesFeed={reports:[]};updatesResolved=[];weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestionView='pending';weaponSuggestions=[];weaponSuggestionPendingRows=[];weaponSuggestionArchiveRows=[];weaponSuggestionPage=0;weaponSuggestionStatus='';
   clearAdminAuditCache();clearPrivatePlayerEditor();scoreRequestDecisionBusy.clear();
   if(typeof banList!=='undefined')banList=[];if(typeof appealList!=='undefined')appealList=[];
   if(typeof appealDecisionBusy!=='undefined')appealDecisionBusy.clear();if(typeof playerBanActionBusy!=='undefined')playerBanActionBusy.clear();
@@ -748,7 +749,49 @@ function normalizeAdminAuditRow(row){
     action:String(r.action||'admin.action'),result:String(r.result||'ok'),details:r.details&&typeof r.details==='object'?r.details:{},
     createdAt:String(r.created_at||'')};
 }
+function adminAuditArchived(row,nowMs=Date.now()){
+  const created=Date.parse(String(row&&(row.createdAt!=null?row.createdAt:row.created_at)||'')),clock=Number(nowMs);
+  // A malformed or future timestamp must stay visible in CURRENT instead of
+  // silently disappearing into an archive that an admin may never inspect.
+  return Number.isFinite(created)&&Number.isFinite(clock)&&created<=clock&&clock-created>=ADMIN_AUDIT_ARCHIVE_MS;
+}
+function adminAuditMatchesView(row,view=adminAuditView,nowMs=adminAuditViewNow||Date.now()){
+  return (view==='archive')===adminAuditArchived(row,nowMs);
+}
+function resetAdminAuditViewPages(nowMs=Date.now()){
+  adminAuditRequestSeq++;adminAuditPages=[];adminAuditPageMore=[];adminAuditPage=0;adminAuditHasMore=false;
+  adminAuditLoading=false;adminAuditError='';adminAuditViewNow=Number.isFinite(+nowMs)?+nowMs:Date.now();resetAdminAuditScroll();
+}
+function setAdminAuditView(view){
+  const next=String(view||'').toLowerCase()==='archive'?'archive':'current';
+  if(next===adminAuditView)return false;
+  adminAuditView=next;resetAdminAuditViewPages();return true;
+}
 function adminAuditPageRows(){ return adminAuditPages[adminAuditPage]||[]; }
+function adminAuditCursorMovesOlder(next,current){
+  if(!/^\d+$/.test(String(next||'')))return false;
+  if(current==null||current==='')return true;
+  if(!/^\d+$/.test(String(current)))return false;
+  try{return BigInt(next)<BigInt(current);}catch(error){return false;}
+}
+async function fetchAdminAuditViewPage(startBefore,view,viewNow,current){
+  let before=startBefore||null;const matches=[];
+  for(let scan=0;scan<ADMIN_AUDIT_SCAN_PAGE_CAP;scan++){
+    const {data,error}=await sb.rpc('list_outpost_zero_admin_audit_by_username',{p_before_event_id:before,p_limit:ADMIN_AUDIT_PAGE_SIZE+1});
+    if(error)throw error;if(!current())return null;
+    const source=Array.isArray(data)?data:[],batch=source.map(normalizeAdminAuditRow);
+    if(batch.length!==source.length||batch.some(row=>!row.eventId))throw new Error('ADMIN_AUDIT_PAGE_INVALID');
+    for(const row of batch){
+      if(adminAuditMatchesView(row,view,viewNow))matches.push(row);
+      if(matches.length>ADMIN_AUDIT_PAGE_SIZE)return {rows:matches.slice(0,ADMIN_AUDIT_PAGE_SIZE),hasMore:true};
+    }
+    if(batch.length<ADMIN_AUDIT_PAGE_SIZE+1)return {rows:matches,hasMore:false};
+    const next=String(batch[batch.length-1].eventId||'');
+    if(!adminAuditCursorMovesOlder(next,before))throw new Error('ADMIN_AUDIT_PAGE_CURSOR_INVALID');
+    before=next;
+  }
+  throw new Error('ADMIN_AUDIT_PAGE_LIMIT_REACHED');
+}
 const ADMIN_AUDIT_ACTION_TITLES=Object.freeze({
   'temporary_weapon.grant':'Temporary weapon grant',
   'temporary_weapon.extend':'Temporary weapon extension',
@@ -933,37 +976,35 @@ function adminAuditDetailsText(row){
 }
 async function fetchAdminAuditLog(reset=false){
   if(!sb||!authUser||!isMainAdmin()){
-    adminAuditPages=[]; adminAuditPage=0; adminAuditHasMore=false; adminAuditError='Main-admin access required.'; return false;
+    adminAuditRequestSeq++;adminAuditPages=[];adminAuditPageMore=[];adminAuditPage=0;adminAuditHasMore=false;adminAuditLoading=false;adminAuditError='Main-admin access required.';resetAdminAuditScroll();return false;
   }
   if(adminAuditLoading) return false;
-  const epoch=adminPrivacyEpoch,userId=currentAuthUserId();
-  adminAuditLoading=true; adminAuditError='';
+  if(reset)resetAdminAuditViewPages();
+  const existing=adminAuditPages[adminAuditPage];
+  if(existing){adminAuditHasMore=!!adminAuditPageMore[adminAuditPage];return true;}
+  const epoch=adminPrivacyEpoch,userId=currentAuthUserId(),view=adminAuditView,viewNow=adminAuditViewNow||Date.now(),request=++adminAuditRequestSeq,
+    current=()=>request===adminAuditRequestSeq&&adminPrivacyRequestCurrent(epoch,userId)&&isMainAdmin()&&adminAuditView===view;
+  adminAuditViewNow=viewNow;adminAuditLoading=true;adminAuditError='';
   try{
-    if(reset){adminAuditPages=[];adminAuditPageMore=[];adminAuditPage=0;adminAuditHasMore=false;resetAdminAuditScroll();}
-    const existing=adminAuditPages[adminAuditPage];
-    if(existing){adminAuditHasMore=!!adminAuditPageMore[adminAuditPage];return true;}
     const previous=adminAuditPage>0?adminAuditPages[adminAuditPage-1]:null;
     const before=previous&&previous.length?previous[previous.length-1].eventId:null;
-    const {data,error}=await sb.rpc('list_outpost_zero_admin_audit_by_username',{p_before_event_id:before,p_limit:ADMIN_AUDIT_PAGE_SIZE+1});
-    if(error) throw error;
-    if(!adminPrivacyRequestCurrent(epoch,userId)||!isMainAdmin())return false;
-    const fetched=(data||[]).map(normalizeAdminAuditRow).filter(row=>row.eventId);
-    adminAuditHasMore=fetched.length>ADMIN_AUDIT_PAGE_SIZE;
-    adminAuditPages[adminAuditPage]=fetched.slice(0,ADMIN_AUDIT_PAGE_SIZE);adminAuditPageMore[adminAuditPage]=adminAuditHasMore;resetAdminAuditScroll();
+    const page=await fetchAdminAuditViewPage(before,view,viewNow,current);
+    if(!page||!current())return false;
+    adminAuditHasMore=!!page.hasMore;adminAuditPages[adminAuditPage]=page.rows;adminAuditPageMore[adminAuditPage]=adminAuditHasMore;resetAdminAuditScroll();
     return true;
   }catch(error){
-    if(!adminPrivacyRequestCurrent(epoch,userId))return false;
+    if(!current())return false;
     adminAuditError=adminRpcMissing(error)
       ?'LOG NOT CONNECTED · RUN ADMIN 01 ADMIN MENU, THEN REFRESH'
       :String(error&&error.message||'Audit log unavailable.');
     adminAuditHasMore=false; return false;
-  }finally{if(adminPrivacyRequestCurrent(epoch,userId))adminAuditLoading=false;}
+  }finally{if(current())adminAuditLoading=false;}
 }
 async function adminAuditOlder(){
   if(adminAuditLoading||!adminAuditHasMore)return false;
-  adminAuditPage++; resetAdminAuditScroll();
+  const view=adminAuditView,nextPage=adminAuditPage+1;adminAuditPage=nextPage;resetAdminAuditScroll();
   const ok=await fetchAdminAuditLog(false);
-  if(!ok&&adminAuditPage>0){adminAuditPage--;adminAuditHasMore=!!adminAuditPageMore[adminAuditPage];}
+  if(!ok&&adminAuditView===view&&adminAuditPage===nextPage&&adminAuditPage>0){adminAuditPage--;adminAuditHasMore=!!adminAuditPageMore[adminAuditPage];}
   return ok;
 }
 function adminAuditNewer(){
@@ -1588,28 +1629,76 @@ function addAdmin(){
       }catch(error){formError(role==='tester'?'Run Admin 02 Admins to add Testers.':'Could not add that admin.');return false;}
     }});return true;
 }
+function normalizeWeaponSuggestionRow(row,fallbackStatus='pending'){
+  const source=row&&typeof row==='object'?row:{},raw=String(source.status||fallbackStatus).toLowerCase(),
+    status=['pending','approved','rejected'].includes(raw)?raw:fallbackStatus;
+  return Object.assign({},source,{status,readOnly:status!=='pending'});
+}
+function weaponSuggestionReviewedAt(row){
+  const reviewed=Date.parse(row&&row.reviewed_at||''),created=Date.parse(row&&row.created_at||'');
+  return Number.isFinite(reviewed)?reviewed:Number.isFinite(created)?created:0;
+}
+function mergeWeaponSuggestionArchive(...groups){
+  const rows=new Map();
+  for(const group of groups)for(const raw of Array.isArray(group)?group:[]){
+    const fallback=String(raw&&raw.status||'').toLowerCase()==='rejected'?'rejected':'approved',row=normalizeWeaponSuggestionRow(raw,fallback),key=String(row.id||'');
+    if(key&&row.status!=='pending')rows.set(key,row);
+  }
+  return [...rows.values()].sort((a,b)=>weaponSuggestionReviewedAt(b)-weaponSuggestionReviewedAt(a)||String(b.id||'').localeCompare(String(a.id||''),undefined,{numeric:true}));
+}
+function setWeaponSuggestionView(view){
+  const next=String(view||'').toLowerCase()==='archive'?'archive':'pending';
+  if(next===weaponSuggestionView)return false;
+  weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestionView=next;
+  weaponSuggestions=(next==='archive'?weaponSuggestionArchiveRows:weaponSuggestionPendingRows).slice();
+  weaponSuggestionPage=0;weaponSuggestionStatus='';return true;
+}
 async function fetchWeaponSuggestions(){
-  if(!canReviewWeaponSuggestions()){weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestions=[];weaponSuggestionPage=0;return false;}
+  if(!canReviewWeaponSuggestions()){
+    weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestionView='pending';weaponSuggestions=[];weaponSuggestionPendingRows=[];weaponSuggestionArchiveRows=[];weaponSuggestionPage=0;weaponSuggestionStatus='';return false;
+  }
   if(weaponSuggestionBusy)return false;
-  const request=++weaponSuggestionRequestSeq,epoch=adminPrivacyEpoch,owner=currentAuthUserId(),current=()=>request===weaponSuggestionRequestSeq&&adminPrivacyRequestCurrent(epoch,owner)&&canReviewWeaponSuggestions();
-  if(!sb){weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='Suggestions load on the deployed site.';return true;}
+  const view=weaponSuggestionView,request=++weaponSuggestionRequestSeq,epoch=adminPrivacyEpoch,owner=currentAuthUserId(),
+    current=()=>request===weaponSuggestionRequestSeq&&adminPrivacyRequestCurrent(epoch,owner)&&canReviewWeaponSuggestions()&&weaponSuggestionView===view;
+  if(!sb){weaponSuggestions=[];if(view==='archive')weaponSuggestionArchiveRows=[];else weaponSuggestionPendingRows=[];weaponSuggestionPage=0;weaponSuggestionStatus='Suggestions load on the deployed site.';return true;}
   weaponSuggestionBusy=true;weaponSuggestionStatus='LOADING…';
-  try{const result=await sb.rpc('list_outpost_zero_weapon_suggestions_by_username',{p_limit:100,p_status:'pending'});if(result.error)throw result.error;
+  try{
+    let rows=[],archiveMayHaveOlder=false;
+    if(weaponSuggestionView==='archive'){
+      const [approved,rejected]=await Promise.all([
+        sb.rpc('list_outpost_zero_weapon_suggestions_by_username',{p_limit:100,p_status:'approved'}),
+        sb.rpc('list_outpost_zero_weapon_suggestions_by_username',{p_limit:100,p_status:'rejected'})
+      ]);
+      if(approved.error)throw approved.error;if(rejected.error)throw rejected.error;
+      archiveMayHaveOlder=(Array.isArray(approved.data)&&approved.data.length===100)||(Array.isArray(rejected.data)&&rejected.data.length===100);
+      rows=mergeWeaponSuggestionArchive(approved.data,rejected.data);
+    }else{
+      const result=await sb.rpc('list_outpost_zero_weapon_suggestions_by_username',{p_limit:100,p_status:'pending'});if(result.error)throw result.error;
+      rows=(Array.isArray(result.data)?result.data:[]).map(row=>normalizeWeaponSuggestionRow(row,'pending')).filter(row=>row.status==='pending');
+    }
     if(!current())return false;
-    weaponSuggestions=Array.isArray(result.data)?result.data:[];weaponSuggestionPage=0;weaponSuggestionStatus=weaponSuggestions.length?weaponSuggestions.length+(weaponSuggestions.length===100?' LOADED':' PENDING'):'NO PENDING SUGGESTIONS';return true;
+    if(view==='archive')weaponSuggestionArchiveRows=rows;else weaponSuggestionPendingRows=rows;
+    weaponSuggestions=rows.slice();weaponSuggestionPage=0;
+    weaponSuggestionStatus=view==='archive'
+      ?(rows.length?rows.length+(archiveMayHaveOlder?' LOADED \u00b7 ARCHIVE MAY HAVE OLDER ITEMS':' REVIEWED'):'NO REVIEWED SUGGESTIONS')
+      :(rows.length?rows.length+(rows.length===100?' LOADED':' PENDING'):'NO PENDING SUGGESTIONS');
+    return true;
   }catch(error){if(current()){weaponSuggestions=[];weaponSuggestionPage=0;weaponSuggestionStatus='COULD NOT LOAD ADMIN SUGGESTIONS \u00b7 TRY REFRESH';}return false;}
   finally{if(current())weaponSuggestionBusy=false;}
 }
 async function reviewWeaponSuggestion(id,decision){
-  if(!canReviewWeaponSuggestions()||weaponSuggestionBusy||!['approved','rejected'].includes(decision))return false;
+  const source=weaponSuggestionPendingRows.find(row=>String(row&&row.id)===String(id))||weaponSuggestions.find(row=>String(row&&row.id)===String(id));
+  if(!canReviewWeaponSuggestions()||weaponSuggestionView!=='pending'||weaponSuggestionBusy||source&&source.readOnly||!['approved','rejected'].includes(decision))return false;
   let rawNote=null;try{rawNote=window.prompt((decision==='approved'?'Approve':'Reject')+' this suggestion. Optional reviewer note:','');}catch(error){return false;}
   if(rawNote===null)return false;
   const note=String(rawNote).trim();
-  const request=++weaponSuggestionRequestSeq,epoch=adminPrivacyEpoch,owner=currentAuthUserId(),current=()=>request===weaponSuggestionRequestSeq&&adminPrivacyRequestCurrent(epoch,owner)&&canReviewWeaponSuggestions();
+  const request=++weaponSuggestionRequestSeq,epoch=adminPrivacyEpoch,owner=currentAuthUserId(),current=()=>request===weaponSuggestionRequestSeq&&adminPrivacyRequestCurrent(epoch,owner)&&canReviewWeaponSuggestions()&&weaponSuggestionView==='pending';
   weaponSuggestionBusy=true;
   try{if(sb){const result=await sb.rpc('review_outpost_zero_weapon_suggestion',{p_suggestion_id:+id,p_decision:decision,p_reviewer_note:note.slice(0,500)});if(result.error||result.data!==true)throw result.error||new Error('not changed');}
     if(!current())return false;
-    weaponSuggestions=weaponSuggestions.filter(row=>String(row.id)!==String(id));weaponSuggestionStatus=decision.toUpperCase()+' · '+weaponSuggestions.length+' PENDING';sfx(decision==='approved'?'pickup':'dry');return true;
+    weaponSuggestionPendingRows=weaponSuggestionPendingRows.filter(row=>String(row.id)!==String(id));weaponSuggestions=weaponSuggestions.filter(row=>String(row.id)!==String(id));
+    if(source)weaponSuggestionArchiveRows=mergeWeaponSuggestionArchive([{...source,status:decision,reviewer_note:note.slice(0,500),reviewed_at:new Date().toISOString()}],weaponSuggestionArchiveRows);
+    weaponSuggestionStatus=decision.toUpperCase()+' · '+weaponSuggestions.length+' PENDING';sfx(decision==='approved'?'pickup':'dry');return true;
   }catch(error){if(current()){weaponSuggestionStatus='COULD NOT REVIEW THAT SUGGESTION.';sfx('dry');}return false;}
   finally{if(current())weaponSuggestionBusy=false;}
 }

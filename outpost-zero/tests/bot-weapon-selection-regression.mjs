@@ -41,10 +41,6 @@ const run=code=>vm.runInContext(code,context);
 
 const tiers=JSON.parse(run('JSON.stringify(BOT_DIFFICULTIES)'));
 for(let i=1;i<tiers.length;i++){
-  assert.ok(tiers[i].secondaryChance>tiers[i-1].secondaryChance,'secondary judgment must improve by difficulty');
-  assert.ok(tiers[i].secondaryMixChance>tiers[i-1].secondaryMixChance,'sidearm mixups must rise by difficulty');
-  assert.ok(tiers[i].meleeChance>tiers[i-1].meleeChance,'melee commitment must rise by difficulty');
-  assert.ok(tiers[i].meleeCommitRange>tiers[i-1].meleeCommitRange,'higher tiers must anticipate close combat sooner');
   assert.ok(tiers[i].weaponThinkMs<tiers[i-1].weaponThinkMs,'higher tiers must reconsider weapons sooner');
 }
 for(const tier of tiers)for(const unfair of ['damage','fireMs','mag','reload','equipMs','meleeDamage','secondaryDamage'])
@@ -156,7 +152,8 @@ assert.equal(hostMelee?.damage,42,'2v2 knife damage must use one fixed non-scali
 
 assert.match(ai,/cpuAiChooseBotWeapon\(b,player,now,tuning,parryResponse\)/,'1v1 must run the shared weapon selector with visible-guard context');
 assert.match(ai,/cpuAiTryBotMelee\(b,player,now,weaponRule\.damage/,'1v1 must execute authoritative knife swings');
-assert.match(ai,/kind!==\'melee\'&&now<parryUntil/,'Twin Sai must not turn a knife swing into a reflected bullet');
+assert.match(ai,/!String\(kind\|\|\'\'\)\.startsWith\(\'melee\'\)&&now<parryUntil/,
+  'Twin Sai must not turn a normal swing or melee ability into a reflected bullet');
 assert.match(party,/cpuAiChooseBotWeapon\(b,target,clock,profile,parryResponse\)/,'2v2 must run the shared weapon selector with visible-guard context');
 assert.match(party,/function partyCpuHostMelee/,'2v2 must have an authority-owned melee damage path');
 assert.match(party,/shot\.melee===true/,'2v2 melee must bypass projectile parry');
@@ -164,7 +161,7 @@ assert.match(party,/weapon:weaponId/,'2v2 bot projectiles must carry their allow
 assert.match(party,/\!\[kit\.primary,kit\.secondary\]\.includes\(weapon\)/,'2v2 guests must reject bot shots outside the fixed kit');
 assert.match(party,/swingSeq:Math\.max/,'2v2 snapshots must replicate bot melee animation state');
 assert.match(rendering,/swingProgress=e\.swingT&&\(clock-e\.swingT\)/,'2v2 rendering must show replicated bot swings');
-for(const [script,version] of [['ai','20260830-sniper-fire-v1'],['party','20260831-melee-polish-v1'],['rendering','20260831-melee-polish-v1']])
+for(const [script,version] of [['ai','20260831-cpu-weapon-roles-v1'],['party','20260831-cpu-weapon-roles-v1'],['rendering','20260831-melee-polish-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current CPU cache-buster`);
 
 console.log('SUMMARY PASS bot weapon selection');
