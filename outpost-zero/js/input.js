@@ -106,7 +106,6 @@ addEventListener('keydown', e=>{
   if(appealOpen){ if(e.key==='Escape') closeAppeal(); return; }
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
   if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
-  if(layoutMode && e.key==='Escape'){ layoutMode=false; layoutDrag=null; layoutPick=null; sfx('swap'); return; }
   if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||weaponSuggestionsOpen||requestsOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); if(updatesOpen)resetReportScroll();reportActionMenuOpen=reportAmountMenuOpen=false; wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; weaponSuggestionsOpen=false;requestsOpen=false;adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
   if(['w','a','s','d',' '].includes(k)) e.preventDefault();
@@ -173,7 +172,6 @@ addEventListener('keyup', e=>{
 
 cv.addEventListener('mousemove', e=>{
   mouse.x=px(e.clientX); mouse.y=e.clientY;
-  if(layoutMode && mouse.down) layoutMouseMove();
   if(dragSlider && mouse.down) setSliderFromMouse();
 });
 cv.addEventListener('wheel',e=>{
@@ -191,9 +189,8 @@ cv.addEventListener('wheel',e=>{
   if((scores?peScrollMax:audit?auditScrollMax:reportScrollMax)>0)e.preventDefault();
 },{passive:false});
 cv.addEventListener('mousedown', e=>{
-  // A press can be the first pointer event after tab focus, a resize, or a
-  // keyboard-opened Layout Editor. Resolve this event's coordinates directly
-  // instead of dragging whichever block the last mousemove happened to touch.
+  // A press can be the first pointer event after tab focus or a resize, so
+  // resolve this event's coordinates directly instead of using stale motion.
   mouse.x=px(e.clientX); mouse.y=e.clientY;
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     mouse.down=false; resetFireCadence(); e.preventDefault(); return;
@@ -212,7 +209,6 @@ cv.addEventListener('mousedown', e=>{
       toggleMenuFromInput(); return;
     }
     if(menuOpen){ menuClick(); return; }
-    if(layoutMode && state==='select' && selPage==='hub'){ layoutMouseDown(); return; }
     if(state==='select'){ clickSelect(); return; }
     if(state==='upgrade'){ clickUpgrade(); return; }
     if(state==='over') return;
@@ -237,7 +233,6 @@ cv.addEventListener('mousedown', e=>{
   }
 });
 addEventListener('mouseup', e=>{
-  layoutMouseUp();
   if(e.button===0){ mouse.down=false; mouseFireCadence=false; cancelSniperTriggerBuffer(); dragSlider=null; if(utilityOut) utilRelease(); }
   if(e.button===2 && rmbAim){ rmbAim=false; aiming=false; }
 });
@@ -276,7 +271,6 @@ function touchInputHasOwner(){
 }
 function resetHeldTouchContacts(clearGeometry=false){
   const ownsMouse=menuTouchId!==null||peScrollTouchId!==null;
-  if(menuTouchId!==null&&typeof layoutMouseUp==='function')layoutMouseUp();
   pressedBtn=null;pressedBtnTouchId=null;menuTouchId=null;aimStickId=null;
   touchUtilityUsed=false;tapShootUntil=0;touchFireCadence=false;
   peScrollTouchId=null;peScrollTouchMoved=false;peScrollTouchKind='';
@@ -378,7 +372,6 @@ cv.addEventListener('touchstart', e=>{
       if(menuTouchId!==null)continue;
       mouse.x=x; mouse.y=y; mouse.down=true; menuTouchId=t.identifier;
       if(menuOpen) menuClick();
-      else if(state==='select'&&layoutMode&&selPage==='hub') layoutMouseDown();
       else if(state==='select') clickSelect();
       else if(state==='upgrade') clickUpgrade();
       else if(state==='over') startGame();
@@ -442,8 +435,7 @@ cv.addEventListener('touchmove', e=>{
     }
     if(t.identifier===menuTouchId){
       mouse.x=px(t.clientX); mouse.y=t.clientY;
-      if(layoutMode&&state==='select'&&selPage==='hub') layoutMouseMove();
-      else if(dragSlider) setSliderFromMouse();
+      if(dragSlider) setSliderFromMouse();
       continue;
     }
     if(t.identifier===aimStickId){
@@ -472,7 +464,7 @@ function touchEnd(e,cancelled){
       if(tap){ mouse.x=peScrollTouchStartX; mouse.y=peScrollTouchStartY; clickSelect(); }
       continue;
     }
-    if(t.identifier===menuTouchId){ layoutMouseUp(); menuTouchId=null; mouse.down=false; dragSlider=null; }
+    if(t.identifier===menuTouchId){ menuTouchId=null; mouse.down=false; dragSlider=null; }
     if(t.identifier===pressedBtnTouchId){pressedBtnTouchId=null;pressedBtn=null;}
     if(t.identifier===aimStickId){ aimStickId=null; touchUtilityUsed=false; touchFireCadence=false; tapShootUntil=0; }
     if(sticks.move.id===t.identifier){ sticks.move.id=null; sticks.move.dx=0; sticks.move.dy=0; }

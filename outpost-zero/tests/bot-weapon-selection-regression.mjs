@@ -46,7 +46,8 @@ for(let i=1;i<tiers.length;i++){
 for(const tier of tiers)for(const unfair of ['damage','fireMs','mag','reload','equipMs','meleeDamage','secondaryDamage'])
   assert.equal(tier[unfair],undefined,'difficulty must not scale raw weapon stat '+unfair);
 const rules=JSON.parse(run('JSON.stringify(CPU_AI_WEAPON_RULES)'));
-assert.deepEqual(rules,{ar:{damage:34,fireMs:245,maxRange:840,forgiveness:8},m9:{damage:38,fireMs:200,maxRange:440,forgiveness:5},knife:{damage:48,fireMs:380,maxRange:130,forgiveness:0}});
+assert.deepEqual(rules,{ar:{damage:48,fireMs:245,maxRange:840,forgiveness:8},m9:{damage:38,fireMs:200,maxRange:440,forgiveness:5},knife:{damage:48,fireMs:380,maxRange:130,forgiveness:0}},
+  'Impossible must use the normal 48-damage SCAR-H baseline before range falloff');
 
 const sidearm=JSON.parse(run(`(()=>{
   const bot={id:'bot',team:'B',x:800,y:450,r:15,angle:Math.PI,aiRng:123};
@@ -115,6 +116,7 @@ const partyContext=vm.createContext({
   clamp:(value,min,max)=>Math.max(min,Math.min(max,value)),weaponBulletSpeed:key=>partyWeapons[key].speed*1.15,
   weaponBulletLife:(_key,base)=>base/1.15,cpuTeamIsAuthority:()=>true,isLocalCpu2v2:()=>true,partySend:()=>{},
   cpuAiRange:()=>0,cpuAiBotLoadout:run('cpuAiBotLoadout'),cpuAiTryBotMelee:run('cpuAiTryBotMelee'),
+  cpuAiRangedDamage:run('cpuAiRangedDamage'),
   partyCpuEnvelope:()=>true,partyCpuIsHost:()=>false,cpuTeamClock:()=>5000,partyCpuTakeLocalDamage:()=>{},
   party:{self:{id:'local'}},player:{hp:250},recordAiTrainingBotSignal:()=>{},partyCpuHostEvaluate:()=>{},
   partyCpuRecordThreat:()=>{},cpuAiRegisterIncomingHit:()=>{},
@@ -137,7 +139,16 @@ assert.equal(partyContext.partyCpuApplyBotShot({round:1,shot:networkShot}),true,
 partyContext.partyCpuMatch.shots=[];partyContext.partyCpuMatch.seenShots=new Set();
 assert.equal(partyContext.partyCpuApplyBotShot({round:1,shot:{...networkShot,dmg:49}}),false,'a forged M9 damage value must be rejected');
 
-partyBot.cur='ar';partyBot.swingSeq=0;partyBot.swingT=0;
+partyBot.cur='ar';partyContext.partyCpuMatch.shots=[];partyContext.partyCpuMatch.seenShots=new Set();
+partyContext.partyCpuSpawnBotShot(partyBot,{id:'local'},{shotJitter:0,rangedDamageScale:.5},'ar');
+assert.equal(partyContext.partyCpuMatch.shots[0].dmg,9,
+  'local Beginner CPU 2v2 must deal half of its existing 18-damage team baseline');
+partyContext.partyCpuMatch.shots=[];partyContext.partyCpuMatch.seenShots=new Set();
+partyContext.partyCpuSpawnBotShot(partyBot,{id:'local'},{shotJitter:0,rangedDamageScale:1},'ar');
+assert.equal(partyContext.partyCpuMatch.shots[0].dmg,18,
+  'local Impossible CPU 2v2 must retain the established team-balanced damage baseline');
+
+partyBot.swingSeq=0;partyBot.swingT=0;
 assert.equal(partyContext.partyCpuApplyBotSnapshot({round:1,bots:[{id:partyBot.id,x:690,y:450,angle:Math.PI,cur:'knife',hp:250,flash:0,
   swingSeq:1,swingMs:180,swingA:Math.PI,swingSide:-1}]}),true);
 assert.deepEqual({cur:partyBot.cur,seq:partyBot.swingSeq,side:partyBot.swingSide},{cur:'knife',seq:1,side:-1},
@@ -161,7 +172,7 @@ assert.match(party,/weapon:weaponId/,'2v2 bot projectiles must carry their allow
 assert.match(party,/\!\[kit\.primary,kit\.secondary\]\.includes\(weapon\)/,'2v2 guests must reject bot shots outside the fixed kit');
 assert.match(party,/swingSeq:Math\.max/,'2v2 snapshots must replicate bot melee animation state');
 assert.match(rendering,/swingProgress=e\.swingT&&\(clock-e\.swingT\)/,'2v2 rendering must show replicated bot swings');
-for(const [script,version] of [['ai','20260831-cpu-weapon-roles-v1'],['party','20260831-cpu-weapon-roles-v1'],['rendering','20260831-melee-polish-v1']])
+for(const [script,version] of [['ai','20260831-bots-volt-layout-v1'],['party','20260831-bots-volt-layout-v1'],['rendering','20260831-melee-polish-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current CPU cache-buster`);
 
 console.log('SUMMARY PASS bot weapon selection');

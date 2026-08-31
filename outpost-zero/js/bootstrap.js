@@ -13,9 +13,7 @@ if(typeof bindBotLadderSyncEvents==='function')bindBotLadderSyncEvents();
 if(typeof bindAiTrainingSyncEvents==='function')bindAiTrainingSyncEvents();
 
 initAuth().finally(()=>{
-  // The local file must still restore layout work when Supabase is unavailable.
   if(!sb){
-    fetchLayout();
     if(typeof purgeUnpublishedWeaponState==='function'&&purgeUnpublishedWeaponState()&&typeof saveMetaLocal==='function')saveMetaLocal();
   }
   if(typeof flushAiTrainingQueue==='function')void flushAiTrainingQueue();

@@ -128,10 +128,10 @@ assert.match(functionSource(online,'arenaApplyRemoteUtility'),/key==='freezer'[\
 assert.doesNotMatch(functionSource(online,'arenaApplyRemoteUtility'),/key==='freezer'[\s\S]{0,600}utilityFrozenUntil\s*=\s*now/,
   'receiving a cast packet must never freeze the player before the projectile arrives');
 
-for(const [script,version] of [['weapons','20260831-melee-polish-v1'],['upgrades','20260831-hub-tools-settings-v1'],
+for(const [script,version] of [['weapons','20260831-bots-volt-layout-v1'],['upgrades','20260831-hub-tools-settings-v1'],
   ['gameplay','20260831-tracking-drill-v1'],['combat','20260831-melee-polish-v1'],
   ['online','20260831-melee-polish-v1'],['rendering','20260831-melee-polish-v1'],
-  ['ui','20260831-melee-polish-v1']])
+  ['ui','20260831-bots-volt-layout-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('PASS Freezer travels, respects walls, self-freezes, and uses the reduced blast');

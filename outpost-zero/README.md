@@ -12,7 +12,7 @@ when `index.html` is opened directly with `file://`.
 - `js/audio.js` — music and sound effects
 - `js/weapons.js` / `js/abilities.js` — weapon data and melee abilities
 - `js/economy-state.js`, `js/progression.js`, `js/persistence.js` — tasks, rewards, shop, and profile saves
-- `js/layout.js`, `js/ui.js`, `js/rendering.js`, `js/admin-ui.js` — menus and drawing
+- `js/ui.js`, `js/rendering.js`, `js/admin-ui.js` — menus and drawing
 - `js/world.js`, `js/enemies.js`, `js/state.js`, `js/upgrades.js` — simulation data
 - `js/gameplay.js`, `js/combat.js`, `js/ai.js` — game flow, combat, and CPU logic
 - `js/online.js`, `js/party-state.js`, `js/party.js`, `js/social.js` — online and social systems

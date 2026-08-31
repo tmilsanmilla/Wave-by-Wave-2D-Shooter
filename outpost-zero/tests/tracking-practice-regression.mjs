@@ -66,7 +66,7 @@ assert.match(ui,/open arena \\u00b7 0\.5\\u00d7 speed steps to 5\\u00d7 \\u00b7 
   'the Practice card must explain the open arena, speed steps, cap, and directions');
 for(const [script,version] of [['state','20260831-practice-infinite-ammo-v1'],['world','20260831-tracking-drill-v1'],
   ['gameplay','20260831-tracking-drill-v1'],['combat','20260831-melee-polish-v1'],
-  ['rendering','20260831-melee-polish-v1'],['ui','20260831-melee-polish-v1']])
+  ['rendering','20260831-melee-polish-v1'],['ui','20260831-bots-volt-layout-v1']])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),`${script}.js needs its current cache tag`);
 
 console.log('PASS open-lane Tracking Dummy controls, reversal, and marker');

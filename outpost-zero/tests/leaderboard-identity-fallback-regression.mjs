@@ -4,8 +4,8 @@ import path from 'node:path';
 
 const root=path.resolve(import.meta.dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
-const publicBoardSql=read('sql/leaderboards/01-public-board.sql');
-const securitySql=read('sql/leaderboards/Leaderboards-03-security-realtime.sql');
+const publicBoardSql=read('sql/leaderboards/Leaderboards-01-leaderboards.sql');
+const securitySql=publicBoardSql;
 
 function sqlFunction(source,name){
   const start=source.indexOf(`create or replace function public.${name}`);

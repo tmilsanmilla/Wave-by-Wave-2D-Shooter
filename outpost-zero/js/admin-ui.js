@@ -38,8 +38,7 @@ function drawHubPosts(topY, maxBottom){
   // UPDATES board: newest first, capped at 5 posts / 10 lines, each post wraps to two lines max
   bannerXRect=null; feedXRects=[];feedReadRects=[];
   if(!banners.length) return topY;
-  const bw=Math.min(560,W-56), bx=W/2-bw/2+offX('posts');
-  topY += offY('posts');
+  const bw=Math.min(560,W-56), bx=W/2-bw/2;
   const head=20, pad=8, lineH=13;
   const xw = isMainAdmin() ? 18 : 0;                 // room for the remove button
   const maxCh=Math.max(8, Math.floor((bw-38-xw)/6.8));
@@ -61,14 +60,12 @@ function drawHubPosts(topY, maxBottom){
   if(!items.length) return topY;
   const bh=head+pad*2+usedH;
   hubPostsRect={x:bx,y:topY,w:bw,h:bh};
-  layoutBlock('posts',bx,topY,bw,bh);
-  const postCol=offCol('posts');
   const g=ctx.createLinearGradient(bx,topY,bx,topY+bh);
   g.addColorStop(0,'rgba(232,182,88,0.16)'); g.addColorStop(1,'rgba(232,182,88,0.05)');
   ctx.fillStyle=g; ctx.fillRect(bx,topY,bw,bh);
   ctx.strokeStyle='#e8b658'; ctx.lineWidth=1.5; ctx.strokeRect(bx+0.5,topY+0.5,bw,bh);
   ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillStyle=postCol||'#e8b658'; ctx.font='700 12px ui-monospace,Consolas,monospace';
+  ctx.fillStyle='#e8b658'; ctx.font='700 12px ui-monospace,Consolas,monospace';
   ctx.fillText('\uD83D\uDCE2 UPDATES', bx+bw/2, topY+head/2+4);
   ctx.textAlign='left';
   let ry=topY+head+pad;
@@ -2145,7 +2142,6 @@ function drawAdminPanel(){
   if(isCoAdmin() && !isMainAdmin()) actionBtn('staffreport','\u26A0 REPORT A PROBLEM \u2014 send to the mains');
   if(canPostUpdates())actionBtn('post','\uD83D\uDCE2 POST UPDATE \u2014 Home + every Inbox'+(isMainAdmin()?'':' (needs approval)'));
   if(canUsePlayerTools())actionBtn('players','\uD83D\uDC65 PLAYERS \u2014 look up'+(isMainAdmin()?' \u00b7 edit \u00b7 ban':' \u00b7 view only'));
-  if(isMainAdmin()) actionBtn('layout','\u2194 LAYOUT EDITOR \u2014 move home page sections');
   if(isMainAdmin()) actionBtn('promos','\uD83C\uDF81 PROMO CODES \u2014 create \u00b7 edit \u00b7 expire');
 
   toggle('testmode','\uD83E\uDDEA TEST MODE \u2014 all weapons \u00b7 no gems', testMode, true);
@@ -2172,10 +2168,6 @@ function adminPanelClick(){
       if(id==='post'){ if(canPostUpdates())openPost();else sfx('dry'); return; }
       if(id==='promos'){ adminPanelOpen=false; promoAdminOpen=true; fetchPromos(); sfx('swap'); return; }
       if(id==='players'){ if(!canUsePlayerTools()){sfx('dry');return;}adminPanelOpen=false; playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
-      if(id==='layout'){
-        if(!isMainAdmin()){ sfx('dry'); return; }
-        adminPanelOpen=false; selPage='hub'; layoutMode=true; layoutPick=null; sfx('swap'); return;
-      }
       if(id==='testmode'){ setTestMode(!testMode); sfx('swap'); return; }
       if(id==='storage'){ if(!canViewWeaponStorage()){sfx('dry');return;}adminPanelOpen=false; storageOpen=true; sfx('swap'); return; }
       if(id==='requests'){openAdminRequests();sfx('swap');return;}

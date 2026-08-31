@@ -6,10 +6,6 @@ import vm from 'node:vm';
 const root=path.resolve(path.dirname(new URL(import.meta.url).pathname),'..');
 const administration=fs.readFileSync(path.join(root,'js/administration.js'),'utf8');
 const networking=fs.readFileSync(path.join(root,'js/networking.js'),'utf8');
-const adminEmailStart=administration.indexOf('function adminEmail(');
-const adminEmailEnd=administration.indexOf('function isCreator(',adminEmailStart);
-assert.ok(adminEmailStart>=0&&adminEmailEnd>adminEmailStart,'safe layout attribution helper should exist');
-const adminEmailSource=administration.slice(adminEmailStart,adminEmailEnd);
 const identityStart=networking.indexOf('function cleanAccountEmail(');
 const identityEnd=networking.indexOf('function leaderboardNeedsUsername(',identityStart);
 assert.ok(identityStart>=0&&identityEnd>identityStart,'account identity helpers should exist');
@@ -22,21 +18,6 @@ const start=administration.indexOf('function adminServerRoleValue(');
 const end=administration.indexOf('async function fetchBanners(',start);
 assert.ok(start>=0&&end>start,'admin role fallback source should exist');
 const fallbackSource=administration.slice(start,end);
-
-{
-  const context={};
-  vm.createContext(context);
-  vm.runInContext(`
-    let adminSelfUsername='NoHandle@Example.COM',adminSelfRole='main';
-    ${adminEmailSource}
-    this.attribution={adminEmail,set:(username,role)=>{adminSelfUsername=username;adminSelfRole=role;}};
-  `,context,{filename:'administration-layout-attribution.js'});
-  assert.equal(context.attribution.adminEmail(),'main',
-    'a private roster email fallback must never enter shared layout attribution');
-  context.attribution.set('Chosen_One','main');
-  assert.equal(context.attribution.adminEmail(),'chosen_one',
-    'a chosen public username remains valid shared layout attribution');
-}
 
 {
   const clearStart=administration.indexOf('function clearAdminIdentityFallbackCache(');

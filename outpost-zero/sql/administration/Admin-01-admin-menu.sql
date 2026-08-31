@@ -1,7 +1,7 @@
 -- OUTPOST ZERO / ADMIN 01: ADMIN MENU
 -- Self-contained Admin Menu storage, audited actions, username tools, grants,
 -- bans, appeals, requests, and the permanent creator/main audit LOG.
--- Run after Social 01 and the base profiles/scores tables. Safe to rerun.
+-- Run after Social 01, Profiles 01, and Leaderboards 01. Safe to rerun.
 
 begin;
 

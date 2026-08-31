@@ -2,13 +2,6 @@
 
 // MAIN ADMINS have every power; CO-ADMINS have shared staff tools; TESTERS
 // have only Test Mode and the Admin Inbox.
-// Legacy layout attribution must remain public-safe. The roster may use a
-// private email fallback for Creator/Main display, but shared layout storage
-// receives only a chosen username or a generic role label.
-function adminEmail(){
-  const username=String(adminSelfUsername||'').trim();
-  return (/^[A-Za-z0-9_]{3,32}$/.test(username)?username:(adminSelfRole||'staff')).toLowerCase();
-}
 function isCreator(){ return !sb || adminSelfRole==='creator'; }
 function isMainAdmin(){ return isCreator() || adminSelfRole==='main'; }
 function isCoAdmin(){ return adminSelfRole==='co'; }
@@ -157,7 +150,6 @@ function clearMainOnlyAdminState(){
   clearAdminNotificationComposerState();
   if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
   if(typeof weaponEditOpen!=='undefined')weaponEditOpen=false;
-  if(typeof layoutMode!=='undefined'){layoutMode=false;if(typeof layoutDrag!=='undefined')layoutDrag=null;if(typeof layoutPick!=='undefined')layoutPick=null;}
   if(closeStaffReport&&typeof reportOpen!=='undefined')reportOpen=false;
   if(typeof document!=='undefined')for(const id of ['msgwrap','postwrap'].concat(closeStaffReport?['repwrap']:[])){const el=document.getElementById(id);if(el)el.style.display='none';}
   if(typeof enforceReaderAccess==='function')enforceReaderAccess();
@@ -174,7 +166,6 @@ function scrubPrivilegedUiForAccountChange(){
   if(typeof playersOpen!=='undefined')playersOpen=false;
   if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
   if(typeof weaponEditOpen!=='undefined')weaponEditOpen=false;
-  if(typeof layoutMode!=='undefined')layoutMode=false;
   reportFetchSeq++;reportResolveBusy.clear();reportLoadStatus='';resetReportScroll();
   reportCopyBusy=false;reportCopyStatus='';reportCopyMode='all';reportBulkAction='copy';reportActionMenuOpen=reportAmountMenuOpen=false;reportView='open';
   inboxTab='msgs';composePickOpen=false;scoreReqs=[];adminMsgs=[];unreadMsgs=0;updatesFeed={reports:[]};updatesResolved=[];weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestionView='pending';weaponSuggestions=[];weaponSuggestionPendingRows=[];weaponSuggestionArchiveRows=[];weaponSuggestionPage=0;weaponSuggestionStatus='';

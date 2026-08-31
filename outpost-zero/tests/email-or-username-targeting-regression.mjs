@@ -13,7 +13,7 @@ const edge=fs.readFileSync(path.join(root,'..','supabase/functions/outpost-zero-
 const admin01=read('sql/administration/Admin-01-admin-menu.sql');
 const admin02=read('sql/administration/Admin-02-admins.sql');
 const admin03=read('sql/administration/Admin-03-inbox.sql');
-const leaderboard=read('sql/leaderboards/01-public-board.sql');
+const leaderboard=read('sql/leaderboards/Leaderboards-01-leaderboards.sql');
 
 function functionSource(source,name){
   const match=new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(source);

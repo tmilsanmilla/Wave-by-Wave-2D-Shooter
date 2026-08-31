@@ -262,7 +262,6 @@ async function initAuth(){
       fetchBoard();
       fetchMyBan();                                  // device bans apply even signed out
       fetchBanners();                                // the UPDATES board is for everyone
-      fetchLayout();                                 // where admins placed the hub blocks
       fetchWeaponDefs();                             // shared stat/price/publish overrides
       setupRealtime();
       if(authUser) fetchSocial(true);

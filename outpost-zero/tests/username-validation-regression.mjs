@@ -45,7 +45,7 @@ assert.match(social,/code==='22023'\|\|message\.includes\('USERNAME_INVALID'\)[\
   'server-side invalid-name responses must map back to useful client text');
 
 assert.match(index,/outpost-zero\/styles\.css\?v=20260831-hub-tools-settings-v1/);
-assert.match(index,/outpost-zero\/js\/networking\.js\?v=20260831-hub-tools-settings-v1/,
+assert.match(index,/outpost-zero\/js\/networking\.js\?v=20260831-bots-volt-layout-v1/,
   'networking.js needs the current Settings cache tag');
 assert.match(index,/outpost-zero\/js\/social\.js\?v=20260831-username-validation-v1/,
   'social.js needs the username-validation cache tag');

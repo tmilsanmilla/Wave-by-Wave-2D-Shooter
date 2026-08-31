@@ -3,11 +3,20 @@
 Database setup is organized by feature so there is no single giant SQL file.
 Each feature has its own numbered scripts and may be installed independently.
 
+For a fresh Outpost Zero installation, use this dependency order:
+
+1. Social `01` through `04`
+2. `profiles/Profiles-01-profiles.sql`
+3. `leaderboards/Leaderboards-01-leaderboards.sql`
+4. Administration `01` through `03`
+5. `weapons/Weapons-01-weapons.sql`
+6. `ai/01-global-training.sql` if the cross-device CPU ladder is enabled
+
 ## Social
 
 The Social feature provides unique public usernames, friendships, private messages, row
 level security, API privileges, Realtime refresh hints, account-setting rules,
-server-authorized Party invitations, public Parties, and threaded private-conversation state. Profiles, friendships, and messages
+server-authorized Party invitations, public Parties, and threaded private-conversation state. Public Social profiles, friendships, and messages
 share one core data script because they form the same Social model. All Social
 RLS, browser privileges, RPC permissions, and Realtime publication membership
 are centralized in one final security script.
@@ -74,7 +83,7 @@ If the legacy Social `05` is the last Social file you already ran, that same
 username code is now named Social `02`; do not rerun it. Run the updated
 `social/Social-01-social-menu.sql` first to add the merged Private Inbox features,
 then run `social/Social-03-parties.sql`, then run `social/Social-04-security.sql`, each
-in its own query. Do not rerun Leaderboards `01`. If a former Social `06`, `07`,
+in its own query. No Leaderboards rerun is required for that Social-only update. If a former Social `06`, `07`,
 or `09` was already installed, the consolidated Social `03` safely upgrades
 those tables and removes the old database online-heartbeat table and functions.
 Deploy the matching game JavaScript at
@@ -87,21 +96,42 @@ incomplete; do not use the Social features until it succeeds.
 Future database features should get a sibling folder under `sql/` with their
 own numbered scripts and a dependency order documented here.
 
+## Profiles
+
+Run `profiles/Profiles-01-profiles.sql` after Auth is available and before
+Administration. It is the single owner of the private `profiles` game-save
+blob: storage, owner-only forced RLS, narrow browser privileges, and safe schema
+checks. It removes obsolete Realtime membership and legacy column grants, and
+prevents new non-object save blobs without deleting malformed legacy rows.
+Public usernames remain in `social_profiles` under Social. Profiles
+does not use Postgres Realtime because the game loads and saves the signed-in
+account directly.
+
+The former Dashboard snippets `Profiles 01` and `Profiles 02` are superseded by
+this one rerunnable query. Run the replacement successfully before deleting the
+old `Profiles 02` snippet. Existing profile rows are preserved.
+
 ## Leaderboards
 
 The public leaderboard reads live Social usernames through a narrow RPC instead
 of exposing account emails or trusting the name stored with a score. Run this
 after Social core has created and backfilled player usernames:
 
-1. `leaderboards/01-public-board.sql`
-2. `leaderboards/Leaderboards-03-security-realtime.sql`
+1. `leaderboards/Leaderboards-01-leaderboards.sql`
 
-If you already finished the legacy Social `01` through `04`, run only this one Leaderboards
-script next. If `leaderboards/01-public-board.sql` is the last database script
-you already ran, your only new paste is `social/Social-02-usernames.sql`; do not
-replace any table and do not rerun Leaderboards `01` for the Settings update.
-It uses the existing `public.scores` table that already stores game scores; it
-does not create or replace the table.
+Leaderboards 01 merges the former Dashboard queries 01, 02, and 03. It creates
+missing storage without replacing live tables, validates the score and receipt
+shapes before making changes, preserves every real score and Arena receipt, and
+installs all board RPCs, forced RLS, exact-once Arena wins, narrow browser
+grants, and the one required `scores` Realtime membership. It also removes the
+private receipt table from Realtime if an older miscellaneous query published
+it.
+
+In the Dashboard, replace **Leaderboards 01**, Save, and Run it successfully
+before deleting the saved **Leaderboards 02** and **Leaderboards 03** queries.
+If the replacement fails its shape check, leave the old queries in place and
+inspect the reported legacy table mismatch; the failed transaction changes no
+leaderboard data.
 
 This also removes obsolete `outpost-zero-profile` score rows that could contain
 legacy account-email JSON, rewrites old score aliases to Social usernames, and
@@ -109,14 +139,15 @@ installs the narrow username/high-score player lookup used by public profiles.
 It also blocks old browser tabs from recreating those JSON rows and removes
 anonymous direct reads of the raw score table. Signed-in score saving and
 referrals retain authenticated access through the forced-RLS rules in
-Leaderboards 03. That file also owns the `scores` Realtime publication used to
-refresh live boards and referral claims. It also owns the private, idempotent
-Arena-win receipts and the atomic `record_outpost_zero_arena_win` RPC. Rerun
-Leaderboards 03 when deploying the reliable Wins leaderboard update; no new
-SQL category or extra numbered script is required.
+Leaderboards 01. The same file owns the `scores` Realtime membership used to
+refresh live boards and referral claims, plus the private, idempotent Arena-win
+receipts and atomic `record_outpost_zero_arena_win` RPC.
 
-This script is rerunnable. It exposes only user ID, username, and score, and it
-hard-limits requests to the two public Outpost Zero boards and five rows.
+This script is rerunnable. Its public RPC exposes only user ID, username, and
+score, and hard-limits requests to the two public Outpost Zero boards and five
+rows. Authenticated direct reads are limited to the two public boards, the
+signed-in account's own rows, and referral claims targeting that account; rows
+for another game sharing `scores` are not exposed by Outpost Zero's policy.
 Accounts created before usernames were required use `USERNAME_NOT_SET` as an
 internal RPC marker instead of publishing an email or UUID-like temporary
 label. This covers both the current 20-character generated handle and the
@@ -143,11 +174,15 @@ the legacy/unscaled shop cost atomically through
 remain reviewable, while the current game no longer shows the old Admin Tools
 suggestion composer.
 
-The saved `Realtime 01` query is now legacy only. Admin, Social, Leaderboards,
-and Weapons each own their own security and Realtime rules; do not rerun the
-miscellaneous query because its older Admin policies and raw `admins`
-publication would weaken the current perimeter. It may be deleted separately
-after the owning section queries have been verified in Supabase.
+The saved `Realtime 01` query is legacy only. Admin, Social, Leaderboards, and
+Weapons each own their own security and Realtime membership; do not rerun the
+miscellaneous query because it contains an obsolete Admin-role implementation.
+Delete the saved snippet after the owning sections are verified. Do not delete
+Supabase's `supabase_realtime` publication itself.
+
+The Layout Editor has been removed from the game, so the Dashboard-only `UI 01`
+query and its unused `public.ui_layout` table may also be deleted. They are not
+replaced by another SQL file; ordinary interface layout remains in game code.
 
 ## Account password changes
 
@@ -161,8 +196,8 @@ into the SQL Editor.
 
 Administration is installed as exactly three rerunnable SQL files. Inbox and
 Suggestions share Admin 03 so the new fourth UI section does not create another
-database script. Run them in this order after Social 01 and the base
-profiles/scores tables:
+database script. Run them in this order after Social `01` through `04`,
+`Profiles 01`, and `Leaderboards 01`:
 
 1. `administration/Admin-01-admin-menu.sql`
 2. `administration/Admin-02-admins.sql`

@@ -10,7 +10,7 @@ const admin01Sql=read('sql/administration/Admin-01-admin-menu.sql');
 const admin02Sql=read('sql/administration/Admin-02-admins.sql');
 const admin03Sql=read('sql/administration/Admin-03-inbox.sql');
 const adminSql=[admin01Sql,admin02Sql,admin03Sql].join('\n');
-const leaderboardSecuritySql=read('sql/leaderboards/Leaderboards-03-security-realtime.sql');
+const leaderboardSecuritySql=read('sql/leaderboards/Leaderboards-01-leaderboards.sql');
 const weaponsSql=read('sql/weapons/Weapons-01-weapons.sql');
 const socialCoreSql=read('sql/social/Social-01-social-menu.sql'),socialSettingsSql=read('sql/social/Social-02-usernames.sql'),partySql=read('sql/social/Social-03-parties.sql');
 const socialSecuritySql=read('sql/social/Social-04-security.sql');

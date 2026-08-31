@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const root=path.resolve(import.meta.dirname,'..');
 const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const networking=read('js/networking.js'),online=read('js/online.js'),loop=read('js/loop.js'),ui=read('js/ui.js');
-const sql=read('sql/leaderboards/Leaderboards-03-security-realtime.sql');
+const sql=read('sql/leaderboards/Leaderboards-01-leaderboards.sql');
 
 function functionSource(source,name){
   let start=source.indexOf(`function ${name}(`);if(start<0)throw new Error('missing '+name);

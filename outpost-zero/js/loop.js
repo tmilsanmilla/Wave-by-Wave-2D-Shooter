@@ -15,7 +15,6 @@ function frame(){
   if(typeof temporaryWeaponGrantTick==='function')temporaryWeaponGrantTick(Date.now());
   if(typeof myBanTick==='function')myBanTick();
   if(raw>0){ const inst=1000/raw; fpsEMA += (inst-fpsEMA)*0.1; }
-  if(layoutDirty && Date.now()>layoutLocalSaveT){ persistLayoutDraft(); layoutLocalSaveT=Date.now()+250; }
 
   // `now` is a GAME clock. It freezes while the pause menu (or a modal) is open, so
   // utility cooldowns, reloads, ability timers and burn/freeze don't tick while paused.
@@ -98,7 +97,6 @@ function frame(){
   drawAccountChip();                      // sign in / out
   drawWaveCoinTracker();                  // every fifth wave: coins spin and spiral into the total
   drawChestReward();                      // boss chest reward menu sits above the run and HUD
-  if(layoutMode && state==='select' && selPage==='hub') drawLayoutOverlay();   // last: everything has registered
   if(showFps){
     ctx.save();
     ctx.textAlign='right'; ctx.textBaseline='top';

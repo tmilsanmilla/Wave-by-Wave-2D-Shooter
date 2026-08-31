@@ -333,9 +333,8 @@ function drawBanNotice(){
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 }
 function drawSelect(){
-  layoutRects=[];                                         // one registry per frame
   cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; weaponBrowserRects=[]; socialRects=[]; partyRects=[]; partyModeRects=[]; toolsRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; offlineCpuRects=[]; backRect=null;
-  adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
+  adLeftRect=null; adRightRect=null; boardPanelRect=null;
   adminHubBtnRect=null; suggestionsHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
   // swallow a click meant for the page you are on (stale shop/practice/feed buttons)
@@ -3136,8 +3135,7 @@ function drawHub(){
   }
 
   // SUMMER FLAMING UPDATE banner
-  const bnW=Math.min(560,W-60), bnX=W/2-bnW/2+offX('banner'), bnY=H*0.035+44+adminRowShift+offY('banner'), bnH=34;
-  layoutBlock('banner',bnX,bnY,bnW,bnH);
+  const bnW=Math.min(560,W-60), bnX=W/2-bnW/2, bnY=H*0.035+44+adminRowShift, bnH=34;
   if(compactStatus){
     const sy=bnY-24;
     ctx.textAlign='center'; ctx.textBaseline='middle';
@@ -3157,7 +3155,7 @@ function drawHub(){
   leftColTop = Math.max(104, H*0.035+44+adminRowShift);
   ctx.fillStyle='#fff2cc'; ctx.font='700 15px ui-monospace,Consolas,monospace';
   ctx.textBaseline='middle';
-  withBlockColour('banner', ()=>ctx.fillText(fitLine('\uD83D\uDD25 SUMMER FLAMING UPDATE \uD83D\uDD25', bnW-16), W/2, bnY+bnH/2));
+  ctx.fillText(fitLine('\uD83D\uDD25 SUMMER FLAMING UPDATE \uD83D\uDD25', bnW-16), W/2, bnY+bnH/2);
   ctx.textBaseline='top';
 
   // Home destinations: Play, Practice, browse-only Weapons, and Social.
@@ -3214,10 +3212,8 @@ function drawHub(){
     // their rectangle centres, so restore centred text before drawing buttons.
     ctx.textAlign='center';ctx.textBaseline='top';
     homeBoardsY=Math.min(maxBoardsY,Math.max(preferredBoardsY,boardBottom+liveBoardGap));
-    const movedBoardsX=homeBoardsX+offX('board'), movedBoardsY=homeBoardsY+offY('board');
-    boardPanelRect={x:movedBoardsX,y:movedBoardsY,w:homeBoardsW,h:homeBoardsH};
-    layoutBlock('board',movedBoardsX,movedBoardsY,homeBoardsW,homeBoardsH);
-    withBlockColour('board',()=>drawHomeLeaderboards(movedBoardsX,movedBoardsY,homeBoardsW,homeBoardsH));
+    boardPanelRect={x:homeBoardsX,y:homeBoardsY,w:homeBoardsW,h:homeBoardsH};
+    drawHomeLeaderboards(homeBoardsX,homeBoardsY,homeBoardsW,homeBoardsH);
   }else boardPanelRect=null;
   ctx.textAlign='center';ctx.textBaseline='top';
   const actionTop=homeBoardsY+homeBoardsH+liveBoardGap;
@@ -3261,12 +3257,9 @@ function drawHub(){
   }
   // ---- DAILY STREAK, then the tasks, stacked under the button row ----
   streakBtnRect=null;
-  const stW=Math.min(340,W-24),stX=W/2-stW/2+offX('streak'),
+  const stW=Math.min(340,W-24),stX=W/2-stW/2,
     stackY=actionTop+cardH*2+actionGap+dailyTopGap,
-    baseStY=stackY,
-    maxSafeStY=controlsLimitTop-6-(stH+8+taskPanelH),
-    stY=showHubStreak?clamp(baseStY+offY('streak'),baseStY,Math.max(baseStY,maxSafeStY)):baseStY;
-  if(showHubStreak){layoutBlock('streak',stX,stY,stW,stH);}
+    stY=stackY;
   if(showHubStreak&&stY+stH<=controlsLimitTop-6){
     const rewardLoading=!!(sb&&authUser&&!profileLoaded),ready=streakClaimable()&&!signedOut&&!streakClaimBusy;
     ctx.fillStyle= ready?'rgba(94,196,106,0.12)':'rgba(0,0,0,0.4)'; ctx.fillRect(stX,stY,stW,stH);
@@ -3326,12 +3319,10 @@ function drawHub(){
   }
 
   // ---- DAILY TASKS, centered under the buttons ----
-  const baseTpY=showHubStreak?stY+stH+streakTaskGap:stackY,
-    tpY=clamp(baseTpY+offY('tasks')-(showHubStreak?offY('streak'):0),baseTpY,Math.max(baseTpY,controlsLimitTop-6-taskPanelH));
+  const tpY=showHubStreak?stY+stH+streakTaskGap:stackY;
   const roomForTasks=(controlsLimitTop-6)-tpY;
   const tpW=controlsW,tpH=taskPanelH;
-  const tpX=W/2-tpW/2+offX('tasks');
-  layoutBlock('tasks',tpX,tpY,tpW,tpH);
+  const tpX=W/2-tpW/2;
   if(tpH <= roomForTasks && (signedOut || dailyTasks.length)){
     ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(tpX,tpY,tpW,tpH);
     ctx.strokeStyle='#4a4634'; ctx.strokeRect(tpX+0.5,tpY+0.5,tpW,tpH);
@@ -3876,7 +3867,7 @@ function drawMenu(){
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 }
 let signBtnRect=null,accountBtnRect=null;
-let adLeftRect=null, adRightRect=null, editHubBtnRect=null, boardPanelRect=null;
+let adLeftRect=null, adRightRect=null, boardPanelRect=null;
 // ---- DAILY REWARD: a full page you must collect before the menu ----
 let dailyGateOpen=false, dailyGateRects=[], dailyGateReward=null;
 function openDailyGate(){
@@ -4170,11 +4161,11 @@ function drawSideAds(){
   const geo=sideAdMetrics();
   if(!geo) return;
   const {aw,ah,edge,gap,centreLeft,centreRight}=geo;
-  const lx2=clamp(edge+offX('adleft'),edge,centreLeft-gap-aw);
-  const rx2=clamp(W-aw-edge+offX('adright'),centreRight+gap,W-aw-edge);
+  const lx2=clamp(edge,edge,centreLeft-gap-aw);
+  const rx2=clamp(W-aw-edge,centreRight+gap,W-aw-edge);
   const base=Math.max(120,H/2-ah/2);
-  const ay=sideAdTop(lx2,aw,ah,base+offY('adleft'));
-  const ry=sideAdTop(rx2,aw,ah,base+offY('adright'));
+  const ay=sideAdTop(lx2,aw,ah,base);
+  const ry=sideAdTop(rx2,aw,ah,base);
 
   const panel=(x,y,label,sub,accent,isYT)=>{
     const hv=mouse.x>=x&&mouse.x<=x+aw&&mouse.y>=y&&mouse.y<=y+ah;
@@ -4200,14 +4191,12 @@ function drawSideAds(){
     ctx.textBaseline='top'; ctx.textAlign='left';
   };
   if(ay!==null){
-    withBlockColour('adleft', ()=>panel(lx2, ay, 'SUBSCRIBE TO LLR', 'on YouTube', '#ff3355', true));
+    panel(lx2, ay, 'SUBSCRIBE TO LLR', 'on YouTube', '#ff3355', true);
     adLeftRect={x:lx2,y:ay,w:aw,h:ah,url:AD_LLR_URL};
-    layoutBlock('adleft', lx2, ay, aw, ah);
   }
   if(ry!==null){
-    withBlockColour('adright', ()=>panel(rx2, ry, 'MOVES FOR A MISSION', 'donate now', '#7fd8ff', false));
+    panel(rx2, ry, 'MOVES FOR A MISSION', 'donate now', '#7fd8ff', false);
     adRightRect={x:rx2,y:ry,w:aw,h:ah,url:AD_MOVES_URL};
-    layoutBlock('adright', rx2, ry, aw, ah);
   }
 }
 let playersOpen=false, playersTab='banned', playersRects=[], playersHubBtnRect=null;
@@ -4286,8 +4275,7 @@ function drawCurrencyHUD(){
   const gt='\uD83D\uDC8E '+gems, ct='\uD83E\uDE99 '+coins;
   const spinTxt='\uD83C\uDFA1 '+wheelCountdown();
   const bw=Math.max(ctx.measureText(gt).width,ctx.measureText(ct).width,ctx.measureText(spinTxt).width)+22, bh=64,
-        bx=52+offX('coins'), by=Math.max(104,leftColTop)+offY('coins');
-  layoutBlock('coins',bx,by,bw,bh);
+        bx=52, by=Math.max(104,leftColTop);
   const paintCoins=()=>{
   ctx.fillStyle='rgba(8,10,5,0.78)'; ctx.fillRect(bx,by,bw,bh);
   ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,by+0.5,bw,bh);
@@ -4300,7 +4288,7 @@ function drawCurrencyHUD(){
     ctx.fillText('\u2191  '+coinTrickleRemaining()+' coming', bx+bw+8, by+33);
   }
   };
-  withBlockColour('coins', paintCoins);
+  paintCoins();
   ctx.restore();
 }
 function dailyTaskProgressText(task){
@@ -4414,8 +4402,8 @@ function gearMetrics(){
 function accountTriggerMetrics(){
   const maxW=Math.max(96,W-76),desired=W<420?Math.max(110,W*.34):W<680?Math.max(150,W*.29):220;
   const w=Math.min(230,maxW,desired),h=48;
-  const gear=gearMetrics(),x=clamp(10+offX('account'),8,Math.max(8,gear.x-w-8));
-  const y=clamp(10+offY('account'),8,Math.max(8,H-h-8));
+  const gear=gearMetrics(),x=clamp(10,8,Math.max(8,gear.x-w-8));
+  const y=clamp(10,8,Math.max(8,H-h-8));
   return {x,y,w,h};
 }
 function accountTriggerVisible(){
@@ -4464,7 +4452,6 @@ function drawAccountChip(){
     ?ownerPrivateDisplayName(authUser):'NOT SIGNED IN',action=authUser?'SIGN OUT':'SIGN IN';
   signBtnRect=accountBtnRect={x:r.x,y:r.y,w:r.w,h:r.h};
   syncAccountTriggerDom(r,accountTriggerLabel(),true);
-  layoutBlock('account',r.x,r.y,r.w,r.h);
   ctx.save();ctx.textBaseline='middle';
   const paintAccount=()=>{
     const hv=mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
@@ -4476,7 +4463,7 @@ function drawAccountChip(){
     ctx.fillStyle=hv?'#bfe8ff':'#e8b658';ctx.font='700 '+(r.w<125?11:12)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(action+' \u203a',r.w-14),r.x+7,r.y+35);
   };
-  withBlockColour('account',paintAccount);ctx.restore();
+  paintAccount();ctx.restore();
 }
 function drawGear(){
   const r=gearMetrics(),sz=r.w,x=r.x,y=r.y;

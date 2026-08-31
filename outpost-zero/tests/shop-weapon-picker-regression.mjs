@@ -102,7 +102,7 @@ for(const [source,name] of [[progression,'buyAnim'],[read('js/persistence.js'),'
 }
 
 for(const [script,version] of [['progression','20260831-shop-weapon-picker-v1'],['persistence','20260831-shop-weapon-picker-v1'],
-  ['cpu-state','20260831-shop-weapon-picker-v1'],['input','20260831-shop-weapon-picker-v1'],['ui','20260831-melee-polish-v1']])
+  ['cpu-state','20260831-shop-weapon-picker-v1'],['input','20260831-bots-volt-layout-v1'],['ui','20260831-bots-volt-layout-v1']])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),
     `${script}.js needs the categorized Shop picker cache tag`);
 

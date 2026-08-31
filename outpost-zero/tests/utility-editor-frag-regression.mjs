@@ -196,8 +196,8 @@ for(const value of ['19','7','1.4','88','2.1'])assert.match(freezerText,new RegE
 assert.doesNotMatch(fragText,/\b170\b|up to 300 at center/,'Frag details must not retain old hardcoded balance text');
 assert.doesNotMatch(freezerText,/\b105\b|1\.35s|2\.5s/,'Freezer details must not hide admin overrides behind defaults');
 
-for(const [file,version] of [['weapons','20260831-melee-polish-v1'],['admin-ui','20260831-admin-archives-v1'],
-  ['upgrades','20260831-hub-tools-settings-v1'],['combat','20260831-melee-polish-v1'],['ui','20260831-melee-polish-v1']])assert.match(
+for(const [file,version] of [['weapons','20260831-bots-volt-layout-v1'],['admin-ui','20260831-bots-volt-layout-v1'],
+  ['upgrades','20260831-hub-tools-settings-v1'],['combat','20260831-melee-polish-v1'],['ui','20260831-bots-volt-layout-v1']])assert.match(
   index,new RegExp(`outpost-zero/js/${file}\\.js\\?v=${version}`),
   `${file}.js must use its current cache version`,
 );

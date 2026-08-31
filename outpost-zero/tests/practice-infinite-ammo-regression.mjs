@@ -85,9 +85,9 @@ assert.match(ui,/player\.reserve\[loadout\.secondary\]=magSize\(loadout\.seconda
 assert.ok((rendering.match(/'\\u221E AMMO'/g)||[]).length>=2,
   'desktop and touch HUDs must both show the infinite-ammo symbol');
 
-for(const [script,version] of [['state','20260831-practice-infinite-ammo-v1'],['input','20260831-shop-weapon-picker-v1'],
+for(const [script,version] of [['state','20260831-practice-infinite-ammo-v1'],['input','20260831-bots-volt-layout-v1'],
   ['combat','20260831-melee-polish-v1'],['rendering','20260831-melee-polish-v1'],
-  ['ui','20260831-melee-polish-v1']])
+  ['ui','20260831-bots-volt-layout-v1']])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),
     `${script}.js needs its current cache tag`);
 

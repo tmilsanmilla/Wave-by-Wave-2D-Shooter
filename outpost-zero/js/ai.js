@@ -1,18 +1,22 @@
 "use strict";
 
 /* ---------------- offline arena: one-device 1v1 vs AI ---------------- */
-const BOT_AI=Object.freeze({weapon:'ar',damage:34,fireMs:245,reactionMs:575,moveSpeed:2.60,
+const BOT_AI=Object.freeze({weapon:'ar',damage:48,fireMs:245,reactionMs:575,moveSpeed:2.60,
   retreat:240,approach:535,maxRange:840,forgiveness:8,aimNoise:0.045,shotJitter:0.0165,
   fireAimError:0.065,leadFactor:0.52,maxLeadMs:170,thinkMs:158,turnRate:0.066});
 const CPU_AI_LOADOUT=Object.freeze({primary:'ar',secondary:'m9',melee:'knife'});
-// Weapon output never scales with difficulty. Better bots decide when to draw
-// the same fair M9 and knife sooner; they do not receive hidden damage, range,
-// magazine, reload, or equip-time bonuses.
+// Ranked CPU ranged damage has one visible difficulty curve: Impossible reaches
+// the normal weapon baseline, while lower tiers deal less. Cadence, range,
+// magazines, reloads, equip times, and melee output remain identical.
 const CPU_AI_WEAPON_RULES=Object.freeze({
   ar:Object.freeze({damage:BOT_AI.damage,fireMs:BOT_AI.fireMs,maxRange:BOT_AI.maxRange,forgiveness:BOT_AI.forgiveness}),
   m9:Object.freeze({damage:38,fireMs:200,maxRange:440,forgiveness:5}),
   knife:Object.freeze({damage:48,fireMs:380,maxRange:130,forgiveness:0}),
 });
+function cpuAiRangedDamage(rule,config){
+  const base=Math.max(0,+rule?.damage||0),scale=clamp(config?.rangedDamageScale==null?1:+config.rangedDamageScale,.1,1);
+  return Math.max(1,Math.round(base*scale));
+}
 const CPU_AI_KNIFE_ABILITY_RANGE=70,CPU_AI_KNIFE_ABILITY_DAMAGE=180,
   CPU_AI_KNIFE_ABILITY_COOLDOWN_MS=4800,CPU_AI_KNIFE_ABILITY_VISUAL_MS=250;
 const CPU_AI_TNT_RETHINK_MS=200,CPU_AI_TNT_SCORE_MIN=45,CPU_AI_TNT_AVOID_PAD=42;
@@ -719,11 +723,11 @@ function cpuAiTacticalGoal(bot,target,tactic,side,localMove,avoid){
   return{x:target.x+perpX*clamp(d*.3,180,300),y:target.y+perpY*clamp(d*.3,180,300)};
 }
 function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
-  const dx=target.x-bot.x,dy=target.y-bot.y,d=Math.hypot(dx,dy)||1,fx=dx/d,fy=dy/d;
+  const dx=target.x-bot.x,dy=target.y-bot.y,d=Math.hypot(dx,dy)||1,fx=dx/d,fy=dy/d,
+    routeVariation=clamp(config.routeVariation==null?1:+config.routeVariation,0,1);
   if(!bot.aiTactic||(clock>=(bot.aiTacticUntil||0)&&clock>=(bot.aiTacticMinUntil||0))){
     const recovering=clock<(bot.aiStuckUntil||0),roll=cpuAiNext(bot),blocked=cpuAiLosBlocked(bot.x,bot.y,target.x,target.y),underFire=clock<(bot.underFireUntil||0),
       losing=Number.isFinite(+bot.hp)&&Number.isFinite(+target.hp)&&bot.hp<target.hp*.78;
-    const routeVariation=clamp(config.routeVariation==null?1:+config.routeVariation,0,1);
     if(recovering)bot.aiTactic='flank';
     else if(config.useReactiveCover!==false&&underFire&&losing)bot.aiTactic='cover';
     else if(routeVariation<.3)bot.aiTactic=blocked?'flank':d>(config.approach||520)?'push':d<(config.retreat||230)?'retreat':'orbit';
@@ -748,13 +752,14 @@ function cpuAiPickMove(bot,target,allies,clock,config,tntPlan){
       }
     }
   }
+  const fixedRoute=config.fixedRoutes===true,angleJitter=fixedRoute?0:.12,scoreJitter=fixedRoute?0:.08;
   let best=null;
   for(const offset of [-Math.PI,-Math.PI*.75,-Math.PI*.5,-Math.PI*.25,0,Math.PI*.25,Math.PI*.5,Math.PI*.75,Math.PI]){
-    const a=Math.atan2(fy,fx)+offset+cpuAiRange(bot,-.12,.12),x=Math.cos(a),y=Math.sin(a),probeX=bot.x+x*72,probeY=bot.y+y*72;
+    const a=Math.atan2(fy,fx)+offset+cpuAiRange(bot,-angleJitter,angleJitter),x=Math.cos(a),y=Math.sin(a),probeX=bot.x+x*72,probeY=bot.y+y*72;
     if(cpuAiPositionBlocked(bot.x+x*34,bot.y+y*34,r)||cpuAiPositionBlocked(probeX,probeY,r))continue;
     const forward=x*fx+y*fy,orbit=(x*-fy+y*fx)*side,oldLen=Math.hypot(+bot.aiPlanMoveX||0,+bot.aiPlanMoveY||0),
       inertia=oldLen>.01?(x*(+bot.aiPlanMoveX||0)+y*(+bot.aiPlanMoveY||0))/oldLen*Math.max(0,+config.moveInertia||0):0;
-    let score=forward*bias[0]+orbit*bias[1]+inertia+cpuAiRange(bot,-.08,.08),unsafe=false;
+    let score=forward*bias[0]+orbit*bias[1]+inertia+cpuAiRange(bot,-scoreJitter,scoreJitter),unsafe=false;
     for(const hazard of avoid){
       const currentD=Math.hypot(bot.x-hazard.x,bot.y-hazard.y),hd=Math.hypot(probeX-hazard.x,probeY-hazard.y),
         candidateRisk=clamp((hazard.radius-hd)/hazard.radius,0,1);
@@ -829,36 +834,41 @@ const BOT_LADDER_TOMBSTONE_STORAGE_KEY='oz_bot_ladder_result_tombstones_v1',BOT_
 const BOT_LADDER_RESULT_QUEUE_MAX=128,BOT_LADDER_TOMBSTONE_MAX=512;
 const BOT_LADDER_QUEUE_RETRY_MS=Object.freeze([2000,10000,30000,120000]),BOT_LADDER_RATE_LIMIT_RETRY_MS=31000;
 const BOT_DIFFICULTIES=Object.freeze([
-  Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'STRONG FOUNDATIONS',detail:'Readable routes with mostly direct, repeatable peeks.',
-    reactionMs:670,moveSpeed:2.50,aimNoise:.080,shotJitter:.030,fireAimError:.125,leadFactor:.35,maxLeadMs:150,thinkMs:198,turnRate:.055,
+  Object.freeze({id:0,key:'beginner',name:'BEGINNER',summary:'STRONG FOUNDATIONS',detail:'Slower fixed routes, regular direct peeks, no prediction, shoots into guards · 50% ranged damage.',
+    reactionMs:760,moveSpeed:2.15,aimNoise:.095,shotJitter:.036,fireAimError:.140,leadFactor:0,maxLeadMs:0,thinkMs:230,turnRate:.043,
+    rangedDamageScale:.50,allowPrediction:false,
     weaponThinkMs:360,
     pressureAimError:.220,pressureChance:.12,pressureDecisionMs:700,pressureBurstMin:2,pressureBurstMax:2,pressureBurstMs:520,pressureMemoryMs:150,
-    parryReactionMs:360,parryRespectChance:.25,parryMeleeChance:.08,parryMeleeCommitMs:850,parryReleaseDelayMs:180,
-    routeVariation:.12,moveCommitMin:1100,moveCommitMax:1700,moveInertia:.60,dodgeChance:.04,dodgeReactionMs:280,dodgeLookaheadMs:300,dodgeCommitMs:190,dodgeCooldownMs:380,dodgeFireHoldMs:160,dodgeSpeedScale:1,dodgeMargin:3,
-    peekFakeChance:.03,prefireAdapt:0,peekTimingVariance:.08,peekHoldMin:105,peekHoldMax:145,peekSettleMin:115,peekSettleMax:155,peekCommitSpeed:1}),
-  Object.freeze({id:1,key:'easy',name:'EASY',summary:'QUICKER DECISIONS',detail:'Cleaner movement with occasional timing changes and bait peeks.',
+    parryReactionMs:360,parryRespectChance:0,parryMeleeChance:0,parryMeleeCommitMs:850,parryReleaseDelayMs:0,
+    routeVariation:0,fixedRoutes:true,moveCommitMin:1450,moveCommitMax:1450,moveInertia:.60,dodgeChance:.04,dodgeReactionMs:280,dodgeLookaheadMs:300,dodgeCommitMs:190,dodgeCooldownMs:380,dodgeFireHoldMs:160,dodgeSpeedScale:1,dodgeMargin:3,
+    peekFakeChance:0,prefireAdapt:0,peekTimingVariance:0,peekHoldMin:125,peekHoldMax:125,peekSettleMin:125,peekSettleMax:125,peekCommitMs:340,peekCommitSpeed:.9}),
+  Object.freeze({id:1,key:'easy',name:'EASY',summary:'QUICKER DECISIONS',detail:'Cleaner movement with occasional timing changes and bait peeks · 62.5% ranged damage.',
     reactionMs:540,moveSpeed:2.65,aimNoise:.060,shotJitter:.022,fireAimError:.100,leadFactor:.52,maxLeadMs:205,thinkMs:160,turnRate:.070,
+    rangedDamageScale:.625,
     weaponThinkMs:280,
     pressureAimError:.180,pressureChance:.30,pressureDecisionMs:560,pressureBurstMin:2,pressureBurstMax:3,pressureBurstMs:600,pressureMemoryMs:250,
     parryReactionMs:260,parryRespectChance:.50,parryMeleeChance:.22,parryMeleeCommitMs:875,parryReleaseDelayMs:160,
     routeVariation:.36,moveCommitMin:950,moveCommitMax:1500,moveInertia:.52,dodgeChance:.18,dodgeReactionMs:220,dodgeLookaheadMs:380,dodgeCommitMs:210,dodgeCooldownMs:330,dodgeFireHoldMs:135,dodgeSpeedScale:1.02,dodgeMargin:5,
     peekFakeChance:.08,prefireAdapt:.18,peekTimingVariance:.28,peekHoldMin:85,peekHoldMax:180,peekSettleMin:95,peekSettleMax:210,peekCommitSpeed:1.05}),
-  Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'COMPLETE TACTICS',detail:'Recognizes punished entries and changes its next peek timing.',
+  Object.freeze({id:2,key:'medium',name:'MEDIUM',summary:'COMPLETE TACTICS',detail:'Recognizes punished entries and changes its next peek timing · 75% ranged damage.',
     reactionMs:400,moveSpeed:2.85,aimNoise:.040,shotJitter:.015,fireAimError:.075,leadFactor:.67,maxLeadMs:270,thinkMs:118,turnRate:.090,
+    rangedDamageScale:.75,
     weaponThinkMs:210,
     pressureAimError:.155,pressureChance:.58,pressureDecisionMs:420,pressureBurstMin:3,pressureBurstMax:4,pressureBurstMs:720,pressureMemoryMs:400,
     parryReactionMs:170,parryRespectChance:.75,parryMeleeChance:.55,parryMeleeCommitMs:900,parryReleaseDelayMs:130,
     routeVariation:.66,moveCommitMin:900,moveCommitMax:1450,moveInertia:.58,dodgeChance:.50,dodgeReactionMs:145,dodgeLookaheadMs:500,dodgeCommitMs:230,dodgeCooldownMs:280,dodgeFireHoldMs:110,dodgeSpeedScale:1.08,dodgeMargin:9,
     peekFakeChance:.08,prefireAdapt:.72,peekTimingVariance:.58,peekHoldMin:70,peekHoldMax:220,peekSettleMin:80,peekSettleMax:260,peekPunishHoldMs:300,peekCommitSpeed:1.13}),
-  Object.freeze({id:3,key:'hard',name:'HARD',summary:'RELENTLESS TACTICIAN',detail:'Dodges live fire, varies timing, baits shots, and commits with wide swings.',
+  Object.freeze({id:3,key:'hard',name:'HARD',summary:'RELENTLESS TACTICIAN',detail:'Dodges live fire, varies timing, baits shots, and commits wide · 87.5% ranged damage.',
     reactionMs:240,moveSpeed:3.18,aimNoise:.022,shotJitter:.006,fireAimError:.047,leadFactor:.85,maxLeadMs:370,thinkMs:78,turnRate:.135,
+    rangedDamageScale:.875,
     weaponThinkMs:140,
     pressureAimError:.130,pressureChance:.88,pressureDecisionMs:300,pressureBurstMin:3,pressureBurstMax:5,pressureBurstMs:850,pressureMemoryMs:550,
     parryReactionMs:90,parryRespectChance:.95,parryMeleeChance:.90,parryMeleeCommitMs:950,parryReleaseDelayMs:90,
     routeVariation:.90,moveCommitMin:1100,moveCommitMax:1750,moveInertia:.78,dodgeChance:.90,dodgeReactionMs:80,dodgeLookaheadMs:650,dodgeCommitMs:250,dodgeCooldownMs:190,dodgeFireHoldMs:90,dodgeSpeedScale:1.18,dodgeMargin:14,
     peekFakeChance:.42,prefireAdapt:.88,peekTimingVariance:.92,peekHoldMin:45,peekHoldMax:280,peekSettleMin:55,peekSettleMax:300,peekPunishHoldMs:340,peekFakeSpeed:1.12,peekCommitSpeed:1.23}),
-  Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'ELITE EVASIVE EXECUTION',detail:'Commits to pressure bursts and routes, counters visible guards, and dodges spawned rounds.',
+  Object.freeze({id:4,key:'impossible',name:'IMPOSSIBLE',summary:'ELITE EVASIVE EXECUTION',detail:'Full weapon damage with elite dodges, guard counters, varied peeks, and committed pressure.',
     reactionMs:100,moveSpeed:3.45,aimNoise:.012,shotJitter:.0020,fireAimError:.040,leadFactor:.95,maxLeadMs:500,thinkMs:40,turnRate:.195,
+    rangedDamageScale:1,
     weaponThinkMs:90,
     pressureAimError:.115,pressureChance:1,pressureDecisionMs:240,pressureBurstMin:4,pressureBurstMax:6,pressureBurstMs:950,pressureMemoryMs:700,
     parryReactionMs:50,parryRespectChance:1,parryMeleeChance:1,parryMeleeCommitMs:1000,parryReleaseDelayMs:65,
@@ -1595,10 +1605,12 @@ function botLadderMatchResultText(match){
   return progress;
 }
 function arenaBotTuning(difficulty=botLadder.tier,modelId=activeBotModelId){
-  // Health, weapon damage, fire cadence, range, and weapon rules never scale.
-  // Difficulty controls fair execution, while the frozen tactical release
-  // controls which cumulative decisions exist.
-  return Object.freeze(Object.assign({},BOT_AI,botDifficulty(difficulty),botModelRelease(modelId)));
+  // Difficulty controls execution plus a bounded ranged-damage handicap. The
+  // frozen tactical release controls which cumulative decisions exist, except
+  // that Beginner deliberately never predicts movement even on newer models.
+  const tier=botDifficulty(difficulty),tuning=Object.assign({},BOT_AI,tier,botModelRelease(modelId));
+  if(tier.allowPrediction===false)tuning.usePrediction=false;
+  return Object.freeze(tuning);
 }
 function isBotArena(){ return !!(arena&&arena.mode==='bot'); }
 function isLocalArena(){ return isBotArena()||(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()); }
@@ -1825,10 +1837,11 @@ function updateArenaBot(dtms){
   cpuAiCompleteBotReload(b,now);cpuAiChooseBotWeapon(b,player,now,tuning,parryResponse);
   const weaponKey=String(b.cur||CPU_AI_LOADOUT.primary),w=WEAPONS[weaponKey]||WEAPONS.ar,
     weaponRule=CPU_AI_WEAPON_RULES[weaponKey]||CPU_AI_WEAPON_RULES.ar,isMelee=!!w.melee,
-    shotSpeed=isMelee?0:weaponBulletSpeed(weaponKey),maxRange=Math.min(+tuning.maxRange||weaponRule.maxRange,weaponRule.maxRange);
+    shotSpeed=isMelee?0:weaponBulletSpeed(weaponKey),maxRange=Math.min(+tuning.maxRange||weaponRule.maxRange,weaponRule.maxRange),
+    rangedDamage=isMelee?weaponRule.damage:cpuAiRangedDamage(weaponRule,tuning);
   if(targetVisible&&tuning.usePrediction)cpuAiTrackTarget(b,player,dtms,now);
 
-  const tntShot={damage:weaponRule.damage,rng:w.range||1,fall:w.fall||1,maxRange};
+  const tntShot={damage:rangedDamage,rng:w.range||1,fall:w.fall||1,maxRange};
   if(!isMelee&&tuning.useTnt&&now>=(b.tntThinkAt||0)){
     b.tntThinkAt=now+CPU_AI_TNT_RETHINK_MS;
     b.tntPlan=cpuAiTntPlan(b,[player],[b],tntShot,now);
@@ -1904,7 +1917,7 @@ function updateArenaBot(dtms){
   const shotStamp=now;
   if(!cpuAiSpendBotRound(b,weaponKey,shotStamp))return;cpuAiRecordPressureShot(b,fireDecision);b.flash=now+55;
   const a=b.angle+cpuAiRange(b,-tuning.shotJitter,tuning.shotJitter), sx=b.x+Math.cos(a)*7, sy=b.y+Math.sin(a)*7;
-  ebullets.push({x:sx,y:sy,vx:Math.cos(a)*shotSpeed,vy:Math.sin(a)*shotSpeed,life:weaponBulletLife(weaponKey,1200),dmg:weaponRule.damage,
+  ebullets.push({x:sx,y:sy,vx:Math.cos(a)*shotSpeed,vy:Math.sin(a)*shotSpeed,life:weaponBulletLife(weaponKey,1200),dmg:rangedDamage,
     botArena:true,dist:0,rng:w.range,fall:w.fall,fg:weaponRule.forgiveness,weapon:weaponKey});
   if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_shots');
   if((+b.aiWeaponMags[weaponKey]||0)<=0)b.aiWeaponThinkAt=now;
