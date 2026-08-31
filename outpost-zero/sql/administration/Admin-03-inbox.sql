@@ -1434,7 +1434,7 @@ begin
       'message',public._outpost_zero_redact_report_text(r.message),'created_at',r.created_at,
       'meta',public._outpost_zero_sanitized_report_meta(r.meta),'resolved',r.resolved
     ) payload
-    from public.reports r where r.game='outpost-zero' order by r.id desc limit bounded
+    from public.reports r where r.game='outpost-zero' and not r.resolved order by r.id desc limit bounded
   ) row_data;
   return payload;
 end;

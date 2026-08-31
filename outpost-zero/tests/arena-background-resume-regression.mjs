@@ -121,7 +121,7 @@ assert.equal(context.arenaCanAct(),true,'the reconnected client must resume the 
 
 assert.match(online,/event===['"]leave['"][\s\S]{0,220}arenaClaimOpponentForfeit/,
   'an explicit Leave must remain distinct and still award the legitimate forfeit');
-assert.match(index,/js\/online\.js\?v=20260830-background-resume-v1/,
+assert.match(index,/js\/online\.js\?v=20260831-melee-polish-v1/,
   'the deployed page must load the background-resume Arena code');
 assert.match(index,/js\/state\.js\?v=20260831-practice-infinite-ammo-v1/,
   'the deployed page must load the matching background-resume Arena state');

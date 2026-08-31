@@ -67,18 +67,40 @@ try{
 }catch{}
 check('Malformed nested dagger entries are ignored without throwing',malformedNestedSafe);
 
+const rapidDaggers={meleeFxSeq:0,meleeFxUntil:0,meleeFxReadyAt:0,meleeFxWallRecallSeq:0};
+check('A wall recall allows the very next Hurl visual without an intermediate packet',
+  apply(rapidDaggers,{meleeFxSeq:1,meleeFxKey:'bdaggers',meleeFxMs:3000,meleeFxAngle:0,
+    meleeFxWallRecallSeq:0,meleeFxBlades:blades},{melee:'bdaggers'},1000)===true&&
+  apply(rapidDaggers,{meleeFxSeq:2,meleeFxKey:'bdaggers',meleeFxMs:3000,meleeFxAngle:0,
+    meleeFxWallRecallSeq:1,meleeFxBlades:blades},{melee:'bdaggers'},1050)===true&&
+  rapidDaggers.meleeFxSeq===2&&rapidDaggers.meleeFxUntil===4050&&rapidDaggers.meleeFxWallRecallSeq===1);
+const explicitRecall={meleeFxSeq:0,meleeFxUntil:0,meleeFxReadyAt:0,meleeFxWallRecallSeq:0};
+check('A standalone wall-return packet clears its active Hurl and remote cooldown',
+  apply(explicitRecall,{meleeFxSeq:1,meleeFxKey:'bdaggers',meleeFxMs:3000,meleeFxAngle:0,
+    meleeFxWallRecallSeq:0,meleeFxBlades:blades},{melee:'bdaggers'},1000)===true&&
+  apply(explicitRecall,{meleeFxSeq:1,meleeFxKey:'bdaggers',meleeFxMs:0,meleeFxAngle:0,
+    meleeFxWallRecallSeq:1},{melee:'bdaggers'},1050)===true&&explicitRecall.meleeFxUntil===1050&&explicitRecall.meleeFxReadyAt===1050);
+check('An ordinary early Hurl still cannot skip its cosmetic cooldown',
+  apply(rapidDaggers,{meleeFxSeq:3,meleeFxKey:'bdaggers',meleeFxMs:3000,meleeFxAngle:0,
+    meleeFxWallRecallSeq:1,meleeFxBlades:blades},{melee:'bdaggers'},1100)===false&&rapidDaggers.meleeFxSeq===3);
+const inconsistentRecall={meleeFxSeq:0,meleeFxUntil:0,meleeFxReadyAt:0,meleeFxWallRecallSeq:0};
+check('A recall marker cannot claim that the same still-active Hurl returned',
+  apply(inconsistentRecall,{meleeFxSeq:1,meleeFxKey:'bdaggers',meleeFxMs:3000,meleeFxAngle:0,
+    meleeFxWallRecallSeq:1,meleeFxBlades:blades},{melee:'bdaggers'},1000)===false&&
+  inconsistentRecall.meleeFxWallRecallSeq===0);
+
 check('Every successful non-Sai ability starts its cosmetic descriptor',
   /if\(activated&&k!=='twinsai'\)[\s\S]*beginMeleeAbilityVisual\(k,visualAngle\)/.test(abilities)&&
   Object.entries(durations).every(([key,ms])=>new RegExp(key+':'+ms+'(?:,|\\s*\\})').test(abilities)));
 check('Casual 1v1 repeats and receives the bounded visual state',
-  /meleeFxSeq:Math\.max[\s\S]*meleeFxMs:clamp[\s\S]*meleeFxAngle:[\s\S]*meleeFxBlades:meleeAbilityVisualBlades\(\)/.test(online)&&
+  /meleeFxSeq:Math\.max[\s\S]*meleeFxMs:clamp[\s\S]*meleeFxAngle:[\s\S]*meleeFxBlades:meleeAbilityVisualBlades\(\)[\s\S]*meleeFxWallRecallSeq:Math\.max/.test(online)&&
   /arenaApplyRemoteMeleeAbilityState\(r,p,r\.loadout,now\)/.test(online));
 check('Party 2v2 repeats and receives the same visual state',
-  /partySend\('cpu_player_state',[\s\S]*meleeFxSeq:[\s\S]*meleeFxMs:clamp[\s\S]*meleeFxBlades:meleeAbilityVisualBlades\(\)/.test(party)&&
+  /partySend\('cpu_player_state',[\s\S]*meleeFxSeq:[\s\S]*meleeFxMs:clamp[\s\S]*meleeFxBlades:meleeAbilityVisualBlades\(\)[\s\S]*meleeFxWallRecallSeq:Math\.max/.test(party)&&
   /arenaApplyRemoteMeleeAbilityState\(h,p,kit,Date\.now\(\)\)/.test(party));
 check('Round-created remote actors start with clean visual sequence and timers',
-  /meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0/.test(online)&&
-  /meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0/.test(party));
+  /meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:\[\],meleeFxWallRecallSeq:0/.test(online)&&
+  /meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:\[\],meleeFxWallRecallSeq:0/.test(party));
 check('Every non-Sai melee has a distinct ability animation branch',
   Object.keys(durations).every(key=>new RegExp("key==='"+key+"'").test(rendering))&&
   /drawMeleeAbilityVisual\(e,now,true,false\)/.test(rendering)&&/drawMeleeAbilityVisual\(e,clock,!ally,false\)/.test(rendering)&&
@@ -86,8 +108,17 @@ check('Every non-Sai melee has a distinct ability animation branch',
 check('Burning Daggers and Tera Fists have their own weapon silhouettes',
   /else if\(key==='bdaggers'\)[\s\S]*else if\(key==='terafists'\)/.test(rendering)&&
   /actor\.meleeFxBlades/.test(rendering));
+check('Burning Daggers use one detailed blade for held, local-thrown, and remote-thrown views',
+  /function drawBurningDaggerBlade\(/.test(rendering)&&(rendering.match(/drawBurningDaggerBlade\(/g)||[]).length>=4&&
+  /partyDaggersThrown/.test(rendering)&&/remoteDaggersThrown/.test(rendering)&&/player\.cur==='bdaggers'&&daggersOut/.test(rendering));
+check('Twin Sai use proper center tines, curved prongs, wrapped grips, and a crossed guard',
+  /function drawTwinSaiBlade\([\s\S]*quadraticCurveTo\(8,-8\.5[\s\S]*quadraticCurveTo\(8,8\.5/.test(rendering)&&
+  /rotate\(-side\*guard\)[\s\S]*drawTwinSaiBlade\(hostile,parryActive\)/.test(rendering));
+check('Twin Sai guard uses its weapon pose without an extra player or opponent ring',
+  !/remoteParryActive\)\{[\s\S]{0,260}ctx\.arc\(e\.x,e\.y,r\+10/.test(rendering)&&
+  !/localParryActive\)\{[\s\S]{0,260}ctx\.arc\(player\.x,player\.y,player\.r\+10/.test(rendering));
 check('Returning or expired local daggers end their remote visual early',
-  (combat.match(/finishMeleeAbilityVisual\('bdaggers'\)/g)||[]).length===2);
+  /finishBurningDaggerThrow\(true\)/.test(combat)&&(combat.match(/finishBurningDaggerThrow\(false\)/g)||[]).length===2);
 check('Normal game and round setup clear presentation-only melee state',
   /resetWeaponGimmickState\(\)[\s\S]*resetMeleeAbilityVisual\(player\)/.test(gameplay)&&
   /resetMeleeAbilityVisual\(arena\.opponent\)/.test(online));

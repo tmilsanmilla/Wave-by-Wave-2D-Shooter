@@ -10,7 +10,7 @@ const MELEE_ABILITY_VISUAL_MAX_MS=3000;
 function resetMeleeAbilityVisual(actor=player){
   if(!actor)return;
   actor.meleeFxSeq=0;actor.meleeFxKey='';actor.meleeFxStart=0;actor.meleeFxUntil=0;
-  actor.meleeFxAngle=0;actor.meleeFxReadyAt=0;actor.meleeFxBlades=[];
+  actor.meleeFxAngle=0;actor.meleeFxReadyAt=0;actor.meleeFxBlades=[];actor.meleeFxWallRecallSeq=0;
 }
 function beginMeleeAbilityVisual(key,angle){
   const duration=MELEE_ABILITY_VISUAL_MS[key];
@@ -24,6 +24,17 @@ function beginMeleeAbilityVisual(key,angle){
 function finishMeleeAbilityVisual(key){
   if(!player||!player.meleeFxSeq||(key&&player.meleeFxKey!==key))return false;
   player.meleeFxUntil=Math.min(+player.meleeFxUntil||now,now);return true;
+}
+function finishBurningDaggerThrow(wallRecall=false){
+  if(!daggersOut)return false;
+  if(wallRecall){
+    // A wall immediately returns both blades and fully refunds Hurl. Carry a
+    // monotonic marker so an immediate rethrow also appears on remote screens.
+    abilityCD.bdaggers=now;comboNextT=0;
+    player.meleeFxWallRecallSeq=Math.max(Math.floor(+player.meleeFxWallRecallSeq||0),
+      Math.floor(+player.meleeFxSeq||0));
+  }
+  finishMeleeAbilityVisual('bdaggers');daggersOut=null;return true;
 }
 function meleeAbilityVisualBlades(){
   if(player.meleeFxKey!=='bdaggers'||!daggersOut||!Array.isArray(daggersOut.blades))return undefined;
@@ -150,6 +161,7 @@ function meleeAbility(){
     if(!ready || daggersOut){ sfx('dry'); return; }
     activated=true;
     const a=aimAngle();
+    comboNextT=0;                                    // no queued slash while both blades are away
     abilityCD[k]=now+abilityCdOf(k);
     daggersOut = { t:now+1500, end:abilityCD[k], blades:[] }; // fixed 3s cooldown
     // both blades fly along the exact aim line, offset only slightly side-to-side so they don't overlap

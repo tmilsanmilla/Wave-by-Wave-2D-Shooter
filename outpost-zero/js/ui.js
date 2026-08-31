@@ -18,7 +18,14 @@ function drawGunIcon(x,y,key,col,sc){
   else if(key==='knife'){ ctx.moveTo(-14,5); ctx.lineTo(-4,5); ctx.moveTo(-4,1); ctx.lineTo(-4,9); ctx.moveTo(-4,5); ctx.lineTo(15,5); ctx.lineTo(8,0); }
   else if(key==='scythe'){ ctx.moveTo(-13,15); ctx.lineTo(7,-9); ctx.moveTo(15,-2); ctx.arc(6,-4,9,0.3,3.0); }
   else if(key==='hammer'){ ctx.moveTo(-14,12); ctx.lineTo(5,-5); ctx.moveTo(2,-13); ctx.rect(2,-13,13,13); }
-  else if(key==='twinsai'){ ctx.moveTo(-16,10); ctx.lineTo(10,-12); ctx.moveTo(-10,-12); ctx.lineTo(16,10); ctx.moveTo(-13,-9); ctx.lineTo(-6,-9); ctx.moveTo(13,-9); ctx.lineTo(6,-9); }
+  else if(key==='twinsai'){
+    ctx.moveTo(-16,11);ctx.lineTo(15,-10);ctx.lineTo(10,-10);
+    ctx.moveTo(-3,2);ctx.quadraticCurveTo(-5,-5,1,-8);ctx.moveTo(-3,2);ctx.quadraticCurveTo(4,4,6,-1);
+    ctx.moveTo(-14,7);ctx.lineTo(-10,13);
+    ctx.moveTo(-16,-11);ctx.lineTo(15,10);ctx.lineTo(10,10);
+    ctx.moveTo(-3,-2);ctx.quadraticCurveTo(-5,5,1,8);ctx.moveTo(-3,-2);ctx.quadraticCurveTo(4,-4,6,1);
+    ctx.moveTo(-14,-7);ctx.lineTo(-10,-13);
+  }
   else if(key==='dart'){ ctx.moveTo(-15,2); ctx.lineTo(13,2); ctx.moveTo(-7,2); ctx.lineTo(-10,12); ctx.moveTo(13,2); ctx.lineTo(9,-1); ctx.moveTo(13,2); ctx.lineTo(9,5); }
   else if(key==='ar'){ ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.moveTo(-4,0); ctx.lineTo(-6,12); ctx.moveTo(-14,0); ctx.lineTo(-16,8); ctx.moveTo(10,0); ctx.lineTo(10,-5); }
   else if(key==='smg'){ ctx.moveTo(-20,0); ctx.lineTo(18,0); ctx.moveTo(-6,0); ctx.lineTo(-6,12); ctx.moveTo(-16,0); ctx.lineTo(-18,9); }
@@ -50,7 +57,14 @@ function drawGunIcon(x,y,key,col,sc){
     ctx.moveTo(0,0); ctx.lineTo(4,2);
   }
   else if(key==='fireworks'){ ctx.moveTo(-12,10); ctx.lineTo(4,-6); ctx.moveTo(4,-6); ctx.lineTo(2,-12); ctx.moveTo(4,-6); ctx.lineTo(10,-10); ctx.moveTo(4,-6); ctx.lineTo(10,-2); ctx.moveTo(4,-6); ctx.lineTo(-1,-11); }
-  else if(key==='bdaggers'){ ctx.moveTo(-14,-6); ctx.lineTo(4,-6); ctx.lineTo(-2,-10); ctx.moveTo(-14,6); ctx.lineTo(4,6); ctx.lineTo(-2,2); }
+  else if(key==='bdaggers'){
+    for(const y of [-6,6]){
+      ctx.moveTo(-16,y);ctx.lineTo(-5,y);ctx.moveTo(-6,y-4);ctx.lineTo(-6,y+4);
+      ctx.moveTo(-5,y);ctx.quadraticCurveTo(2,y-7,8,y-3);ctx.quadraticCurveTo(13,y-7,17,y);
+      ctx.quadraticCurveTo(8,y+1,3,y+4);ctx.quadraticCurveTo(-1,y+2,-5,y);
+      ctx.moveTo(0,y);ctx.quadraticCurveTo(7,y-2,12,y);
+    }
+  }
   else { ctx.moveTo(-30,0); ctx.lineTo(30,0); ctx.moveTo(-12,0); ctx.lineTo(-15,12); ctx.moveTo(2,-2); ctx.arc(6,-6,5,Math.PI*0.75,Math.PI*2.1); }
   ctx.stroke(); ctx.restore();
 }
@@ -157,7 +171,7 @@ function weaponDetails(k){
               scythe:['E / F / MELEE RMB: DASH','far dash + 2\u00d7 cleave \u00b7 i-frames \u00b7 9.6s'],
               hammer:['E / F / MELEE RMB: SLAM','110 dmg \u00b7 radius 160 \u00b7 8s'],
               twinsai:['E / F / MELEE RMB: PARRY','stop firing first \u00b7 cannot attack during 1s guard \u00b7 reflects every shot toward crosshair \u00b7 returns the shot\'s damage 1:1 \u00b7 2.5s cd after guard'],
-              bdaggers:['E / F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite']}[k];
+              bdaggers:['E / F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite \u00b7 wall hit instantly recalls + resets Hurl']}[k];
     if(ab) rows.push(ab);
     return rows;
   }

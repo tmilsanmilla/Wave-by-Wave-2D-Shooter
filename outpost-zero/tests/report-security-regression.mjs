@@ -53,6 +53,7 @@ check('Resolve and export both return only sanitized RPC rows',
   /resolve_outpost_zero_report/.test(sql)&&
   /public\._outpost_zero_redact_report_text\(v_row\.message\)/.test(sql)&&
   /export_outpost_zero_reports[\s\S]+public\._outpost_zero_sanitized_report_meta\(r\.meta\)/.test(sql)&&
+  /export_outpost_zero_reports[\s\S]+where r\.game='outpost-zero' and not r\.resolved/.test(sql)&&
   /rpc\('resolve_outpost_zero_report'/.test(administration)&&
   /rpc\('export_outpost_zero_reports'/.test(administration));
 check('Bulk resolution is main-only, bounded, Outpost Zero scoped, and count-only',

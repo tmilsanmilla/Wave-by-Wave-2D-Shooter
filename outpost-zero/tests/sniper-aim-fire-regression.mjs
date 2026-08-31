@@ -101,7 +101,7 @@ spreadContext.player.cur='ar';spreadContext.aiming=true;
 assert.ok(spreadContext.effSpread()>WEAPONS.ar.aimSpread,'ordinary aimed guns must retain recoil bloom');
 
 for(const [script,version] of [['input','20260831-shop-weapon-picker-v1'],['gameplay','20260831-tracking-drill-v1'],
-  ['combat','20260831-practice-infinite-ammo-v1'],['ai','20260830-sniper-fire-v1']])
+  ['combat','20260831-melee-polish-v1'],['ai','20260830-sniper-fire-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('PASS AWM cadence, held-trigger retry, cancellation, and scoped accuracy');

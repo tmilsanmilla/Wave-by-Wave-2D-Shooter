@@ -89,6 +89,36 @@ function meleeWeaponPalette(hostile=false){
     ? {shaft:'#8b201e',blade:'#ff3b34',edge:'#ff8b80',grip:'#5a1111',bright:'#ff6b61',housing:'#731b19',bar:'#ff3b34',teeth:'#40090a'}
     : {shaft:'#5a6b52',blade:'#a9c4d6',edge:'#8fb3c9',grip:'#3a4239',bright:'#c9d6e2',housing:'#3a4a54',bar:'#8fb3c9',teeth:'#25313a'};
 }
+function drawBurningDaggerBlade(hostile=false,phase=0){
+  const body=hostile?'#4a1112':'#322820',edge=hostile?'#ff4038':'#ff7228',
+    core=hostile?'#ffb0aa':'#ffd45f',grip=hostile?'#2a090a':'#252019',flicker=.5+.5*Math.sin(phase*.018);
+  ctx.save();ctx.lineJoin='round';ctx.lineCap='round';
+  ctx.strokeStyle=grip;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(-12,0);ctx.lineTo(2,0);ctx.stroke();
+  ctx.strokeStyle=edge;ctx.lineWidth=1.1;
+  for(const x of [-9,-6,-3,0]){ctx.beginPath();ctx.moveTo(x,-2.2);ctx.lineTo(x+1.6,2.2);ctx.stroke();}
+  ctx.fillStyle=core;ctx.beginPath();ctx.moveTo(-14,0);ctx.lineTo(-11,-3);ctx.lineTo(-8,0);ctx.lineTo(-11,3);ctx.closePath();ctx.fill();
+  ctx.strokeStyle=edge;ctx.lineWidth=2.2;ctx.beginPath();ctx.moveTo(2,-5);ctx.quadraticCurveTo(5,0,2,5);ctx.stroke();
+  ctx.fillStyle=body;ctx.strokeStyle=edge;ctx.lineWidth=2.1;ctx.beginPath();ctx.moveTo(2,0);
+  ctx.quadraticCurveTo(9,-6,15,-3);ctx.quadraticCurveTo(22,-9-flicker*2,34,0);
+  ctx.quadraticCurveTo(25,1,20,5);ctx.quadraticCurveTo(12,7,7,3);ctx.quadraticCurveTo(4,2,2,0);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.fillStyle=core;ctx.beginPath();ctx.moveTo(7,.3);ctx.quadraticCurveTo(14,-2.8,19,-1.2);
+  ctx.quadraticCurveTo(25,-4-flicker,30,0);ctx.quadraticCurveTo(21,.8,16,3);ctx.quadraticCurveTo(11,1.2,7,.3);ctx.closePath();ctx.fill();
+  ctx.restore();
+}
+function drawTwinSaiBlade(hostile=false,parryActive=false){
+  const p=meleeWeaponPalette(hostile),steel=hostile?'#ff5148':'#b9d2df',shine=hostile?'#ffc0ba':'#e9f7ff';
+  ctx.save();ctx.lineJoin='round';ctx.lineCap='round';
+  ctx.strokeStyle=p.grip;ctx.lineWidth=5.2;ctx.beginPath();ctx.moveTo(-12,0);ctx.lineTo(5,0);ctx.stroke();
+  ctx.strokeStyle=hostile?'#ff6b61':'#7394a6';ctx.lineWidth=1;
+  for(const x of [-9,-6,-3,0,3]){ctx.beginPath();ctx.moveTo(x,-2.3);ctx.lineTo(x+1.5,2.3);ctx.stroke();}
+  ctx.fillStyle=p.housing;ctx.beginPath();ctx.arc(-13,0,3,0,TAU);ctx.fill();
+  ctx.fillStyle=steel;ctx.strokeStyle=p.edge;ctx.lineWidth=1.25;ctx.beginPath();ctx.moveTo(4,-2.4);ctx.lineTo(37,0);ctx.lineTo(4,2.4);ctx.closePath();ctx.fill();ctx.stroke();
+  ctx.strokeStyle=steel;ctx.lineWidth=3.3;ctx.beginPath();
+  ctx.moveTo(4,-1);ctx.quadraticCurveTo(8,-8.5,15,-8);ctx.quadraticCurveTo(18,-7.5,19,-4.5);
+  ctx.moveTo(4,1);ctx.quadraticCurveTo(8,8.5,15,8);ctx.quadraticCurveTo(18,7.5,19,4.5);ctx.stroke();
+  ctx.strokeStyle=shine;ctx.globalAlpha=parryActive ? .95 : .62;ctx.lineWidth=1.1;ctx.beginPath();ctx.moveTo(7,-.7);ctx.lineTo(33,0);ctx.stroke();
+  ctx.restore();
+}
 // Drawn at the origin and facing +X. Both local and remote actors call this
 // exact geometry; hostile ownership changes only the palette.
 function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
@@ -105,9 +135,8 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
     ctx.fillStyle=p.blade;ctx.save();ctx.translate(26,-7);ctx.rotate(.5);ctx.fillRect(-5,-10,10,20);ctx.restore();
   }else if(key==='bdaggers'){
     for(const side of [-1,1]){
-      ctx.save();ctx.translate(0,side*5);ctx.rotate(side*.1);
-      ctx.strokeStyle=p.grip;ctx.lineWidth=3.2;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(11,0);ctx.stroke();
-      ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(10,-2.8);ctx.lineTo(34,0);ctx.lineTo(10,2.8);ctx.closePath();ctx.fill();ctx.restore();
+      ctx.save();ctx.translate(1,side*6);ctx.rotate(-side*.09);ctx.scale(.88,.88);
+      drawBurningDaggerBlade(hostile,now+side*45);ctx.restore();
     }
   }else if(key==='terafists'){
     for(const side of [-1,1]){
@@ -116,12 +145,12 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
       ctx.strokeStyle=p.edge;ctx.lineWidth=1.6;ctx.strokeRect(6,y-3,10,6);
     }
   }else if(key==='twinsai'){
-    const guard=parryActive ? .34+Math.sin(now*.02)*.035 : 0;
+    const guard=parryActive ? .39+Math.sin(now*.02)*.025 : .12;
     for(const side of [-1,1]){
-      ctx.save();ctx.rotate(side*guard);ctx.translate(0,side*5);
-      ctx.strokeStyle=p.grip;ctx.lineWidth=3.4;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(12,0);ctx.stroke();
-      ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(11,-2.5);ctx.lineTo(35,0);ctx.lineTo(11,2.5);ctx.closePath();ctx.fill();
-      ctx.strokeStyle=p.edge;ctx.lineWidth=2.2;ctx.beginPath();ctx.moveTo(13,0);ctx.lineTo(18,-6);ctx.moveTo(13,0);ctx.lineTo(18,6);ctx.stroke();ctx.restore();
+      // Reverse the old fan rotation: the tines cross over the aim line into
+      // a readable guard instead of opening away from incoming fire.
+      ctx.save();ctx.translate(0,side*5);ctx.rotate(-side*guard);ctx.scale(.86,.86);
+      drawTwinSaiBlade(hostile,parryActive);ctx.restore();
     }
   }else if(key==='chainsaw'){
     ctx.fillStyle=p.housing;ctx.fillRect(3,-4.5,11,9);
@@ -174,9 +203,8 @@ function drawMeleeAbilityVisual(actor,clock,hostile=false,localActor=false){
       const px=b?b.x:x+Math.cos(angle)*travel+Math.cos(angle+Math.PI/2)*side*7;
       const py=b?b.y:y+Math.sin(angle)*travel+Math.sin(angle+Math.PI/2)*side*7;
       const bladeAngle=b?Math.atan2(b.vy,b.vx):angle+(returning?Math.PI:0);
-      ctx.save();ctx.translate(px,py);ctx.rotate(bladeAngle);ctx.fillStyle=hostile?'#ff3b34':'#a9c4d6';
-      ctx.beginPath();ctx.moveTo(10,0);ctx.lineTo(-6,3.5);ctx.lineTo(-6,-3.5);ctx.closePath();ctx.fill();
-      ctx.fillStyle=hostile?'#7a1715':'#5a6b52';ctx.fillRect(-10,-2,-6,4);ctx.restore();
+      ctx.save();ctx.translate(px,py);ctx.rotate(bladeAngle);ctx.scale(.76,.76);
+      drawBurningDaggerBlade(hostile,clock+i*55);ctx.restore();
     }
   }else if(key==='terafists'){
     const jab=Math.floor(elapsed/90)%2===0?1:-1,pulse=8+Math.sin(elapsed*.07)*5;
@@ -187,7 +215,7 @@ function drawMeleeAbilityVisual(actor,clock,hostile=false,localActor=false){
 }
 function drawMeleeSwingPath(x,y,angle,arc,range,progress){
   ctx.beginPath();
-  if(arc<.6){
+  if(arc<=.6){
     ctx.moveTo(x+Math.cos(angle)*12,y+Math.sin(angle)*12);
     const thrustR=range*(.8+.25*progress);
     ctx.lineTo(x+Math.cos(angle)*thrustR,y+Math.sin(angle)*thrustR);
@@ -216,13 +244,11 @@ function drawPartyCpuActors(){
     ctx.strokeStyle=ally?'#9dd7ff':'#ff8b80';ctx.lineWidth=2/zoom;ctx.stroke();
     const partyParryActive=ally&&clock<(e.parryUntil||0)&&partyCpuMatch.loadouts&&
       partyCpuMatch.loadouts[e.id]&&partyCpuMatch.loadouts[e.id].melee==='twinsai';
-    if(partyParryActive){
-      ctx.strokeStyle='#bfe8ff';ctx.lineWidth=3/zoom;ctx.beginPath();ctx.arc(e.x,e.y,r+10,0,TAU);ctx.stroke();
-    }
+    const partyDaggersThrown=e.cur==='bdaggers'&&e.meleeFxKey==='bdaggers'&&clock<(e.meleeFxUntil||0);
     if(partyParryActive){
       ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette('twinsai',false,true);ctx.restore();
     }else if(wk.melee){
-      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,!ally,false);ctx.restore();
+      if(!partyDaggersThrown){ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,!ally,false);ctx.restore();}
     }else{
       ctx.strokeStyle=weaponColor(e.cur,ally?'#bde7ff':'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
       ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6);ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8));ctx.stroke();
@@ -255,6 +281,7 @@ function drawArenaOpponentWorld(){
   if(!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
   const remoteParryActive=now<(e.parryUntil||0)&&e.loadout&&e.loadout.melee==='twinsai';
+  const remoteDaggersThrown=e.cur==='bdaggers'&&e.meleeFxKey==='bdaggers'&&now<(e.meleeFxUntil||0);
   // Exact opponent health is result information, never live combat intel.
   // This applies equally to Casual 1v1 and every local 1v1 bot difficulty.
   const showOpponentHp=arena.phase==='round_end'||arena.phase==='match_end';
@@ -269,11 +296,6 @@ function drawArenaOpponentWorld(){
   ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU); ctx.fill();
   ctx.fillStyle=showOpponentHitFlash&&now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   ctx.strokeStyle='#ff8b80'; ctx.lineWidth=2/zoom; ctx.stroke();
-  if(remoteParryActive){
-    const remain=clamp(((e.parryUntil||0)-now)/TWIN_SAI_PARRY_MS,0,1);
-    ctx.strokeStyle='rgba(255,107,97,'+(0.45+remain*.45)+')';ctx.lineWidth=3/zoom;ctx.beginPath();
-    ctx.arc(e.x,e.y,r+10+Math.sin(now*.018)*2,0,TAU);ctx.stroke();
-  }
   const wk=WEAPONS[e.cur]||WEAPONS.ar, len=Math.min(38,wk.len||24);
   const remoteUtility=e.utilityOut&&e.loadout&&typeof casualArenaUtilityKey==='function'
     ?casualArenaUtilityKey(e.loadout.utility,false):'';
@@ -282,7 +304,7 @@ function drawArenaOpponentWorld(){
   }else if(remoteUtility){
     ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawUtilIcon(14,0,remoteUtility,'#ff8bc2',.8);ctx.restore();
   }else if(wk.melee){
-    ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,true,false);ctx.restore();
+    if(!remoteDaggersThrown){ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,true,false);ctx.restore();}
   }else{
     ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
     ctx.beginPath();ctx.moveTo(e.x+Math.cos(weaponAngle)*6,e.y+Math.sin(weaponAngle)*6);ctx.lineTo(e.x+Math.cos(weaponAngle)*(len+8),e.y+Math.sin(weaponAngle)*(len+8));ctx.stroke();
@@ -574,12 +596,8 @@ function drawWorld(){
   if(daggersOut){
     for(const bl of daggersOut.blades){
       const a=Math.atan2(bl.vy,bl.vx);
-      ctx.save(); ctx.translate(bl.x,bl.y); ctx.rotate(a);
-      ctx.fillStyle='#ff6a2c';
-      ctx.beginPath(); ctx.moveTo(9,0); ctx.lineTo(-5,3); ctx.lineTo(-5,-3); ctx.closePath(); ctx.fill();
-      ctx.fillStyle='#ffd24d';
-      ctx.beginPath(); ctx.arc(-5,0,2,0,TAU); ctx.fill();
-      ctx.restore();
+      ctx.save();ctx.translate(bl.x,bl.y);ctx.rotate(a);ctx.scale(.76,.76);
+      drawBurningDaggerBlade(false,now);ctx.restore();
     }
   }
 
@@ -665,12 +683,6 @@ function drawWorld(){
     ctx.strokeStyle='rgba(191,239,255,0.92)';ctx.lineWidth=4/zoom;ctx.beginPath();
     ctx.arc(player.x,player.y,player.r+12+Math.sin(now*.012)*2,0,TAU);ctx.stroke();
   }
-  if(localParryActive){                              // Twin Sai parry remains visibly active
-    const remain=clamp((parryUntil-now)/TWIN_SAI_PARRY_MS,0,1);
-    ctx.strokeStyle='rgba(191,232,255,'+(0.45+remain*0.45)+')';
-    ctx.lineWidth=3/zoom; ctx.beginPath();
-    ctx.arc(player.x,player.y,player.r+10+Math.sin(now*0.018)*2,0,TAU); ctx.stroke();
-  }
   ctx.fillStyle='rgba(0,0,0,0.3)';
   ctx.beginPath(); ctx.ellipse(player.x+3,player.y+5,player.r,player.r*0.7,0,0,TAU); ctx.fill();
   ctx.save();
@@ -696,7 +708,7 @@ function drawWorld(){
     const side=player.swingSide||Math.sign(player.swingA-aimAngle())||1; // which way this swing goes
     const ease=sw<0.25 ? -(sw/0.25)*0.35                     // short wind-up
                        : -0.35 + ((sw-0.25)/0.75)*1.35;      // then the sweep through
-    const thrust=(player.swingArc<0.6);                      // knife-style stab, not a sweep
+    const thrust=(player.swingArc<=0.6);                     // knife/Sai thrust, not a sweep
     if(thrust){
       ctx.translate(Math.sin(sw*Math.PI)*9, 0);              // lunge out and back
     } else {
@@ -709,7 +721,7 @@ function drawWorld(){
   } else if(utilityOut){                         // utility in hand
     drawUtilIcon(14, 0, loadout.utility, '#c98fb8', 0.8);
   } else if(w.melee){                            // shared local/remote melee geometry
-    drawMeleeWeaponSilhouette(player.cur,false,false);
+    if(!(player.cur==='bdaggers'&&daggersOut))drawMeleeWeaponSilhouette(player.cur,false,false);
   } else if(w.solar){                            // solar rifle: long barrel + glowing solar core
     ctx.fillStyle='#3a3320';                      // stock/body
     ctx.fillRect(-4,-3,10,6);

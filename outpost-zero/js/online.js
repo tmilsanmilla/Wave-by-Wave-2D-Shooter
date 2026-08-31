@@ -89,11 +89,24 @@ function arenaRemoteMeleeFxBlades(packet,clock){
 }
 function arenaApplyRemoteMeleeAbilityState(actor,packet,remoteLoadout,clock=now){
   if(!actor||!packet)return false;
-  const seq=+packet.meleeFxSeq,left=+packet.meleeFxMs,oldSeq=Math.max(0,Math.floor(+actor.meleeFxSeq||0));
+  const seq=+packet.meleeFxSeq,left=+packet.meleeFxMs,oldSeq=Math.max(0,Math.floor(+actor.meleeFxSeq||0)),
+    oldWallRecallSeq=Math.max(0,Math.floor(+actor.meleeFxWallRecallSeq||0)),
+    wallRecallSeq=packet.meleeFxWallRecallSeq===undefined?oldWallRecallSeq:+packet.meleeFxWallRecallSeq;
   if(!Number.isSafeInteger(seq)||seq<0||seq>1000000000||seq<oldSeq||
-     !Number.isFinite(left)||left<0||left>MELEE_ABILITY_VISUAL_MAX_MS)return false;
+     !Number.isFinite(left)||left<0||left>MELEE_ABILITY_VISUAL_MAX_MS||
+     !Number.isSafeInteger(wallRecallSeq)||wallRecallSeq<oldWallRecallSeq||wallRecallSeq>seq)return false;
+  const wallRecallAdvanced=wallRecallSeq>oldWallRecallSeq;
+  if(wallRecallAdvanced&&wallRecallSeq===seq&&left>0)return false;
+  // A recall can be followed by a new Hurl before the next 50 ms packet. Free
+  // the old cosmetic lock before validating that newer activation.
+  if(wallRecallAdvanced){
+    actor.meleeFxWallRecallSeq=wallRecallSeq;
+    if(actor.meleeFxKey==='bdaggers'&&wallRecallSeq>=oldSeq){
+      actor.meleeFxUntil=clock;actor.meleeFxBlades=[];actor.meleeFxReadyAt=clock;
+    }
+  }
   if(seq===oldSeq){
-    if(left===0&&clock<(actor.meleeFxUntil||0)){actor.meleeFxUntil=clock;actor.meleeFxBlades=[];return true;}
+    if(left===0&&(wallRecallAdvanced||clock<(actor.meleeFxUntil||0))){actor.meleeFxUntil=clock;actor.meleeFxBlades=[];return true;}
     if(left>0&&actor.meleeFxKey==='bdaggers'){
       const blades=arenaRemoteMeleeFxBlades(packet,clock);if(blades){actor.meleeFxBlades=blades;return true;}
     }
@@ -1302,7 +1315,7 @@ function arenaMatchPresenceSync(ch){
   const remoteKit=typeof arenaRemoteLoadout==='function'?arenaRemoteLoadout(om):
     {primary:om.primary,secondary:om.secondary,melee:om.melee};
   arena.opponent=Object.assign(oldOpp||{x:WORLD.w/2+380,y:WORLD.h/2,tx:WORLD.w/2+380,ty:WORLD.h/2,angle:Math.PI,hp:ARENA_HP,cur:remoteKit&&remoteKit.primary||'ar',utilityOut:false,
-                                 parrySeq:0,parryUntil:0,parryReadyAt:0,meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:[],lastSeen:Date.now()},
+                                 parrySeq:0,parryUntil:0,parryReadyAt:0,meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:[],meleeFxWallRecallSeq:0,lastSeen:Date.now()},
                                {id:om.id,name:om.name||'opponent',loadout:remoteKit||{primary:'ar',secondary:'m9',melee:'knife'},remoteLoadoutValid:!!remoteKit,
                                 backgrounded:om.backgrounded===true||om.away===true,away:om.backgrounded===true||om.away===true});
   // Stay visible in the quick queue until both confirmed IDs have actually
@@ -1603,6 +1616,7 @@ function arenaSyncTick(wall){
       meleeFxMs:clamp((+player.meleeFxUntil||0)-now,0,MELEE_ABILITY_VISUAL_MAX_MS),
       meleeFxAngle:Number.isFinite(+player.meleeFxAngle)?+player.meleeFxAngle:0,
       meleeFxBlades:meleeAbilityVisualBlades(),
+      meleeFxWallRecallSeq:Math.max(0,Math.floor(+player.meleeFxWallRecallSeq||0)),
       tntDamage:activeArenaMapId()==='construction'?arenaTntOwnDamageSnapshot(String(authUser.id)):undefined,
       detonatedTnt:activeArenaMapId()==='construction'?[...arenaDestroyedTnt()]:undefined,
       portalSeq:Math.max(0,Math.floor(+player.portalSeq||0)),koKind:cause&&cause.kind,

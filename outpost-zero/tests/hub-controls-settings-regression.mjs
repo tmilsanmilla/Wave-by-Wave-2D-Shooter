@@ -97,8 +97,8 @@ assert.match(index,/outpost-zero\/styles\.css\?v=20260831-hub-tools-settings-v1/
 for(const script of ['networking','upgrades'])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=20260831-hub-tools-settings-v1`),
     `${script}.js needs the current hub/tools/settings cache tag`);
-for(const script of ['cpu-state','input','ui'])
-  assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=20260831-shop-weapon-picker-v1`),
+for(const [script,version] of [['cpu-state','20260831-shop-weapon-picker-v1'],['input','20260831-shop-weapon-picker-v1'],['ui','20260831-melee-polish-v1']])
+  assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),
     `${script}.js needs the current Shop picker cache tag`);
 
 console.log('PASS organized hub controls and GAME MENU soundtrack settings');

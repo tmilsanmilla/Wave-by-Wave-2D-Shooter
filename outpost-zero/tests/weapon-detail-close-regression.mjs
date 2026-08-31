@@ -48,7 +48,7 @@ for(const sample of [render(1000,800,false,'alphabetic'),render(320,390,true,'bo
 assert.match(source,/mouse\.x>=close\.x[\s\S]{0,160}close\.w[\s\S]{0,160}close\.h/,
   'close hover geometry must not retain the old hard-coded 22 by 20 bounds');
 assert.match(input,/inR\(detailRects\.close\)/,'weapon-detail clicks must use the same centered close rectangle');
-assert.match(index,/outpost-zero\/js\/ui\.js\?v=20260831-shop-weapon-picker-v1/,
+assert.match(index,/outpost-zero\/js\/ui\.js\?v=20260831-melee-polish-v1/,
   'ui.js needs the current Shop picker cache tag');
 
 console.log('PASS weapon-detail X is centered inside one responsive close button');

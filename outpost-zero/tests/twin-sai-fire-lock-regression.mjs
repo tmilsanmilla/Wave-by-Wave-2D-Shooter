@@ -72,8 +72,8 @@ check('No weapon attack can start during the live Twin Sai guard',
   /function tryFire\([\s\S]{0,500}now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS\)return false/.test(combat));
 check('Twin Sai details explain that firing and guarding cannot overlap',
   /twinsai:\[[^\n]*stop firing first[^\n]*cannot attack during 1s guard/.test(ui));
-for(const [script,version] of [['abilities','20260830-twin-sai-fire-lock-v1'],
-  ['combat','20260831-practice-infinite-ammo-v1'],['ui','20260831-shop-weapon-picker-v1']])
+for(const [script,version] of [['abilities','20260831-melee-polish-v1'],
+  ['combat','20260831-melee-polish-v1'],['ui','20260831-melee-polish-v1']])
   check(`${script}.js has its current cache tag`,
     new RegExp(`js/${script}\\.js\\?v=${version}`).test(index));
 

@@ -1361,8 +1361,11 @@ function chooseReportCopyCustom(){
   reportCopyMode='custom';reportCopyCustomCount=count;reportCopyStatus='READY TO '+reportBulkAction.toUpperCase()+' '+count+' REPORT'+(count===1?'':'S')+'.';return true;
 }
 function reportExportText(rows,requested){
-  const list=Array.isArray(rows)?rows:[],created=new Date().toISOString();
-  const out=['OUTPOST ZERO REPORT EXPORT','EXPORTED: '+created,'SELECTION: '+(requested==null?'ALL REPORTS':'NEWEST '+requested),'COPIED: '+list.length,''];
+  // Clipboard exports are an active-work queue. Resolved reports stay saved in
+  // the Archive, but can never leak into COPY ALL even if stale data is passed.
+  const list=(Array.isArray(rows)?rows:[]).filter(row=>row&&row.resolved!==true),created=new Date().toISOString();
+  const selection=requested==null?'ALL UNRESOLVED REPORTS':'NEWEST '+requested+' UNRESOLVED REPORTS';
+  const out=['OUTPOST ZERO REPORT EXPORT','EXPORTED: '+created,'SELECTION: '+selection,'COPIED: '+list.length,''];
   list.forEach((row,index)=>{
     const meta=row&&row.meta&&typeof row.meta==='object'?row.meta:{},message=String(row&&row.message||'').replace(/^\[STAFF\]\s*/,'');
     // Keep bulk exports focused on the report itself. Reviewer identity and
@@ -1386,14 +1389,17 @@ async function copyOutpostZeroReports(){
   const requested=reportCopyCount(),owner=currentAuthUserId(),epoch=adminPrivacyEpoch;reportCopyBusy=true;reportCopyStatus='LOADING REPORTS…';
   try{
     let rows=[];
-    if(!sb)rows=[...(updatesFeed.reports||[]),...(updatesResolved||[])].sort((a,b)=>(+b.id||0)-(+a.id||0));
+    if(!sb)rows=[...(updatesFeed.reports||[])].sort((a,b)=>(+b.id||0)-(+a.id||0));
     else{
-      const result=await sb.rpc('export_outpost_zero_reports',{p_limit:requested});
+      // Request the full sanitized set for compatibility with an older Admin
+      // 03 deployment, filter locally, then apply CUSTOM to open reports only.
+      const result=await sb.rpc('export_outpost_zero_reports',{p_limit:null});
       if(result.error)throw result.error;
       const payload=Array.isArray(result.data)?result.data[0]:result.data;
       rows=Array.isArray(payload)?payload:Array.isArray(payload&&payload.reports)?payload.reports:[];
     }
     if(!adminPrivacyRequestCurrent(epoch,owner)||!canAccessReports())return false;
+    rows=rows.filter(row=>row&&row.resolved!==true);
     if(requested!=null)rows=rows.slice(0,requested);
     const copied=await writeReportExport(reportExportText(rows,requested));
     reportCopyStatus=copied?'COPIED '+rows.length+' REPORT'+(rows.length===1?'':'S')+' TO CLIPBOARD.':'COPY FAILED · TRY AGAIN.';

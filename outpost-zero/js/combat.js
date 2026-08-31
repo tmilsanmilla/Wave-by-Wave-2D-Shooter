@@ -902,11 +902,11 @@ function update(dtms){
   }
   // thrown burning daggers: fly out, then home back to the hand; return at t
   if(daggersOut && now>=daggersOut.end){
-    if(typeof finishMeleeAbilityVisual==='function')finishMeleeAbilityVisual('bdaggers');
-    daggersOut=null;
+    finishBurningDaggerThrow(false);
   }
   if(daggersOut){
     const back = now>=daggersOut.t;
+    let wallRecall=null;
     for(const bl of daggersOut.blades){
       if(back || bl.returning){
         bl.returning=true;
@@ -917,15 +917,11 @@ function update(dtms){
       bl.x+=bl.vx*dt; bl.y+=bl.vy*dt;
       const hitWall=pointInRects(bl.x,bl.y)||
         (typeof losBlocked==='function'&&losBlocked(oldX,oldY,bl.x,bl.y));
-      if(hitWall){
-        bl.x=oldX;bl.y=oldY;bl.returning=true;
-        const dx=player.x-bl.x,dy=player.y-bl.y,d=Math.hypot(dx,dy)||1;
-        bl.vx=dx/d*17;bl.vy=dy/d*17;
-      }
-      if(projectileOutsideArena(bl,9)){
-        clampProjectileToArena(bl,9); bl.returning=true;
-        const dx=player.x-bl.x, dy=player.y-bl.y, d=Math.hypot(dx,dy)||1;
-        bl.vx=dx/d*17; bl.vy=dy/d*17;
+      const leftArena=projectileOutsideArena(bl,9);
+      if(hitWall||leftArena){
+        if(leftArena)clampProjectileToArena(bl,9);
+        wallRecall={x:hitWall?oldX:bl.x,y:hitWall?oldY:bl.y};
+        break;                                       // never damage through the wall this frame
       }
       if(practiceMode==='arena'&&arenaCanAct()){
         const arenaTargets=typeof isCpuTeamArena==='function'&&isCpuTeamArena()
@@ -957,10 +953,14 @@ function update(dtms){
       }
       if(Math.random()<0.5) burst(bl.x,bl.y,'#ff9a4a',1,2);
     }
+    if(wallRecall){
+      burst(wallRecall.x,wallRecall.y,'#ff9a4a',6,3);
+      burst(player.x,player.y,'#ffd36a',4,2);
+      finishBurningDaggerThrow(true);                // both teleport back; Hurl is ready now
+    }
     // once returning blades reach the player, catch them
-    if(daggersOut.blades.every(bl=>bl.returning && dist2(bl.x,bl.y,player.x,player.y)<28*28)){
-      if(typeof finishMeleeAbilityVisual==='function')finishMeleeAbilityVisual('bdaggers');
-      daggersOut=null;
+    if(daggersOut&&daggersOut.blades.every(bl=>bl.returning && dist2(bl.x,bl.y,player.x,player.y)<28*28)){
+      finishBurningDaggerThrow(false);
     }
   }
 

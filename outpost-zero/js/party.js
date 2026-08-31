@@ -1169,7 +1169,7 @@ function cpuTeamBeginRound(options){
     const spawn=mapSpawns?mapSpawns.allies[Math.min(i,1)]:null,
       x=spawn?spawn.x:cx-500,y=spawn?spawn.y:cy+(count===1?0:(i===0?-125:125)),kit=kits[id];
     partyCpuMatch.humans[id]={id,name:partyCpuMatch.humanNames[id]||'OPERATOR',team:'A',r:15,hp:PARTY_CPU_HP,x,y,tx:x,ty:y,angle:0,cur:kit.primary,
-      parrySeq:0,parryUntil:0,parryReadyAt:0,meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:[]};
+      parrySeq:0,parryUntil:0,parryReadyAt:0,meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:[],meleeFxWallRecallSeq:0};
     if(id===localId){player.x=x;player.y=y;cam.x=x;cam.y=y;}
   });
   const allySpawn=mapSpawns?mapSpawns.allies[1]:{x:cx-500,y:cy+150},
@@ -1325,6 +1325,7 @@ function partyCpuSyncLocalActor(){
   const clock=cpuTeamClock(),left=clamp((+player.meleeFxUntil||0)-now,0,MELEE_ABILITY_VISUAL_MAX_MS),max=MELEE_ABILITY_VISUAL_MS[player.meleeFxKey]||1;
   a.meleeFxSeq=Math.max(0,Math.floor(+player.meleeFxSeq||0));a.meleeFxKey=String(player.meleeFxKey||'');
   a.meleeFxStart=clock-(max-left);a.meleeFxUntil=clock+left;a.meleeFxAngle=Number.isFinite(+player.meleeFxAngle)?+player.meleeFxAngle:0;
+  a.meleeFxWallRecallSeq=Math.max(0,Math.floor(+player.meleeFxWallRecallSeq||0));
 }
 function partyCpuActors(team){
   return Object.values(partyCpuMatch.humans).concat(partyCpuMatch.bots).filter(a=>a.team===team&&a.hp>0);
@@ -1692,7 +1693,8 @@ function partyCpuSyncTick(clock){
       x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,hp:Math.max(0,player.hp),parrySeq,parryMs:Math.max(0,parryUntil-now),
       meleeFxSeq:Math.max(0,Math.floor(+player.meleeFxSeq||0)),meleeFxKey:String(player.meleeFxKey||''),
       meleeFxMs:clamp((+player.meleeFxUntil||0)-now,0,MELEE_ABILITY_VISUAL_MAX_MS),
-      meleeFxAngle:Number.isFinite(+player.meleeFxAngle)?+player.meleeFxAngle:0,meleeFxBlades:meleeAbilityVisualBlades()});
+      meleeFxAngle:Number.isFinite(+player.meleeFxAngle)?+player.meleeFxAngle:0,meleeFxBlades:meleeAbilityVisualBlades(),
+      meleeFxWallRecallSeq:Math.max(0,Math.floor(+player.meleeFxWallRecallSeq||0))});
   }
   if(partyCpuIsHost()&&clock>=partyCpuMatch.snapshotAt){
     partyCpuMatch.snapshotAt=clock+PARTY_CPU_SYNC_MS;
