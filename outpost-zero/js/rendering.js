@@ -184,6 +184,12 @@ function drawPartyCpuActors(){
   for(const e of actors){
     if(e.hp<=0)continue;
     const ally=e.team==='A',a=e.angle||0,r=e.r||15,wk=WEAPONS[e.cur]||WEAPONS.ar,len=Math.min(38,wk.len||24);
+    const swingDur=Math.max(1,+e.swingDur||130),swingProgress=e.swingT&&(clock-e.swingT)>=0&&(clock-e.swingT)<swingDur?(clock-e.swingT)/swingDur:null;
+    let weaponAngle=a;
+    if(swingProgress!==null){
+      const ease=swingProgress<.25?-(swingProgress/.25)*.35:-.35+((swingProgress-.25)/.75)*1.35;
+      weaponAngle+=(e.swingSide||1)*(e.swingArc||1.2)*.5*ease;
+    }
     ctx.fillStyle='rgba(0,0,0,.35)';ctx.beginPath();ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU);ctx.fill();
     ctx.fillStyle=ally?'#5b9bd5':'#d05548';ctx.beginPath();ctx.arc(e.x,e.y,r,0,TAU);ctx.fill();
     ctx.strokeStyle=ally?'#9dd7ff':'#ff8b80';ctx.lineWidth=2/zoom;ctx.stroke();
@@ -193,15 +199,20 @@ function drawPartyCpuActors(){
       ctx.strokeStyle='#bfe8ff';ctx.lineWidth=3/zoom;ctx.beginPath();ctx.arc(e.x,e.y,r+10,0,TAU);ctx.stroke();
     }
     if(partyParryActive){
-      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(a);drawMeleeWeaponSilhouette('twinsai',false,true);ctx.restore();
+      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette('twinsai',false,true);ctx.restore();
     }else if(wk.melee){
-      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(a);drawMeleeWeaponSilhouette(e.cur,!ally,false);ctx.restore();
+      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,!ally,false);ctx.restore();
     }else{
       ctx.strokeStyle=weaponColor(e.cur,ally?'#bde7ff':'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
       ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6);ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8));ctx.stroke();
     }
     if(!partyParryActive&&clock<(e.flash||0)){ctx.fillStyle='#ffd98a';ctx.beginPath();ctx.arc(e.x+Math.cos(a)*(len+10),e.y+Math.sin(a)*(len+10),4,0,TAU);ctx.fill();}
     drawMeleeAbilityVisual(e,clock,!ally,false);
+    if(swingProgress!==null){
+      const attackA=Number.isFinite(+e.swingA)?+e.swingA:a,attackArc=e.swingArc||wk.arc||.5,attackR=e.swingR||wk.range||55;
+      ctx.strokeStyle=(ally?'rgba(191,232,255,':'rgba(255,59,52,')+(.8*(1-swingProgress)).toFixed(3)+')';ctx.lineWidth=4/zoom;
+      drawMeleeSwingPath(e.x,e.y,attackA,attackArc,attackR,swingProgress);
+    }
     // Teammate status helps coordination. Enemy CPUs intentionally expose no
     // name, exact health bar, damage flash, or hit-confirmation information.
     if(ally){

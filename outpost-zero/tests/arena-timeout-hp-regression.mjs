@@ -80,7 +80,7 @@ timeoutContext.arenaTimeoutTick(4000);
 assert.equal(resolved.length,0,'only the host may award the timeout point');
 assert.equal(sent[0].event,'round_timeout_hp','the guest must still publish its final HP');
 
-assert.match(online,/arenaHostResolve\(arenaTimeoutWinner\(me,localHp,opponent,remoteHp\)\)/,
+assert.match(online,/arenaHostResolve\(arenaTimeoutWinner\(me,localHp,opponent,remoteHp\),\{kind:['"]timeout['"]\}\)/,
   'Casual 1v1 timeout must resolve from the final HP ledger');
 assert.match(online,/['"]round_timeout_hp['"]/,'Casual must subscribe to the final-HP event');
 assert.match(state,/timeoutHpId:''[\s\S]{0,80}timeoutHp:new Map\(\)[\s\S]{0,80}timeoutHpNextAt:0/,
@@ -91,7 +91,7 @@ assert.match(online,/arena\.phase!==['"]fight['"]\|\|Date\.now\(\)>=arena\.round
   'late TNT-hit packets must not change HP after zero');
 assert.match(online,/arena\.active&&arena\.roundStartAt&&!timeoutLocked/,
   'reconnect clock extension must not reopen a round whose final HP is already locked');
-assert.match(ai,/arenaBotResolve\(arenaTimeoutWinner\(LOCAL_DUEL_PLAYER,player\.hp,LOCAL_DUEL_BOT,bhp\)\)/,
+assert.match(ai,/arenaBotResolve\(arenaTimeoutWinner\(LOCAL_DUEL_PLAYER,player\.hp,LOCAL_DUEL_BOT,bhp\),['"]timeout['"]\)/,
   'CPU 1v1 timeout must use remaining HP');
 assert.equal((party.match(/arenaTimeoutWinner\('allies',[a-zA-Z]+,'cpus',[a-zA-Z]+\)/g)||[]).length,2,
   'offline and Party CPU 2v2 timeouts must use total remaining team HP');

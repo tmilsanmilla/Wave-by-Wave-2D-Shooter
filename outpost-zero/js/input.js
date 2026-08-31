@@ -7,7 +7,23 @@ let menuRects={}, dragSlider=null, menuOpen=false, gearRect={x:-99,y:-99,w:0,h:0
 // physical press. Resetting it on release prevents a second quick press from
 // replaying the automatic-fire intervals that elapsed while the button was up.
 let mouseFireCadence=false;
-function resetFireCadence(){ mouseFireCadence=false; touchFireCadence=false; }
+const SNIPER_TRIGGER_BUFFER_MS=220;
+let sniperTriggerUntil=0,sniperTriggerWeapon='';
+function cancelSniperTriggerBuffer(){sniperTriggerUntil=0;sniperTriggerWeapon='';}
+function queueSniperTriggerBuffer(){
+  const w=WEAPONS[player.cur];
+  if(state!=='play'||menuOpen||utilityOut||player.cur!=='sniper'||!w||w.auto||w.melee||
+     player.mags[player.cur]<1)return false;
+  sniperTriggerWeapon=player.cur;sniperTriggerUntil=now+SNIPER_TRIGGER_BUFFER_MS;return true;
+}
+function retrySniperTriggerBuffer(){
+  if(!sniperTriggerWeapon)return false;
+  if(!mouse.down||state!=='play'||menuOpen||utilityOut||player.cur!==sniperTriggerWeapon||
+     now>sniperTriggerUntil){cancelSniperTriggerBuffer();return false;}
+  if(!tryFire(false))return false;
+  mouseFireCadence=true;cancelSniperTriggerBuffer();return true;
+}
+function resetFireCadence(){ mouseFireCadence=false; touchFireCadence=false; cancelSniperTriggerBuffer(); }
 function toggleMenuFromInput(){
   // Opening an overlay while a CPU start/rematch is awaiting cloud state is a
   // route-away intent. Cancel first so closing the overlay before the response
@@ -207,7 +223,10 @@ cv.addEventListener('mousedown', e=>{
     }
     // Every physical press gets one immediate attempt. Automatic weapons then
     // continue from that shot only while this same press remains held.
-    if(state==='play') mouseFireCadence=!!tryFire(false)&&player.reloadEnd<=now;
+    if(state==='play'){
+      mouseFireCadence=!!tryFire(false)&&player.reloadEnd<=now;
+      if(mouseFireCadence)cancelSniperTriggerBuffer();else queueSniperTriggerBuffer();
+    }
   } else if(e.button===2 && state==='play'){
     if(practiceMode==='arena'&&!arenaCanAct()){ sfx('dry'); }
     else if(utilityOut){                                 // the visible utility owns RMB, never the hidden melee
@@ -219,7 +238,7 @@ cv.addEventListener('mousedown', e=>{
 });
 addEventListener('mouseup', e=>{
   layoutMouseUp();
-  if(e.button===0){ mouse.down=false; mouseFireCadence=false; dragSlider=null; if(utilityOut) utilRelease(); }
+  if(e.button===0){ mouse.down=false; mouseFireCadence=false; cancelSniperTriggerBuffer(); dragSlider=null; if(utilityOut) utilRelease(); }
   if(e.button===2 && rmbAim){ rmbAim=false; aiming=false; }
 });
 cv.addEventListener('contextmenu', e=> e.preventDefault());

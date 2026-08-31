@@ -59,9 +59,9 @@ function frame(){
   const ub=$('userbar').style;
   if(ub.display !== 'none') ub.display='none';
 
-  if(profilePending && Date.now()>profileSaveT){
-    const saveUserId=profilePendingUserId; profilePending=false; profilePendingUserId='';
-    if(authUser&&String(authUser.id)===saveUserId) saveProfile(); // a delayed save must never cross accounts
+  if(profilePending&&profileSaveQueued===0&&Date.now()>profileSaveT){
+    const saveUserId=profilePendingUserId;
+    if(authUser&&String(authUser.id)===saveUserId)void saveProfile(); // clear only after confirmed save; failures retry
   }
 
   if(state==='select'){

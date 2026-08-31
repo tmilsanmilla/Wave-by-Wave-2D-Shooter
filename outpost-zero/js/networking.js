@@ -225,8 +225,15 @@ async function initAuth(){
         }
         syncFallAccess();
         fetchAdmins(); fetchBanners(); fetchMsgs(); fetchPrices();
-        profileLoaded=false;
-        Promise.resolve(fetchWeaponDefs()).then(()=>fetchProfile(profileUserId,profileRequestVersion)).then(async profileReady=>{ // publication authority, then account progress
+        // Token refreshes can fire between a local reward and its cloud write.
+        // Skip a known-dirty same-account read, and pass the scheduling
+        // revision so a mutation during fetchWeaponDefs also invalidates the
+        // later profile response.
+        const sameLoadedProfile=!accountChanged&&profileLoaded&&profileOwnerUserId===profileUserId,
+          reuseLoadedProfile=sameLoadedProfile&&typeof profileWritesPending==='function'&&profileWritesPending(),
+          profileMutationAtSchedule=typeof profileMutationVersion==='number'?profileMutationVersion:0;
+        if(!sameLoadedProfile)profileLoaded=false;
+        Promise.resolve(fetchWeaponDefs()).then(()=>reuseLoadedProfile?true:fetchProfile(profileUserId,profileRequestVersion,profileMutationAtSchedule)).then(async profileReady=>{ // publication authority, then account progress
           // Auth may change while the profile request is in flight. A response
           // for the previous account must never open rewards or onboarding for
           // the account that is signed in now.
@@ -684,7 +691,11 @@ async function confirmSignOut(){
   if(!userId||String(authUser.id||'')!==userId){closeAccountMenu(true);return false;}
   accountMenuBusy=true;syncAccountMenu();
   const ok=await toggleAuth({confirmed:true,userId});
-  if(!ok&&authUser&&String(authUser.id||'')===userId){accountMenuBusy=false;syncAccountMenu();}
+  if(!ok&&authUser&&String(authUser.id||'')===userId){
+    accountMenuBusy=false;syncAccountMenu();
+    const status=accountMenuElements().status;
+    if(status)status.textContent='COULD NOT SAFELY SAVE PROGRESS. RECONNECT AND TRY AGAIN.';
+  }
   return !!ok;
 }
 function accountMenuKeydown(event){
@@ -713,8 +724,15 @@ async function toggleAuth(options){
     const expectedUserId=String(opts.userId||''),liveUserId=String(authUser.id||'');
     if(!expectedUserId||expectedUserId!==liveUserId){closeAccountMenu(true);return false;}
     if(accountSettingsOpen)closeAccountSettings(true);
+    if(typeof persistNormalEndlessScoreOnExit==='function')persistNormalEndlessScoreOnExit();
+    if(typeof isBotArena==='function'&&isBotArena()&&!arena.botAdminTest&&typeof arenaRecordDailyMatch==='function')
+      arenaRecordDailyMatch(LOCAL_DUEL_PLAYER,'',typeof arenaHasCompletedDailyTaskRound==='function'&&arenaHasCompletedDailyTaskRound());
     try{if(typeof arenaForfeitBeforeSignOut==='function')await arenaForfeitBeforeSignOut();}
     catch(error){console.warn('arena sign-out forfeit failed',error);}
+    if(profileLoaded&&profileOwnerUserId===liveUserId&&typeof saveProfile==='function'){
+      const profileSaved=await Promise.race([saveProfile(true),new Promise(resolve=>setTimeout(()=>resolve(false),9000))]);
+      if(!profileSaved)return false;
+    }
     let signOutError=null;
     if(sb)try{const result=await sb.auth.signOut();signOutError=result&&result.error||null;}
     catch(error){signOutError=error;}

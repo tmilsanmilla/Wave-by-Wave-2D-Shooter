@@ -329,6 +329,14 @@ function startReload(){
   aiming=false; rmbAim=false;
   sfx('reload');
 }
+function fireCadenceLastShot(key,w){
+  // The AWM's bolt clock belongs to the AWM. A sidearm or melee attack made
+  // before drawing it must not impose a fresh one-second Sniper lockout.
+  const perWeapon=key==='sniper'||Number.isFinite(+w.quickdrawMs);
+  return perWeapon
+    ? (Number.isFinite(+weaponLastShotAt[key])?+weaponLastShotAt[key]:-Infinity)
+    : player.lastShot;
+}
 function tryFire(carryCadence=false){
   if(state!=='play' || now<fireSuppressT) return false;
   if(practiceMode==='arena' && !arenaCanAct()) return false;
@@ -343,12 +351,9 @@ function tryFire(carryCadence=false){
   const frenzyMul=Number.isFinite(+w.frenzyAt)&&preShotMag<=+w.frenzyAt
     ? (Number.isFinite(+w.frenzyRateMul)?+w.frenzyRateMul:1) : 1;
   const shotInterval=w.fireRate*frenzyMul*perks.rate*wm(player.cur).rate*(now<surgeT?0.77:1);
-  // Quickdraw has a per-M9 cadence clock: a primary shot must not secretly
-  // extend its advertised 120ms draw, while two M9 shots still respect 200ms.
-  const weaponCadence=Number.isFinite(+w.quickdrawMs);
-  const cadenceLastShot=weaponCadence
-    ? (Number.isFinite(+weaponLastShotAt[player.cur])?+weaponLastShotAt[player.cur]:-Infinity)
-    : player.lastShot;
+  // Private weapon clocks keep both Quickdraw and the AWM honest: another gun
+  // cannot extend their draw, while repeated shots still respect their cadence.
+  const cadenceLastShot=fireCadenceLastShot(player.cur,w);
   if(now-cadenceLastShot<shotInterval) return false;
   // Held automatic fire keeps the fractional timer remainder instead of losing
   // it to the 60 Hz step. Fresh presses and shots after an idle gap still fire now.
@@ -509,6 +514,9 @@ function update(dtms){
     } else cancelFanTheHammer();
   }
   // full-auto
+  // A semi-auto Sniper press made just before its draw/bolt gate opens gets one
+  // short retry window. It fires at most once and never turns hold-LMB into auto.
+  if(!utilityOut&&sniperTriggerWeapon)retrySniperTriggerBuffer();
   if(!utilityOut && (w.auto || perks.autoAll) && mouse.down){
     if(tryFire(mouseFireCadence)&&player.reloadEnd<=now) mouseFireCadence=true;
   }
@@ -869,7 +877,7 @@ function update(dtms){
   } else if(!practiceMode && waveSkipPending>0 && !upgradeOffered){
     // WAVE SKIPPER: grant an upgrade with no combat, up to 3 times
     waveSkipPending--;
-    taskProgress('waves',1);
+    if(typeof recordDailyEndlessWaveClear==='function')recordDailyEndlessWaveClear();
     recordWaveCoinReward();
     bossBounty = wave%10===0;
     upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
@@ -878,7 +886,7 @@ function update(dtms){
     state='upgrade'; sfx('wave');
   } else if(!practiceMode && !enemies.length){
     if(wave>=1 && !upgradeOffered){
-      taskProgress('waves',1);
+      if(typeof recordDailyEndlessWaveClear==='function')recordDailyEndlessWaveClear();
       recordWaveCoinReward(); // bank each clear; pay the whole bank exactly every fifth wave
       bossBounty = wave%10===0;   // weapon-mod level every 10 waves
       upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
@@ -1309,10 +1317,14 @@ function update(dtms){
             waveMsg='\uD83C\uDF81 '+modTxt+'+'+awardedGems+' \uD83D\uDC8E  +'+coinDrop+' \uD83E\uDE99'; waveMsgT=now+2600;
           }
           if(typeof resetHeldTouchContacts==='function')resetHeldTouchContacts();
-          chestRewardOpen={coins:coinDrop,gems:awardedGems,mod:modName,trickle,end:trickle.start+trickle.dur};
+          const chestTaskBefore=dailyTasks.find(task=>task.id==='victories'),taskGemsBefore=gems,
+            chestTaskWasDone=!!(chestTaskBefore&&chestTaskBefore.done);
+          taskProgress('mod_chest',1);
+          const chestTaskAfter=dailyTasks.find(task=>task.id==='victories'),
+            taskReward=!chestTaskWasDone&&chestTaskAfter&&chestTaskAfter.done?Math.max(0,gems-taskGemsBefore):0;
+          chestRewardOpen={coins:coinDrop,gems:awardedGems,taskReward,mod:modName,trickle,end:trickle.start+trickle.dur};
         }
         burst(p.x,p.y,'#ffd24d',18,5); sfx('pickup');
-        taskProgress('chests',1);
       } else if(p.type==='med'){
         if(!collectDroppedMedkit()) continue;
       }
@@ -1349,6 +1361,7 @@ function hurtPlayer(dmg){
       sfx('die');
       return;
     }
+    if(typeof completeDailyEndlessTaskRun==='function')completeDailyEndlessTaskRun();
     player.hp=0; state='over'; sfx('die'); submitScore(hiScore);
   }
 }
@@ -1447,9 +1460,8 @@ function killEnemy(j){
       if(!t.boss) pickups.push({x:e.x,y:e.y,type:'med'});
     }
     if(Math.random()<0.165) pickups.push({x:e.x+rand(-10,10),y:e.y+rand(-10,10),type:'ammo'});
-    taskProgress('kills',1);
+    taskProgress('endless_kill',1);
     if(t.boss){
-      taskProgress('bosses',1);
       pickups.push({x:e.x-32,y:e.y,type:'med'},{x:e.x+32,y:e.y,type:'ammo'},{x:e.x,y:e.y+32,type:'ammo'});
       // weapon-mod CHESTS: purple 100%, yellow 33.3%, blue 10%, red 5%
       const CHEST={boss:[0.05,60], bossBlue:[0.10,120], bossYellow:[0.333,250], bossPurple:[1.0,600]}[e.type];

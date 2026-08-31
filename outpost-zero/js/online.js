@@ -214,6 +214,7 @@ function arenaMapVoteResultPacket(clock=Date.now()){
 function arenaStartMapVote(){
   const local=arenaIsLocalMapVote(), host=local||!!(authUser&&authUser.id===arena.hostId);
   if((!local&&!arena.opponent)||!host) return false;
+  if(typeof arenaResetDailyTaskTracking==='function')arenaResetDailyTaskTracking(arena);
   const clock=local?now:Date.now(), ids=arenaMapVoterIds();
   if(ids.length!==2) return false;
   arenaResetMapVote('arena');
@@ -253,6 +254,7 @@ function arenaApplyMapVoteOpen(p){
     arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
     arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();arena.receivedHitDamage=new Map();
     arena.hitSeq=0; arena.sentHitKinds=new Map();arena.sentHitDamage=new Map();arena.pendingHitFeedback=new Map(); arena.winRecorded=false;
+    if(typeof arenaResetDailyTaskTracking==='function')arenaResetDailyTaskTracking(arena);
     arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
     arenaResetMapVote('arena');
   }
@@ -393,7 +395,7 @@ function arenaTimeoutTick(clock=Date.now()){
   }
   if(!hasRemote&&!fallback)return true;
   const remoteHp=hasRemote?ledger.get(opponent):clamp(+arena.timeoutOpponentHp||0,0,ARENA_HP);
-  arenaHostResolve(arenaTimeoutWinner(me,localHp,opponent,remoteHp));return true;
+  arenaHostResolve(arenaTimeoutWinner(me,localHp,opponent,remoteHp),{kind:'timeout'});return true;
 }
 const REMOTE_UTILITY_SEEN_MAX=96;
 function arenaUtilityIdValid(id,owner,epoch,round){
@@ -744,6 +746,10 @@ function arenaForfeitEligible(){
 function arenaForfeitResultId(loserId){
   return ['arena-forfeit',String(arena&&arena.room||''),Math.floor(+arena?.matchEpoch||0),String(loserId||'')].join(':');
 }
+function arenaHasCompletedDailyTaskRound(){
+  return !!arena&&(['ko_wait','round_end'].includes(arena.phase)||Math.floor(+arena.round||0)>1||
+    Object.values(arena.scores||{}).some(score=>(+score||0)>0));
+}
 function arenaClearDisconnectHold(resumeClocks){
   if(!arena) return 0;
   const heldFor=Math.max(0,Date.now()-(arena.disconnectAt||Date.now()));
@@ -775,6 +781,9 @@ function arenaApplyForfeitResult(p){
   // packet. During an unfinished match, even round_end is still binding.
   if(arena.phase==='match_end'||!arenaForfeitEligible()) return false;
   arenaClearDisconnectHold(false);
+  // A draw leaves both scores at zero. phase=round_end or round>1 still proves
+  // that at least one real round finished before this forfeit.
+  const hadCompletedRound=arenaHasCompletedDailyTaskRound();
   const scores=Object.assign({},arena.scores);
   scores[winner]=Math.max(ARENA_TARGET,Math.max(0,Math.floor(+scores[winner]||0)));
   scores[loser]=Math.max(0,Math.floor(+scores[loser]||0));
@@ -783,6 +792,7 @@ function arenaApplyForfeitResult(p){
   arena.mapVoteStartPending=false; arena.rematchVotes=new Set(); arena.forfeitResultId=resultId;
   arena.forfeitPacket={room:arena.room,epoch:arena.matchEpoch,round:arena.round,resultId,winner,loser,
     reason:String(p.reason||'disconnect').slice(0,24)};
+  if(typeof arenaRecordDailyMatch==='function')arenaRecordDailyMatch(me,winner,hadCompletedRound);
   if(winner===me&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(arenaWinResultId(arena,authUser)); }
   if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
   if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
@@ -858,6 +868,10 @@ function arenaNotifyDeparture(reason='left'){
   const resultId=forfeit?arenaForfeitResultId(loser):'';
   if(resultId&&arena.departureAnnounced===resultId) return true;
   if(resultId) arena.departureAnnounced=resultId;
+  // Explicit in-app Leave remains alive long enough to save profile progress.
+  // A hard page exit cannot promise that write, so do not show phantom credit.
+  if(forfeit&&['left','signed_out'].includes(reason)&&typeof arenaRecordDailyMatch==='function')
+    arenaRecordDailyMatch(loser,'',arenaHasCompletedDailyTaskRound());
   arena.departurePromise=arenaSend('leave',{forfeit,resultId,loser,reason:String(reason||'left').slice(0,24)});
   return forfeit;
 }
@@ -1307,6 +1321,7 @@ function arenaApplyRematchStart(p){
   arena.seenShots=new Set(); arena.shotSeq=0; arena.remoteShots=[];arena.seenMelees=new Set();arena.meleeSeq=0;
   arena.seenFireworks=new Set();arena.fireworkSeq=0;arena.remoteFireworkHighestSeq=0;
   arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.winRecorded=false;
+  if(typeof arenaResetDailyTaskTracking==='function')arenaResetDailyTaskTracking(arena);
   arena.utilitySeq=0;arena.seenUtilities=new Set();arena.remoteUtilityReadyAt=new Map();arena.utilityFrozenUntil=0;
   arenaResetTimeoutHp(arena.matchEpoch,arena.round);
   arena.departureAnnounced=''; arena.departurePromise=null; arena.forfeitResultId=''; arena.forfeitPacket=null;
@@ -1583,6 +1598,7 @@ function arenaHostResolve(winnerId,cause=null){
   if(winnerId) scores[winnerId]=(scores[winnerId]||0)+1;
   const over=winnerId&&(scores[winnerId]||0)>=ARENA_TARGET;
   const p={from:authUser.id,room:arena.room,epoch:arena.matchEpoch,round:arena.round,winner:winnerId,scores,matchOver:!!over,
+           roundEndReason:cause&&cause.kind==='timeout'?'timeout':'knockout',
            nextDelay:over?0:2600,nextAt:over?0:Date.now()+2600};
   Object.assign(p,arenaUnscopedKillCause(cause,winnerId)||{});
   arenaApplyRoundResult(p); arenaSend('round_result',p);
@@ -1594,6 +1610,8 @@ function arenaApplyRoundResult(p){
   if(!p||Math.floor(+p.epoch||0)!==arena.matchEpoch||p.round!==arena.round) return;
   if(arena.roundResolved&&(arena.phase==='round_end'||arena.phase==='match_end')) return;
   arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=true;
+  const roundEndReason=p.roundEndReason==='knockout'?'knockout':p.roundEndReason==='timeout'?'timeout':'';
+  if(typeof arenaRecordDailyOutcome==='function')arenaRecordDailyOutcome(authUser.id,p.winner,roundEndReason,!!p.matchOver,true);
   arena.remoteShots=[];arena.remoteFireworks=[];arena.remoteFireworkFx=[];arena.utilityFrozenUntil=0;
   medChan=0;medChanHeal=0;medHealPct=0;utilityOut=false;
   arenaCelebrateConfirmedUnscopedKill(p,p.winner);
@@ -1647,6 +1665,8 @@ function leaveArena(status,toHub){
     aiLearningReturnModelId=wasBot&&arena.botAdminTest?String(arena.botModelId||LATEST_BOT_MODEL_ID):'',
     aiLearningSavedLoadout=wasBot&&arena.botAdminTest&&arena.botAdminSavedLoadout?
       Object.assign({},arena.botAdminSavedLoadout):null;
+  if(wasBot&&!arena.botAdminTest&&typeof arenaRecordDailyMatch==='function')
+    arenaRecordDailyMatch(LOCAL_DUEL_PLAYER,'',arenaHasCompletedDailyTaskRound());
   if(wasBot&&typeof cancelBotLadderSubmission==='function')cancelBotLadderSubmission(arena);
   const oldMatchChannel=arena.matchChannel,forfeitAnnounced=oldMatchChannel&&authUser?arenaNotifyDeparture('left'):false;
   if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);

@@ -1097,24 +1097,27 @@ function partyCpuMaybeStart(){
   partyCpuHostStartRound(); return true;
 }
 function partyCpuMakeBot(id,team,x,y,startAt){
-  const w=WEAPONS.ar;
   const localMatch=isLocalCpu2v2(),difficulty=localMatch?(team==='A'?0:clamp(Math.floor(+partyCpuMatch.botDifficulty||0),0,4)):2,
     modelId=localMatch?(partyCpuMatch.botModelId||(typeof activeBotModelId==='string'?activeBotModelId:'apex-v5')):'',
     tuning=localMatch&&typeof arenaBotTuning==='function'?arenaBotTuning(difficulty,modelId):{reactionMs:450};
   const seed=typeof cpuAiSeed==='function'?cpuAiSeed(partyCpuMatch.aiSeed,partyCpuMatch.round,arena&&arena.mapId,id):1;
-  const bot={id,team,name:team==='A'?'ALLY CPU':'',r:15,hp:PARTY_CPU_HP,x,y,tx:x,ty:y,angle:team==='A'?0:Math.PI,cur:'ar',
-    mag:w.mag,reloadEnd:0,lastShot:0,flash:0,hitT:0,thinkAt:startAt,aimNoiseAt:startAt,aimNoise:0,
+  const bot={id,team,name:team==='A'?'ALLY CPU':'',r:15,hp:PARTY_CPU_HP,x,y,tx:x,ty:y,angle:team==='A'?0:Math.PI,
+    loadout:Object.assign({},CPU_AI_LOADOUT),reloadEnd:0,lastShot:0,flash:0,hitT:0,thinkAt:startAt,aimNoiseAt:startAt,aimNoise:0,
     strafe:1,strafeUntil:startAt,reactionAt:startAt+tuning.reactionMs,moveX:0,moveY:0,lastThinkX:x,lastThinkY:y,
     botDifficulty:difficulty,botModelId:modelId,
     aiSeed:seed,aiRng:seed,aiTracks:{},aiRole:team==='A'?'guardian':(String(id).endsWith('1')?'anchor':'flanker'),
-    aiTactic:'hold',aiTacticUntil:startAt,targetId:'',targetLockUntil:0,targetThinkAt:startAt,tntThinkAt:startAt,tntPlan:null,
+    aiTactic:'hold',aiTacticUntil:startAt,aiTacticMinUntil:startAt,aiPlanMoveX:0,aiPlanMoveY:0,
+    targetId:'',targetLockUntil:0,targetThinkAt:startAt,tntThinkAt:startAt,tntPlan:null,
     aiStuckTicks:0,aiStuckUntil:0,aiFailedMoveX:0,aiFailedMoveY:0,aiNavPath:[],aiNavUntil:0,aiUsingPortal:false,
     aiHitResponseUntil:0,aiMotionWindowAt:startAt,aiMotionAnchorX:x,aiMotionAnchorY:y,
     aiMotionTravel:0,aiMotionReversals:0,aiMotionDx:0,aiMotionDy:0,aiMotionSampleAt:startAt,
     aiPeekPhase:'',aiPeekTargetId:'',aiPeekUntil:0,aiPeekCooldownUntil:0,aiPeekWasHidden:undefined,
     aiPeekExposedAt:0,aiPeekWindowUntil:0,aiPeekPunishScore:0,aiPrefirePressureUntil:0,
+    aiDodgeThreat:null,aiDodgeReadyAt:0,aiDodgeWillReact:false,aiDodgeUntil:0,aiDodgeCooldownUntil:0,aiDodgeFireUntil:0,
+    aiDodgeX:0,aiDodgeY:0,aiDodgeSide:0,aiDodgeSideRepeat:0,aiDodgePlannedSide:0,aiDodgeHandled:new WeakSet(),
     aiTrainingTntAvoided:new Set(),aiTrainingWallAt:0,
     lastAttackerId:'',underFireUntil:0};
+  cpuAiInitBotWeapons(bot,startAt);
   bot.strafe=typeof cpuAiNext==='function'&&cpuAiNext(bot)<.5?-1:1;
   bot.strafeUntil=startAt+(typeof cpuAiRange==='function'?cpuAiRange(bot,700,1300):1000);
   return bot;
@@ -1372,34 +1375,83 @@ function partyCpuThreatTarget(bot,enemyTeam,clock){
   if(best!==current)bot.targetLockUntil=clock+(typeof cpuAiRange==='function'?cpuAiRange(bot,450,750):600);
   bot.targetId=String(best.id);bot.targetThinkAt=clock+250;return best;
 }
-function partyCpuSpawnBotShot(bot,target,profile){
+const PARTY_CPU_WEAPON_RULES=Object.freeze({
+  ar:Object.freeze({damage:18,fireMs:WEAPONS.ar.fireRate*1.68,maxRange:1050}),
+  m9:Object.freeze({damage:24,fireMs:WEAPONS.m9.fireRate*1.68,maxRange:440}),
+  knife:Object.freeze({damage:42,fireMs:WEAPONS.knife.fireRate,maxRange:WEAPONS.knife.range}),
+});
+function partyCpuWeaponRule(key){return PARTY_CPU_WEAPON_RULES[key]||PARTY_CPU_WEAPON_RULES.ar;}
+function partyCpuSpawnBotShot(bot,target,profile,weaponId=bot&&bot.cur){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight') return;
+  weaponId=['ar','m9'].includes(String(weaponId||''))?String(weaponId):'ar';
+  const w=WEAPONS[weaponId],rule=partyCpuWeaponRule(weaponId);
   const spread=profile&&Number.isFinite(+profile.shotJitter)?+profile.shotJitter:.028,
     jitter=typeof cpuAiRange==='function'?cpuAiRange(bot,-spread,spread):0;
-  const a=bot.angle+jitter, speed=weaponBulletSpeed('ar'), id=partyCpuMatch.epoch+':'+partyCpuMatch.round+':shot:'+(++partyCpuMatch.shotSeq);
+  const a=bot.angle+jitter,speed=weaponBulletSpeed(weaponId),id=partyCpuMatch.epoch+':'+partyCpuMatch.round+':shot:'+(++partyCpuMatch.shotSeq);
   const shot={id,ownerId:bot.id,team:bot.team,targetId:target&&target.id||'',x:bot.x+Math.cos(a)*7,y:bot.y+Math.sin(a)*7,
-    vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:weaponBulletLife('ar',1200),dmg:Math.min(18,WEAPONS.ar.dmg*.85),dist:0,rng:WEAPONS.ar.range,fall:WEAPONS.ar.fall};
+    vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:weaponBulletLife(weaponId,1200),dmg:rule.damage,dist:0,rng:w.range,fall:w.fall,weapon:weaponId};
   partyCpuMatch.seenShots.add(id); partyCpuMatch.shots.push(shot);
   if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(bot,'bot_shots');
   if(!isLocalCpu2v2())partySend('cpu_bot_shot',{matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,round:partyCpuMatch.round,shot});
 }
+function partyCpuHostMelee(bot,target,clock){
+  const rule=partyCpuWeaponRule('knife');
+  return cpuAiTryBotMelee(bot,target,clock,rule.damage,(damage)=>{
+    const attack={id:partyCpuMatch.epoch+':'+partyCpuMatch.round+':melee:'+(++partyCpuMatch.shotSeq),ownerId:bot.id,team:bot.team,melee:true};
+    if(target.team==='A'&&partyCpuMatch.humans[target.id]){partyCpuHostDamageHuman(target,attack,damage);return;}
+    const live=partyCpuMatch.bots.find(candidate=>candidate===target&&candidate.team!==bot.team&&candidate.hp>0);if(!live)return;
+    const dealt=Math.min(live.hp,damage);live.hp=Math.max(0,live.hp-damage);live.lastAttackerId=bot.id;
+    if(bot.team==='B'&&typeof recordAiTrainingBotSignal==='function'){
+      recordAiTrainingBotSignal(bot,'bot_hits');recordAiTrainingBotSignal(bot,'bot_damage_dealt',dealt);
+    }
+    if(live.team==='B'&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(live,'bot_damage_taken',dealt);
+    partyCpuRecordThreat(bot.id,live.team,dealt,clock);cpuAiRegisterIncomingHit(live,clock);
+    partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();
+  });
+}
+function partyCpuDodgeShots(bot){
+  if(!bot)return [];
+  const shots=[];
+  for(const shot of Array.isArray(partyCpuMatch.shots)?partyCpuMatch.shots:[]){
+    if(shot&&String(shot.team||'')!==String(bot.team||'')&&
+       (!shot.targetId||String(shot.targetId)===String(bot.id||'')))shots.push(shot);
+  }
+  // Human projectiles use the normal local bullet simulation for the host and
+  // validated visual tracers for the remote teammate. Only red CPUs consider
+  // these team-A shots hostile; the ally CPU never dodges friendly fire.
+  if(bot.team==='B'){
+    if(Array.isArray(bullets))shots.push(...bullets);
+    if(Array.isArray(partyCpuMatch.visualShots))shots.push(...partyCpuMatch.visualShots);
+  }
+  return shots;
+}
 function partyCpuHostStep(dtms,clock){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight'||partyCpuMatch.roundResolved) return;
-  const dt=dtms/16.667,w=WEAPONS.ar,partyProfile={approach:580,retreat:290,maxRange:1010,leadFactor:.60,maxLeadMs:205,
+  const dt=dtms/16.667,partyProfile={approach:580,retreat:290,maxRange:1010,leadFactor:.60,maxLeadMs:205,
     aimNoise:.085,shotJitter:.032,fireAimError:.125,turnRate:.06,moveSpeed:2.60,thinkMs:165,
-    routeVariation:.66,peekFakeChance:.08,prefireAdapt:.72,peekTimingVariance:.58,peekHoldMin:70,peekHoldMax:220,
-    peekSettleMin:80,peekSettleMax:260,peekPunishHoldMs:300,peekCommitSpeed:1.13},
-    shotProfile={damage:Math.min(18,w.dmg*.85),rng:w.range,fall:w.fall,maxRange:1050};
+    secondaryChance:.70,secondaryMixChance:.14,meleeChance:.50,meleeCommitRange:175,weaponThinkMs:210,
+    pressureAimError:.155,pressureChance:.58,pressureDecisionMs:420,pressureBurstMin:3,pressureBurstMax:4,pressureBurstMs:720,pressureMemoryMs:400,
+    parryReactionMs:170,parryRespectChance:.75,parryMeleeChance:.55,parryMeleeRange:225,parryMeleeCommitMs:900,parryReleaseDelayMs:130,
+    routeVariation:.66,moveCommitMin:900,moveCommitMax:1450,moveInertia:.58,dodgeChance:.50,dodgeReactionMs:145,dodgeLookaheadMs:500,
+    dodgeCommitMs:230,dodgeCooldownMs:280,dodgeFireHoldMs:110,dodgeSpeedScale:1.08,dodgeMargin:9,
+    peekFakeChance:.08,prefireAdapt:.72,peekTimingVariance:.58,peekHoldMin:70,peekHoldMax:220,
+    peekSettleMin:80,peekSettleMax:260,peekPunishHoldMs:300,peekCommitSpeed:1.13};
   for(const b of partyCpuMatch.bots){
     if(b.hp<=0) continue;
     const localMatch=isLocalCpu2v2(),profile=localMatch?Object.assign({},arenaBotTuning(b.botDifficulty,b.botModelId||partyCpuMatch.botModelId),{approach:560,retreat:260,maxRange:1050}):partyProfile;
     const enemyTeam=b.team==='A'?'B':'A',foes=partyCpuActors(enemyTeam),allies=partyCpuActors(b.team);
     const target=partyCpuThreatTarget(b,enemyTeam,clock);if(!target)continue;
-    if(!localMatch||profile.usePrediction)cpuAiTrackTarget(b,target,dtms);
-    if(b.reloadEnd&&clock>=b.reloadEnd){ b.reloadEnd=0; b.mag=w.mag; }
-    if((!localMatch||profile.useTnt)&&clock>=(b.tntThinkAt||0)){
+    const targetVisible=!cpuAiLosBlocked(b.x,b.y,target.x,target.y),guardVisible=targetVisible&&target.team==='A'&&
+      !!partyCpuMatch.humans[target.id]&&clock<(+target.parryUntil||0)&&clock>=(+target.parryUntil||0)-TWIN_SAI_PARRY_MS,
+      parryResponse=cpuAiObserveVisibleParry(b,target,clock,profile,guardVisible);
+    cpuAiCompleteBotReload(b,clock);cpuAiChooseBotWeapon(b,target,clock,profile,parryResponse);
+    const weaponKey=String(b.cur||CPU_AI_LOADOUT.primary),w=WEAPONS[weaponKey]||WEAPONS.ar,weaponRule=partyCpuWeaponRule(weaponKey),
+      isMelee=!!w.melee,maxRange=Math.min(+profile.maxRange||weaponRule.maxRange,weaponRule.maxRange),
+      shotProfile={damage:weaponRule.damage,rng:w.range||1,fall:w.fall||1,maxRange};
+    if(targetVisible&&(!localMatch||profile.usePrediction))cpuAiTrackTarget(b,target,dtms,clock);
+    if(!isMelee&&(!localMatch||profile.useTnt)&&clock>=(b.tntThinkAt||0)){
       b.tntThinkAt=clock+CPU_AI_TNT_RETHINK_MS;b.tntPlan=cpuAiTntPlan(b,foes,allies,shotProfile,clock);
-    }else if(localMatch&&!profile.useTnt)b.tntPlan=null;
+    }else if(isMelee||(localMatch&&!profile.useTnt))b.tntPlan=null;
     if(clock>=b.thinkAt){
       if((!localMatch||profile.useStuckRecovery)&&cpuAiObserveMovement(b,clock)){
         b.aiTacticUntil=clock;if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_stuck_recoveries');
@@ -1408,16 +1460,20 @@ function partyCpuHostStep(dtms,clock){
       if(clock>=b.aimNoiseAt){b.aimNoise=cpuAiRange(b,-profile.aimNoise,profile.aimNoise);b.aimNoiseAt=clock+cpuAiRange(b,450,750);}
       const move=cpuAiPickMove(b,target,allies,clock,profile,b.tntPlan);b.moveX=move.x;b.moveY=move.y;
     }
-    const lead=cpuAiLeadPoint(b,target,'ar',!localMatch||profile.usePrediction?profile.leadFactor:0,!localMatch||profile.usePrediction?profile.maxLeadMs:0),liveTnt=activeArenaTnt(),
+    const lead=isMelee?{x:target.x,y:target.y,leadMs:0,visible:cpuAiMeleeClear(b,target)}:
+      (targetVisible?cpuAiLeadPoint(b,target,weaponKey,!localMatch||profile.usePrediction?profile.leadFactor:0,!localMatch||profile.usePrediction?profile.maxLeadMs:0):null),
+      rangedAim=isMelee?null:cpuAiRangedAimSolution(b,target,clock,profile,lead,targetVisible),liveTnt=activeArenaTnt(),
       plannedTnt=b.tntPlan&&b.tntPlan.targetId?liveTnt.find(t=>String(t.id)===String(b.tntPlan.targetId)):null;
-    let aimX=lead.x,aimY=lead.y,aimTntId='';
+    let aimX=isMelee?lead.x:rangedAim.x,aimY=isMelee?lead.y:rangedAim.y,aimTntId='';
     if(plannedTnt&&!cpuAiLosBlocked(b.x,b.y,b.tntPlan.aimX,b.tntPlan.aimY,plannedTnt.id)){
       aimX=b.tntPlan.aimX;aimY=b.tntPlan.aimY;aimTntId=String(plannedTnt.id);
     }
-    const desired=Math.atan2(aimY-b.y,aimX-b.x)+(b.aimNoise||0),turn=cpuAiAngleDelta(desired,b.angle);
+    const desired=Math.atan2(aimY-b.y,aimX-b.x)+(isMelee?0:(b.aimNoise||0)),turn=cpuAiAngleDelta(desired,b.angle);
     b.angle+=clamp(turn,-profile.turnRate*dt,profile.turnRate*dt);
-    const peek=cpuAiApplyPeekBehavior(b,target,b.moveX,b.moveY,clock,profile,b.tntPlan),
-      tacticSpeed=b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=profile.moveSpeed*tacticSpeed*peek.speedScale*dt,
+    const dodge=typeof cpuAiApplyProjectileDodge==='function'?cpuAiApplyProjectileDodge(b,partyCpuDodgeShots(b),clock,profile,b.tntPlan,allies):{active:false},
+      meleeMove=!dodge.active?cpuAiMeleeMovement(b,target):null,
+      peek=dodge.active?dodge:(meleeMove||cpuAiApplyPeekBehavior(b,target,b.moveX,b.moveY,clock,profile,b.tntPlan)),
+      tacticSpeed=dodge.active?1:b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=profile.moveSpeed*tacticSpeed*peek.speedScale*dt,
       moveStartX=b.x,moveStartY=b.y,nx=b.x+peek.x*spd,ny=b.y+peek.y*spd,
       blockedX=pointInRects(nx,b.y),blockedY=pointInRects(b.x,ny);
     if(!blockedX)b.x=nx; if(!blockedY)b.y=ny;
@@ -1431,21 +1487,27 @@ function partyCpuHostStep(dtms,clock){
     const usedPortal=typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena()&&typeof arenaPortalStep==='function'&&arenaPortalStep(b,clock);
     if(usedPortal&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_portal_uses');
     b.tx=b.x;b.ty=b.y;
-    if(clock<b.reactionAt||b.reloadEnd||cpuAiPeekWithholdsFire(b))continue;
+    if(clock<b.reactionAt||clock<(+b.aiDodgeFireUntil||0)||clock<(+b.equipEnd||0)||b.reloadEnd||cpuAiPeekWithholdsFire(b))continue;
+    if(isMelee){partyCpuHostMelee(b,target,clock);continue;}
     if(aimTntId){
       const fresh=cpuAiTntPlan(b,foes,allies,shotProfile,clock),freshTnt=liveTnt.find(t=>String(t.id)===String(fresh.targetId));
       b.tntPlan=fresh;b.tntThinkAt=clock+CPU_AI_TNT_RETHINK_MS;
       if(freshTnt){aimTntId=String(freshTnt.id);aimX=fresh.aimX;aimY=fresh.aimY;}
-      else{aimTntId='';aimX=lead.x;aimY=lead.y;}
+      else{aimTntId='';aimX=rangedAim.x;aimY=rangedAim.y;}
     }
-    const blocked=aimTntId?cpuAiLosBlocked(b.x,b.y,aimX,aimY,aimTntId):(!lead.visible||cpuAiLosBlocked(b.x,b.y,target.x,target.y));
+    const blocked=aimTntId?cpuAiLosBlocked(b.x,b.y,aimX,aimY,aimTntId):(!rangedAim.available||cpuAiLosBlocked(b.x,b.y,aimX,aimY));
     if(blocked)continue;
     const dx=aimX-b.x,dy=aimY-b.y,d=Math.hypot(dx,dy)||1,targetA=Math.atan2(dy,dx),aimErr=Math.abs(cpuAiAngleDelta(targetA,b.angle));
-    if(d>profile.maxRange||aimErr>profile.fireAimError)continue;
-    if(b.mag<=0){ b.reloadEnd=clock+w.reload; continue; }
-    const interval=w.fireRate*1.68; if(clock-b.lastShot<interval) continue;
-    b.lastShot=b.lastShot>0&&clock-b.lastShot<interval*4?b.lastShot+interval:clock;b.mag--;b.flash=clock+55;
-    partyCpuSpawnBotShot(b,aimTntId?{id:aimTntId,kind:'tnt'}:target,profile);if(b.mag<=0)b.reloadEnd=clock+w.reload;
+    if(d>maxRange)continue;
+    if((+b.aiWeaponMags?.[weaponKey]||0)<=0){b.aiWeaponThinkAt=clock;cpuAiStartBotReload(b,weaponKey,clock);continue;}
+    const interval=weaponRule.fireMs,previous=Math.max(0,+b.aiWeaponLastShot?.[weaponKey]||0);if(clock-previous<interval)continue;
+    const fireDecision=cpuAiPressureFireDecision(b,target,clock,profile,{available:aimTntId?true:rangedAim.available,
+      visible:aimTntId?true:rangedAim.visible,aimErr,holdRanged:parryResponse.holdRanged,tnt:!!aimTntId});
+    if(!fireDecision.fire)continue;
+    const shotStamp=clock;
+    if(!cpuAiSpendBotRound(b,weaponKey,shotStamp))continue;cpuAiRecordPressureShot(b,fireDecision);b.flash=clock+55;
+    partyCpuSpawnBotShot(b,aimTntId?{id:aimTntId,kind:'tnt'}:target,profile,weaponKey);
+    if((+b.aiWeaponMags[weaponKey]||0)<=0)b.aiWeaponThinkAt=clock;
   }
 }
 function partyCpuTakeLocalDamage(dmg){
@@ -1457,7 +1519,7 @@ function partyCpuTakeLocalDamage(dmg){
   if(cpuTeamIsAuthority()) partyCpuHostEvaluate();
 }
 function partyCpuHostTryParry(target,shot,incomingDamage){
-  if(!cpuTeamIsAuthority()||!target||!shot) return false;
+  if(!cpuTeamIsAuthority()||!target||!shot||shot.melee===true) return false;
   const originalId=String(shot.id||'');
   if(!originalId)return false;
   if(!(partyCpuMatch.seenReflections instanceof Set))partyCpuMatch.seenReflections=new Set();
@@ -1635,7 +1697,9 @@ function partyCpuSyncTick(clock){
   if(partyCpuIsHost()&&clock>=partyCpuMatch.snapshotAt){
     partyCpuMatch.snapshotAt=clock+PARTY_CPU_SYNC_MS;
     partySend('cpu_bot_snapshot',{matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,round:partyCpuMatch.round,
-      bots:partyCpuMatch.bots.map(b=>({id:b.id,x:b.x,y:b.y,angle:b.angle,cur:b.cur,hp:b.hp,flash:b.flash||0})),
+      bots:partyCpuMatch.bots.map(b=>({id:b.id,x:b.x,y:b.y,angle:b.angle,cur:b.cur,hp:b.hp,flash:b.flash||0,
+        swingSeq:Math.max(0,Math.floor(+b.swingSeq||0)),swingMs:clamp((+b.swingT||0)+(+b.swingDur||0)-clock,0,500),
+        swingA:Number.isFinite(+b.swingA)?+b.swingA:0,swingSide:b.swingSide===-1?-1:1})),
       humanHp:Object.fromEntries(partyCpuMatch.humanIds.map(id=>[id,Math.max(0,partyCpuMatch.humans[id]?.hp||0)]))});
   }
 }
@@ -1691,7 +1755,18 @@ function partyCpuApplyBotSnapshot(p){
   for(const raw of p.bots.slice(0,3)){
     const b=partyCpuMatch.bots.find(x=>x.id===String(raw.id||'')); if(!b)continue;
     if(Number.isFinite(+raw.x))b.tx=clamp(+raw.x,40,WORLD.w-40);if(Number.isFinite(+raw.y))b.ty=clamp(+raw.y,40,WORLD.h-40);
-    if(Number.isFinite(+raw.angle))b.angle=+raw.angle;if(raw.cur==='ar')b.cur='ar';
+    if(Number.isFinite(+raw.angle))b.angle=Math.atan2(Math.sin(+raw.angle),Math.cos(+raw.angle));
+    const remoteKey=String(raw.cur||''),kit=cpuAiBotLoadout(b);if([kit.primary,kit.secondary,kit.melee].includes(remoteKey))b.cur=remoteKey;
+    const swingSeq=clamp(Math.floor(+raw.swingSeq||0),0,1000000000),swingMs=clamp(+raw.swingMs||0,0,500);
+    if(swingSeq>Math.max(0,Math.floor(+b.swingSeq||0))){
+      b.swingSeq=swingSeq;
+      if(remoteKey===kit.melee&&swingMs>0&&Number.isFinite(+raw.swingA)){
+        b.swingDur=clamp(WEAPONS[kit.melee].fireRate*.55,90,260);
+        b.swingT=cpuTeamClock()-(b.swingDur-Math.min(swingMs,b.swingDur));
+        b.swingA=Math.atan2(Math.sin(+raw.swingA),Math.cos(+raw.swingA));b.swingArc=WEAPONS[kit.melee].arc;
+        b.swingR=WEAPONS[kit.melee].range;b.swingSide=raw.swingSide===-1?-1:1;
+      }
+    }
     b.hp=Math.min(b.hp,clamp(+raw.hp||0,0,PARTY_CPU_HP));b.flash=Math.max(0,+raw.flash||0);
   }
   if(p.humanHp&&Object.prototype.hasOwnProperty.call(p.humanHp,party.self.id)&&Number.isFinite(+p.humanHp[party.self.id])){
@@ -1704,11 +1779,15 @@ function partyCpuApplyBotShot(p){
   if(!partyCpuEnvelope(p,true)||p.round!==partyCpuMatch.round||partyCpuMatch.phase!=='fight') return false;
   const s=p.shot||{},id=String(s.id||'').slice(0,100),owner=partyCpuMatch.bots.find(b=>b.id===String(s.ownerId||''));
   if(!id||partyCpuMatch.seenShots.has(id)||!owner||s.team!==owner.team) return false;
+  const weapon=String(s.weapon||'ar'),kit=cpuAiBotLoadout(owner),w=WEAPONS[weapon],rule=partyCpuWeaponRule(weapon);
+  if(!w||w.melee||![kit.primary,kit.secondary].includes(weapon))return false;
   const nums=['x','y','vx','vy','life','dmg','dist','rng','fall'];if(nums.some(k=>!Number.isFinite(+s[k])))return false;
-  if(Math.hypot(+s.vx,+s.vy)>30||+s.life<=0||+s.life>7000||+s.dmg<=0||+s.dmg>50)return false;
+  const expectedSpeed=weaponBulletSpeed(weapon),maxLife=weaponBulletLife(weapon,1200);
+  if(Math.abs(Math.hypot(+s.vx,+s.vy)-expectedSpeed)>.03||+s.life<=0||+s.life>maxLife+.01||
+     Math.abs(+s.dmg-rule.damage)>.001||Math.abs(+s.rng-w.range)>.001||Math.abs(+s.fall-w.fall)>.001)return false;
   partyCpuMatch.seenShots.add(id);if(partyCpuMatch.seenShots.size>500)partyCpuMatch.seenShots=new Set([...partyCpuMatch.seenShots].slice(-250));
   partyCpuMatch.shots.push({id,ownerId:owner.id,team:owner.team,targetId:String(s.targetId||''),x:clamp(+s.x,ARENA_EDGE,WORLD.w-ARENA_EDGE),y:clamp(+s.y,ARENA_EDGE,WORLD.h-ARENA_EDGE),
-    vx:+s.vx,vy:+s.vy,life:+s.life,dmg:+s.dmg,dist:Math.max(0,+s.dist),rng:clamp(+s.rng,1,3000),fall:clamp(+s.fall,0,1)});return true;
+    vx:+s.vx,vy:+s.vy,life:clamp(+s.life,1,maxLife),dmg:rule.damage,dist:Math.max(0,+s.dist),rng:w.range,fall:w.fall,weapon});return true;
 }
 function partyCpuApplyReflectedShot(p){
   if(!partyCpuEnvelope(p,true)||partyCpuIsHost()||p.round!==partyCpuMatch.round||partyCpuMatch.phase!=='fight')return false;
@@ -1970,13 +2049,22 @@ function partyTick(clock){
   }
 }
 function flushLayoutDraftOnExit(){ if(layoutDirty) persistLayoutDraft(); }
+let profileExitFlushStarted=false;
+function flushProfileOnExit(){
+  if(profileExitFlushStarted||typeof profileLoaded==='undefined'||!profileLoaded||
+     typeof profileOwnerUserId==='undefined'||!authUser||profileOwnerUserId!==String(authUser.id||'')||
+     typeof saveProfile!=='function')return false;
+  profileExitFlushStarted=true;void saveProfile(true);return true;
+}
 addEventListener('pagehide',event=>{
   flushLayoutDraftOnExit();
+  if(!event||event.persisted!==true)flushProfileOnExit();
   try{if((!event||event.persisted!==true)&&typeof handleBotLadderPageExit==='function')handleBotLadderPageExit(event);}catch(e){}
-  try{ if(typeof arenaForfeitOnPageExit==='function') arenaForfeitOnPageExit(); }catch(e){}
+  try{if((!event||event.persisted!==true)&&typeof arenaForfeitOnPageExit==='function')arenaForfeitOnPageExit();}catch(e){}
 });
 addEventListener('beforeunload',event=>{
   flushLayoutDraftOnExit();
+  flushProfileOnExit();
   try{if(typeof handleBotLadderPageExit==='function')handleBotLadderPageExit(event);}catch(e){}
   try{ if(typeof arenaForfeitOnPageExit==='function') arenaForfeitOnPageExit(); }catch(e){}
   try{ if(party&&party.channel) partySend('leave',{}); }catch(e){}

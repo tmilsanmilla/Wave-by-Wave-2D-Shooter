@@ -1145,8 +1145,8 @@ function drawRespawnPrompt(){
 function respawnPromptClick(){
   for(const r of respawnRects){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
-      if(r.act==='respawn'){ if(!usePowerup('respawn')){ respawnPromptT=0; menuOpen=false; state='over'; submitScore(hiScore); } }
-      else { respawnPromptT=0; menuOpen=false; state='over'; sfx('die'); submitScore(hiScore); }
+      if(r.act==='respawn'){ if(!usePowerup('respawn')){ if(typeof completeDailyEndlessTaskRun==='function')completeDailyEndlessTaskRun(); respawnPromptT=0; menuOpen=false; state='over'; submitScore(hiScore); } }
+      else { if(typeof completeDailyEndlessTaskRun==='function')completeDailyEndlessTaskRun(); respawnPromptT=0; menuOpen=false; state='over'; sfx('die'); submitScore(hiScore); }
       return;
     }
   }
@@ -1262,9 +1262,10 @@ function drawArena(){
   const arenaSub=queueNoticeActive?modeBoardNotice:compactBetaReveal?('NEW/BETA \u00b7 '+arenaMapName(arena.mapId)+' \u00b7 WEIGHTED VOTE'):onlineBetaPrefix+(mapVoting?('CHANGE YOUR VOTE UNTIL TIMER ENDS \u00b7 '+voteSummary):
                    mapReveal?('SELECTED MAP: '+arenaMapName(arena.mapId)+' \u00b7 WON THE WEIGHTED VOTE \u00b7 '+voteSummary):
                    botAdminTest?'ADMIN COMPARISON \u00b7 ACCOUNT LADDER WILL NOT CHANGE':
-                   localMode?(compactCpuTeamMeta?'NEW/BETA \u00b7 LOCAL CPU 2v2 \u00b7 FIRST TO 5 \u00b7 NO REWARDS':'ONE DEVICE ONLY \u00b7 FIRST TO 5 \u00b7 NO UPGRADES, UTILITIES, OR REWARDS'):
-                   compactCasualMeta?'NEW/BETA \u00b7 ONLINE \u00b7 FIRST TO 5 \u00b7 NO REWARDS':
-                   (tiny?'DIFFERENT DEVICES \u00b7 SIGN-IN ONLY \u00b7 FIRST TO 5':'ONLINE \u00b7 MULTIPLAYER ON DIFFERENT DEVICES \u00b7 FIRST TO 5 \u00b7 NO REWARDS'));
+                   cpuTeamMode?(compactCpuTeamMeta?'NEW/BETA \u00b7 LOCAL CPU 2v2 \u00b7 FIRST TO 5 \u00b7 NO REWARDS':'ONE DEVICE ONLY \u00b7 CPU 2v2 \u00b7 FIRST TO 5 \u00b7 NO REWARDS'):
+                   botMode?(W<430?'CPU 1v1 \u00b7 FIRST TO 5 \u00b7 COUNTS FOR DAILY TASKS':'ONE DEVICE ONLY \u00b7 FIRST TO 5 \u00b7 NO MATCH REWARDS \u00b7 COUNTS FOR DAILY TASKS'):
+                   compactCasualMeta?'NEW/BETA \u00b7 ONLINE \u00b7 FIRST TO 5 \u00b7 COUNTS FOR DAILY TASKS':
+                   (tiny?'DIFFERENT DEVICES \u00b7 FIRST TO 5 \u00b7 COUNTS FOR DAILY TASKS':'ONLINE \u00b7 DIFFERENT DEVICES \u00b7 FIRST TO 5 \u00b7 NO MATCH REWARDS \u00b7 COUNTS FOR DAILY TASKS'));
   ctx.fillText(fitLine(arenaSub,W-16),W/2,subY);
   const pw=Math.min(mapVoting||mapReveal?820:560,W-20), px=W/2-pw/2, gap=tiny?4:(dense?7:10);
   const button=(id,label,y,col,sub,enabled=true)=>{
@@ -1366,8 +1367,9 @@ function drawArena(){
     ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace'; ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(ladderResult,pw-20),W/2,bodyY+(tiny?72:108));
-    if(!botAdminTest){ctx.fillStyle='#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
-      ctx.fillText(fitLine(typeof aiTrainingMatchStatusText==='function'?aiTrainingMatchStatusText(arena):'',pw-20),W/2,bodyY+(tiny?82:122));}
+    if(!botAdminTest){ctx.fillStyle=arena.dailyTaskResult?'#a7c15e':'#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
+      const dailyText=arena.dailyTaskResult||(typeof dailyDuelTaskProgressText==='function'?dailyDuelTaskProgressText():'');
+      ctx.fillText(fitLine(dailyText,pw-20),W/2,bodyY+(tiny?82:122));}
     let y=bodyY+(tiny?94:140);
     if(botAdminTest){
       y=bodyY+(tiny?84:126);
@@ -1409,7 +1411,10 @@ function drawArena(){
     ctx.fillText(me>them?'MATCH WON':'MATCH LOST',W/2,bodyY+12);
     ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace'; ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
-    let y=bodyY+(tiny?72:116);
+    ctx.fillStyle=arena.dailyTaskResult?'#a7c15e':'#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
+    const dailyText=arena.dailyTaskResult||(typeof dailyDuelTaskProgressText==='function'?dailyDuelTaskProgressText():'');
+    ctx.fillText(fitLine(dailyText,pw-20),W/2,bodyY+(tiny?72:110));
+    let y=bodyY+(tiny?82:132);
     y=button('rematch',arena.rematchVotes.has(authUser.id)?'REMATCH REQUESTED':'REMATCH',y,'#a7c15e');
     y=button('again','PLAY AGAIN \u00b7 QUICK MATCH',y,'#e8b658');
     y=button('switchweapons','SWITCH WEAPONS',y,'#7fd8ff');
@@ -1585,6 +1590,9 @@ function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=
     modeBoardNotice='CHOOSE YOUR USERNAME TO PLAY'; modeBoardNoticeT=performance.now()+2800; sfx('dry'); return false;
   }
   const launchMode=String(expectedMode||pendingGameMode||''),cpuLaunch=typeof cpuLaunchMode==='function'&&cpuLaunchMode(launchMode);
+  if(sb&&authUser&&(!profileLoaded||profileOwnerUserId!==String(authUser.id||''))){
+    modeBoardNotice='LOADING YOUR ACCOUNT PROGRESS\u2026';modeBoardNoticeT=performance.now()+2200;sfx('dry');return false;
+  }
   if(cpuLaunch&&!uiIntent&&typeof beginCpuLaunchIntent==='function')uiIntent=beginCpuLaunchIntent(launchMode,'loadout');
   const cpuStillCurrent=()=>!cpuLaunch||((typeof cpuLaunchIntentCurrent!=='function'||cpuLaunchIntentCurrent(uiIntent))&&pendingGameMode===launchMode&&selPage==='loadout'&&
     (typeof state==='undefined'||state==='select')&&(typeof menuOpen==='undefined'||!menuOpen));
@@ -2971,34 +2979,48 @@ function drawHub(){
   // deliberately separate full-width armory section directly underneath.
   const actionRows=2;
   const actionGap=H<390?4:H<560?7:10, targetActionH=H<390?42:H<560?54:76;
-  const contentTop=bnY+bnH+8, actionBottom=hbY-10;
+  // Small landscape screens use one-line task rows. At the shortest height,
+  // tasks take priority and the streak card waits for a taller/rotated view.
+  const signedOut=sb&&!authUser,ultraCompactDaily=H<430,compactDaily=H<640,
+    taskHeaderH=compactDaily?(ultraCompactDaily?22:24):34,
+    trH=compactDaily?(ultraCompactDaily?15:18):36,
+    taskPanelH=signedOut?(compactDaily?(ultraCompactDaily?37:42):58):taskHeaderH+dailyTasks.length*trH,
+    showHubStreak=!ultraCompactDaily,stH=compactDaily?32:42,
+    dailyTopGap=compactDaily?(ultraCompactDaily?5:6):10,streakTaskGap=compactDaily?6:8,
+    dailyPanelReserve=dailyTopGap+(showHubStreak?stH+streakTaskGap:0)+taskPanelH+6;
+  const contentTop=bnY+bnH+8, actionBottom=hbY-10-dailyPanelReserve;
   let cardH=targetActionH, homeBoardsH=H<390?72:H<560?88:112;
-  const boardActionGap=H<390?3:H<560?5:8;
+  const boardActionGap=H<390?3:H<560?5:8,minCardH=H<390?24:compactDaily?32:38,
+    minBoardH=H<390?50:60;
   const available=Math.max(0,actionBottom-contentTop);
   let actionBlockH=cardH*actionRows+actionGap*(actionRows-1);
-  let excess=homeBoardsH+boardActionGap+actionBlockH-available;
-  if(excess>0){
-    const shrink=Math.min(excess,Math.max(0,homeBoardsH-(H<390?60:72)));
-    homeBoardsH-=shrink; excess-=shrink;
-  }
-  if(excess>0){
-    cardH=Math.max(H<390?32:38,Math.floor((available-homeBoardsH-boardActionGap-actionGap*(actionRows-1))/actionRows));
-    actionBlockH=cardH*actionRows+actionGap*(actionRows-1);
-  }
-  const maxBoardsY=Math.max(contentTop,actionBottom-actionBlockH-boardActionGap-homeBoardsH);
-  const preferredBoardsY=Math.min(maxBoardsY,Math.max(contentTop,H*0.30));
-  const postsLimit=preferredBoardsY-boardActionGap;
-  const boardBottom=postsLimit-contentTop>=58?drawHubPosts(contentTop,postsLimit):contentTop;
-  // The updates feed draws its post copy left-aligned. Home action labels use
-  // their rectangle centres, so restore centred text before drawing buttons.
-  ctx.textAlign='center'; ctx.textBaseline='top';
-  const homeBoardsY=Math.min(maxBoardsY,Math.max(preferredBoardsY,boardBottom+boardActionGap));
+  let showHomeBoards=available>=minBoardH+boardActionGap+(minCardH*actionRows+actionGap*(actionRows-1));
+  let liveBoardGap=showHomeBoards?boardActionGap:0;
+  if(showHomeBoards){
+    const excess=Math.max(0,homeBoardsH+liveBoardGap+actionBlockH-available);
+    homeBoardsH-=Math.min(excess,Math.max(0,homeBoardsH-minBoardH));
+  }else homeBoardsH=0;
+  const actionRoom=Math.max(0,available-homeBoardsH-liveBoardGap);
+  cardH=Math.min(cardH,Math.max(10,Math.floor((actionRoom-actionGap*(actionRows-1))/actionRows)));
+  actionBlockH=cardH*actionRows+actionGap*(actionRows-1);
+  let homeBoardsY=contentTop;
   const homeBoardsW=Math.min(560,W-24), homeBoardsX=W/2-homeBoardsW/2;
-  const movedBoardsX=homeBoardsX+offX('board'), movedBoardsY=homeBoardsY+offY('board');
-  boardPanelRect={x:movedBoardsX,y:movedBoardsY,w:homeBoardsW,h:homeBoardsH};
-  layoutBlock('board',movedBoardsX,movedBoardsY,homeBoardsW,homeBoardsH);
-  withBlockColour('board',()=>drawHomeLeaderboards(movedBoardsX,movedBoardsY,homeBoardsW,homeBoardsH));
-  const actionTop=homeBoardsY+homeBoardsH+boardActionGap;
+  if(showHomeBoards){
+    const maxBoardsY=Math.max(contentTop,actionBottom-actionBlockH-liveBoardGap-homeBoardsH),
+      preferredBoardsY=Math.min(maxBoardsY,Math.max(contentTop,H*0.30)),
+      postsLimit=preferredBoardsY-liveBoardGap,
+      boardBottom=postsLimit-contentTop>=58?drawHubPosts(contentTop,postsLimit):contentTop;
+    // The updates feed draws its post copy left-aligned. Home action labels use
+    // their rectangle centres, so restore centred text before drawing buttons.
+    ctx.textAlign='center';ctx.textBaseline='top';
+    homeBoardsY=Math.min(maxBoardsY,Math.max(preferredBoardsY,boardBottom+liveBoardGap));
+    const movedBoardsX=homeBoardsX+offX('board'), movedBoardsY=homeBoardsY+offY('board');
+    boardPanelRect={x:movedBoardsX,y:movedBoardsY,w:homeBoardsW,h:homeBoardsH};
+    layoutBlock('board',movedBoardsX,movedBoardsY,homeBoardsW,homeBoardsH);
+    withBlockColour('board',()=>drawHomeLeaderboards(movedBoardsX,movedBoardsY,homeBoardsW,homeBoardsH));
+  }else boardPanelRect=null;
+  ctx.textAlign='center';ctx.textBaseline='top';
+  const actionTop=homeBoardsY+homeBoardsH+liveBoardGap;
   const groupW=Math.min(560,W-24), groupX=W/2-groupW/2;
   const topCols=3, topCardW=(groupW-actionGap*(topCols-1))/topCols;
   for(let i=0;i<actions.length;i++){
@@ -3065,11 +3087,14 @@ function drawHub(){
     ctx.textBaseline='alphabetic';
   }
   // ---- DAILY STREAK, then the tasks, stacked under the button row ----
-  const signedOut = sb && !authUser;
   streakBtnRect=null;
-  const stW=Math.min(340,W-24), stH=42, stX=W/2-stW/2+offX('streak'), stY=hbY+hbH+10+offY('streak');
-  layoutBlock('streak',stX,stY,stW,stH);
-  if(stY+stH <= H-6){
+  const stW=Math.min(340,W-24),stX=W/2-stW/2+offX('streak'),
+    stackY=actionTop+cardH*2+actionGap+dailyTopGap,
+    baseStY=stackY,
+    maxSafeStY=hbY-6-(stH+8+taskPanelH),
+    stY=showHubStreak?clamp(baseStY+offY('streak'),baseStY,Math.max(baseStY,maxSafeStY)):baseStY;
+  if(showHubStreak){layoutBlock('streak',stX,stY,stW,stH);}
+  if(showHubStreak&&stY+stH<=hbY-6){
     const rewardLoading=!!(sb&&authUser&&!profileLoaded),ready=streakClaimable()&&!signedOut&&!streakClaimBusy;
     ctx.fillStyle= ready?'rgba(94,196,106,0.12)':'rgba(0,0,0,0.4)'; ctx.fillRect(stX,stY,stW,stH);
     ctx.strokeStyle= ready?'#5ec46a':'#4a4634'; ctx.lineWidth=1; ctx.strokeRect(stX+0.5,stY+0.5,stW,stH);
@@ -3128,39 +3153,49 @@ function drawHub(){
   }
 
   // ---- DAILY TASKS, centered under the buttons ----
-  const tpY=stY+stH+8+offY('tasks')-offY('streak');
-  const roomForTasks=(H-6)-tpY;
-  const trH = (24+dailyTasks.length*28 <= roomForTasks) ? 28 : 21;   // tighten rather than vanish
-  const tpW=Math.min(340,W-24), tpH= signedOut ? 46 : 24+dailyTasks.length*trH;
+  const baseTpY=showHubStreak?stY+stH+streakTaskGap:stackY,
+    tpY=clamp(baseTpY+offY('tasks')-(showHubStreak?offY('streak'):0),baseTpY,Math.max(baseTpY,hbY-6-taskPanelH));
+  const roomForTasks=(hbY-6)-tpY;
+  const tpW=Math.min(390,W-24),tpH=taskPanelH;
   const tpX=W/2-tpW/2+offX('tasks');
   layoutBlock('tasks',tpX,tpY,tpW,tpH);
   if(tpH <= roomForTasks && (signedOut || dailyTasks.length)){
     ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(tpX,tpY,tpW,tpH);
     ctx.strokeStyle='#4a4634'; ctx.strokeRect(tpX+0.5,tpY+0.5,tpW,tpH);
-    ctx.textAlign='left';
-    ctx.fillStyle='#e8b658'; ctx.font='700 11px ui-monospace,Consolas,monospace';
-    ctx.fillText('\uD83D\uDCCB DAILY TASKS', tpX+10, tpY+7);
+    ctx.textAlign='left';ctx.textBaseline='top';
+    ctx.fillStyle='#e8b658';ctx.font='700 '+(compactDaily?9:11)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText('\uD83D\uDCCB DAILY TASKS',tpX+10,tpY+(compactDaily?4:11));
     ctx.textAlign='right';
-    ctx.fillStyle='#6b7455'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText('new quests in '+dailyCountdown(), tpX+tpW-10, tpY+8);
+    ctx.fillStyle='#6b7455';ctx.font=(compactDaily?7:9)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText('new in '+dailyCountdown(),tpX+tpW-10,tpY+(compactDaily?5:11));
     ctx.textAlign='left';
+    ctx.fillStyle='#9fa77f';ctx.font='700 '+(compactDaily?7:8)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine('COMPLETE EITHER SIDE \u00b7 EACH REWARD PAYS ONCE',tpW-20),tpX+10,tpY+(compactDaily?15:26));
     if(signedOut){
-      ctx.fillStyle='#d0a548'; ctx.font='10px ui-monospace,Consolas,monospace';
-      ctx.fillText('SIGN IN (top-left) to earn \uD83D\uDC8E gems from tasks', tpX+10, tpY+26);
+      const signInY=tpY+taskHeaderH+Math.max(2,(taskPanelH-taskHeaderH-(compactDaily?7:10))/2);
+      ctx.fillStyle='#d0a548';ctx.font=(compactDaily?7:10)+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine('SIGN IN (top-left) to earn \uD83D\uDC8E gems from tasks',tpW-20),tpX+10,signInY);
     } else {
-      ctx.font='10px ui-monospace,Consolas,monospace';
       for(let i=0;i<dailyTasks.length;i++){
-        const t=dailyTasks[i], ty2=tpY+24+i*trH;
-        ctx.fillStyle = t.done ? '#a7c15e' : '#cdd6b0';
-        ctx.fillText((t.done?'\u2714 ':'')+t.d, tpX+10, ty2);
-        ctx.textAlign='right';
-        ctx.fillStyle = t.done ? '#a7c15e' : '#8a9268';
-        ctx.fillText(t.done ? '\uD83D\uDC8E'+t.reward : t.prog+'/'+t.goal+'  \uD83D\uDC8E'+t.reward, tpX+tpW-10, ty2);
-        ctx.textAlign='left';
-        if(!t.done){
-          ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(tpX+10, ty2+13, tpW-20, 3);
-          ctx.fillStyle='#e8b658'; ctx.fillRect(tpX+10, ty2+13, (tpW-20)*clamp(t.prog/t.goal,0,1), 3);
+        const t=dailyTasks[i],def=dailyTaskDefinition(t.id),rowY=tpY+taskHeaderH+i*trH;
+        if(!def)continue;
+        if(i){ctx.fillStyle='rgba(74,70,52,.55)';ctx.fillRect(tpX+9,rowY,tpW-18,1);}
+        if(compactDaily){
+          ctx.fillStyle=t.done?'#7f9768':'#9fa77f';ctx.font='700 8px ui-monospace,Consolas,monospace';
+          ctx.fillText(fitLine(dailyTaskProgressText(t),tpW-58),tpX+10,rowY+(ultraCompactDaily?5:6));
+          ctx.textAlign='right';ctx.fillStyle=t.done?'#a7c15e':'#e8b658';
+          ctx.fillText('\uD83D\uDC8E'+def.reward,tpX+tpW-10,rowY+(ultraCompactDaily?5:6));ctx.textAlign='left';
+          continue;
         }
+        ctx.font='700 9px ui-monospace,Consolas,monospace';
+        ctx.fillStyle = t.done ? '#a7c15e' : '#cdd6b0';
+        ctx.fillText(fitLine((t.done?'\u2714 ':'')+def.title,tpW-100),tpX+10,rowY+11);
+        ctx.textAlign='right';
+        ctx.fillStyle=t.done?'#a7c15e':'#e8b658';
+        ctx.fillText('\uD83D\uDC8E'+def.reward,tpX+tpW-10,rowY+11);
+        ctx.textAlign='left';
+        ctx.fillStyle=t.done?'#7f9768':'#8a9268';ctx.font='9px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine(dailyTaskProgressText(t),tpW-20),tpX+10,rowY+(trH>=36?27:25));
       }
     }
     ctx.textAlign='center';
@@ -4058,31 +4093,47 @@ function drawCurrencyHUD(){
   withBlockColour('coins', paintCoins);
   ctx.restore();
 }
+function dailyTaskProgressText(task){
+  const def=dailyTaskDefinition(task&&task.id);if(!def)return '';
+  if(task.done){
+    const completed=def.paths.find(path=>path.id===task.completedBy)||def.paths[0];
+    return '\u2714 '+completed.label+' '+completed.goal+'/'+completed.goal+' \u00b7 REWARD CLAIMED';
+  }
+  return def.paths.map(path=>{
+    const progress=clamp(+(task.progress&&task.progress[path.id])||0,0,path.goal);
+    return path.label+' '+progress+'/'+path.goal;
+  }).join('  OR  ');
+}
 function drawPlayQuests(){
-  if(practiceMode==='arena') return;                       // Arena never advances campaign quests
+  if(practiceMode==='arena') return;                       // keep the duel sightline clear; progress appears after the match
   if(state!=='play' && state!=='upgrade') return;
-  const signedOut=sb&&!authUser, rows=signedOut?1:dailyTasks.length;
-  const pw=Math.min(280,Math.max(210,W*0.28)), rh=25, ph=30+rows*rh;
-  const px=16, py=Math.max(72,H/2-ph/2);
+  const signedOut=sb&&!authUser,rows=signedOut?1:dailyTasks.length;
+  const pw=Math.max(160,Math.min(360,W-24)),rh=34,headerH=34,ph=headerH+rows*rh;
+  const px=Math.max(8,Math.min(16,(W-pw)/2)),py=Math.max(72,H/2-ph/2);
   ctx.save(); ctx.globalAlpha=0.72;
   ctx.fillStyle='rgba(5,7,4,0.68)'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   ctx.textBaseline='middle'; ctx.textAlign='left';
   ctx.fillStyle='#e8b658'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-  ctx.fillText('\uD83D\uDCCB DAILY QUESTS',px+9,py+14);
+  ctx.fillText('\uD83D\uDCCB DAILY TASKS',px+9,py+11);
   ctx.textAlign='right'; ctx.fillStyle='#8a9268'; ctx.font='8px ui-monospace,Consolas,monospace';
-  ctx.fillText(dailyCountdown(),px+pw-9,py+14);
+  ctx.fillText(dailyCountdown(),px+pw-9,py+11);
   ctx.textAlign='left';
+  ctx.fillStyle='#9fa77f';ctx.font='700 7px ui-monospace,Consolas,monospace';
+  ctx.fillText('COMPLETE EITHER SIDE',px+9,py+25);
   if(signedOut){
     ctx.fillStyle='#d0a548'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText('SIGN IN TO EARN GEMS',px+9,py+30+rh/2);
+    ctx.fillText('SIGN IN TO EARN GEMS',px+9,py+headerH+rh/2);
   } else for(let i=0;i<dailyTasks.length;i++){
-    const t=dailyTasks[i], y=py+30+i*rh+rh/2;
-    ctx.fillStyle=t.done?'#a7c15e':'#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine((t.done?'\u2714 ':'')+t.d,pw-92),px+9,y);
+    const t=dailyTasks[i],def=dailyTaskDefinition(t.id),rowY=py+headerH+i*rh;
+    if(!def)continue;
+    ctx.fillStyle=t.done?'#a7c15e':'#cdd6b0';ctx.font='700 8px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine((t.done?'\u2714 ':'')+def.title,pw-76),px+9,rowY+10);
     ctx.textAlign='right'; ctx.fillStyle=t.done?'#a7c15e':'#8a9268';
-    ctx.fillText(t.done?('\uD83D\uDC8E'+t.reward):(t.prog+'/'+t.goal+'  \uD83D\uDC8E'+t.reward),px+pw-9,y);
+    ctx.fillText('\uD83D\uDC8E'+def.reward,px+pw-9,rowY+10);
     ctx.textAlign='left';
+    ctx.fillStyle=t.done?'#7f9768':'#9fa77f';ctx.font='8px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(dailyTaskProgressText(t),pw-18),px+9,rowY+25);
   }
   ctx.restore();
 }
@@ -4103,7 +4154,7 @@ function drawChestReward(){
   ctx.fillStyle='#ffe08a'; ctx.font='700 18px ui-monospace,Consolas,monospace';
   ctx.fillText('\uD83E\uDE99 '+Math.min(r.coins,r.trickle.credited)+' / '+r.coins,W/2,py+126);
   ctx.fillStyle='#bfe8ff'; ctx.font='700 13px ui-monospace,Consolas,monospace';
-  ctx.fillText('\uD83D\uDC8E +'+r.gems,W/2,py+151);
+  ctx.fillText(fitLine('\uD83D\uDC8E CHEST +'+r.gems+(r.taskReward?' \u00b7 DAILY TASK +'+r.taskReward:''),pw-20),W/2,py+151);
   const bw=150,bh=32,bx=W/2-bw/2,by=py+190;
   chestRewardBtn=done?{x:bx,y:by,w:bw,h:bh}:null;
   ctx.fillStyle=done?'rgba(94,196,106,0.7)':'rgba(74,70,52,0.45)'; ctx.fillRect(bx,by,bw,bh);

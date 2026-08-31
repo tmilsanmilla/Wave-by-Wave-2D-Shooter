@@ -37,7 +37,8 @@ assert.equal(hitBurst.during.tacticUntil,900,'repeated hits must preserve the co
 assert.equal(hitBurst.during.responseUntil,1230,'each pellet should extend, not restart, the burst quiet window');
 assert.equal(hitBurst.during.underFireUntil,1480,'reactive-cover pressure should still extend through the burst');
 assert.equal(hitBurst.separate,true,'a later, separate burst should be allowed to trigger a new response');
-assert.deepEqual({...hitBurst.after},{thinkAt:1300,tacticUntil:1300});
+assert.deepEqual({...hitBurst.after},{thinkAt:1300,tacticUntil:1800},
+  'a later burst may wake execution without discarding the movement idea');
 
 const oscillation=vm.runInContext(`(()=>{
   const bot={id:'hard-bot',x:100,y:100,r:15,hp:100,lastThinkX:100,lastThinkY:100,moveX:1,moveY:0,

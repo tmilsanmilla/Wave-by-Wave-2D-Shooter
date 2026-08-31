@@ -1656,26 +1656,77 @@ async function fetchPrices(){
     for(const r of (data||[])) setGemPrice(r.key, r.cost*GEM_PRICE_SCALE);
   }catch(e){}
 }
-const DAILY_TASK_DEFS=[
-  {id:'kills',  d:'Defeat 40 enemies', goal:40, baseReward:5},
-  {id:'waves',  d:'Clear 8 waves',     goal:8,  baseReward:10},
-  {id:'bosses', d:'Defeat 3 warlords', goal:3,  baseReward:35},
-  {id:'chests', d:'Open a mod chest',  goal:1,  baseReward:20},
-].map(t=>Object.assign({},t,{reward:t.baseReward*GEM_REWARD_SCALE}));
-const DAILY_ACTIVE_IDS=['kills','waves','chests'];
-const DAILY_REWARDS=Object.fromEntries(DAILY_TASK_DEFS.map(t=>[t.id,t.reward]));
-function freshDailyTasks(){
-  return DAILY_ACTIVE_IDS.map(id=>{
-    const t=DAILY_TASK_DEFS.find(x=>x.id===id);
-    return {id:t.id,d:t.d,goal:t.goal,reward:t.reward,prog:0,done:false};
+// Each row has two independent ways to finish it. Progress never combines
+// across the word "OR": either path must reach its own full goal.
+const DAILY_TASK_SCHEMA_VERSION=2;
+const DAILY_TASK_DEFS=Object.freeze([
+  {id:'games',title:'PLAY GAMES',reward:60,paths:[
+    {id:'duels',label:'1v1 DUELS',goal:5},
+    {id:'endless',label:'ENDLESS GAMES (1+ WAVE)',goal:2},
+  ]},
+  {id:'eliminations',title:'GET ELIMINATIONS',reward:150,paths:[
+    {id:'duels',label:'1v1 KOs',goal:15},
+    {id:'endless',label:'ENDLESS KILLS',goal:100},
+  ]},
+  {id:'victories',title:'WIN OR OPEN A MOD CHEST',reward:300,paths:[
+    {id:'duels',label:'1v1 WINS',goal:2},
+    {id:'chests',label:'MOD CHESTS',goal:1},
+  ]},
+].map(task=>Object.freeze(Object.assign({},task,{paths:Object.freeze(task.paths.map(path=>Object.freeze(path)))}))));
+const DAILY_TASK_EVENTS=Object.freeze({
+  duel_game:{task:'games',path:'duels'},
+  endless_game:{task:'games',path:'endless'},
+  duel_elimination:{task:'eliminations',path:'duels'},
+  endless_kill:{task:'eliminations',path:'endless'},
+  duel_win:{task:'victories',path:'duels'},
+  mod_chest:{task:'victories',path:'chests'},
+});
+const DAILY_REWARDS=Object.fromEntries(DAILY_TASK_DEFS.map(task=>[task.id,task.reward]));
+function dailyTaskDefinition(id){ return DAILY_TASK_DEFS.find(task=>task.id===id)||null; }
+function freshDailyTask(def){
+  return {id:def.id,v:DAILY_TASK_SCHEMA_VERSION,
+    progress:Object.fromEntries(def.paths.map(path=>[path.id,0])),done:false,completedBy:''};
+}
+function freshDailyTasks(){ return DAILY_TASK_DEFS.map(freshDailyTask); }
+function dailyTaskSetIsCurrent(tasks){
+  return Array.isArray(tasks)&&tasks.length===DAILY_TASK_DEFS.length&&DAILY_TASK_DEFS.every(def=>{
+    const matches=tasks.filter(task=>task&&task.id===def.id);
+    return matches.length===1&&matches[0].v===DAILY_TASK_SCHEMA_VERSION&&
+      matches[0].progress&&typeof matches[0].progress==='object'&&
+      def.paths.every(path=>Number.isFinite(+matches[0].progress[path.id]));
+  });
+}
+function normalizedDailyTask(task,def){
+  const progress={};
+  for(const path of def.paths) progress[path.id]=clamp(+task.progress[path.id]||0,0,path.goal);
+  let completedBy=def.paths.some(path=>path.id===task.completedBy)?task.completedBy:'';
+  if(task.done&&completedBy) progress[completedBy]=def.paths.find(path=>path.id===completedBy).goal;
+  if(completedBy&&progress[completedBy]<def.paths.find(path=>path.id===completedBy).goal) completedBy='';
+  if(!completedBy) completedBy=(def.paths.find(path=>progress[path.id]>=path.goal)||{}).id||'';
+  if(task.done&&!completedBy){ completedBy=def.paths[0].id; progress[completedBy]=def.paths[0].goal; }
+  const done=!!completedBy&&progress[completedBy]>=def.paths.find(path=>path.id===completedBy).goal;
+  return {id:def.id,v:DAILY_TASK_SCHEMA_VERSION,progress,done,completedBy:done?completedBy:''};
+}
+function normalizedDailyTaskSet(tasks){
+  if(!dailyTaskSetIsCurrent(tasks)) return freshDailyTasks();
+  return DAILY_TASK_DEFS.map(def=>normalizedDailyTask(tasks.find(task=>task.id===def.id),def));
+}
+function mergeDailyTaskSets(localTasks,cloudTasks){
+  const local=normalizedDailyTaskSet(localTasks),cloud=normalizedDailyTaskSet(cloudTasks);
+  return DAILY_TASK_DEFS.map(def=>{
+    const a=local.find(task=>task.id===def.id),b=cloud.find(task=>task.id===def.id),merged=freshDailyTask(def);
+    for(const path of def.paths) merged.progress[path.id]=Math.max(a.progress[path.id],b.progress[path.id]);
+    const preferred=(a.done&&a.completedBy)||(b.done&&b.completedBy)||'';
+    const completed=def.paths.find(path=>path.id===preferred&&merged.progress[path.id]>=path.goal)||
+      def.paths.find(path=>merged.progress[path.id]>=path.goal);
+    merged.done=!!completed; merged.completedBy=completed?completed.id:'';
+    return merged;
   });
 }
 function normalizeDailyRewards(){
-  for(const t of dailyTasks){
-    const d=DAILY_TASK_DEFS.find(x=>x.id===t.id); if(!d) continue;
-    t.d=d.d; t.goal=d.goal; t.reward=d.reward;
-    t.prog=clamp(+t.prog||0,0,t.goal); if(t.done) t.prog=t.goal;
-  }
+  const migrated=!dailyTaskSetIsCurrent(dailyTasks);
+  dailyTasks=normalizedDailyTaskSet(dailyTasks);
+  return migrated;
 }
-function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({owner:profileOwnerUserId==null?null:String(profileOwnerUserId), gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, mt:typeof musicTrack==='string'?musicTrack:'calm', sv:sfxVol})); persistLastLoadoutLocal(); }catch(e){} }
+function saveMetaLocal(){ try{ localStorage.setItem('oz_meta', JSON.stringify({owner:profileOwnerUserId==null?null:String(profileOwnerUserId), gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, owned:gemOwned, date:tasksDate, tasksV:DAILY_TASK_SCHEMA_VERSION, tasks:dailyTasks, coins, cos:cosmeticOwned, cosEq:cosmeticEquipped, pow:powerStock, anim:animOwned, animEq:animEquipped, stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc), hi:hiScore, mv:musicVol, mt:typeof musicTrack==='string'?musicTrack:'calm', sv:sfxVol})); persistLastLoadoutLocal(); }catch(e){} }
 function saveMeta(){ saveMetaLocal(); queueProfileSave(); }

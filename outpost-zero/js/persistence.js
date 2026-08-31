@@ -2,6 +2,11 @@
 
 // ---- account progress sync: purchases + currency live with the account, not the device ----
 let profileLoaded=false, profileSaveT=0, profilePending=false, profilePendingUserId='', profileOwnerUserId=null;
+let profileMutationVersion=0,profileSaveQueued=0,profileSaveTail=Promise.resolve(false);
+let profileSaveRequestSerial=0,profileLatestSaveSerialByUser=Object.create(null),
+  profileActiveSaveController=null,profileActiveSaveUserId='';
+let pendingDailyTaskEvents=Object.create(null),pendingDailyTaskOwner='',pendingDailyTaskDay='';
+let dailyTaskBatchDepth=0;
 // Temporary admin gifts are a separate server-backed entitlement. They are
 // deliberately excluded from metaPayload/localStorage so no device can turn a
 // timed gift into permanent ownership by editing its local profile cache.
@@ -12,7 +17,8 @@ const TEMP_WEAPON_GRANT_POLL_MS=60000;
 function prepareAccountProgressForAuth(accountId=''){
   const id=String(accountId||'');
   if(profileOwnerUserId!==null&&id===profileOwnerUserId)return false; // token refresh / same account: keep loaded state
-  profileOwnerUserId=id;profileLoaded=false;profilePending=false;profilePendingUserId='';
+  profileOwnerUserId=id;profileLoaded=false;profilePending=false;profilePendingUserId='';profileMutationVersion++;
+  pendingDailyTaskEvents=Object.create(null);pendingDailyTaskOwner=id;pendingDailyTaskDay=todayIndex();
   if(typeof resetDailyStreakUiForAccountChange==='function')resetDailyStreakUiForAccountChange();
   // Fail closed synchronously during A -> B (and sign-out). A slow or failed B
   // profile read must never leave A's wallet or permanent inventory usable.
@@ -27,7 +33,7 @@ function prepareAccountProgressForAuth(accountId=''){
 function metaPayload(){
   return {gems, gv:GEM_ECONOMY_VERSION, gre:gemResetVersion, coins, device:deviceId(), stk:streakDays, stkMax:streakLongest, stkDay:streakLastDay, refUsed:referralUsed, refPaid:referralPaid, wr:wheelReady, wa:Math.round(wheelAcc),
           wd:wheelEarnedDay, we:wheelEarnedToday, wt:wheelReadyTier,
-          date:tasksDate, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
+          date:tasksDate, tasksV:DAILY_TASK_SCHEMA_VERSION, tasks:dailyTasks, owned:gemOwned, cos:cosmeticOwned, cosEq:cosmeticEquipped,
           pow:powerStock, anim:animOwned, animEq:animEquipped,
           hi:hiScore, mv:musicVol, mt:typeof musicTrack==='string'?musicTrack:'calm', sv:sfxVol, onboardV:onboardingVersion, loadout:storedLastLoadout()};
 }
@@ -281,6 +287,9 @@ function canRestoreAccountLoadout(){
 }
 function applyProfile(m){
   if(!m) return false;
+  const cloudTasksCurrent=m.tasksV===DAILY_TASK_SCHEMA_VERSION&&dailyTaskSetIsCurrent(m.tasks);
+  const today=todayIndex();
+  let profileMigrated=!cloudTasksCurrent||m.date!==today;
   profileOwnerUserId=authUser?String(authUser.id||''):profileOwnerUserId;
   // the account is the source of truth for what you own: a purchase made elsewhere arrives,
   // and an item an admin removed actually goes away (a union here would ignore every revoke)
@@ -292,20 +301,14 @@ function applyProfile(m){
   // the account is the source of truth for spendable balances
   gems=savedGemBalance(m); gemResetVersion=Math.max(GEM_RESET_VERSION,+m.gre||0);
   if(typeof m.coins==='number') coins=m.coins;
-  // ---- daily tasks: the account is the record, so finishing them twice on two devices is impossible ----
-  if(typeof m.date==='string' && Array.isArray(m.tasks)){
-    const today=todayIndex();
+  // ---- daily tasks: merge account progress without mixing the two OR paths ----
+  if(typeof m.date==='string' && cloudTasksCurrent){
     if(m.date===tasksDate){
-      // same day on both: a task counts as done if EITHER side finished it, and progress takes the higher
-      for(const ct of m.tasks){
-        const lt=dailyTasks.find(t=>t.id===ct.id);
-        if(!lt) continue;
-        lt.prog=Math.max(lt.prog||0, ct.prog||0);
-        lt.done=!!(lt.done||ct.done);
-        if(lt.done) lt.prog=lt.goal;
-      }
+      // Same day on both: merge each side of every OR independently. Progress
+      // from unlike choices is never added together.
+      dailyTasks=mergeDailyTaskSets(dailyTasks,m.tasks);
     } else if(m.date===today && tasksDate!==today){
-      tasksDate=m.date; dailyTasks=m.tasks;          // this device was behind; take the account's day
+      tasksDate=m.date; dailyTasks=normalizedDailyTaskSet(m.tasks); // this device was behind; take the account's day
     }
   }
   if(typeof m.hi==='number') hiScore=Math.max(hiScore, m.hi);   // best score is the best of both
@@ -333,7 +336,7 @@ function applyProfile(m){
   if(m.cosEq) cosmeticEquipped=m.cosEq;
   if(m.animEq && typeof m.animEq==='object') animEquipped=m.animEq;
   if(m.pow) powerStock=m.pow;
-  normalizeDailyRewards();
+  profileMigrated=normalizeDailyRewards()||profileMigrated;
   for(const k in animEquipped){ const id=animEquipped[k];
     if(id!=='none' && !animOwned[animKey(k,id)]) delete animEquipped[k]; }
   lastLoadoutAccountId=authUser?String(authUser.id||''):'';
@@ -343,7 +346,7 @@ function applyProfile(m){
     ?storedLastLoadout(m.loadout):storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
   const unpublishedPurged=syncOwnedWeapons();          // purge storage-only items before restoring or exposing them
   if(canRestoreAccountLoadout()) restoreLastLoadoutForMode(pendingGameMode);
-  return unpublishedPurged;
+  return unpublishedPurged||profileMigrated;
 }
 // an older account may have a leaderboard score but no saved profile yet
 async function fetchOwnBest(){
@@ -359,19 +362,26 @@ async function fetchOwnBest(){
     if(endless&&typeof endless.score==='number'&&endless.score>hiScore){hiScore=endless.score;saveMetaLocal();}
   }catch(e){}
 }
-async function fetchProfile(expectedUserId,requestVersion){
+async function fetchProfile(expectedUserId,requestVersion,scheduledMutationVersion){
   if(!sb || !authUser) return false;
   const userId=String(expectedUserId||authUser.id);
   if(String(authUser.id)!==userId) return false;
   prepareAccountProgressForAuth(userId);
+  const retainedLoadedProfile=profileLoaded&&profileOwnerUserId===userId,
+    mutationAtStart=Number.isFinite(scheduledMutationVersion)?scheduledMutationVersion:profileMutationVersion;
   try{
     const { data, error } = await sb.from('profiles').select('data').eq('user_id', userId).maybeSingle();
     if(error) throw error;                            // a failed read is not a new account
     if(!authUser || String(authUser.id)!==userId ||
        (requestVersion!=null && requestVersion!==authProfileRequestVersion)) return false;
+    // A match or purchase may finish while a clean same-account refresh is in
+    // flight. Keep that newer local snapshot; its serialized save is the next
+    // authority instead of letting this older read erase it.
+    if(retainedLoadedProfile&&profileMutationVersion!==mutationAtStart)return true;
     if(data && data.data){
       const migrateGems=data.data.gv!==GEM_ECONOMY_VERSION;
       const resetGems=(+data.data.gre||0)<GEM_RESET_VERSION;
+      const migrateDailyTasks=data.data.tasksV!==DAILY_TASK_SCHEMA_VERSION||!dailyTaskSetIsCurrent(data.data.tasks);
       const removeLegacyBotTrain=Object.prototype.hasOwnProperty.call(data.data,'botTrain');
       const hasOnboarding=Object.prototype.hasOwnProperty.call(data.data,'onboardV') &&
         data.data.onboardV!==null && Number.isFinite(Number(data.data.onboardV));
@@ -380,10 +390,12 @@ async function fetchProfile(expectedUserId,requestVersion){
       // players. Migrate them as already seen instead of surprising everyone
       // with a first-login tutorial after an update.
       onboardingVersion=hasOnboarding ? Math.max(0,Math.floor(Number(data.data.onboardV))) : ONBOARDING_VERSION;
-      const unpublishedPurged=applyProfile(data.data); profileLoaded=true; saveMetaLocal();
+      const unpublishedPurged=applyProfile(data.data);profileLoaded=true;
+      const flushedDailyTasks=flushPendingDailyTaskEvents();saveMetaLocal();
       if(onboardingVersion<ONBOARDING_VERSION) firstAccountTutorialUserId=userId;
       else if(firstAccountTutorialUserId===userId) firstAccountTutorialUserId='';
-      if(migrateGems||resetGems||!hasOnboarding||removeLegacyBotTrain||!hasLoadout||unpublishedPurged) await saveProfile(true); // persist all migration markers
+      if(migrateGems||resetGems||migrateDailyTasks||!hasOnboarding||removeLegacyBotTrain||!hasLoadout||unpublishedPurged||flushedDailyTasks)
+        await saveProfile(true); // persist migrations and any events held during the authoritative read
     }
     else {                                            // a new account never inherits another account's device gems
       onboardingVersion=0;
@@ -399,7 +411,7 @@ async function fetchProfile(expectedUserId,requestVersion){
       lastLoadoutAccountId=userId; lastLoadout=storedLastLoadout(SHARED_LOADOUT_DEFAULTS);
       if(canRestoreAccountLoadout()) restoreLastLoadoutForMode(pendingGameMode);
       saveMetaLocal();
-      profileLoaded=true;
+      profileLoaded=true;flushPendingDailyTaskEvents();
       // Finish the initial onboardV=0 write before exposing START. Otherwise a
       // slow first write could land after the button's onboardV=1 save and make
       // the same account look new again on its next login.
@@ -409,19 +421,61 @@ async function fetchProfile(expectedUserId,requestVersion){
        (requestVersion!=null && requestVersion!==authProfileRequestVersion)) return false;
     return true;
   }catch(e){
-    if(requestVersion==null || requestVersion===authProfileRequestVersion) profileLoaded=false;
+    if(requestVersion==null || requestVersion===authProfileRequestVersion)profileLoaded=retainedLoadedProfile;
     return false;
   }
 }
-async function saveProfile(force){
-  if(!sb || !authUser) return;
-  if(!force && !profileLoaded) return;               // never overwrite the cloud before we've read it
-  try{ await sb.from('profiles').upsert({user_id:authUser.id, data:metaPayload(), updated_at:new Date().toISOString()}); }
-  catch(e){}
+function profileWritesPending(){return profilePending||profileSaveQueued>0;}
+function saveProfile(force){
+  if(!sb||!authUser||(!force&&!profileLoaded))return Promise.resolve(false);
+  const userId=String(authUser.id),payload=metaPayload(),version=profileMutationVersion,
+    requestSerial=++profileSaveRequestSerial;
+  profileLatestSaveSerialByUser[userId]=requestSerial;
+  // A final/forced snapshot supersedes an older in-flight snapshot for the
+  // same account. Cancelling it lets sign-out persist the newest reward first.
+  if(force&&profileActiveSaveController&&profileActiveSaveUserId===userId)
+    try{profileActiveSaveController.abort();}catch(error){}
+  // Snapshot writes are serialized. When Supabase supports abort signals, a
+  // timed-out request is cancelled before the next snapshot may start; without
+  // abort support we wait for settlement so an older write can never arrive
+  // after a newer task reward and overwrite it.
+  profileSaveQueued++;
+  const job=profileSaveTail.then(async()=>{
+    if(profileLatestSaveSerialByUser[userId]!==requestSerial)return false;
+    if(!authUser||String(authUser.id)!==userId)return false;
+    let timer=null,controller=null;
+    try{
+      let write=sb.from('profiles').upsert({user_id:userId,data:payload,updated_at:new Date().toISOString()});
+      controller=typeof AbortController==='function'?new AbortController():null;
+      const canAbort=!!(controller&&write&&typeof write.abortSignal==='function');
+      if(canAbort){write=write.abortSignal(controller.signal);profileActiveSaveController=controller;profileActiveSaveUserId=userId;}
+      const result=canAbort
+        ?await Promise.race([write,new Promise((resolve,reject)=>{timer=setTimeout(()=>{
+          controller.abort();reject(new Error('profile save timed out'));
+        },8000);})])
+        :await write;
+      const {error}=result||{};
+      if(error)throw error;
+      if(authUser&&String(authUser.id)===userId&&profileMutationVersion===version){
+        profilePending=false;profilePendingUserId='';
+      }
+      return true;
+    }catch(error){
+      if(authUser&&String(authUser.id)===userId){
+        profilePending=true;profilePendingUserId=userId;profileSaveT=Date.now()+3000;
+      }
+      return false;
+    }finally{
+      if(timer!==null)clearTimeout(timer);
+      if(profileActiveSaveController===controller){profileActiveSaveController=null;profileActiveSaveUserId='';}
+    }
+  });
+  const settled=job.finally(()=>{profileSaveQueued=Math.max(0,profileSaveQueued-1);});
+  profileSaveTail=settled.catch(()=>false);return settled;
 }
 function queueProfileSave(){                          // debounce: batch rapid changes into one write
   if(!sb || !authUser) return;
-  profilePending=true; profilePendingUserId=String(authUser.id); profileSaveT=Date.now()+1200;
+  profileMutationVersion++;profilePending=true;profilePendingUserId=String(authUser.id);profileSaveT=Date.now()+1200;
 }
 function loadMeta(){
   // Retire the old device/account-specific training cache without importing
@@ -433,7 +487,8 @@ function loadMeta(){
     // caches without the marker are unknown and get one fail-closed reset when
     // a cloud client starts, rather than being trusted as guest ownership.
     profileOwnerUserId=Object.prototype.hasOwnProperty.call(m,'owner')&&typeof m.owner==='string'?m.owner:null;
-    gems=savedGemBalance(m); gemResetVersion=Math.max(GEM_RESET_VERSION,+m.gre||0); gemOwned=m.owned||{}; tasksDate=m.date||''; dailyTasks=m.tasks||[];
+    gems=savedGemBalance(m); gemResetVersion=Math.max(GEM_RESET_VERSION,+m.gre||0); gemOwned=m.owned||{}; tasksDate=m.date||'';
+    dailyTasks=m.tasksV===DAILY_TASK_SCHEMA_VERSION&&Array.isArray(m.tasks)?m.tasks:[];
     coins=m.coins||0; cosmeticOwned=m.cos||{}; cosmeticEquipped=m.cosEq||{}; powerStock=m.pow||{};
     animOwned=m.anim||{}; animEquipped=(m.animEq && typeof m.animEq==='object') ? m.animEq : {};
     streakDays=m.stk||0; streakLongest=m.stkMax||streakDays; streakLastDay=m.stkDay||'';
@@ -644,17 +699,118 @@ const FIREARM_BULLET_SPEED_MUL=1.15, AWM_BULLET_SPEED_MUL=1.35;
 function weaponBulletSpeedMul(k){ return k==='sniper'?AWM_BULLET_SPEED_MUL:FIREARM_BULLET_SPEED_MUL; }
 function weaponBulletSpeed(k){ const w=WEAPONS[k]; return w&&w.speed ? w.speed*weaponBulletSpeedMul(k) : 0; }
 function weaponBulletLife(k,base){ return base/weaponBulletSpeedMul(k); } // faster travel, same maximum distance
-function taskProgress(id,n){
-  if(!gemRewardsEnabled()) return;         // never consume a quest when its gem payout is disabled
-  for(const t of dailyTasks){
-    if(t.id===id && !t.done){
-      t.prog+=n;
-      if(t.prog>=t.goal){ t.prog=t.goal; t.done=true; addGems(t.reward);
-        waveMsg='\uD83D\uDC8E DAILY TASK COMPLETE +'+t.reward+' GEMS'; waveMsgT=now+2600; sfx('pickup'); }
-      saveMeta();
-    }
-  }
+function dailyTaskGameplayEligible(){
+  return gemRewardsEnabled()&&!(typeof unrankedRun!=='undefined'&&unrankedRun)&&
+    !(typeof adminUsed!=='undefined'&&adminUsed)&&
+    !(typeof practiceMode!=='undefined'&&practiceMode&&practiceMode!=='arena');
 }
+function dailyTaskOwnerKey(){
+  if(!sb)return 'offline';
+  return String(authUser&&authUser.id||'');
+}
+function dailyTaskOwnerMatches(owner){
+  const current=dailyTaskOwnerKey();return !!current&&current===String(owner||'');
+}
+function dailyTaskAccountReady(){
+  if(!sb)return true;
+  const id=String(authUser&&authUser.id||'');
+  return !!id&&profileLoaded&&profileOwnerUserId===id;
+}
+function dailyTaskRewardsEnabled(){
+  return dailyTaskGameplayEligible()&&dailyTaskAccountReady();
+}
+function queueDailyTaskEvent(eventId,amount){
+  const id=String(authUser&&authUser.id||''),day=todayIndex();
+  if(!sb||!id||!dailyTaskGameplayEligible())return false;
+  if(pendingDailyTaskOwner!==id||pendingDailyTaskDay!==day){
+    pendingDailyTaskEvents=Object.create(null);pendingDailyTaskOwner=id;pendingDailyTaskDay=day;
+  }
+  pendingDailyTaskEvents[eventId]=Math.max(0,Math.floor(+pendingDailyTaskEvents[eventId]||0))+amount;
+  return true;
+}
+function announceDailyTaskBatch(beforeDone,beforeGems){
+  const completed=dailyTasks.filter(task=>task.done&&!beforeDone.has(task.id)).length;
+  if(completed<2)return false;
+  const reward=Math.max(0,gems-beforeGems);
+  waveMsg='\uD83D\uDC8E '+completed+' DAILY TASKS COMPLETE +'+reward+' GEMS';waveMsgT=now+3000;
+  return true;
+}
+function dailyDuelTaskProgressText(){
+  const route=[['games','duels','DUELS','PLAY'],['eliminations','duels','KOs','ELIMS'],['victories','duels','WINS','WIN']];
+  return 'TASKS \u00b7 '+route.map(([taskId,pathId,label,rowLabel])=>{
+    const task=dailyTasks.find(item=>item.id===taskId),def=dailyTaskDefinition(taskId),path=def&&def.paths.find(item=>item.id===pathId);
+    if(!task||!path)return label+' 0/?';
+    if(task.done){
+      const via=task.completedBy==='endless'?'ENDLESS':task.completedBy==='chests'?'CHEST':'DUELS';
+      return rowLabel+' \u2713 VIA '+via;
+    }
+    return label+' '+Math.min(path.goal,Math.max(0,Math.floor(+task.progress[pathId]||0)))+'/'+path.goal;
+  }).join(' \u00b7 ');
+}
+function flushPendingDailyTaskEvents(){
+  if(!dailyTaskRewardsEnabled())return false;
+  const id=String(authUser&&authUser.id||''),day=todayIndex();
+  if(pendingDailyTaskOwner!==id||pendingDailyTaskDay!==day){
+    pendingDailyTaskEvents=Object.create(null);pendingDailyTaskOwner=id;pendingDailyTaskDay=day;return false;
+  }
+  const entries=Object.entries(pendingDailyTaskEvents);if(!entries.length)return false;
+  pendingDailyTaskEvents=Object.create(null);
+  const beforeDone=new Set(dailyTasks.filter(task=>task.done).map(task=>task.id)),beforeGems=gems;
+  let changed=false;
+  dailyTaskBatchDepth++;
+  try{for(const [eventId,amount] of entries)changed=taskProgress(eventId,amount)||changed;}
+  finally{dailyTaskBatchDepth=Math.max(0,dailyTaskBatchDepth-1);}
+  announceDailyTaskBatch(beforeDone,beforeGems);
+  return changed;
+}
+function taskProgress(eventId,n=1){
+  const target=DAILY_TASK_EVENTS[eventId],amount=Math.max(0,Math.floor(+n||0));
+  if(!target||!amount)return false;
+  if(['endless_game','endless_kill','mod_chest'].includes(eventId)&&
+     typeof dailyEndlessTaskOwner!=='undefined'&&!dailyTaskOwnerMatches(dailyEndlessTaskOwner))return false;
+  if(!dailyTaskGameplayEligible())return false;
+  // A same-account token refresh can finish while a match is in progress.
+  // Hold those events until the authoritative profile is back instead of
+  // marking a reward complete in memory and then losing it to the cloud read.
+  if(!dailyTaskAccountReady())return queueDailyTaskEvent(eventId,amount);
+  // Reset before applying an event so a noon-UTC boundary can never advance
+  // yesterday's task for one frame.
+  if(typeof tasksDate!=='undefined'&&typeof todayIndex==='function'){
+    const today=todayIndex();
+    if(tasksDate!==today){ tasksDate=today; dailyTasks=freshDailyTasks(); saveMeta(); }
+  }
+  normalizeDailyRewards();
+  const task=dailyTasks.find(item=>item.id===target.task),def=dailyTaskDefinition(target.task);
+  const path=def&&def.paths.find(item=>item.id===target.path);
+  if(!task||!def||!path||task.done) return false;
+  task.progress[path.id]=clamp((+task.progress[path.id]||0)+amount,0,path.goal);
+  let completedNow=false;
+  if(task.progress[path.id]>=path.goal){
+    task.done=true; task.completedBy=path.id; addGems(def.reward);
+    completedNow=true;
+    waveMsg='\uD83D\uDC8E DAILY TASK COMPLETE +'+def.reward+' GEMS'; waveMsgT=now+2600; sfx('pickup');
+  }
+  saveMeta();
+  if(completedNow&&!dailyTaskBatchDepth&&sb&&authUser&&typeof saveProfile==='function')void saveProfile(true);
+  return true;
+}
+function recordDailyDuelOutcome(eliminated,completed,won){
+  const beforeDone=new Set(dailyTasks.filter(task=>task.done).map(task=>task.id)),beforeGems=gems;
+  let knockout=false,played=false,victory=false;
+  dailyTaskBatchDepth++;
+  try{
+    knockout=eliminated?taskProgress('duel_elimination',1):false;
+    played=completed?taskProgress('duel_game',1):false;
+    victory=completed&&won?taskProgress('duel_win',1):false;
+  }finally{dailyTaskBatchDepth=Math.max(0,dailyTaskBatchDepth-1);}
+  announceDailyTaskBatch(beforeDone,beforeGems);
+  const changed=knockout||played||victory,
+    completedTask=changed&&dailyTasks.some(task=>task.done&&!beforeDone.has(task.id));
+  if((completed||completedTask)&&changed&&sb&&authUser&&typeof saveProfile==='function')void saveProfile(true);
+  return changed;
+}
+function recordDailyDuelElimination(){ return recordDailyDuelOutcome(true,false,false); }
+function recordDailyDuelMatch(won){ return recordDailyDuelOutcome(false,true,won); }
 const LOCKED_KEYS = ['fireworks','solarrifle','bdaggers','beachball'];   // seasonal = sign-in only
 const TEMP_KEYS = ['flamethrower','fireworks','bdaggers','beachball'];  // Summer Flaming Update
 function isLocked(k){

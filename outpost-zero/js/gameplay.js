@@ -32,7 +32,10 @@ function effSpread(){
     const moving = now-(player.moveT||0) < 140;
     if(moving || fanShots>0 || now<fanBurstUntil) base += 0.13;
   }
-  return (base + player.bloom * (aiming ? 0.3 : 1)) * perks.acc;
+  // A zero-spread scope promises that the round goes through its reticle. Do
+  // not quietly reintroduce random error from a previous shot's recoil bloom.
+  const perfectScope=aiming&&w.scoped&&Number(w.aimSpread)===0;
+  return (base + (perfectScope?0:player.bloom*(aiming?0.3:1))) * perks.acc;
 }
 function dmgMul(b){
   let mul=1;
@@ -228,11 +231,29 @@ function resetWeaponGimmickState(){
   cancelFanTheHammer(true);
   if(typeof resetMeleeAbilityVisual==='function')resetMeleeAbilityVisual(player);
 }
+function dailyEndlessTaskEligible(){
+  return !practiceMode&&!testMode&&!unrankedRun&&!adminUsed&&
+    (typeof dailyTaskOwnerMatches!=='function'||dailyTaskOwnerMatches(dailyEndlessTaskOwner));
+}
+function recordDailyEndlessWaveClear(){
+  if(typeof dailyEndlessRunSettled==='undefined'||typeof dailyEndlessClearedWaves==='undefined'||
+     typeof wave==='undefined'||wave<1||dailyEndlessRunSettled||!dailyEndlessTaskEligible())return false;
+  dailyEndlessClearedWaves++;return true;
+}
+function completeDailyEndlessTaskRun(){
+  if(typeof dailyEndlessRunSettled==='undefined'||typeof dailyEndlessClearedWaves==='undefined'||
+     dailyEndlessRunSettled||dailyEndlessClearedWaves<1||!dailyEndlessTaskEligible())return false;
+  dailyEndlessRunSettled=true;
+  const changed=typeof taskProgress==='function'?taskProgress('endless_game',1):true;
+  if(changed&&typeof sb!=='undefined'&&sb&&authUser&&typeof saveProfile==='function')void saveProfile(true);
+  return changed;
+}
 // A voluntary return to the menu is still a completed Endless attempt. Save it
 // before menuClick clears the run. Every non-ranked context is rejected here;
 // submitScore repeats the same server-side-boundary guards as defense in depth.
 function persistNormalEndlessScoreOnExit(){
   if(!['play','upgrade'].includes(state)||practiceMode||testMode||unrankedRun||adminUsed)return false;
+  completeDailyEndlessTaskRun();
   hiScore=Math.max(Math.max(0,+hiScore||0),Math.max(0,+score||0));
   if(typeof saveMeta==='function')saveMeta();
   if(typeof submitScore==='function'&&hiScore>0)void submitScore(hiScore);
@@ -240,6 +261,11 @@ function persistNormalEndlessScoreOnExit(){
 }
 function startGame(){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
+  if(sb&&authUser&&(!profileLoaded||profileOwnerUserId!==String(authUser.id||''))){
+    if(typeof modeBoardNotice!=='undefined')modeBoardNotice='LOADING YOUR ACCOUNT PROGRESS\u2026';
+    if(typeof modeBoardNoticeT!=='undefined')modeBoardNoticeT=performance.now()+2200;
+    if(typeof sfx==='function')sfx('dry');return false;
+  }
   const selected=[loadout.primary,loadout.secondary,loadout.melee,loadout.utility].filter(Boolean);
   // Practice may loan a published shop weapon without granting ownership. All
   // real matches require every selected item to remain authorized at the last
@@ -281,6 +307,8 @@ function startGame(){
   aiming=false; rmbAim=false;
   bullets=[]; ebullets=[]; enemies=[]; particles=[]; pickups=[]; damageNumbers=[]; spawnQueue=[];
   wave=0; score=0; kills=0; betweenTimer=1400; prevBest=hiScore;
+  dailyEndlessRunSettled=false;dailyEndlessClearedWaves=0;
+  dailyEndlessTaskOwner=typeof dailyTaskOwnerKey==='function'?dailyTaskOwnerKey():'';
   practiceMode=null; practiceSpawns=[];
   powerUsed={}; invincUntil=0; waveSkipPending=0; coinTimeAcc=0; killCoinAcc=0; waveCoinBank=0;
   coinTrickles=[]; coinTricklePopT=0; chestRewardOpen=null; powerMenuOpen=false; respawnPromptT=0;
