@@ -940,14 +940,11 @@ function accountSettingsElements(){
     wrap:$('settingswrap'),box:$('settingsbox'),title:$('settingstitle'),account:$('settingsaccount'),intro:$('settingsintro'),
     home:$('settingshome'),usernameOpen:$('settingsusernameopen'),usernameSummary:$('settingsusernamesummary'),
     passwordOpen:$('settingspasswordopen'),passwordSummary:$('settingspasswordsummary'),
-    soundtrackOpen:$('settingssoundtrackopen'),soundtrackSummary:$('settingssoundtracksummary'),
-    usernamePanel:$('settingsusernamepanel'),passwordPanel:$('settingspasswordpanel'),soundtrackPanel:$('settingssoundtrackpanel'),
+    usernamePanel:$('settingsusernamepanel'),passwordPanel:$('settingspasswordpanel'),
     username:$('settingsusername'),usernameHint:$('settingsusernamehint'),
     usernameSave:$('settingsusernamesave'),usernameStatus:$('settingsusernamestatus'),usernameBack:$('settingsusernameback'),
     pass1:$('settingspass1'),pass2:$('settingspass2'),passwordSave:$('settingspasswordsave'),
     passwordStatus:$('settingspasswordstatus'),passwordBack:$('settingspasswordback'),
-    soundtrackStatus:$('settingssoundtrackstatus'),soundtrackBack:$('settingssoundtrackback'),
-    trackCalm:$('settingstrackcalm'),trackEnergetic:$('settingstrackenergetic'),trackPiano:$('settingstrackpiano'),
     signout:$('settingssignout'),close:$('settingsclose')
   };
 }
@@ -955,6 +952,7 @@ function accountSettingsSetStatus(kind,message,error=false){
   const el=accountSettingsElements(), target=kind==='password'?el.passwordStatus:el.usernameStatus;
   if(!target) return;
   target.textContent=String(message||''); target.className='settings-status'+(error?' error':'');
+  if(kind==='username'&&el.username)el.username.setAttribute('aria-invalid',error?'true':'false');
 }
 function accountSettingsCaptureFocus(){
   if(typeof document==='undefined') return null;
@@ -982,9 +980,7 @@ function accountSettingsFocusable(){
     ?[el.username,el.usernameSave,accountSettingsRequiredUsername?null:el.usernameBack,el.signout,accountSettingsRequiredUsername?null:el.close]
     :accountSettingsSection==='password'
       ?[el.pass1,el.pass2,el.passwordSave,el.passwordBack,el.signout,el.close]
-      :accountSettingsSection==='soundtrack'
-        ?[el.trackCalm,el.trackEnergetic,el.trackPiano,el.soundtrackBack,el.signout,el.close]
-        :[el.usernameOpen,el.passwordOpen,el.soundtrackOpen,el.signout,el.close];
+      :[el.usernameOpen,el.passwordOpen,el.signout,el.close];
   return choices.filter(node=>node&&!node.disabled&&typeof node.focus==='function');
 }
 function accountSettingsTrapTab(event){
@@ -997,7 +993,7 @@ function accountSettingsTrapTab(event){
 }
 function accountSettingsSetSection(section='menu',focus=false){
   const el=accountSettingsElements();
-  let next=['username','password','soundtrack'].includes(section)?section:'menu';
+  let next=['username','password'].includes(section)?section:'menu';
   if(accountSettingsRequiredUsername) next='username';
   if(accountSettingsBusy&&next!==accountSettingsSection)return accountSettingsSection;
   const previous=accountSettingsSection;
@@ -1007,17 +1003,16 @@ function accountSettingsSetSection(section='menu',focus=false){
     if(el.pass2) el.pass2.value='';
     accountSettingsSetStatus('password','');
   }
-  if(el.title) el.title.textContent=next==='username'?'USERNAME SETTINGS':next==='password'?'PASSWORD SETTINGS':next==='soundtrack'?'SOUNDTRACK SETTINGS':'ACCOUNT SETTINGS';
+  if(el.title) el.title.textContent=next==='username'?'USERNAME SETTINGS':next==='password'?'PASSWORD SETTINGS':'ACCOUNT SETTINGS';
   if(el.intro) el.intro.hidden=next!=='menu';
   if(el.home) el.home.hidden=next!=='menu';
   if(el.usernamePanel) el.usernamePanel.hidden=next!=='username';
   if(el.passwordPanel) el.passwordPanel.hidden=next!=='password';
-  if(el.soundtrackPanel) el.soundtrackPanel.hidden=next!=='soundtrack';
   if(el.close) el.close.textContent='CLOSE';
   if(focus){
     const target=next==='username'
       ?(!el.username||el.username.disabled?(accountSettingsRequiredUsername?el.signout:el.usernameBack):el.username)
-      :next==='password'?el.pass1:next==='soundtrack'?el.trackCalm:el.usernameOpen;
+      :next==='password'?el.pass1:el.usernameOpen;
     try{setTimeout(()=>target&&target.focus(),0);}catch(error){}
   }
   return next;
@@ -1057,11 +1052,6 @@ function accountSettingsSync(resetInput=false){
     ? 'Choose your public username'
     : locked?('@'+current+' · locked until '+accountSettingsDate(readyAt)):('@'+current+' · change available');
   if(el.passwordSummary) el.passwordSummary.textContent='Private · update your sign-in password';
-  const selectedTrack=typeof normalizedMusicTrack==='function'?normalizedMusicTrack(typeof musicTrack==='string'?musicTrack:'calm'):'calm';
-  if(el.soundtrackSummary)el.soundtrackSummary.textContent=typeof musicTrackLabel==='function'?musicTrackLabel(selectedTrack):selectedTrack.toUpperCase();
-  for(const [key,button] of [['calm',el.trackCalm],['energetic',el.trackEnergetic],['piano',el.trackPiano]])if(button){
-    const active=key===selectedTrack;button.classList.toggle('active',active);button.setAttribute('aria-pressed',active?'true':'false');
-  }
   if(el.usernameSave){
     el.usernameSave.textContent=chosen?'CHANGE USERNAME':'CHOOSE USERNAME';
     el.usernameSave.disabled=accountSettingsBusy||!profileReady||locked;
@@ -1071,19 +1061,12 @@ function accountSettingsSync(resetInput=false){
   if(el.pass1) el.pass1.disabled=accountSettingsBusy||!signedIn;
   if(el.pass2) el.pass2.disabled=accountSettingsBusy||!signedIn;
   if(el.signout) el.signout.disabled=accountSettingsBusy||!signedIn;
-  for(const control of [el.usernameOpen,el.passwordOpen,el.soundtrackOpen,el.usernameBack,el.passwordBack,el.soundtrackBack,el.close])
+  for(const control of [el.usernameOpen,el.passwordOpen,el.usernameBack,el.passwordBack,el.close])
     if(control)control.disabled=accountSettingsBusy;
   accountSettingsRequiredUsername=!!(signedIn&&accountSettingsRequiredUsername&&!chosen);
   el.wrap.classList.toggle('required',accountSettingsRequiredUsername);
   accountSettingsSetSection(accountSettingsSection);
   return true;
-}
-function accountSettingsSelectSoundtrack(value){
-  if(typeof initAudio==='function')initAudio();
-  const key=typeof normalizedMusicTrack==='function'?normalizedMusicTrack(value):'calm';
-  if(typeof setMusicTrack==='function')setMusicTrack(key,true);
-  const el=accountSettingsElements();if(el.soundtrackStatus)el.soundtrackStatus.textContent='NOW PLAYING · '+(typeof musicTrackLabel==='function'?musicTrackLabel(key):key.toUpperCase());
-  accountSettingsSync();return true;
 }
 function openAccountSettings(options={}){
   if(!authUser){ toggleAuth(); return false; }
@@ -1137,6 +1120,10 @@ function closeAccountSettings(force=false){
 async function saveAccountSettingsUsername(){
   const el=accountSettingsElements(), value=String(el.username&&el.username.value||'').trim();
   if(accountSettingsBusy) return false;
+  if(typeof socialUsernameValidationMessage==='function'){
+    const problem=socialUsernameValidationMessage(value,authUser&&authUser.id);
+    if(problem){accountSettingsSetStatus('username',problem,true);return false;}
+  }
   if(typeof socialUpdateHandle!=='function'){
     accountSettingsSetStatus('username','Username settings are still loading. Try again.',true); return false;
   }
@@ -1225,13 +1212,8 @@ function bindDomEvents(){
   if(typeof accountSettingsSetSection==='function'){
     $('settingsusernameopen').onclick=()=>accountSettingsSetSection('username',true);
     $('settingspasswordopen').onclick=()=>accountSettingsSetSection('password',true);
-    $('settingssoundtrackopen').onclick=()=>accountSettingsSetSection('soundtrack',true);
     $('settingsusernameback').onclick=()=>accountSettingsSetSection('menu',true);
     $('settingspasswordback').onclick=()=>accountSettingsSetSection('menu',true);
-    $('settingssoundtrackback').onclick=()=>accountSettingsSetSection('menu',true);
-  }
-  for(const id of ['settingstrackcalm','settingstrackenergetic','settingstrackpiano']){
-    const button=$(id);if(button)button.onclick=()=>accountSettingsSelectSoundtrack(button.dataset.track);
   }
   if(typeof closeAccountSettings==='function'){
     $('settingsclose').onclick=()=>closeAccountSettings();
@@ -1246,6 +1228,13 @@ function bindDomEvents(){
   }
   if(typeof saveAccountSettingsUsername==='function')
     $('settingsusername').addEventListener('keydown',event=>{ if(event.key==='Enter'){ event.preventDefault(); saveAccountSettingsUsername(); } });
+  $('settingsusername').addEventListener('input',()=>{
+    const el=typeof accountSettingsElements==='function'?accountSettingsElements():{};
+    if(!el.usernameStatus||!el.usernameStatus.classList.contains('error'))return;
+    const problem=typeof socialUsernameValidationMessage==='function'
+      ? socialUsernameValidationMessage(el.username&&el.username.value,authUser&&authUser.id):'';
+    accountSettingsSetStatus('username',problem,!!problem);
+  });
   if(typeof saveAccountSettingsPassword==='function') for(const id of ['settingspass1','settingspass2'])
     $(id).addEventListener('keydown',event=>{ if(event.key==='Enter'){ event.preventDefault(); saveAccountSettingsPassword(); } });
   const refreshTemporaryGifts=()=>{

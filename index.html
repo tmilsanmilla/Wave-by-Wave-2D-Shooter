@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OUTPOST ZERO — Tactical 2D Shooter</title>
-<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260830-identity-choice">
+<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260831-hub-tools-settings-v1">
 </head>
 <body>
 <canvas id="c" tabindex="-1"></canvas>
@@ -54,11 +54,12 @@
     <h2 id="usernameclaimtitle">CHOOSE YOUR USERNAME</h2>
     <p id="usernameclaimhint">Every signed-in operator needs one unique public username. Until you choose it, creator/main staff may use your email as the account label.</p>
     <input id="usernameclaiminput" type="text" placeholder="operator_7" autocomplete="off"
-      minlength="3" maxlength="32" autocapitalize="none" spellcheck="false" aria-label="Choose username">
+      minlength="3" autocapitalize="none" spellcheck="false" aria-label="Choose username"
+      aria-describedby="usernameclaimstatus" aria-invalid="false">
+    <div id="usernameclaimstatus" aria-live="polite"></div>
     <button id="usernameclaimsave" class="btn" type="button">OPEN SETTINGS</button>
     <button id="usernameclaimretry" class="btn" type="button">RETRY</button>
     <button id="usernameclaimsignout" class="btn" type="button">SIGN OUT</button>
-    <div id="usernameclaimstatus" aria-live="polite"></div>
   </div>
 </div>
 <button id="accountmenutrigger" type="button" aria-haspopup="dialog" aria-controls="accountmenuwrap"
@@ -100,19 +101,16 @@
         <span>PASSWORD</span>
         <small id="settingspasswordsummary">Set a new private sign-in password</small>
       </button>
-      <button id="settingssoundtrackopen" class="btn settings-choice" type="button">
-        <span>SOUNDTRACK</span>
-        <small id="settingssoundtracksummary">Calm · original ambient electronic loop</small>
-      </button>
     </nav>
     <section id="settingsusernamepanel" class="settings-section" aria-labelledby="settingsusernametitle" hidden>
       <h3 id="settingsusernametitle">PUBLIC USERNAME</h3>
       <p id="settingsusernamehint">Your username is shown in matches, parties, friends, messages, and leaderboards. After choosing one, you can change it once every 21 days.</p>
       <label class="sr-only" for="settingsusername">Public username</label>
       <input id="settingsusername" type="text" placeholder="operator_7" autocomplete="off"
-        minlength="3" maxlength="32" autocapitalize="none" spellcheck="false">
-      <button id="settingsusernamesave" class="btn" type="button">SAVE USERNAME</button>
+        minlength="3" autocapitalize="none" spellcheck="false"
+        aria-describedby="settingsusernamestatus" aria-invalid="false">
       <div id="settingsusernamestatus" class="settings-status" aria-live="polite"></div>
+      <button id="settingsusernamesave" class="btn" type="button">SAVE USERNAME</button>
       <button id="settingsusernameback" class="btn settings-section-back" type="button">BACK TO SETTINGS</button>
     </section>
     <section id="settingspasswordpanel" class="settings-section" aria-labelledby="settingspasswordtitle" hidden>
@@ -125,17 +123,6 @@
       <button id="settingspasswordsave" class="btn" type="button">CHANGE PASSWORD</button>
       <div id="settingspasswordstatus" class="settings-status" aria-live="polite"></div>
       <button id="settingspasswordback" class="btn settings-section-back" type="button">BACK TO SETTINGS</button>
-    </section>
-    <section id="settingssoundtrackpanel" class="settings-section" aria-labelledby="settingssoundtracktitle" hidden>
-      <h3 id="settingssoundtracktitle">CHOOSE SOUNDTRACK</h3>
-      <p>Switch instantly. Calm and Energetic are original Outpost Zero scores. Piano performs public-domain pieces by Bach and Beethoven.</p>
-      <div class="settings-track-grid" role="group" aria-label="Soundtrack">
-        <button id="settingstrackcalm" class="btn settings-track" type="button" data-track="calm">CALM<small>Ambient electronic</small></button>
-        <button id="settingstrackenergetic" class="btn settings-track" type="button" data-track="energetic">ENERGETIC<small>Original combat score</small></button>
-        <button id="settingstrackpiano" class="btn settings-track" type="button" data-track="piano">PIANO<small>Bach + Beethoven</small></button>
-      </div>
-      <div id="settingssoundtrackstatus" class="settings-status" aria-live="polite"></div>
-      <button id="settingssoundtrackback" class="btn settings-section-back" type="button">BACK TO SETTINGS</button>
     </section>
     <div id="settingsactions">
       <button id="settingssignout" class="btn" type="button">SIGN OUT</button>
@@ -242,33 +229,33 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./outpost-zero/js/networking.js?v=20260830-daily-or-tasks-v2"></script>
+<script src="./outpost-zero/js/networking.js?v=20260831-hub-tools-settings-v1"></script>
 <script src="./outpost-zero/js/core.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/audio.js?v=20260830-map-vote-ui"></script>
-<script src="./outpost-zero/js/weapons.js?v=20260830-utility-editor-frag-v1"></script>
+<script src="./outpost-zero/js/weapons.js?v=20260831-freezer-buff-v1"></script>
 <script src="./outpost-zero/js/economy-state.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/layout.js?v=20260830-map-vote-ui"></script>
-<script src="./outpost-zero/js/progression.js?v=20260830-map-vote-ui"></script>
+<script src="./outpost-zero/js/progression.js?v=20260831-shop-weapon-picker-v1"></script>
 <script src="./outpost-zero/js/administration.js?v=20260830-daily-or-tasks-v2"></script>
-<script src="./outpost-zero/js/persistence.js?v=20260830-daily-or-tasks-v2"></script>
-<script src="./outpost-zero/js/world.js?v=20260830-map-vote-ui"></script>
+<script src="./outpost-zero/js/persistence.js?v=20260831-shop-weapon-picker-v1"></script>
+<script src="./outpost-zero/js/world.js?v=20260831-tracking-drill-v1"></script>
 <script src="./outpost-zero/js/enemies.js?v=20260830-map-vote-ui"></script>
-<script src="./outpost-zero/js/state.js?v=20260830-background-resume-v1"></script>
+<script src="./outpost-zero/js/state.js?v=20260831-practice-infinite-ammo-v1"></script>
 <script src="./outpost-zero/js/party-state.js?v=20260830-map-vote-ui"></script>
-<script src="./outpost-zero/js/social.js?v=20260830-account-labels"></script>
-<script src="./outpost-zero/js/cpu-state.js?v=20260830-map-vote-ui"></script>
-<script src="./outpost-zero/js/upgrades.js?v=20260830-utility-editor-frag-v1"></script>
+<script src="./outpost-zero/js/social.js?v=20260831-username-validation-v1"></script>
+<script src="./outpost-zero/js/cpu-state.js?v=20260831-shop-weapon-picker-v1"></script>
+<script src="./outpost-zero/js/upgrades.js?v=20260831-hub-tools-settings-v1"></script>
 <script src="./outpost-zero/js/admin-ui.js?v=20260830-utility-editor-frag-v1"></script>
 <script src="./outpost-zero/js/abilities.js?v=20260830-twin-sai-fire-lock-v1"></script>
-<script src="./outpost-zero/js/input.js?v=20260830-sniper-fire-v1"></script>
-<script src="./outpost-zero/js/gameplay.js?v=20260830-freezer-projectile-v1"></script>
+<script src="./outpost-zero/js/input.js?v=20260831-shop-weapon-picker-v1"></script>
+<script src="./outpost-zero/js/gameplay.js?v=20260831-tracking-drill-v1"></script>
 <script src="./outpost-zero/js/ai.js?v=20260830-sniper-fire-v1"></script>
 <script src="./outpost-zero/js/ai-training.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/online.js?v=20260830-background-resume-v1"></script>
 <script src="./outpost-zero/js/party.js?v=20260830-cpu-combat-v2"></script>
-<script src="./outpost-zero/js/combat.js?v=20260830-utility-editor-frag-v1"></script>
-<script src="./outpost-zero/js/rendering.js?v=20260830-freezer-projectile-v1"></script>
-<script src="./outpost-zero/js/ui.js?v=20260830-utility-editor-frag-v1"></script>
+<script src="./outpost-zero/js/combat.js?v=20260831-practice-infinite-ammo-v1"></script>
+<script src="./outpost-zero/js/rendering.js?v=20260831-practice-infinite-ammo-v1"></script>
+<script src="./outpost-zero/js/ui.js?v=20260831-shop-weapon-picker-v1"></script>
 <script src="./outpost-zero/js/loop.js?v=20260830-daily-or-tasks-v2"></script>
 <script src="./outpost-zero/js/bootstrap.js?v=20260830-map-vote-ui"></script>
 </body>

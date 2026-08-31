@@ -189,24 +189,27 @@ function drawDetail(){
   const rowH=Math.max(11,Math.min(19,Math.floor((H-24-headHt-16)/Math.max(1,rows.length))));
   const ph=headHt+rows.length*rowH+16;
   const px=W/2-pw/2, py=Math.max(16, H/2-ph/2);
-  detailRects={panel:{x:px,y:py,w:pw,h:ph}, close:{x:px+pw-32,y:py+10,w:22,h:20}};
+  const closeSize=touchUI?36:32,close={x:px+pw-closeSize-10,y:py+10,w:closeSize,h:closeSize};
+  detailRects={panel:{x:px,y:py,w:pw,h:ph},close};
   ctx.fillStyle='#101208'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
   const cls = slot==='primary'?'PRIMARY':slot==='secondary'?'SIDEARM':slot==='melee'?'MELEE':'UTILITY';
   ctx.textAlign='left';
   ctx.fillStyle='#e8b658'; ctx.font='700 '+(H<430?15:18)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(def.name, pw-70), px+20, py+14);
+  ctx.fillText(fitLine(def.name, Math.max(40,close.x-(px+20)-8)), px+20, py+14);
   ctx.fillStyle=ROLECOL[cls]||'#8a9268'; ctx.font='700 10px ui-monospace,Consolas,monospace';
   ctx.fillText(cls, px+20, py+(H<430?32:36));
   // close X
-  const hc=mouse.x>=detailRects.close.x&&mouse.x<=detailRects.close.x+22&&mouse.y>=detailRects.close.y&&mouse.y<=detailRects.close.y+20;
+  const hc=mouse.x>=close.x&&mouse.x<=close.x+close.w&&mouse.y>=close.y&&mouse.y<=close.y+close.h;
+  ctx.save();
   ctx.fillStyle=hc?'#e8b658':'rgba(0,0,0,0.4)';
-  ctx.fillRect(px+pw-32,py+10,22,20);
-  ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+pw-31.5,py+10.5,22,20);
-  ctx.fillStyle=hc?'#101208':'#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
-  ctx.textAlign='center'; ctx.fillText('\u2715', px+pw-21, py+15);
+  ctx.fillRect(close.x,close.y,close.w,close.h);
+  ctx.strokeStyle='#4a4634';ctx.strokeRect(close.x+0.5,close.y+0.5,close.w-1,close.h-1);
+  ctx.fillStyle=hc?'#101208':'#8a9268';ctx.font='700 '+(touchUI?15:13)+'px ui-monospace,Consolas,monospace';
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText('\u2715',close.x+close.w/2,close.y+close.h/2);
+  ctx.restore();
   // description
-  ctx.textAlign='left'; ctx.fillStyle='#8a9268'; ctx.font=(H<430?'8':'10')+'px ui-monospace,Consolas,monospace';
+  ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#8a9268'; ctx.font=(H<430?'8':'10')+'px ui-monospace,Consolas,monospace';
   wrapTextClamped(def.blurb, px+20, py+(H<430?46:52), pw-40, H<430?10:13, H<430?2:3); // left-aligned inside the panel
   ctx.strokeStyle='rgba(74,70,52,0.7)';
   ctx.beginPath(); ctx.moveTo(px+16,py+headHt-8); ctx.lineTo(px+pw-16,py+headHt-8); ctx.stroke();
@@ -317,21 +320,21 @@ function drawBanNotice(){
 }
 function drawSelect(){
   layoutRects=[];                                         // one registry per frame
-  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; weaponBrowserRects=[]; socialRects=[]; partyRects=[]; partyModeRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; offlineCpuRects=[]; backRect=null;
+  cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; weaponBrowserRects=[]; socialRects=[]; partyRects=[]; partyModeRects=[]; toolsRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; offlineCpuRects=[]; backRect=null;
   adLeftRect=null; adRightRect=null; editHubBtnRect=null; boardPanelRect=null;
   adminHubBtnRect=null; suggestionsHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
   // page-scoped hit regions: clear them on every frame so a page you LEFT can never
   // swallow a click meant for the page you are on (stale shop/practice/feed buttons)
-  shopRects=[]; shopTabRects=[]; practiceRects=[]; arenaRects=[]; feedXRects=[];
-  cosPrevRect=null; cosNextRect=null; animPrevRect=null; animNextRect=null; pendingCancelRect=null;
-  tutBtnRect=null; settingsBtnRect=null; shopBtnRect=null; pracBtnRect=null; arenaBtnRect=null; tempBtnRect=null; deployRect=null;
+  shopRects=[]; shopTabRects=[]; shopWeaponPickerRects=[]; practiceRects=[]; arenaRects=[]; feedXRects=[];
+  pendingCancelRect=null;
+  tutBtnRect=null; settingsBtnRect=null; shopBtnRect=null; toolsBtnRect=null; pracBtnRect=null; arenaBtnRect=null; tempBtnRect=null; deployRect=null;
   if(typeof socialSetDomPageActive==='function')
     socialSetDomPageActive(selPage==='social'&&!banBlocksPlay()&&!dailyGateOpen&&!firstAccountWelcomeOpen&&!signUpPromptOpen);
   if(banBlocksPlay()){ drawBanPage(); return; }      // blocked accounts see only the ban page
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(firstAccountWelcomeOpen){ drawFirstAccountWelcome(); return; }
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='weapons') drawWeaponsHome(); else if(selPage==='weaponbrowse') drawWeaponBrowser(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='offlinecpu') drawOfflineCpuModes(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='social') drawSocial(); else if(selPage==='party') drawParty(); else if(selPage==='partymodes') drawPartyModes(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
+  if(selPage==='hub') drawHub(); else if(selPage==='weapons') drawWeaponsHome(); else if(selPage==='weaponbrowse') drawWeaponBrowser(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='offlinecpu') drawOfflineCpuModes(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='social') drawSocial(); else if(selPage==='party') drawParty(); else if(selPage==='partymodes') drawPartyModes(); else if(selPage==='tools') drawTools(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
   drawDetail();
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
@@ -396,8 +399,8 @@ const TUT_STEPS=[
    why:'RMB uses a utility only while it is visibly in hand. Casual online 1v1 allows utilities; CPU and ranked modes do not.',
    watch:'equipped: {equipped}  \u00b7  cast: {cast}'},
   {id:'med-pickup', title:'STORE A DROPPED MEDKIT',
-   how:'walk over the outlined white-and-red medkit',
-   why:'Dropped medkits go into your stash, even at full health. The stash holds up to five.',
+   how:'watch the outlined white-and-red medkit fly to you',
+   why:'Dropped medkits auto-collect into your stash, even at full health. The stash holds up to 15.',
    watch:'medkits stored: {n}/1'},
   {id:'med-use', title:'USE A STASHED MEDKIT',
    how:'press H  \u00b7  touch: tap MED',
@@ -438,7 +441,8 @@ function tutorialSpawnPickup(type){
     if(typeof pointInRects==='function'&&pointInRects(tx,ty)) continue;
     x=tx;y=ty;break;
   }
-  pickups.push({x,y,type,tutorialPickup:true});
+  if(type==='med'&&typeof collectDroppedMedkit==='function') collectDroppedMedkit(x,y);
+  else pickups.push({x,y,type,tutorialPickup:true});
 }
 function tutorialPlaceAbilityTarget(){
   let target=enemies.find(e=>e&&e.hp>0);
@@ -495,9 +499,12 @@ function startTutorial(){
   tutLastPos={x:player.x,y:player.y};
   // Practice normally grants infinite ammunition. Tutorial deliberately uses
   // finite reserves so the two-number HUD and ammo crates have real meaning.
-  player.reserve[loadout.primary]=magSize(loadout.primary)*2;
-  player.reserve[loadout.secondary]=magSize(loadout.secondary)*2;
+  // Five more reserve magazines than the old two-mag allowance. Together
+  // with the loaded magazine, each tutorial gun now starts with eight total.
+  player.reserve[loadout.primary]=magSize(loadout.primary)*7;
+  player.reserve[loadout.secondary]=magSize(loadout.secondary)*7;
   if(typeof medStash!=='undefined') medStash=0;
+  if(typeof medkitFlyFx!=='undefined') medkitFlyFx=[];
   if(typeof tutorialBeginStep==='function') tutorialBeginStep();
   waveMsg=''; waveMsgT=0;
 }
@@ -543,7 +550,7 @@ function tutStepDone(){
     case 'kill':        return tutorialDelta('killed')>=3;
     case 'melee':       return tutorialDelta('melee')>=1;
     case 'utility':     return tutorialDelta('utilityEquip')>=1&&tutorialDelta('utilityUse')>=1;
-    case 'med-pickup':  return tutorialDelta('med')>=1;
+    case 'med-pickup':  return tutorialDelta('med')>=1&&now-tutStepT>=650;
     case 'med-use':     return tutorialDelta('medUsed')>=1;
   }
   return false;
@@ -683,6 +690,49 @@ function tutorialClick(){
   }
   return false;
 }
+function drawTools(){
+  selBg(); toolsRects=[]; backRect=null;
+  const compact=H<500, margin=W<440?14:24;
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?22:30)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('\uD83E\uDDF0 TOOLS',W/2,compact?10:H*0.055);
+  ctx.fillStyle='#8a9268';ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('guides, rewards, sharing, and player lookup',W-margin*2),W/2,compact?38:H*0.055+39);
+
+  const items=[
+    {id:'howto',title:'\u2753 HOW TO PLAY',sub:'interactive tutorial and full control guide',col:'#8a9268'},
+    {id:'code',title:'\uD83C\uDF81 REDEEM CODE',sub:'enter an active Outpost Zero promo code',col:'#a7c15e'},
+    {id:'share',title:'\uD83D\uDD17 SHARE INVITE',sub:'send your referral link to a new player',col:'#bfa8ff'},
+    {id:'spin',title:'\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+' READY)':wheelCountdown()),sub:'daily reward wheel',col:wheelReady>0?'#e8b658':'#6b6450'},
+    {id:'lookup',title:'\uD83D\uDD0D PLAYER LOOKUP',sub:'find a player by username or account email',col:'#7fd8ff'}
+  ];
+  const backH=compact?34:40,backY=H-backH-(compact?8:14),top=compact?54:H*0.055+64,
+    gap=compact?5:9,contentW=Math.min(500,W-margin*2),x=W/2-contentW/2,
+    rowH=clamp(Math.floor((backY-top-12-gap*(items.length-1))/items.length),compact?32:40,compact?46:56);
+  let y=top;
+  for(const item of items){
+    const r={id:item.id,x,y,w:contentW,h:rowH};toolsRects.push(r);
+    const hot=mouse.x>=x&&mouse.x<=x+contentW&&mouse.y>=y&&mouse.y<=y+rowH;
+    ctx.fillStyle=hot?item.col:'rgba(0,0,0,0.42)';ctx.fillRect(x,y,contentW,rowH);
+    ctx.strokeStyle=item.col;ctx.lineWidth=1.5;ctx.strokeRect(x+0.5,y+0.5,contentW,rowH);
+    ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillStyle=hot?'#101208':'#e8d9a8';
+    ctx.font='700 '+(rowH<40?11:14)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText(fitLine(item.title,contentW-28),x+14,y+rowH/2-(rowH<40?0:8));
+    if(rowH>=40){
+      ctx.fillStyle=hot?'#24291a':'#8a9268';ctx.font=(compact?'8':'9')+'px ui-monospace,Consolas,monospace';
+      ctx.fillText(fitLine(item.sub,contentW-28),x+14,y+rowH/2+11);
+    }
+    y+=rowH+gap;
+  }
+  const backW=Math.min(240,contentW),backX=W/2-backW/2;
+  backRect={x:backX,y:backY,w:backW,h:backH};toolsRects.push(Object.assign({id:'back'},backRect));
+  const backHot=mouse.x>=backX&&mouse.x<=backX+backW&&mouse.y>=backY&&mouse.y<=backY+backH;
+  ctx.fillStyle=backHot?'#e8b658':'rgba(232,182,88,0.14)';ctx.fillRect(backX,backY,backW,backH);
+  ctx.strokeStyle='#e8b658';ctx.lineWidth=1;ctx.strokeRect(backX+0.5,backY+0.5,backW,backH);
+  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle=backHot?'#101208':'#e8b658';
+  ctx.font='700 14px ui-monospace,Consolas,monospace';ctx.fillText('\u2039 BACK',W/2,backY+backH/2);
+  ctx.textAlign='left';ctx.textBaseline='top';
+}
 function drawHowTo(){
   selBg(); howToRects=[]; backRect=null;
   ctx.textAlign='center'; ctx.textBaseline='top';
@@ -746,7 +796,7 @@ function drawTutorial(){
     ['QUICK MELEE','F anytime \u00b7 E/RMB with melee out \u00b7 touch: fist button'],
     ['UTILITY','G quick-casts \u00b7 4 equips \u00b7 RMB uses it while visible \u00b7 Casual 1v1 yes; CPU/Ranked no'],
     ['AMMO','magazine / reserve is limited \u00b7 walk over gold ammo crates to refill reserves'],
-    ['MEDKITS','drop every '+MED_DROP_KILLS_BASE+' campaign kills \u00b7 walk over to stash (max 5) \u00b7 H / touch MED'],
+    ['MEDKITS','drop every '+MED_DROP_KILLS_BASE+' campaign kills \u00b7 fly to your stash (max '+MED_STASH_MAX+') \u00b7 H / touch MED'],
     ['GEMS \uD83D\uDC8E','unlock published weapons in the Shop \u00b7 earn them from tasks, streaks, chests, and the wheel'],
     ['COINS \uD83E\uDE99','buy colors, equip animations, and pre-run power-ups in the Shop'],
     ['ANIMATIONS','cosmetic weapon-draw flourishes only \u00b7 they never change weapon strength'],
@@ -786,32 +836,119 @@ function drawTutorial(){
   ctx.textAlign='center';
   ctx.fillText('\u2039 BACK', W/2, by+(bh-15)/2);
 }
+const SHOP_WEAPON_PICKER_CATEGORIES=[
+  {id:'primary',label:'PRIMARY'},
+  {id:'secondary',label:'SECONDARY'},
+  {id:'melee',label:'MELEE'},
+];
+function shopWeaponPickerCategory(k){
+  if(PRIMARIES.includes(k)||TEMP_PRIMARY.includes(k)) return 'primary';
+  if(SECONDARIES.includes(k)||TEMP_SECONDARY.includes(k)) return 'secondary';
+  if(MELEES.includes(k)||TEMP_MELEE.includes(k)) return 'melee';
+  return '';
+}
+function shopWeaponPickerGroups(){
+  const groups={primary:[],secondary:[],melee:[]};
+  for(const k of WKEYS){
+    const cat=shopWeaponPickerCategory(k);
+    if(cat&&WEAPONS[k]&&!isLocked(k)&&!groups[cat].includes(k)) groups[cat].push(k);
+  }
+  return groups;
+}
+function openShopWeaponPicker(target){
+  shopWeaponPickerTarget=target==='anims'?'anims':'cosmetics';
+  const current=shopWeaponPickerTarget==='anims'?shopAnimWeapon:shopCosWeapon;
+  const groups=shopWeaponPickerGroups(), currentCat=shopWeaponPickerCategory(current);
+  shopWeaponPickerCat=currentCat&&groups[currentCat].includes(current)
+    ? currentCat
+    : (SHOP_WEAPON_PICKER_CATEGORIES.find(cat=>groups[cat.id].length)||SHOP_WEAPON_PICKER_CATEGORIES[0]).id;
+  shopWeaponPickerOpen=true;
+}
+function chooseShopWeapon(k){
+  const groups=shopWeaponPickerGroups(), cat=shopWeaponPickerCategory(k);
+  if(!cat||!groups[cat].includes(k)) return false;
+  if(shopWeaponPickerTarget==='anims') shopAnimWeapon=k;
+  else shopCosWeapon=k;
+  shopWeaponPickerOpen=false;
+  return true;
+}
+function drawShopWeaponButton(cw,y,target,k){
+  const x=W/2-cw/2, h=46, wname=(WEAPONS[k]||{}).name||k||'NONE AVAILABLE';
+  const hot=mouse.x>=x&&mouse.x<=x+cw&&mouse.y>=y&&mouse.y<=y+h;
+  shopWeaponPickerRects.push({kind:'open',target,x,y,w:cw,h});
+  ctx.fillStyle=hot?'rgba(127,216,255,0.18)':'rgba(0,0,0,0.42)'; ctx.fillRect(x,y,cw,h);
+  ctx.strokeStyle=hot?'#7fd8ff':'#4a4634'; ctx.lineWidth=hot?2:1; ctx.strokeRect(x+0.5,y+0.5,cw-1,h-1);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillStyle=hot?'#bfe8ff':'#7fd8ff'; ctx.font='700 13px ui-monospace,Consolas,monospace';
+  ctx.fillText('WEAPONS',W/2,y+15);
+  ctx.fillStyle='#cdd6b0'; ctx.font='700 9px ui-monospace,Consolas,monospace';
+  ctx.fillText(fitLine('SELECTED · '+wname+' · TAP TO CHANGE',cw-20),W/2,y+33);
+  ctx.textBaseline='alphabetic';
+  return y+h+10;
+}
+function drawShopWeaponPicker(cw,y){
+  const x=W/2-cw/2, compact=H<520, groups=shopWeaponPickerGroups();
+  if(!groups[shopWeaponPickerCat]||!groups[shopWeaponPickerCat].length){
+    const first=SHOP_WEAPON_PICKER_CATEGORIES.find(cat=>groups[cat.id].length);
+    if(first) shopWeaponPickerCat=first.id;
+  }
+  ctx.textAlign='center'; ctx.textBaseline='alphabetic';
+  ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(compact?15:17)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('CHOOSE A WEAPON',W/2,y+(compact?13:15));
+  y+=compact?23:27;
+
+  const gap=6, tabH=compact?26:30, tabW=(cw-gap*2)/3;
+  for(let i=0;i<SHOP_WEAPON_PICKER_CATEGORIES.length;i++){
+    const cat=SHOP_WEAPON_PICKER_CATEGORIES[i], tx=x+i*(tabW+gap), active=shopWeaponPickerCat===cat.id;
+    const hot=mouse.x>=tx&&mouse.x<=tx+tabW&&mouse.y>=y&&mouse.y<=y+tabH;
+    shopWeaponPickerRects.push({kind:'category',cat:cat.id,x:tx,y,w:tabW,h:tabH});
+    ctx.fillStyle=active?'rgba(232,182,88,0.22)':hot?'rgba(255,255,255,0.08)':'rgba(0,0,0,0.38)'; ctx.fillRect(tx,y,tabW,tabH);
+    ctx.strokeStyle=active?'#e8b658':'#4a4634'; ctx.lineWidth=active?2:1; ctx.strokeRect(tx+0.5,y+0.5,tabW-1,tabH-1);
+    ctx.fillStyle=active?'#ffe3a0':'#8a9268'; ctx.font='700 '+(tabW<92?8:10)+'px ui-monospace,Consolas,monospace';
+    ctx.textBaseline='middle'; ctx.fillText(cat.label+' · '+groups[cat.id].length,tx+tabW/2,y+tabH/2);
+  }
+  y+=tabH+(compact?7:10);
+
+  const keys=groups[shopWeaponPickerCat]||[];
+  if(!keys.length){
+    ctx.fillStyle='#6b7455'; ctx.font='700 12px ui-monospace,Consolas,monospace';
+    ctx.fillText('NO AVAILABLE WEAPONS',W/2,y+24);
+    ctx.textBaseline='alphabetic';
+    return y+48;
+  }
+  const cols=compact?3:2, cardGap=compact?5:8, rows=Math.ceil(keys.length/cols);
+  const cardW=(cw-cardGap*(cols-1))/cols, room=Math.max(34,H-72-y-cardGap*(rows-1));
+  const cardH=clamp(Math.floor(room/rows),compact?34:42,compact?50:58);
+  const selected=shopWeaponPickerTarget==='anims'?shopAnimWeapon:shopCosWeapon;
+  for(let i=0;i<keys.length;i++){
+    const k=keys[i], def=WEAPONS[k], cx=x+(i%cols)*(cardW+cardGap), cy=y+Math.floor(i/cols)*(cardH+cardGap);
+    const active=k===selected, hot=mouse.x>=cx&&mouse.x<=cx+cardW&&mouse.y>=cy&&mouse.y<=cy+cardH;
+    shopWeaponPickerRects.push({kind:'weapon',key:k,x:cx,y:cy,w:cardW,h:cardH});
+    ctx.fillStyle=active?'rgba(167,193,94,0.20)':hot?'rgba(127,216,255,0.13)':'rgba(0,0,0,0.40)'; ctx.fillRect(cx,cy,cardW,cardH);
+    ctx.strokeStyle=active?'#a7c15e':hot?'#7fd8ff':'#4a4634'; ctx.lineWidth=active||hot?2:1; ctx.strokeRect(cx+0.5,cy+0.5,cardW-1,cardH-1);
+    ctx.fillStyle=active?'#dff2a8':'#e8d9a8'; ctx.font='700 '+(cardW<150?9:11)+'px ui-monospace,Consolas,monospace';
+    ctx.textBaseline='middle'; ctx.fillText(fitLine(def.name,cardW-14),cx+cardW/2,cy+cardH/2-(active?6:0));
+    if(active){
+      ctx.fillStyle='#a7c15e'; ctx.font='700 8px ui-monospace,Consolas,monospace';
+      ctx.fillText('✔ SELECTED',cx+cardW/2,cy+cardH/2+9);
+    }
+  }
+  ctx.textBaseline='alphabetic';
+  return y+rows*(cardH+cardGap)-cardGap;
+}
 function drawShopAnims(cw, y){
   const x0=W/2-cw/2;
-  const pickable=WKEYS.filter(k=>!isLocked(k));
+  const groups=shopWeaponPickerGroups(), pickable=SHOP_WEAPON_PICKER_CATEGORIES.flatMap(cat=>groups[cat.id]);
   if(!shopAnimWeapon || !pickable.includes(shopAnimWeapon)) shopAnimWeapon=pickable[0];
   ctx.textAlign='center'; ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine('pick a weapon, then buy how it flourishes when you draw it', W-24), W/2, y);
   y+=14;
-  // < weapon name >
-  const selH=34, aw=40;
-  const wname=(WEAPONS[shopAnimWeapon]||{}).name||shopAnimWeapon;
-  ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(x0,y,cw,selH);
-  ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,cw,selH);
-  animPrevRect={x:x0,y:y,w:aw,h:selH}; animNextRect={x:x0+cw-aw,y:y,w:aw,h:selH};
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  for(const [r,ch] of [[animPrevRect,'\u2039'],[animNextRect,'\u203A']]){
-    const hv=mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
-    ctx.fillStyle=hv?'rgba(255,255,255,0.10)':'rgba(255,255,255,0.04)'; ctx.fillRect(r.x,r.y,r.w,r.h);
-    ctx.fillStyle=hv?'#e8d9a8':'#8a9268'; ctx.font='700 16px ui-monospace,Consolas,monospace';
-    ctx.fillText(ch, r.x+r.w/2, r.y+r.h/2);
-  }
-  ctx.fillStyle='#e8d9a8'; ctx.font='700 13px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(wname, cw-2*aw-12), x0+cw/2, y+selH/2);
-  ctx.textBaseline='alphabetic';
-  y+=selH+10;
+  if(!shopAnimWeapon) return y+48;
+  y=drawShopWeaponButton(cw,y,'anims',shopAnimWeapon);
+  const rowCount=EQUIP_ANIMS.length, rowGap=clamp(Math.floor((H-64-y)*0.02),3,8);
+  const rowH=clamp(Math.floor((H-64-y-rowGap*(rowCount-1))/rowCount),28,44);
   for(const a of EQUIP_ANIMS){
-    const h=44, owned=a.id==='none'||!!animOwned[animKey(shopAnimWeapon,a.id)], eq=animOf(shopAnimWeapon)===a.id;
+    const h=rowH, owned=a.id==='none'||!!animOwned[animKey(shopAnimWeapon,a.id)], eq=animOf(shopAnimWeapon)===a.id;
     shopRects.push({x:x0,y,w:cw,h,kind:'anim',anim:a,wkey:shopAnimWeapon});
     const hv=mouse.x>=x0&&mouse.x<=x0+cw&&mouse.y>=y&&mouse.y<=y+h;
     ctx.fillStyle= eq?'rgba(167,193,94,0.18)':hv?'rgba(255,255,255,0.06)':'rgba(0,0,0,0.35)';
@@ -819,20 +956,22 @@ function drawShopAnims(cw, y){
     ctx.strokeStyle= eq?'#a7c15e':'#4a4634'; ctx.lineWidth=1; ctx.strokeRect(x0+0.5,y+0.5,cw,h);
     ctx.textAlign='left'; ctx.textBaseline='middle';
     ctx.fillStyle='#cdd6b0'; ctx.font='700 13px ui-monospace,Consolas,monospace';
-    ctx.fillText(a.name, x0+14, y+16);
-    ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
-    ctx.fillText(a.d, x0+14, y+31);
+    ctx.fillText(a.name, x0+14, y+(h<38?h/2:16));
+    if(h>=38){
+      ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
+      ctx.fillText(a.d, x0+14, y+31);
+    }
     ctx.textAlign='right'; ctx.font='700 12px ui-monospace,Consolas,monospace';
     ctx.fillStyle= eq?'#a7c15e':owned?'#a7c15e':(coins>=a.cost?'#bfe8ff':'#6b7455');
     ctx.fillText(eq?'\u2714 EQUIPPED':owned?'EQUIP':(a.cost+' \uD83E\uDE99'), x0+cw-14, y+h/2);
     ctx.textBaseline='alphabetic';
-    y+=h+8;
+    y+=h+rowGap;
   }
   ctx.textAlign='center';
   return y;
 }
 function drawShop(){
-  selBg(); shopRects=[];
+  selBg(); shopRects=[]; shopWeaponPickerRects=[];
   const cw=Math.min(460,W-70);
   ctx.textAlign='center'; ctx.textBaseline='alphabetic';
   ctx.fillStyle='#7fd8ff'; ctx.font='700 22px ui-monospace,Consolas,monospace';
@@ -858,7 +997,12 @@ function drawShop(){
   }
 
   let y=tY+tH+16;
-  if(shopTab==='weapons')        y=drawShopWeapons(cw, y);
+  // On portrait phones the account/currency badge owns the upper-left lane.
+  // Shift every Shop section below it so neither products nor WEAPONS controls
+  // are hidden underneath the badge.
+  if(W<520&&H>W) y+=50;
+  if(shopWeaponPickerOpen)       y=drawShopWeaponPicker(cw,y);
+  else if(shopTab==='weapons')   y=drawShopWeapons(cw, y);
   else if(shopTab==='cosmetics') y=drawShopCosmetics(cw, y);
   else if(shopTab==='anims')     y=drawShopAnims(cw, y);
   else                           y=drawShopPowerups(cw, y);
@@ -871,7 +1015,10 @@ function drawShop(){
   ctx.strokeStyle='#e8b658'; ctx.lineWidth=1; ctx.strokeRect(bx+0.5,by+0.5,bw,bh);
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillStyle=hov?'#101208':'#e8b658'; ctx.font='700 15px ui-monospace,Consolas,monospace';
-  ctx.fillText('\u2039 BACK', W/2, by+bh/2);
+  const backLabel=shopWeaponPickerOpen
+    ? '\u2039 BACK TO '+(shopWeaponPickerTarget==='anims'?'ANIMS':'COLORS')
+    : '\u2039 BACK';
+  ctx.fillText(backLabel, W/2, by+bh/2);
   ctx.textBaseline='alphabetic';
 }
 let shopExpanded=null;                               // which shop row is opened up
@@ -988,33 +1135,15 @@ function drawShopWeapons(cw, y){
 }
 function drawShopCosmetics(cw, y){
   const x=W/2-cw/2;
-  // weapon picker: cycle through everything the player owns/can use
-  const pickable=WKEYS.filter(k=>!isLocked(k));
+  const groups=shopWeaponPickerGroups(), pickable=SHOP_WEAPON_PICKER_CATEGORIES.flatMap(cat=>groups[cat.id]);
   if(!shopCosWeapon || !pickable.includes(shopCosWeapon)) shopCosWeapon=pickable[0];
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace';
   ctx.textBaseline='alphabetic';
   ctx.fillText(fitLine('choose a weapon, then unlock a color for it \u00b7 '+COSMETIC_COST+' \uD83E\uDE99 each', W-24), W/2, y);
   y+=14;
-  // < weapon name >
-  const selW=cw, selH=34;
-  const wname=(WEAPONS[shopCosWeapon]||{}).name||shopCosWeapon;
-  ctx.fillStyle='rgba(0,0,0,0.4)'; ctx.fillRect(x,y,selW,selH);
-  ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(x+0.5,y+0.5,selW,selH);
-  // arrows
-  const ah=selH, aw=40;
-  cosPrevRect={x:x,y:y,w:aw,h:ah}; cosNextRect={x:x+selW-aw,y:y,w:aw,h:ah};
-  const ph=mouse.x>=x&&mouse.x<=x+aw&&mouse.y>=y&&mouse.y<=y+ah;
-  const nh=mouse.x>=x+selW-aw&&mouse.x<=x+selW&&mouse.y>=y&&mouse.y<=y+ah;
-  ctx.fillStyle=ph?'#e8b658':'#8a9268'; ctx.font='700 18px ui-monospace,Consolas,monospace';
-  ctx.textAlign='center'; ctx.textBaseline='middle';
-  ctx.fillText('\u2039', x+aw/2, y+ah/2);
-  ctx.fillStyle=nh?'#e8b658':'#8a9268';
-  ctx.fillText('\u203A', x+selW-aw/2, y+ah/2);
-  ctx.fillStyle='#e8d9a8'; ctx.font='700 15px ui-monospace,Consolas,monospace';
-  ctx.fillText(wname, W/2, y+selH/2);
-  ctx.textBaseline='alphabetic';
-  y+=selH+16;
+  if(!shopCosWeapon) return y+48;
+  y=drawShopWeaponButton(cw,y,'cosmetics',shopCosWeapon)+6;
   // color swatches grid
   const cols=3, sw=(cw-2*14)/cols, sh=56, gy=12;
   for(let i=0;i<COSMIC_COLORS.length;i++){
@@ -1177,21 +1306,35 @@ function drawPractice(){
   ctx.fillText('\uD83C\uDFAF PRACTICE', W/2, titleY);
   ctx.fillStyle='#8a9268'; ctx.font=(tiny?'9':'12')+'px ui-monospace,Consolas,monospace';
   const subY=tiny?34:H*0.05+38;
-  ctx.fillText(fitLine('offline \u00b7 no score, loot, or tasks \u00b7 unlimited ammo', W-24), W/2, subY);
+  ctx.fillText(fitLine('offline \u00b7 no score, loot, or tasks', W-24), W/2, subY);
   const needsLoadout=!(loadout.primary && loadout.secondary && loadout.melee);
   if(needsLoadout){
     ctx.fillStyle='#d0a548'; ctx.font='700 11px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine('\u26A0 tap a mode, then pick your weapons', W-24), W/2, tiny?49:H*0.05+56);
   }
+  const toggleH=tiny?25:32, toggleW=Math.min(460,W-(tiny?20:80));
+  const toggleX=W/2-toggleW/2;
+  const toggleY=tiny?(needsLoadout?60:45):(needsLoadout?H*0.05+66:H*0.05+52);
+  const toggleHover=mouse.x>=toggleX&&mouse.x<=toggleX+toggleW&&mouse.y>=toggleY&&mouse.y<=toggleY+toggleH;
+  practiceRects.push({x:toggleX,y:toggleY,w:toggleW,h:toggleH,action:'practice-infinite-ammo'});
+  ctx.fillStyle=practiceInfiniteAmmo
+    ? (toggleHover?'#cfe0a8':'rgba(167,193,94,0.24)')
+    : (toggleHover?'rgba(232,182,88,0.24)':'rgba(0,0,0,0.4)');
+  ctx.fillRect(toggleX,toggleY,toggleW,toggleH);
+  ctx.strokeStyle=practiceInfiniteAmmo?'#a7c15e':'#e8b658';ctx.strokeRect(toggleX+0.5,toggleY+0.5,toggleW,toggleH);
+  ctx.fillStyle=practiceInfiniteAmmo&&toggleHover?'#101208':practiceInfiniteAmmo?'#cfe0a8':'#e8b658';
+  ctx.font='700 '+(tiny?9:11)+'px ui-monospace,Consolas,monospace';ctx.textBaseline='middle';
+  ctx.fillText(fitLine(practiceInfiniteAmmo?'INFINITE AMMO: ON  \u00b7  \u221E MAGAZINE  \u00b7  NO RELOAD':'INFINITE AMMO: OFF  \u00b7  TAP TO ENABLE',toggleW-18),W/2,toggleY+toggleH/2);
+  ctx.textBaseline='alphabetic';
   const OPTS=[
     {mode:'range', name:'SHOOTING RANGE', d:'one of every enemy type \u00b7 they stand still \u00b7 respawn 3s after a kill'},
     {mode:'dps',   name:'DPS DUMMY',      d:'an unbreakable target \u00b7 live damage-per-second readout'},
-    {mode:'tracking', name:'TRACKING DUMMY', d:'one moving dummy \u00b7 choose its speed and travel direction', controls:true},
+    {mode:'tracking', name:'TRACKING DUMMY', d:'open arena \u00b7 0.5\u00d7 speed steps to 5\u00d7 \u00b7 eight 45\u00b0 directions', controls:true},
     {mode:'boss',  name:'WARLORD FIGHT',  d:'all four warlords, fully live \u00b7 you respawn on death'},
   ];
   const cw=Math.min(460,W-(tiny?20:80)), gap=tiny?5:14;
   const bh=tiny?30:44, bottomPad=tiny?7:14, backGap=tiny?5:8;
-  let y=tiny?(needsLoadout?63:50):H*0.05+62;
+  let y=toggleY+toggleH+(tiny?5:9);
   const cardBottom=H-bottomPad-bh-backGap;
   const controlsExtra=tiny?54:60;
   const ch=clamp(Math.floor((cardBottom-y-gap*(OPTS.length-1)-controlsExtra)/OPTS.length),28,tiny?64:70);
@@ -1231,7 +1374,7 @@ function drawPractice(){
         ctx.fillText(rightAction.label,right.x+right.w/2,ry+rowH/2);
         ctx.textBaseline='top';
       };
-      drawControlRow(firstY,'SPEED  '+practiceTrackingSpeed.toFixed(1)+'\u00d7',{action:'tracking-speed',delta:-PRACTICE_TRACKING_SPEED_STEP,label:'\u2212'},{action:'tracking-speed',delta:PRACTICE_TRACKING_SPEED_STEP,label:'+'});
+      drawControlRow(firstY,'SPEED  '+normalizePracticeTrackingSpeed().toFixed(1)+'\u00d7',{action:'tracking-speed',delta:-PRACTICE_TRACKING_SPEED_STEP,label:'\u2212'},{action:'tracking-speed',delta:PRACTICE_TRACKING_SPEED_STEP,label:'+'});
       drawControlRow(secondY,'DIRECTION  '+Math.round(normalizePracticeTrackingDirection())+'\u00b0  '+practiceTrackingDirectionArrow(),{action:'tracking-direction',delta:-PRACTICE_TRACKING_DIRECTION_STEP,label:'\u21b6'},{action:'tracking-direction',delta:PRACTICE_TRACKING_DIRECTION_STEP,label:'\u21b7'});
     }
     y+=cardH+gap;
@@ -1652,6 +1795,7 @@ function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=
 }
 function navigateSelectBack(){
   if(detailKey){ detailKey=null; sfx('swap'); return; }
+  if(selPage==='shop'&&shopWeaponPickerOpen){ shopWeaponPickerOpen=false; sfx('swap'); return; }
   if(selPage==='weaponbrowse'){ selPage='weapons'; sfx('swap'); return; }
   if(selPage==='weapons'){ selPage='hub'; sfx('swap'); return; }
   if(CATS.some(c=>c[0]===selPage)){ selPage=pendingGameMode?'loadout':'hub'; sfx('swap'); return; }
@@ -2205,26 +2349,26 @@ function drawSocial(){
     }else{
       panelFrame(p,inboxPanelTitle,col,'25 ACTIVE CONVERSATIONS MAX');
       const tabY=p.y+(tiny?18:compact?25:31),tabH=tiny?21:compact?27:31,tabGap=compact?5:8,tabW=(p.w-12-tabGap)/2,
-        section=typeof socialInboxSection==='string'&&socialInboxSection==='archive'?'archive':'inbox';
-      drawSocialButton('inbox_section_inbox','INBOX · '+conversations.filter(row=>!row.archived).length,p.x+6,tabY,tabW,tabH,col,true,{active:section==='inbox'});
-      drawSocialButton('inbox_section_archive','ARCHIVE · '+conversations.filter(row=>row.archived).length,p.x+6+tabW+tabGap,tabY,tabW,tabH,'#8a9268',true,{active:section==='archive'});
-      const headY=tabY+tabH+(tiny?3:compact?5:7),officialMeta=value=>{
+        section=typeof socialInboxSection==='string'&&socialInboxSection==='archive'?'archive':'inbox',
+        notificationRows=authUser&&typeof socialNotifications!=='undefined'&&Array.isArray(socialNotifications)?socialNotifications:[],
+        archivedUpdateNotices=notificationRows.filter(notice=>typeof socialOfficialUpdateAutoArchived==='function'&&socialOfficialUpdateAutoArchived(notice)),
+        activeNotices=notificationRows.filter(notice=>!(typeof socialOfficialUpdateAutoArchived==='function'&&socialOfficialUpdateAutoArchived(notice))),
+        officialMeta=value=>{
         const stamp=Date.parse(value||'');if(!Number.isFinite(stamp))return 'OUTPOST ZERO · OFFICIAL';
         const date=new Date(stamp);try{return 'POSTED '+date.toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});}catch(error){return 'POSTED '+date.toISOString().slice(0,16).replace('T',' ')+' UTC';}
       };
-      const official=section==='inbox'?(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]).filter(row=>row&&row.approved===true&&String(row.heading||row.message||'').trim()&&
+      const fallbackOfficial=(!authUser||socialNotificationSqlReady!==true?(typeof banners!=='undefined'&&Array.isArray(banners)?banners:[]):[]).filter(row=>row&&row.approved===true&&String(row.heading||row.message||'').trim()&&
           !(typeof socialOfficialBannerAlreadyNotified==='function'&&socialOfficialBannerAlreadyNotified(row)))
-        .map(row=>({kind:'official',id:row.id,title:String(row.heading||row.message||'OFFICIAL UPDATE'),body:String(row.details||row.message||''),meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)})):[];
-      const notices=section==='inbox'?(authUser&&typeof socialNotifications!=='undefined'&&Array.isArray(socialNotifications)?socialNotifications:[])
-        .map(notice=>({kind:'notification',notice,sortAt:+notice.createdAt||0})):[];
-      const cloudInvites=section==='inbox'?(authUser&&typeof socialPartyInvites!=='undefined'&&Array.isArray(socialPartyInvites)?socialPartyInvites:[])
-        .map(invite=>({kind:'cloud_party_invite',invite,sortAt:+invite.createdAt||0})):[];
-      const legacyInvites=section==='inbox'?(authUser&&Array.isArray(socialMessages)?socialMessages:[]).filter(row=>
-        (typeof socialPrivateMessageVisible!=='function'||socialPrivateMessageVisible(row))&&
-        ((typeof socialCpuGameInviteEnvelope==='function'&&socialCpuGameInviteEnvelope(row.body))||(typeof socialPartyInviteEnvelope==='function'&&socialPartyInviteEnvelope(row.body))))
-        .map(row=>({kind:'legacy_invite',row,sortAt:Date.parse(row.created_at||'')||(+row.id||0)})):[];
+        .map(row=>({kind:'official',id:row.id,title:String(row.heading||row.message||'OFFICIAL UPDATE'),body:String(row.details||row.message||''),meta:officialMeta(row.created_at),sortAt:Date.parse(row.created_at||'')||(+row.id||0)})),
+        official=section==='inbox'?fallbackOfficial:[],noticeSource=section==='archive'?archivedUpdateNotices:activeNotices,
+        notices=noticeSource.map(notice=>({kind:'notification',notice,sortAt:+notice.createdAt||0})),
+        inboxCount=conversations.filter(row=>!row.archived).length+activeNotices.length+fallbackOfficial.length,
+        archiveCount=conversations.filter(row=>row.archived).length+archivedUpdateNotices.length;
+      drawSocialButton('inbox_section_inbox','INBOX · '+inboxCount,p.x+6,tabY,tabW,tabH,col,true,{active:section==='inbox'});
+      drawSocialButton('inbox_section_archive','ARCHIVE · '+archiveCount,p.x+6+tabW+tabGap,tabY,tabW,tabH,'#8a9268',true,{active:section==='archive'});
+      const headY=tabY+tabH+(tiny?3:compact?5:7);
       const threadRows=conversations.filter(row=>section==='archive'?row.archived:!row.archived).map(conversation=>({kind:'conversation',conversation,sortAt:conversation.lastAt})),
-        inboxRows=notices.concat(official,cloudInvites,legacyInvites,threadRows).sort((a,b)=>b.sortAt-a.sortAt),
+        inboxRows=notices.concat(official,threadRows).sort((a,b)=>b.sortAt-a.sortAt),
         desiredRowH=tiny?25:compact?36:47,listSpace=Math.max(0,footerY-headY-2),maxRows=listSpace>=12?Math.max(1,Math.floor(listSpace/desiredRowH)):0,
         rowH=maxRows?Math.min(desiredRowH,listSpace/maxRows):0,pages=Math.max(1,Math.ceil(inboxRows.length/Math.max(1,maxRows)));
       socialMessagePage=clamp(socialMessagePage,0,pages-1);
@@ -2261,27 +2405,14 @@ function drawSocial(){
           ctx.fillStyle='rgba(232,182,88,.11)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText('OFFICIAL UPDATE',p.x+9,y+3);
           ctx.fillStyle='#f0ddb0';ctx.font=(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(item.title,p.w-18),p.x+9,y+(tiny?14:compact?19:25));socialRects.push({id:'official_update_open',x:p.x+5,y,w:p.w-10,h:rowH-2,enabled:true,title:item.title,body:item.body,meta:item.meta,updateId:item.id});continue;
         }
-        if(item.kind==='cloud_party_invite'){
-          const invite=item.invite,cpu=invite&&invite.kind==='cpu2v2',live=invite&&invite.expiresAt>(typeof socialPartyInviteServerNow==='function'?socialPartyInviteServerNow():Date.now()),joinW=live?Math.min(compact?64:88,p.w*.24):0,bodyW=p.w-18-(joinW?joinW+6:0);
-          ctx.fillStyle='rgba(191,168,255,.11)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine('FROM @'+String(invite&&invite.senderUsername||'PLAYER'),bodyW),p.x+9,y+3);
-          ctx.fillStyle='#cdd6b0';ctx.fillText(fitLine(live?(cpu?'CPU 2v2 INVITE':'PARTY INVITE'):'INVITE EXPIRED',bodyW),p.x+9,y+(tiny?14:compact?19:25));
-          if(live)drawSocialButton('cloud_party_invite_accept',cpu?'START':'JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-4),'#bfa8ff',true,{inviteKey:String(invite.uiKey||'')});continue;
-        }
-        const m=item.row,incoming=String(m.recipient_id||'')===String(authUser&&authUser.id||''),other=incoming?m.sender_id:m.recipient_id,person=socialPerson(other),canJoin=socialAcceptedFriend(other),messageKey=typeof socialPrivateMessageUiKey==='function'?socialPrivateMessageUiKey(m):'',handled=typeof socialLegacyInviteHandled==='function'&&socialLegacyInviteHandled(m,authUser.id),
-          cpuEnvelope=typeof socialCpuGameInviteEnvelope==='function'?socialCpuGameInviteEnvelope(m.body):null,cpuInvite=incoming&&canJoin&&!handled&&typeof socialCpuGameInvite==='function'?socialCpuGameInvite(m.body):null,
-          partyEnvelope=typeof socialPartyInviteEnvelope==='function'?socialPartyInviteEnvelope(m.body):null,partyInvite=incoming&&canJoin&&!handled&&typeof socialPartyInvite==='function'?socialPartyInvite(m.body):null,
-          action=cpuInvite||partyInvite,joinW=action?Math.min(compact?64:88,p.w*.24):0,bodyW=p.w-18-(joinW?joinW+6:0);
-        ctx.fillStyle='rgba(191,168,255,.09)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine((incoming?'FROM ':'TO ')+'@'+person.handle,bodyW),p.x+9,y+3);
-        const label=handled?'INVITE DISMISSED':cpuEnvelope?'CPU 2v2 GAME INVITE':partyEnvelope?'PARTY INVITE':'INVITE';ctx.fillStyle='#cdd6b0';ctx.fillText(fitLine(label,bodyW),p.x+9,y+(tiny?14:compact?19:25));
-        if(cpuInvite)drawSocialButton('cpu_invite_play','START',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-4),'#bfa8ff',true,{invite:{...cpuInvite,senderId:String(other)},messageKey});
-        else if(partyInvite)drawSocialButton('party_invite_join','JOIN',p.x+p.w-joinW-7,y+1,joinW,Math.max(16,rowH-4),'#bfa8ff',true,{invite:{...partyInvite,senderId:String(other)},messageKey});
       }
       const footerGap=compact?5:8,bw=(p.w-12-footerGap*2)/3;
       if(!authUser)drawSocialButton('signin','SIGN IN',p.x+6,footerY,bw,footerH,col,true);
       else if(dmReady)drawSocialButton('dm_new','NEW MESSAGE',p.x+6,footerY,bw,footerH,col,true);
       else drawSocialButton('social_retry',dmMissing?'RETRY MESSAGES':'LOADING MESSAGES',p.x+6,footerY,bw,footerH,col,dmMissing);
       drawSocialButton('dm_prev','‹ '+(socialMessagePage+1)+'/'+pages,p.x+6+bw+footerGap,footerY,bw,footerH,'#8a9268',socialMessagePage>0);
-      drawSocialButton(socialMessagePage<pages-1?'dm_next':'inbox_refresh',socialMessagePage<pages-1?(socialMessagePage+1)+'/'+pages+' ›':'REFRESH',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',socialMessagePage<pages-1||!!authUser);
+      const morePages=socialMessagePage<pages-1,canLoadOlder=!morePages&&!!socialNotificationHasMore;
+      drawSocialButton(morePages?'dm_next':canLoadOlder?'inbox_load_older':'inbox_refresh',morePages?(socialMessagePage+1)+'/'+pages+' ›':canLoadOlder?'LOAD OLDER':'REFRESH',p.x+6+(bw+footerGap)*2,footerY,bw,footerH,'#8a9268',morePages||canLoadOlder||!!authUser);
     }
   }
 
@@ -2295,6 +2426,37 @@ function drawSocial(){
     if(party.accepted){
       const openH=tiny?22:compact?28:32;
       drawSocialButton('party_open','OPEN CURRENT PARTY · '+party.members.length+'/'+PARTY_MAX,p.x+6,cursor,p.w-12,openH,col,true);cursor+=openH+(tiny?4:compact?7:9);
+    }
+    const incomingInvites=typeof socialIncomingPartyInvites==='function'?socialIncomingPartyInvites():[];
+    if(incomingInvites.length){
+      const titleH=tiny?14:compact?18:21,rowH=tiny?34:compact?43:49,footerReserve=tiny?35:compact?45:52,
+        pageSize=!tiny&&p.y+p.h-cursor-footerReserve>=titleH+rowH*2?2:1,
+        invitePages=Math.max(1,Math.ceil(incomingInvites.length/pageSize));
+      socialPartyInvitePage=clamp(Math.floor(+socialPartyInvitePage||0),0,invitePages-1);
+      ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#bfa8ff';ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';
+      ctx.fillText('INCOMING INVITES · '+incomingInvites.length,p.x+8,cursor);
+      if(invitePages>1){
+        const pagerW=tiny?24:31,pagerGap=tiny?2:4,pagerX=p.x+p.w-pagerW*2-pagerGap-6;
+        drawSocialButton('party_invite_prev','‹',pagerX,cursor-2,pagerW,titleH,'#8a9268',socialPartyInvitePage>0);
+        drawSocialButton('party_invite_next','›',pagerX+pagerW+pagerGap,cursor-2,pagerW,titleH,'#8a9268',socialPartyInvitePage<invitePages-1);
+      }
+      cursor+=titleH;
+      const inviteRows=incomingInvites.slice(socialPartyInvitePage*pageSize,(socialPartyInvitePage+1)*pageSize);
+      for(let i=0;i<inviteRows.length;i++){
+        const invite=inviteRows[i],y=cursor+i*rowH,cpu=invite.kind==='cpu2v2',buttonGap=tiny?2:4,
+          buttonW=Math.min(compact?56:72,Math.max(45,p.w*.16)),actionW=buttonW*2+buttonGap,profileW=Math.max(54,p.w-actionW-24),cloud=invite.source==='cloud';
+        ctx.fillStyle=i%2?'rgba(191,168,255,.055)':'rgba(191,168,255,.11)';ctx.fillRect(p.x+5,y,p.w-10,rowH-2);
+        ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#e6dcff';ctx.font='700 '+(tiny?6:compact?8:10)+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine('FROM @'+String(invite.senderUsername||'PLAYER'),profileW-8),p.x+9,y+3);
+        ctx.fillStyle='#aeb59d';ctx.font='700 '+(tiny?6:compact?7:9)+'px ui-monospace,Consolas,monospace';
+        ctx.fillText(fitLine(cpu?'CPU 2v2 INVITE':'PARTY INVITE',profileW-8),p.x+9,y+(tiny?14:compact?19:24));
+        socialRects.push({id:'player_profile',x:p.x+6,y,w:profileW,h:rowH-2,enabled:true,handle:String(invite.senderUsername||'')});
+        const bx=p.x+p.w-actionW-7,actionH=Math.max(16,rowH-4),actionExtra=cloud?{inviteKey:String(invite.inviteKey||'')}:{invite:invite.invite,messageKey:String(invite.messageKey||'')};
+        const inviteActionsReady=!socialPartyInviteClaimBusy&&!socialPartyInviteDismissBusy;
+        drawSocialButton(cloud?'cloud_party_invite_accept':cpu?'cpu_invite_play':'party_invite_join',cpu?'START':'JOIN',bx,y+1,buttonW,actionH,'#a7c15e',inviteActionsReady,actionExtra);
+        drawSocialButton(cloud?'cloud_party_invite_dismiss':'legacy_party_invite_dismiss','DECLINE',bx+buttonW+buttonGap,y+1,buttonW,actionH,'#d05548',inviteActionsReady,actionExtra);
+      }
+      cursor+=inviteRows.length*rowH+(tiny?2:5);
     }
     const pending=typeof publicPartyHostRequests!=='undefined'&&Array.isArray(publicPartyHostRequests)?publicPartyHostRequests:[];
     if(partyIsHost()&&party.publicParty&&pending.length&&cursor<p.y+p.h-70){
@@ -2883,17 +3045,25 @@ function drawHomeLeaderboards(x,y,w,h){
   }
   ctx.textAlign='center'; ctx.textBaseline='top';
 }
+function hubUtilityLayout(taskRect,limitTop,buttonH,gap){
+  const y=Math.min(limitTop,taskRect.y+taskRect.h+6),half=(taskRect.w-gap)/2,rowY=y+buttonH+gap;
+  return {
+    settings:{x:taskRect.x,y,w:taskRect.w,h:buttonH},
+    shop:{x:taskRect.x,y:rowY,w:half,h:buttonH},
+    tools:{x:taskRect.x+half+gap,y:rowY,w:half,h:buttonH}
+  };
+}
 function drawHub(){
   selBg();
   leaderboardRowRects=[];
   compactStatus = W<680;
   pendingCancelRect=null;
   ctx.textAlign='center';
-  const accountGeo=accountTriggerMetrics(),titleChars=12;
+  const accountGeo=accountTriggerMetrics(),gearGeo=gearMetrics(),titleChars=12;
   let titleFs=(H<760?28:38),titleX=W/2;
   const estimatedTitleW=titleFs*titleChars*.62,accountRight=accountGeo.x+accountGeo.w+10;
   if(W<900&&W/2-estimatedTitleW/2<accountRight){
-    const titleRight=W-60,room=Math.max(96,titleRight-accountRight);
+    const titleRight=gearGeo.x-8,room=Math.max(96,titleRight-accountRight);
     titleFs=Math.min(titleFs,Math.max(16,Math.floor(room/(titleChars*.62))));
     titleX=accountRight+room/2;
   }
@@ -2988,10 +3158,9 @@ function drawHub(){
     {id:'social',title:'SOCIAL',sub:W<520?'NEW \u00b7 BETA \u00b7 PARTY':party.directCpu?'NEW \u00b7 BETA \u00b7 CPU 2v2':party.accepted?('NEW \u00b7 BETA \u00b7 PARTY '+party.members.length+'/'+PARTY_MAX):'NEW \u00b7 BETA \u00b7 PARTY \u00b7 FRIENDS',col:'#bfa8ff',enabled:true},
     {id:'weapons',title:'WEAPONS',sub:'STATS \u00b7 OWNERSHIP \u00b7 PRACTICE',col:'#8fb3c9',enabled:true}
   ];
-  const hbH=H<600?30:40, hbGap=W<520?5:8;
-  const hbN=7;
-  const hbW=Math.min(146, (W-24-hbGap*(hbN-1))/hbN);
-  const hbY=H-hbH-8;
+  const hbH=H<600?30:40,hbGap=W<520?5:8,
+    controlsW=Math.min(390,W-24),controlsBlockH=hbH*2+hbGap,
+    controlsLimitTop=H-controlsBlockH-8;
   // PLAY, PRACTICE, and SOCIAL form one destination row. WEAPONS is a
   // deliberately separate full-width armory section directly underneath.
   const actionRows=2;
@@ -3005,7 +3174,7 @@ function drawHub(){
     showHubStreak=!ultraCompactDaily,stH=compactDaily?32:42,
     dailyTopGap=compactDaily?(ultraCompactDaily?5:6):10,streakTaskGap=compactDaily?6:8,
     dailyPanelReserve=dailyTopGap+(showHubStreak?stH+streakTaskGap:0)+taskPanelH+6;
-  const contentTop=bnY+bnH+8, actionBottom=hbY-10-dailyPanelReserve;
+  const contentTop=bnY+bnH+8, actionBottom=controlsLimitTop-10-dailyPanelReserve;
   let cardH=targetActionH, homeBoardsH=H<390?72:H<560?88:112;
   const boardActionGap=H<390?3:H<560?5:8,minCardH=H<390?24:compactDaily?32:38,
     minBoardH=H<390?50:60;
@@ -3057,39 +3226,12 @@ function drawHub(){
     ctx.textBaseline='top';
   }
 
-  // ---- Menu actions. ----
-  let hbX=W/2-(hbW*hbN+hbGap*(hbN-1))/2;
-  const hubBtn=(label, base, txtCol)=>{
-    const r={x:hbX,y:hbY,w:hbW,h:hbH};
-    const hv=mouse.x>=r.x&&mouse.x<=r.x+hbW&&mouse.y>=hbY&&mouse.y<=hbY+hbH;
-    ctx.fillStyle=hv?base:'rgba(255,255,255,0.06)';
-    ctx.fillRect(r.x,hbY,hbW,hbH);
-    ctx.strokeStyle=base; ctx.lineWidth=1; ctx.strokeRect(r.x+0.5,hbY+0.5,hbW,hbH);
-    ctx.fillStyle=hv?'#101208':txtCol; ctx.font='700 '+(hbW<110?11:13)+'px ui-monospace,Consolas,monospace';
-    ctx.textBaseline='middle';
-    ctx.fillText(fitLine(label, hbW-8), r.x+hbW/2, hbY+hbH/2);
-    ctx.textBaseline='top';
-    hbX+=hbW+hbGap;
-    return r;
-  };
-  tutBtnRect =hubBtn('\u2753 HOW TO PLAY','#8a9268','#cdd6b0');
-  settingsBtnRect=hubBtn('\u2699 SETTINGS','#e8b658','#e8d9a8');
-  shopBtnRect=hubBtn('\uD83D\uDC8E SHOP \u00b7 '+gems,'#7fd8ff','#bfe8ff');
-  promoBtnRect=hubBtn('\uD83C\uDF81 CODE','#a7c15e','#cfe0a8');
-  shareBtnRect=hubBtn('\uD83D\uDD17 SHARE INVITE','#bfa8ff','#d8c8ff');
-  wheelBtnRect=hubBtn('\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+')':wheelCountdown()),
-                      wheelReady>0?'#e8b658':'#5a5648', wheelReady>0?'#e8d9a8':'#8a9268');
-  lookupBtnRect=hubBtn('\uD83D\uDD0D LOOKUP','#7fd8ff','#bfe8ff');
   if(now<referralMsgT){
     ctx.fillStyle='#bfa8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(referralMsg,W-30),W/2,Math.max(12,actionTop-13));
   } else if(!authUser&&pendingReferralId()){
     ctx.fillStyle='#bfa8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine('FRIEND GIFT WAITING \u00b7 SIGN IN TO CLAIM +5 GEMS',W-30),W/2,Math.max(12,actionTop-13));
-  }
-  if(now<utilLockMsgT){
-    ctx.fillStyle='#d05548'; ctx.font='700 12px ui-monospace,Consolas,monospace';
-    ctx.fillText('SIGN-IN ONLY \u2014 use the SIGN IN button top-left', W/2, hbY+hbH+12);
   }
   if(fallInjected){
     // Admin preview badge, left column under the currency chip
@@ -3108,10 +3250,10 @@ function drawHub(){
   const stW=Math.min(340,W-24),stX=W/2-stW/2+offX('streak'),
     stackY=actionTop+cardH*2+actionGap+dailyTopGap,
     baseStY=stackY,
-    maxSafeStY=hbY-6-(stH+8+taskPanelH),
+    maxSafeStY=controlsLimitTop-6-(stH+8+taskPanelH),
     stY=showHubStreak?clamp(baseStY+offY('streak'),baseStY,Math.max(baseStY,maxSafeStY)):baseStY;
   if(showHubStreak){layoutBlock('streak',stX,stY,stW,stH);}
-  if(showHubStreak&&stY+stH<=hbY-6){
+  if(showHubStreak&&stY+stH<=controlsLimitTop-6){
     const rewardLoading=!!(sb&&authUser&&!profileLoaded),ready=streakClaimable()&&!signedOut&&!streakClaimBusy;
     ctx.fillStyle= ready?'rgba(94,196,106,0.12)':'rgba(0,0,0,0.4)'; ctx.fillRect(stX,stY,stW,stH);
     ctx.strokeStyle= ready?'#5ec46a':'#4a4634'; ctx.lineWidth=1; ctx.strokeRect(stX+0.5,stY+0.5,stW,stH);
@@ -3171,9 +3313,9 @@ function drawHub(){
 
   // ---- DAILY TASKS, centered under the buttons ----
   const baseTpY=showHubStreak?stY+stH+streakTaskGap:stackY,
-    tpY=clamp(baseTpY+offY('tasks')-(showHubStreak?offY('streak'):0),baseTpY,Math.max(baseTpY,hbY-6-taskPanelH));
-  const roomForTasks=(hbY-6)-tpY;
-  const tpW=Math.min(390,W-24),tpH=taskPanelH;
+    tpY=clamp(baseTpY+offY('tasks')-(showHubStreak?offY('streak'):0),baseTpY,Math.max(baseTpY,controlsLimitTop-6-taskPanelH));
+  const roomForTasks=(controlsLimitTop-6)-tpY;
+  const tpW=controlsW,tpH=taskPanelH;
   const tpX=W/2-tpW/2+offX('tasks');
   layoutBlock('tasks',tpX,tpY,tpW,tpH);
   if(tpH <= roomForTasks && (signedOut || dailyTasks.length)){
@@ -3216,6 +3358,26 @@ function drawHub(){
       }
     }
     ctx.textAlign='center';
+  }
+
+  // Account settings stays immediately under Daily Tasks. SHOP and TOOLS
+  // form the only second row, replacing the old seven-button footer.
+  const utilityLayout=hubUtilityLayout({x:tpX,y:tpY,w:tpW,h:tpH},controlsLimitTop,hbH,hbGap);
+  const hubBtn=(r,label,base,textCol)=>{
+    const hot=mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
+    ctx.fillStyle=hot?base:'rgba(255,255,255,0.06)';ctx.fillRect(r.x,r.y,r.w,r.h);
+    ctx.strokeStyle=base;ctx.lineWidth=1.25;ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h);
+    ctx.fillStyle=hot?'#101208':textCol;ctx.font='700 '+(r.w<150?11:13)+'px ui-monospace,Consolas,monospace';
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(fitLine(label,r.w-10),r.x+r.w/2,r.y+r.h/2);
+    ctx.textBaseline='top';return r;
+  };
+  settingsBtnRect=hubBtn(utilityLayout.settings,'\u2699 SETTINGS','#e8b658','#e8d9a8');
+  shopBtnRect=hubBtn(utilityLayout.shop,'\uD83D\uDC8E SHOP \u00b7 '+gems,'#7fd8ff','#bfe8ff');
+  toolsBtnRect=hubBtn(utilityLayout.tools,'\uD83E\uDDF0 TOOLS','#bfa8ff','#d8c8ff');
+  if(now<utilLockMsgT){
+    ctx.fillStyle='#d05548';ctx.font='700 10px ui-monospace,Consolas,monospace';ctx.textBaseline='bottom';
+    ctx.fillText(fitLine('SIGN-IN ONLY \u2014 use SIGN IN at top-left',tpW),W/2,utilityLayout.settings.y-3);
+    ctx.textBaseline='top';
   }
 
 }
@@ -3631,6 +3793,16 @@ function drawMenuBtn(id,label,x,y,w,h){
   ctx.fillText(label, x+w/2, y+h/2);
   ctx.textBaseline='alphabetic';
 }
+function drawMenuTrack(key,label,x,y,w,h){
+  const id='track_'+key,selected=(typeof normalizedMusicTrack==='function'?normalizedMusicTrack(musicTrack):musicTrack)===key;
+  menuRects[id]={x,y,w,h};
+  const hot=mouse.x>=x&&mouse.x<=x+w&&mouse.y>=y&&mouse.y<=y+h;
+  ctx.fillStyle=hot?'#e8b658':selected?'rgba(167,193,94,0.25)':'rgba(255,255,255,0.045)';ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle=selected?'#a7c15e':hot?'#e8b658':'#4a4634';ctx.lineWidth=selected?2:1;ctx.strokeRect(x+0.5,y+0.5,w,h);
+  ctx.fillStyle=hot?'#101208':selected?'#cfe0a8':'#8a9268';ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.font='700 '+(w<95?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText(label,x+w/2,y+h/2);
+  ctx.textBaseline='alphabetic';
+}
 function drawSlider(id,label,val,x,y,w){
   ctx.textBaseline='alphabetic';
   ctx.textAlign='left'; ctx.fillStyle='#8a9268'; ctx.font='700 11px ui-monospace,Consolas,monospace';
@@ -3649,9 +3821,10 @@ function drawMenu(){
     ((typeof isBotArena==='function'&&isBotArena()&&botLadderMatchForfeitEligible(arena))||
      (typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()&&botLadderMatchForfeitEligible(partyCpuMatch))));
   ctx.fillStyle='rgba(8,9,5,0.78)'; ctx.fillRect(0,0,W,H);
-  const compact=H<430,pw=Math.min(340,W-16),buttonH=compact?34:44,buttonGap=compact?5:8,
-    buttonCount=inRun?4:3,titleZone=compact?42:58,sliderZone=compact?74:102,bottomZone=compact?18:28,
-    ph=titleZone+buttonCount*buttonH+(buttonCount-1)*buttonGap+(compact?7:12)+sliderZone+bottomZone,
+  const compact=H<560,pw=Math.min(compact?370:420,W-16),buttonH=compact?34:44,buttonGap=compact?5:8,
+    buttonCount=inRun?4:3,titleZone=compact?42:58,postButtonGap=compact?7:12,
+    trackZone=compact?60:74,sliderZone=compact?74:102,bottomZone=compact?18:28,
+    ph=titleZone+buttonCount*buttonH+(buttonCount-1)*buttonGap+postButtonGap+trackZone+sliderZone+bottomZone,
     px=W/2-pw/2,py=Math.max(6,(H-ph)/2);
   ctx.fillStyle='rgba(16,18,8,0.96)'; ctx.fillRect(px,py,pw,ph);
   ctx.strokeStyle='#4a4634'; ctx.lineWidth=1; ctx.strokeRect(px+0.5,py+0.5,pw,ph);
@@ -3671,7 +3844,14 @@ function drawMenu(){
   } else {
     drawMenuBtn('report','\u26A0 REPORT PROBLEM',px+sidePad,by,bw,buttonH);by+=buttonH;
   }
-  const sy=by+(compact?17:26),sliderStep=compact?38:52;
+  const trackY=by+postButtonGap,trackLabelH=compact?13:18,trackH=compact?26:32,trackGap=compact?4:6;
+  ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle='#8a9268';ctx.font='700 '+(compact?9:11)+'px ui-monospace,Consolas,monospace';
+  ctx.fillText('SOUNDTRACK',px+sidePad,trackY);
+  const trackButtonY=trackY+trackLabelH,trackW=(bw-trackGap*2)/3;
+  drawMenuTrack('calm','CALM',px+sidePad,trackButtonY,trackW,trackH);
+  drawMenuTrack('energetic','ENERGETIC',px+sidePad+trackW+trackGap,trackButtonY,trackW,trackH);
+  drawMenuTrack('piano','PIANO',px+sidePad+(trackW+trackGap)*2,trackButtonY,trackW,trackH);
+  const sy=trackY+trackZone,sliderStep=compact?38:52;
   drawSlider('music','MUSIC',musicVol,px+sidePad,sy,bw);
   drawSlider('sfx','SOUND',sfxVol,px+sidePad,sy+sliderStep,bw);
 
@@ -3961,8 +4141,7 @@ function sideAdTop(x,w,h,preferred){
   const minY=120, maxY=H-h-16;
   if(maxY<minY) return null;
   const overlapsX=r=>r && x<r.x+r.w+12 && x+w>r.x-12;
-  // PLAYER LOOKUP is directly below the board, so protect both rectangles.
-  const blocks=[boardPanelRect,lookupBtnRect].filter(overlapsX);
+  const blocks=[boardPanelRect].filter(overlapsX);
   const collides=y=>blocks.some(r=>y<r.y+r.h+12 && y+h>r.y-12);
   const candidates=[clamp(preferred,minY,maxY),minY,maxY];
   for(const r of blocks){ candidates.push(r.y+r.h+16, r.y-h-16); }
@@ -4214,10 +4393,14 @@ function chestRewardClick(){
 // One stable top-left account trigger replaces the old small button plus the
 // separate compact-Hub duplicate. Its visual and hit rectangle are always the
 // same, so touch, mouse, keyboard companion, and the layout audit cannot drift.
+function gearMetrics(){
+  const sz=48;
+  return {x:W-12-sz,y:10,w:sz,h:sz};
+}
 function accountTriggerMetrics(){
   const maxW=Math.max(96,W-76),desired=W<420?Math.max(110,W*.34):W<680?Math.max(150,W*.29):220;
   const w=Math.min(230,maxW,desired),h=48;
-  const x=clamp(10+offX('account'),8,Math.max(8,W-w-58));
+  const gear=gearMetrics(),x=clamp(10+offX('account'),8,Math.max(8,gear.x-w-8));
   const y=clamp(10+offY('account'),8,Math.max(8,H-h-8));
   return {x,y,w,h};
 }
@@ -4282,7 +4465,7 @@ function drawAccountChip(){
   withBlockColour('account',paintAccount);ctx.restore();
 }
 function drawGear(){
-  const sz=34, x=W-16-sz, y=14;
+  const r=gearMetrics(),sz=r.w,x=r.x,y=r.y;
   gearRect={x,y,w:sz,h:sz};
   const hot = menuOpen || (mouse.x>=x&&mouse.x<=x+sz&&mouse.y>=y&&mouse.y<=y+sz);
   ctx.fillStyle = hot ? 'rgba(232,182,88,0.18)' : 'rgba(8,10,5,0.7)';
@@ -4291,16 +4474,16 @@ function drawGear(){
   ctx.strokeRect(x+0.5,y+0.5,sz,sz);
   const cx=x+sz/2, cy=y+sz/2;
   ctx.strokeStyle = hot ? '#e8b658' : '#8a9268'; ctx.lineWidth=2;
-  ctx.beginPath(); ctx.arc(cx,cy,6,0,TAU); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx,cy,8,0,TAU); ctx.stroke();
   for(let i=0;i<8;i++){
     const a=i*TAU/8;
     ctx.beginPath();
-    ctx.moveTo(cx+Math.cos(a)*7, cy+Math.sin(a)*7);
-    ctx.lineTo(cx+Math.cos(a)*10,cy+Math.sin(a)*10);
+    ctx.moveTo(cx+Math.cos(a)*10, cy+Math.sin(a)*10);
+    ctx.lineTo(cx+Math.cos(a)*14,cy+Math.sin(a)*14);
     ctx.stroke();
   }
   ctx.fillStyle=ctx.strokeStyle;
-  ctx.beginPath(); ctx.arc(cx,cy,2,0,TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx,cy,3,0,TAU); ctx.fill();
 
   // powerups are now accessed from the upgrade screen only
   powerBtnRect={x:-99,y:-99,w:0,h:0};

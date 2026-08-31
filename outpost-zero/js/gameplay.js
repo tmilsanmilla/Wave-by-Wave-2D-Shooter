@@ -288,8 +288,8 @@ function startGame(){
   flameFuel=100; flameLock=false; daggersOut=null; splitBalls=[]; flames=[]; comboStep=0; comboNextT=0; freezeFx=[];
   timeStopUntil=0; timeStopArm=0; fistFlurryUntil=0; fistNextT=0; teraHitCharge=teraHitsRequired(); parryUntil=0; parrySeq=0;
   sawChargeUntil=0; sawChargeTick=0; abilityCD={}; quickReadyT=0; player.dashSpd=14; player.spinT=0; player.animT=0;
-  utilReadyT=0; medChan=0; medChanHeal=0; medKillCharge=medKillsRequired(); medDropKillAcc=0; medStash=0; balls=[]; grenades=[]; pearls=[]; utilityOut=false;
-  player.dashUntil=0; player.regenT=0; player.ddx=0; player.ddy=0; player.swingDur=130;
+  utilReadyT=0; medChan=0; medChanHeal=0; medKillCharge=medKillsRequired(); medDropKillAcc=0; medStash=0; medkitFlyFx=[]; balls=[]; grenades=[]; pearls=[]; utilityOut=false;
+  player.dashUntil=0; player.regenT=0; player.ddx=0; player.ddy=0; player.motionVx=0; player.motionVy=0; player.swingDur=130;
   player.x=WORLD.w/2; player.y=WORLD.h/2; player.hp=perks.maxhp;
   player.cur=loadout.primary;
   player.mags={};
@@ -335,6 +335,18 @@ function bossComposition(w){
   const yellow = w>=20 ? Math.min(3, Math.max(1, Math.floor((idx-3)/2))) : 0;
   const purple = w>=30 ? 1 : 0;                      // KING boss: 1 per wave from wave 30 on
   return {boss:red, bossBlue:blue, bossYellow:yellow, bossPurple:purple};
+}
+// Endless gets one explicit difficulty step at wave 15. Keeping this separate
+// from the normal curves makes the requested HP and damage increase happen
+// exactly once and leaves Practice / 1v1 balancing untouched.
+function endlessWave15Boost(w=wave){ return Math.max(0,+w||0)>=15?1.20:1; }
+function endlessEnemyHpMultiplier(w=wave,difficulty=diffMode){
+  const level=Math.max(1,Math.floor(+w||1));
+  return (1+(level-1)*0.047)*endlessWave15Boost(level)*DIFFS[difficulty].hp;
+}
+function endlessEnemyDamageMultiplier(w=wave,difficulty=diffMode){
+  const level=Math.max(1,Math.floor(+w||1));
+  return (1+(level-1)*0.053)*endlessWave15Boost(level)*DIFFS[difficulty].dmg;
 }
 function nextWave(){
   wave++;
@@ -385,12 +397,13 @@ function spawnOne(type){
     else { x=WORLD.w-50; y=rand(60,WORLD.h-60); }
     tries++;
   } while(dist2(x,y,player.x,player.y) < 550*550 && tries<12);
-  const t=ETYPES[type], hpMul=(1+(wave-1)*0.047)*DIFFS[diffMode].hp;
+  const t=ETYPES[type], hpMul=endlessEnemyHpMultiplier(wave,diffMode)*(t.boss?1.20:1);
   enemies.push({ type, x, y, r:t.r, hp:t.hp*hpMul, maxhp:t.hp*hpMul,
                  spd:t.spd*rand(0.9,1.1), fireT:now+rand(400,1400), hitT:0,
                  burnUntil:0, burnActiveUntil:0, fleeUntil:0, frozenUntil:0,
                  deflectNext:now+8000, deflectUntil:0, chargeNext:now+18000, chargeUntil:0, chargeGo:0, stunUntil:0, chronoStacks:0,
-                 mode:'chase', modeT:0, ringT:now+2500, dashT:now+5500, streamT:now+1500, missileT:now+3000, cvx:0, cvy:0, dragUntil:0 });
+                 mode:'chase', modeT:0, ringT:now+2500, dashT:now+5500, streamT:now+1500, heavyT:now+2800, missileT:now+3000,
+                 purpleDeflectReadyAt:0, deflectFlashUntil:0, cvx:0, cvy:0, dragUntil:0 });
 }
 function spawnPracticeEnemy(sp, id){
   const t=ETYPES[sp.type], hpMul=DIFFS[diffMode].hp, spawnSpeed=Number.isFinite(sp.speed)?sp.speed:(Number.isFinite(t.spd)?t.spd:1),
@@ -399,8 +412,8 @@ function spawnPracticeEnemy(sp, id){
                  spd:spawnSpeed, fireT:now+rand(400,1400), hitT:0,
                  burnUntil:0, burnActiveUntil:0, fleeUntil:0, frozenUntil:0,
                  deflectNext:now+8000, deflectUntil:0, chargeNext:now+18000, chargeUntil:0, chargeGo:0, stunUntil:0, chronoStacks:0,
-                 mode:'chase', modeT:0, ringT:now+2500, dashT:now+5500, streamT:now+1500, missileT:now+3000,
-                 cvx:0, cvy:0, dragUntil:0, spawnId:id, practiceStill:sp.still,
+                 mode:'chase', modeT:0, ringT:now+2500, dashT:now+5500, streamT:now+1500, heavyT:now+2800, missileT:now+3000,
+                 purpleDeflectReadyAt:0, deflectFlashUntil:0, cvx:0, cvy:0, dragUntil:0, spawnId:id, practiceStill:sp.still,
                  practiceMoving:!!sp.practiceMoving, practiceDir:practiceDir });
   sp.alive=true;
   burst(sp.x, sp.y, '#8d949c', 8, 3);
@@ -414,14 +427,19 @@ const PRACTICE_MODES=[
   {id:'boss',  name:'WARLORD',        d:'fight a boss one on one'},
 ];
 function normalizePracticeTrackingDirection(value=practiceTrackingDirection){
-  return ((Number(value)||0)%360+360)%360;
+  const wrapped=((Number(value)||0)%360+360)%360;
+  return (Math.round(wrapped/PRACTICE_TRACKING_DIRECTION_STEP)*PRACTICE_TRACKING_DIRECTION_STEP)%360;
+}
+function normalizePracticeTrackingSpeed(value=practiceTrackingSpeed){
+  const raw=Number.isFinite(+value)?+value:DEFAULT_PRACTICE_TRACKING_SPEED;
+  const stepped=Math.round(raw/PRACTICE_TRACKING_SPEED_STEP)*PRACTICE_TRACKING_SPEED_STEP;
+  return clamp(stepped,PRACTICE_TRACKING_SPEED_MIN,PRACTICE_TRACKING_SPEED_MAX);
 }
 function practiceTrackingDirectionArrow(value=practiceTrackingDirection){
   return ['\u2192','\u2198','\u2193','\u2199','\u2190','\u2196','\u2191','\u2197'][Math.round(normalizePracticeTrackingDirection(value)/45)%8];
 }
 function adjustPracticeTrackingSpeed(delta){
-  const next=clamp((Number(practiceTrackingSpeed)||DEFAULT_PRACTICE_TRACKING_SPEED)+delta,PRACTICE_TRACKING_SPEED_MIN,PRACTICE_TRACKING_SPEED_MAX);
-  practiceTrackingSpeed=Math.round(next*10)/10;
+  practiceTrackingSpeed=normalizePracticeTrackingSpeed(normalizePracticeTrackingSpeed()+delta);
 }
 function adjustPracticeTrackingDirection(delta){
   practiceTrackingDirection=normalizePracticeTrackingDirection((Number(practiceTrackingDirection)||0)+delta);
@@ -455,7 +473,7 @@ function drawPracticePick(){
     ctx.fillText(fitLine(m.name, rw-16), W/2, y+h/2-8);
     ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
     const detail=m.id==='tracking'
-      ? 'speed '+practiceTrackingSpeed.toFixed(1)+'\u00d7 \u00b7 direction '+Math.round(normalizePracticeTrackingDirection())+'\u00b0 '+practiceTrackingDirectionArrow()
+      ? 'speed '+normalizePracticeTrackingSpeed().toFixed(1)+'\u00d7 \u00b7 direction '+Math.round(normalizePracticeTrackingDirection())+'\u00b0 '+practiceTrackingDirectionArrow()
       : m.d;
     ctx.fillText(fitLine(detail, rw-16), W/2, y+h/2+9);
     ctx.textBaseline='alphabetic';
@@ -549,7 +567,8 @@ function startPractice(mode){
     practiceSpawns.push({type:'dummy', x:cx+60, y:cy, still:true, alive:false, respawnAt:0});
     waveMsg='DPS DUMMY \u2014 integrity never breaks'; waveMsgT=now+3000;
   } else if(mode==='tracking'){
-    const speed=clamp(Number(practiceTrackingSpeed)||DEFAULT_PRACTICE_TRACKING_SPEED, PRACTICE_TRACKING_SPEED_MIN, PRACTICE_TRACKING_SPEED_MAX);
+    const speed=normalizePracticeTrackingSpeed();
+    practiceTrackingSpeed=speed;
     const dir=normalizePracticeTrackingDirection();
     const rad=dir*Math.PI/180;
     practiceSpawns.push({type:'dummy', x:cx+60, y:cy, still:false, practiceMoving:true, speed:1.4*speed, practiceDir:rad, alive:false, respawnAt:0});

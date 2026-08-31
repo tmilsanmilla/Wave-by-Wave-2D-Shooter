@@ -12,7 +12,8 @@ function hostileProjectileCollisionRadius(projectile){
 }
 function hostileProjectileProfile(projectile,source){
   if(source==='firework')return {danger:'#ff3f36',tail:30,diamond:true};
-  if(projectile&&projectile.h)return {danger:'#ff3f36',tail:34};
+  if(projectile&&projectile.flashing)return {danger:((now/62)|0)%2?'#fff4ff':'#ff275f',tail:34};
+  if(projectile&&projectile.h)return {danger:'#ff9f43',accent:'#fff0a6',tail:42,homing:true};
   if(projectile&&projectile.king)return {danger:'#ff275f',tail:25};
   if(source==='remote')return {danger:'#ff3b34',tail:30};
   if(source==='cpu')return {danger:'#ff3b34',tail:28};
@@ -26,10 +27,25 @@ function drawHostileProjectileCue(projectile,source='enemy'){
   const speed=Math.hypot(vx,vy),ux=speed?vx/speed:0,uy=speed?vy/speed:0;
   const tail=profile.tail*scale;
   ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
-  // Hostile rounds use the same clean tracer language as ordinary rounds,
-  // recolored red. Never surround a hostile projectile with a warning ring.
+  // Ordinary hostile rounds remain clean red tracers. Homing missiles use an
+  // orange arrow-shaped body plus separated guidance trails, so their behavior
+  // is readable by shape as well as color. Neither style gets a warning ring.
   ctx.strokeStyle=profile.danger;ctx.lineWidth=3.2*scale;
   ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-ux*tail,y-uy*tail);ctx.stroke();
+  if(profile.homing){
+    const px=-uy,py=ux,trailOffset=3.2*scale,bodyBack=6*scale,bodySide=5.2*scale,nose=7*scale;
+    ctx.strokeStyle=profile.accent;ctx.lineWidth=1.5*scale;
+    ctx.beginPath();
+    ctx.moveTo(x-ux*bodyBack+px*trailOffset,y-uy*bodyBack+py*trailOffset);
+    ctx.lineTo(x-ux*tail+px*trailOffset*1.5,y-uy*tail+py*trailOffset*1.5);
+    ctx.moveTo(x-ux*bodyBack-px*trailOffset,y-uy*bodyBack-py*trailOffset);
+    ctx.lineTo(x-ux*tail-px*trailOffset*1.5,y-uy*tail-py*trailOffset*1.5);ctx.stroke();
+    ctx.fillStyle=profile.danger;ctx.beginPath();
+    ctx.moveTo(x+ux*nose,y+uy*nose);
+    ctx.lineTo(x-ux*bodyBack+px*bodySide,y-uy*bodyBack+py*bodySide);
+    ctx.lineTo(x-ux*bodyBack-px*bodySide,y-uy*bodyBack-py*bodySide);ctx.closePath();ctx.fill();
+    ctx.strokeStyle=profile.accent;ctx.lineWidth=1.2*scale;ctx.stroke();
+  }
   if(profile.diamond){
     const d=4.1*scale;ctx.fillStyle=profile.danger;ctx.beginPath();
     ctx.moveTo(x,y-d);ctx.lineTo(x+d,y);ctx.lineTo(x,y+d);ctx.lineTo(x-d,y);ctx.closePath();ctx.fill();
@@ -469,6 +485,19 @@ function drawWorld(){
       ctx.fillRect(p.x-2.5*s,p.y-8*s,5*s,16*s);
     }
   }
+  // Medkits enter the stash immediately; this world-space flight is the clear
+  // visual handoff from the defeated enemy to the player and keeps animating
+  // beneath an upgrade screen after the final kill of a wave.
+  for(let i=medkitFlyFx.length-1;i>=0;i--){
+    const fx=medkitFlyFx[i],progress=clamp((now-fx.startAt)/Math.max(1,fx.duration),0,1);
+    if(progress>=1){medkitFlyFx.splice(i,1);continue;}
+    const eased=1-Math.pow(1-progress,3),x=fx.fromX+(player.x-fx.fromX)*eased,y=fx.fromY+(player.y-fx.fromY)*eased;
+    const s=(1+Math.sin(now*0.025)*0.08)/zoom;
+    ctx.save();ctx.translate(x,y);ctx.scale(s,s);ctx.rotate(progress*TAU);
+    ctx.fillStyle='#f2f2ee';ctx.strokeStyle='#b8b8b0';ctx.lineWidth=1.2;
+    ctx.fillRect(-8,-8,16,16);ctx.strokeRect(-8,-8,16,16);
+    ctx.fillStyle='#d03a30';ctx.fillRect(-6,-2,12,4);ctx.fillRect(-2,-6,4,12);ctx.restore();
+  }
 
   // Projectiles are clipped to the same gold fence used by physics. Long
   // tracer tails therefore cannot visually poke outside after a ricochet.
@@ -566,6 +595,12 @@ function drawWorld(){
   // enemies
   for(const e of enemies){
     const t=ETYPES[e.type];
+    const turn=e.practiceMoving&&e.practiceTurnMarker;
+    if(turn&&now<turn.until){
+      const progress=clamp((now-turn.startAt)/Math.max(1,turn.until-turn.startAt),0,1),radius=(5+3*progress)/zoom;
+      ctx.save();ctx.globalAlpha=1-progress;ctx.strokeStyle='#e8b658';ctx.fillStyle='rgba(232,182,88,.22)';ctx.lineWidth=2/zoom;
+      ctx.beginPath();ctx.arc(turn.x,turn.y,radius,0,TAU);ctx.fill();ctx.stroke();ctx.restore();
+    }
     const flash = now<e.hitT;
     const frozen = e.frozenUntil>now;
     ctx.fillStyle = flash ? '#ffffff' : frozen ? '#8fd0ee' : t.col;
@@ -577,7 +612,7 @@ function drawWorld(){
       ctx.fillStyle='rgba(255,255,255,0.85)';
       ctx.fillRect(e.x-e.r*0.4,e.y-e.r*0.5,2,2); ctx.fillRect(e.x+e.r*0.3,e.y+e.r*0.2,2,2);
     }
-    if(e.deflectUntil>now){                        // BLUE deflection: color-shifting shield
+    if(e.deflectUntil>now||e.deflectFlashUntil>now){ // BLUE shield / PURPLE single-shot deflect flash
       const hue=(now*0.4)%360;
       ctx.strokeStyle='hsl('+hue+',90%,70%)'; ctx.lineWidth=3.5/zoom;
       ctx.beginPath(); ctx.arc(e.x,e.y,e.r+7+Math.sin(now*0.02)*2,0,TAU); ctx.stroke();
@@ -891,7 +926,7 @@ function drawHUD(){
   // health
   const hbW=230, hbY=H-92;
   ctx.fillStyle='#8a9268'; ctx.font='11px ui-monospace,Consolas,monospace';
-  ctx.fillText('INTEGRITY '+Math.ceil(player.hp)+' / '+perks.maxhp, pad, hbY-15);
+  ctx.fillText('INTEGRITY '+Math.ceil(player.hp)+' / '+Math.ceil(perks.maxhp), pad, hbY-15);
   ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(pad,hbY,hbW,13);
   ctx.fillStyle = player.hp>perks.maxhp*0.35 ? '#a7c15e' : '#d05548';
   ctx.fillRect(pad,hbY,hbW*player.hp/perks.maxhp,13);
@@ -899,17 +934,19 @@ function drawHUD(){
 
   // weapon block
   const mag=Math.floor(player.mags[player.cur]);
+  const infinitePractice=typeof practiceInfiniteAmmoActive==='function'&&practiceInfiniteAmmoActive();
   ctx.fillStyle = utilityOut ? '#c98fb8' : w.melee ? '#8fb3c9' : '#cdd6b0';
   ctx.font='700 16px ui-monospace,Consolas,monospace';
   ctx.fillText(utilityOut ? UTILITIES[loadout.utility].name : w.name, pad, H-62);
   ctx.font='700 30px ui-monospace,Consolas,monospace';
-  ctx.fillStyle = w.saw ? (sawLock ? '#d05548' : '#e8b658') : (mag===0 ? '#d05548' : '#e8b658');
+  ctx.fillStyle = w.saw ? (sawLock ? '#d05548' : '#e8b658') : (infinitePractice||mag!==0 ? '#e8b658' : '#d05548');
   const ammoTxt = utilityOut
                 ? (loadout.utility==='medkit' ? (medKillCharge>=medKillsRequired()?'MEDKIT READY':(medKillsRequired()-medKillCharge)+' KILLS')
                    : now<utilReadyT ? 'RECHARGING' : 'READY')
                 : w.infinite ? (player.reloadEnd>now ? 'RELOADING' : '\u2600 '+mag+' / \u221E')
                 : w.saw ? (sawLock ? 'RECHARGING' : 'FUEL '+Math.ceil(sawFuel)+'%')
                 : w.melee ? 'MELEE'
+                : infinitePractice ? '\u221E AMMO'
                 : (player.reloadEnd>now ? 'RELOADING' : ((isFinite(mag)?mag:'\u221E')+' / '+(isFinite(player.reserve[player.cur])?player.reserve[player.cur]:'\u221E')));
   ctx.fillText(ammoTxt, pad, H-42);
   // slots: 1 primary / 2 sidearm / 3 melee / 4 utility. On touch these are
@@ -1128,6 +1165,7 @@ function drawHUD(){
     if(utilityOut) atxt = loadout.utility==='medkit' ? (medKillCharge>=medKillsRequired()?'MEDKIT READY':(medKillsRequired()-medKillCharge)+' KILLS') : (now<utilReadyT?'RECHARGING':'READY');
     else if(wq.saw) atxt = sawLock?'RECHARGING':'FUEL '+Math.ceil(sawFuel)+'%';
     else if(wq.melee) atxt='MELEE';
+    else if(typeof practiceInfiniteAmmoActive==='function'&&practiceInfiniteAmmoActive()) atxt='\u221E AMMO';
     else atxt = player.reloadEnd>now ? 'RELOADING' : ((isFinite(player.mags[player.cur])?player.mags[player.cur]:'\u221E')+' / '+(isFinite(player.reserve[player.cur])?player.reserve[player.cur]:'\u221E'));
     ctx.fillText(atxt, pxp+8, pyp+26);
     ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';

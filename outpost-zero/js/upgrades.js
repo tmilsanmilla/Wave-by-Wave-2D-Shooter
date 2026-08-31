@@ -1,14 +1,14 @@
 "use strict";
 
 /* ---------------- upgrades ---------------- */
-const MED_KILLS_REQUIRED=10, MED_DROP_KILLS_BASE=20, MED_STASH_MAX=5, TERA_HITS_REQUIRED=15, MED_CHANNEL_MS=8000;
+const MED_KILLS_REQUIRED=10, MED_DROP_KILLS_BASE=20, MED_STASH_MAX=15, TERA_HITS_REQUIRED=15, MED_CHANNEL_MS=8000;
 let perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,pierce:0,acc:1,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
 let perkCounts={}, upgradeChoices=[], upgradeRects=[], upgradeOffered=false;
 let surgeT=0, windReadyWave=0, dashReadyT=0, sawFuel=100, sawLock=false, sawChargeUntil=0, sawChargeTick=0;
 let flameFuel=100, flameLock=false, daggersOut=null, splitBalls=[], flames=[], comboStep=0, comboNextT=0, freezeFx=[];
 let timeStopUntil=0, timeStopArm=0, fistFlurryUntil=0, fistNextT=0, teraHitCharge=15, parryUntil=0, parrySeq=0;
 let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
-let utilReadyT=0, medChan=0, medChanHeal=0, medKillCharge=MED_KILLS_REQUIRED, medDropKillAcc=0, medStash=0, balls=[], grenades=[], pearls=[], utilityOut=false;
+let utilReadyT=0, medChan=0, medChanHeal=0, medKillCharge=MED_KILLS_REQUIRED, medDropKillAcc=0, medStash=0, medkitFlyFx=[], balls=[], grenades=[], pearls=[], utilityOut=false;
 let playerFrozenUntil=0;
 const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:2500, warpwave:18000, timeturner:12000};
 const TWIN_SAI_PARRY_MS=1000;
@@ -67,16 +67,17 @@ for(const c of TIER_CHAINS) for(let tier=1;tier<=3;tier++){
 // These repeat forever, but clamp their multipliers so an exceptionally long
 // run cannot overflow a stat or drive a firing interval to zero.
 const LATE_RUN_UPGRADES=Object.freeze([
-  Object.freeze({n:'ENDLESS CALIBRATION',d:'+5% weapon damage',lateRun:true,
-    f:()=>{perks.dmg=Math.min(1000000,Math.max(1,+perks.dmg||1)*1.05);}}),
-  Object.freeze({n:'ENDLESS CYCLING',d:'+3% fire rate',lateRun:true,
-    f:()=>{perks.rate=Math.max(0.08,Math.min(1,+perks.rate||1)*0.97);}}),
-  Object.freeze({n:'ENDLESS MAGAZINES',d:'+5% magazine size',lateRun:true,
-    f:()=>{perks.mag=Math.min(1000,Math.max(1,+perks.mag||1)*1.05);}}),
-  Object.freeze({n:'ENDLESS ARMOR',d:'+15 maximum HP and heal 15 HP',lateRun:true,
+  Object.freeze({n:'ENDLESS CALIBRATION',d:'+10% weapon damage',lateRun:true,
+    f:()=>{perks.dmg=Math.min(1000000,Math.max(1,+perks.dmg||1)*1.10);}}),
+  Object.freeze({n:'ENDLESS CYCLING',d:'+6% fire rate',lateRun:true,
+    f:()=>{perks.rate=Math.max(0.08,Math.min(1,+perks.rate||1)*0.94);}}),
+  Object.freeze({n:'ENDLESS MAGAZINES',d:'+10% magazine size',lateRun:true,
+    f:()=>{perks.mag=Math.min(1000,Math.max(1,+perks.mag||1)*1.10);}}),
+  Object.freeze({n:'ENDLESS ARMOR',d:'+15% maximum HP and medkit healing',lateRun:true,
     f:()=>{
       const before=Math.max(1,+perks.maxhp||100);
-      perks.maxhp=Math.min(1000000,before+15);
+      perks.maxhp=Math.min(1000000,before*1.15);
+      perks.medkitHeal=Math.min(1000000,Math.max(1,+perks.medkitHeal||25)*1.15);
       if(typeof player!=='undefined'&&player)player.hp=Math.min(perks.maxhp,Math.max(0,+player.hp||0)+(perks.maxhp-before));
     }}),
 ]);
@@ -146,6 +147,11 @@ function menuClick(){
     if(typeof persistNormalEndlessScoreOnExit==='function')persistNormalEndlessScoreOnExit();
     const returnPage=tutorialOn?'howto':practiceMode?(soloPractice?(practiceReturnPage||'practice'):'practice'):'hub';
     menuOpen=false; state='select'; selPage=returnPage; practiceMode=null; tutorialTeardown(); restoreTryLoadout(); aiming=false; rmbAim=false; sfx('swap'); return;
+  }
+  for(const key of ['calm','energetic','piano'])if(hit(menuRects['track_'+key])){
+    if(typeof initAudio==='function')initAudio();
+    if(typeof setMusicTrack==='function')setMusicTrack(key,true);
+    sfx('swap');return;
   }
   if(hit(menuRects.music)){ dragSlider='music'; setSliderFromMouse(); return; }
   if(hit(menuRects.sfx)){ dragSlider='sfx'; setSliderFromMouse(); return; }

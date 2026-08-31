@@ -8,7 +8,7 @@ let socialBackend={profiles:null,friends:null,messages:null};
 // Social is one page at a time: the Friends directory or the private Inbox.
 // Each friend bucket owns its own page so a busy Incoming list can never hide
 // Outgoing requests or current friends.
-let socialView='friends', socialFriendPage=0, socialMessagePage=0;
+let socialView='friends', socialFriendPage=0, socialMessagePage=0, socialPartyInvitePage=0;
 let socialInboxSection='inbox',socialConversationPeer='',socialConversationPage=0;
 let socialConversationStates={},socialConversationSqlReady=null,socialConversationBusy='';
 let socialFriendPages={incoming:0,outgoing:0,current:0};
@@ -18,6 +18,7 @@ let socialFetchVersion=0, socialAccountId='', socialFetchUserId='', socialFetchP
 const SOCIAL_REALTIME_RETRY_MS=3000, SOCIAL_CPU_INVITE_POLL_MS=7000;
 const SOCIAL_PARTY_INVITE_POLL_MS=7000;
 const SOCIAL_NOTIFICATION_POLL_MS=10000, SOCIAL_NOTIFICATION_LIMIT=30;
+const SOCIAL_OFFICIAL_UPDATE_ARCHIVE_MS=24*60*60*1000;
 const SOCIAL_LEGACY_INVITE_RECEIPT_STORAGE_KEY='oz_social_legacy_invite_receipts_v1';
 const SOCIAL_LEGACY_INVITE_RECEIPT_CAP=96, SOCIAL_LEGACY_INVITE_RECEIPT_MAX_MS=15*60*1000;
 let socialRealtimeRetryAt=0, socialCpuInvitePollAt=0, socialCpuInvitePolling=false;
@@ -27,6 +28,7 @@ let socialPartyPresenceChannel=null,socialPartyPresencePromise=null,socialPartyP
 let socialPartyPresenceRetryAt=0,socialPartyOnlineHandles=[],socialPartyServerOffsetMs=0;
 let socialPartyInviteSqlReady=null,socialPartyInvites=[],socialPartyInvitePollAt=0,socialPartyInvitePolling=false;
 let socialPartyInvitePromptedIds=new Set(),socialPartyInvitePromptUserId='',socialPartyInviteClaimBusy=false,socialPartyInviteClaimOp=null;
+let socialPartyInviteDismissBusy=false,socialPartyInviteDismissOp=null;
 let socialPartyInviteUiKeys=new Map(),socialPartyInviteUiSequence=0,socialPartyPresenceLifecycleReady=false;
 let socialNotificationSqlReady=null,socialNotifications=[],socialNotificationUnreadCount=0,socialNotificationLatestKey='';
 let socialNotificationFeedRevision='';
@@ -50,6 +52,25 @@ function usernameIsGeneratedForUser(value,userId){
   const key=socialHandleKey(value), suffix=String(userId||'').replace(/-/g,'').toLowerCase();
   if(!key||key==='username_not_set'||key==='usernamenotset') return true;
   return !!suffix&&(key==='op_'+suffix.slice(0,20)||key==='op_'+suffix.slice(0,8));
+}
+function socialUsernameValidationMessage(value,userId){
+  const username=String(value||'').trim().replace(/^@/,'');
+  if(!username) return 'Enter a username.';
+  if(username.length<3) return 'That username is too short. Use at least 3 characters.';
+  if(username.length>32) return 'That username is too long. Use no more than 32 characters.';
+  const invalid=username.match(/[^A-Za-z0-9_]/g)||[];
+  if(invalid.length){
+    if(invalid.some(char=>/\s/.test(char)))
+      return 'Spaces are not allowed. Use only letters, numbers, and underscores.';
+    const chars=[...new Set(invalid)].slice(0,3).map(char=>'"'+char+'"').join(', ');
+    return chars+' '+(chars.includes(',')?'are':'is')+' not allowed. Use only letters, numbers, and underscores.';
+  }
+  const key=username.toLowerCase();
+  if(key==='username_not_set'||key==='usernamenotset')
+    return 'That username is reserved. Choose a different one.';
+  if(usernameIsGeneratedForUser(username,userId))
+    return 'That is your temporary account label. Choose a different username.';
+  return '';
 }
 function usernameIsChosenForUser(value,userId){
   const raw=String(value||'').trim().replace(/^@/,'');
@@ -120,7 +141,8 @@ function closeUsernameClaim(force=false){
   const el=usernameClaimElements();
   if(el.wrap){ el.wrap.style.display='none'; el.wrap.className='ui'; }
   if(el.input) el.input.value='';
-  if(el.status) el.status.textContent='';
+  if(el.input) el.input.setAttribute('aria-invalid','false');
+  if(el.status){el.status.textContent='';el.status.className='';}
   return true;
 }
 function openUsernameClaim(mode='checking',message='Checking your account username...'){
@@ -142,7 +164,8 @@ function openUsernameClaim(mode='checking',message='Checking your account userna
       ? 'The Social 02 database update is required before you can choose or change a username.'
       : 'Open Settings to choose the unique public username shown throughout the game. Until then, creator/main staff may use your email as the account label.')
     : mode==='error'?'Your username could not be verified. Retry the secure profile check or sign out.':'Checking the public username attached to your account.';
-  if(el.status) el.status.textContent=usernameClaimPrivateStatus(message);
+  if(el.status){el.status.textContent=usernameClaimPrivateStatus(message);el.status.className=mode==='error'?'error':'';}
+  if(el.input)el.input.setAttribute('aria-invalid',mode==='error'?'true':'false');
   if(el.save){ el.save.disabled=mode!=='required'; el.save.textContent='OPEN SETTINGS'; }
   if(el.signout) el.signout.disabled=false;
   if(mode==='required'&&!preserveRequiredInput&&el.input){
@@ -182,7 +205,8 @@ function usernameClaimBusy(busy,status){
   const el=usernameClaimElements();
   if(el.save) el.save.disabled=!!busy;
   if(el.signout) el.signout.disabled=!!busy;
-  if(status&&el.status) el.status.textContent=usernameClaimPrivateStatus(status);
+  if(status&&el.status){el.status.textContent=usernameClaimPrivateStatus(status);el.status.className='';}
+  if(el.input)el.input.setAttribute('aria-invalid','false');
 }
 async function usernameClaimSubmit(){
   if(typeof openAccountSettings==='function')
@@ -328,14 +352,14 @@ function prepareSocialForAccount(userId){
   socialDropRealtime(); socialDropPartyRealtimePresence(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialAccountSettingsSqlReady=null;
-  socialView='friends'; socialFriendPage=0; socialMessagePage=0;
+  socialView='friends'; socialFriendPage=0; socialMessagePage=0; socialPartyInvitePage=0;
   socialInboxSection='inbox';socialConversationPeer='';socialConversationPage=0;
   socialConversationStates={};socialConversationSqlReady=null;socialConversationBusy='';
   socialFriendPages={incoming:0,outgoing:0,current:0};
   socialCpuInvitePollAt=0; socialCpuInvitePolling=false; socialCpuInvitePromptedIds=new Set();
   socialPartyPresenceOwner=id;socialPartyServerOffsetMs=0;
   socialPartyInviteSqlReady=null;socialPartyInvites=[];socialPartyInvitePollAt=0;socialPartyInvitePolling=false;
-  socialPartyInvitePromptedIds=new Set();socialPartyInviteClaimBusy=false;socialPartyInviteClaimOp=null;socialPartyInviteUiKeys.clear();socialPartyInviteUiSequence=0;
+  socialPartyInvitePromptedIds=new Set();socialPartyInviteClaimBusy=false;socialPartyInviteClaimOp=null;socialPartyInviteDismissBusy=false;socialPartyInviteDismissOp=null;socialPartyInviteUiKeys.clear();socialPartyInviteUiSequence=0;
   socialResetNotificationState();
   if(id)socialLoadLegacyInviteHandledReceipts(id);
   if(typeof clearReaderState==='function')clearReaderState();
@@ -350,14 +374,14 @@ function resetSocialState(message){
   socialDropRealtime(); socialDropPartyRealtimePresence(); socialProfile=null; socialProfiles={}; socialFriends=[]; socialMessages=[];
   socialBackend={profiles:null,friends:null,messages:null}; socialLoading=false; socialLastFetch=0;
   socialAccountSettingsSqlReady=null;
-  socialView='friends'; socialFriendPage=0; socialMessagePage=0;
+  socialView='friends'; socialFriendPage=0; socialMessagePage=0; socialPartyInvitePage=0;
   socialInboxSection='inbox';socialConversationPeer='';socialConversationPage=0;
   socialConversationStates={};socialConversationSqlReady=null;socialConversationBusy='';
   socialFriendPages={incoming:0,outgoing:0,current:0};
   socialCpuInvitePollAt=0; socialCpuInvitePolling=false; socialCpuInvitePromptedIds=new Set();
   socialPartyPresenceOwner='';socialPartyServerOffsetMs=0;
   socialPartyInviteSqlReady=null;socialPartyInvites=[];socialPartyInvitePollAt=0;socialPartyInvitePolling=false;
-  socialPartyInvitePromptedIds=new Set();socialPartyInviteClaimBusy=false;socialPartyInviteClaimOp=null;socialPartyInviteUiKeys.clear();socialPartyInviteUiSequence=0;
+  socialPartyInvitePromptedIds=new Set();socialPartyInviteClaimBusy=false;socialPartyInviteClaimOp=null;socialPartyInviteDismissBusy=false;socialPartyInviteDismissOp=null;socialPartyInviteUiKeys.clear();socialPartyInviteUiSequence=0;
   socialResetNotificationState();
   if(typeof clearReaderState==='function')clearReaderState();
   socialStatus=message||'SIGN IN FOR FRIENDS + DIRECT MESSAGES';
@@ -574,6 +598,26 @@ function socialPartyInviteUiKey(inviteId){
 function socialPartyInviteByUiKey(uiKey){
   const key=String(uiKey||'');return socialPartyInvites.find(row=>row&&row.uiKey===key)||null;
 }
+function socialIncomingPartyInvites(clock=typeof socialPartyInviteServerNow==='function'?socialPartyInviteServerNow():Date.now()){
+  const owner=authUser?String(authUser.id||''):'',now=Number(clock);if(!owner||!Number.isFinite(now))return [];
+  const rows=[];
+  for(const invite of Array.isArray(socialPartyInvites)?socialPartyInvites:[]){
+    if(!invite||invite.expiresAt<=now)continue;
+    rows.push({source:'cloud',kind:invite.kind,senderUsername:invite.senderUsername,createdAt:invite.createdAt,
+      expiresAt:invite.expiresAt,inviteKey:invite.uiKey});
+  }
+  for(const row of Array.isArray(socialMessages)?socialMessages:[]){
+    if(!row||String(row.recipient_id||'')!==owner||
+       typeof socialPrivateMessageVisible==='function'&&!socialPrivateMessageVisible(row,owner)||socialLegacyInviteHandled(row,owner))continue;
+    const senderId=String(row.sender_id||'');if(!senderId||!socialAcceptedFriend(senderId))continue;
+    const cpuInvite=socialCpuGameInvite(row.body,now),partyInvite=!cpuInvite&&socialPartyInvite(row.body,now),invite=cpuInvite||partyInvite;
+    if(!invite)continue;
+    rows.push({source:'legacy',kind:cpuInvite?'cpu2v2':'party',senderUsername:String(socialPerson(senderId).handle||'PLAYER'),
+      createdAt:Date.parse(row.created_at||'')||0,expiresAt:invite.expiresAt,messageKey:socialPrivateMessageUiKey(row),
+      invite:{...invite,senderId}});
+  }
+  return rows.sort((a,b)=>b.createdAt-a.createdAt);
+}
 function socialNormalizePartyInviteMetadata(row){
   const inviteId=socialPartyInviteUuid(row&&row.invite_id),senderUsername=socialPartyInviteSafeHandle(row&&row.sender_username),
     kind=row&&row.kind==='cpu2v2'?'cpu2v2':row&&row.kind==='party'?'party':'',
@@ -627,6 +671,24 @@ async function socialDismissPartyInvite(inviteId){
     socialPartyInvites=socialPartyInvites.filter(row=>row.inviteId!==id);socialPartyInviteUiKeys.delete(id);return result.data===true;
   }catch(error){if(socialPartyInviteRpcMissing(error))socialPartyInviteSqlReady=false;return false;}
 }
+async function socialDismissPartyInviteByUiKey(uiKey){
+  const invite=socialPartyInviteByUiKey(uiKey),owner=authUser?String(authUser.id||''):'';
+  if(!invite||!owner||socialPartyInviteDismissOp)return false;
+  const op={owner,inviteId:invite.inviteId};socialPartyInviteDismissOp=op;socialPartyInviteDismissBusy=true;
+  try{
+    const dismissed=await socialDismissPartyInvite(invite.inviteId);
+    if(!authUser||String(authUser.id||'')!==owner||socialPartyInviteDismissOp!==op)return false;
+    const label=invite.kind==='cpu2v2'?'CPU 2v2 INVITE':'PARTY INVITE';
+    socialStatus=dismissed?label+' DECLINED':'COULD NOT DECLINE THAT '+label;sfx(dismissed?'swap':'dry');return dismissed;
+  }finally{if(socialPartyInviteDismissOp===op){socialPartyInviteDismissOp=null;socialPartyInviteDismissBusy=false;}}
+}
+function socialDismissLegacyPartyInviteByMessageKey(messageKey){
+  const row=socialPrivateMessageByUiKey(messageKey),owner=authUser?String(authUser.id||''):'';
+  const cpu=!!(row&&socialCpuGameInvite(row.body)),partyInvite=!cpu&&row?socialPartyInvite(row.body):null;
+  if(!row||!owner||String(row.recipient_id||'')!==owner||!cpu&&!partyInvite)return false;
+  const label=cpu?'CPU 2v2 INVITE':'PARTY INVITE',dismissed=socialHandleLegacyInvite(row);
+  socialStatus=dismissed?label+' DECLINED':'COULD NOT DECLINE THAT '+label;sfx(dismissed?'swap':'dry');return dismissed;
+}
 async function socialClaimAndJoinPartyInvite(uiKey){
   const metadata=socialPartyInviteByUiKey(uiKey),owner=authUser?String(authUser.id||''):'';
   if(!metadata||!owner||socialPartyInviteClaimOp)return false;
@@ -654,7 +716,7 @@ function socialMaybePromptPartyInvite(){
         ?' invited you to play together against two CPUs. Start verifies the private invite and joins immediately.'
         :' invited you to their Party. Join verifies the private invite and connects without showing a code.'),
       saveLabel:cpu?'START GAME':'JOIN PARTY',fields:[],
-      onCancel:()=>{socialPartyInvitePromptUserId='';socialStatus=label+' DISMISSED';void socialDismissPartyInvite(invite.inviteId);},
+      onCancel:()=>{socialPartyInvitePromptUserId='';socialStatus=label+' DISMISSED';void socialDismissPartyInviteByUiKey(invite.uiKey);},
       onSave:async()=>{
         if(!authUser||String(authUser.id||'')!==owner){socialPartyInvitePromptUserId='';closeForm();return false;}
         const joined=await socialClaimAndJoinPartyInvite(invite.uiKey);
@@ -738,6 +800,10 @@ function socialMergeNotifications(rows){
   socialNotifications=[...byKey.values()].sort((a,b)=>b.createdAt-a.createdAt);
 }
 function socialNotificationServerNow(){return Date.now()+socialNotificationServerOffsetMs;}
+function socialOfficialUpdateAutoArchived(notice,clock=socialNotificationServerNow()){
+  const readAt=Number(notice&&notice.readAt),now=Number(clock);
+  return !!(notice&&notice.kind==='official_update'&&Number.isFinite(readAt)&&readAt>0&&Number.isFinite(now)&&now-readAt>=SOCIAL_OFFICIAL_UPDATE_ARCHIVE_MS);
+}
 async function socialPollNotifications(force=false){
   const owner=authUser?String(authUser.id||''):'',clock=Date.now();
   if(!sb||!owner||typeof navigator!=='undefined'&&navigator.onLine===false)return false;
@@ -1047,16 +1113,10 @@ function socialUnreadPrivateMessageCount(){
     !socialCpuGameInviteEnvelope(row.body)&&!socialPartyInviteEnvelope(row.body)).length;
 }
 function socialLiveLegacyPartyInviteCount(){
-  const owner=authUser?String(authUser.id||''):'';if(!owner)return 0;
-  let count=0;for(const row of socialMessages){
-    if(!row||(typeof socialPrivateMessageVisible==='function'&&!socialPrivateMessageVisible(row,owner))||String(row.recipient_id||'')!==owner||socialLegacyInviteHandled(row,owner))continue;
-    const sender=String(row.sender_id||'');if(!socialAcceptedFriend(sender))continue;
-    if(socialCpuGameInvite(row.body)||socialPartyInvite(row.body))count++;
-  }return count;
+  return socialIncomingPartyInvites().filter(invite=>invite.source==='legacy').length;
 }
 function socialLiveCloudPartyInviteCount(){
-  const clock=typeof socialPartyInviteServerNow==='function'?socialPartyInviteServerNow():Date.now();
-  return socialPartyInvites.filter(invite=>invite&&invite.expiresAt>clock).length;
+  return socialIncomingPartyInvites().filter(invite=>invite.source==='cloud').length;
 }
 function socialUnreadSummary(){
   if(!authUser)return {friendRequests:0,privateMessages:0,partyInvites:0,partyRequests:0,notifications:0,total:0,hasAny:false};
@@ -1070,8 +1130,8 @@ function socialUnreadSummary(){
 }
 function socialHasUnreadActivity(){return socialUnreadSummary().hasAny;}
 function socialHasUnreadFriendsActivity(){return socialUnreadSummary().friendRequests>0;}
-function socialHasUnreadInboxActivity(){const s=socialUnreadSummary();return s.privateMessages+s.partyInvites+s.notifications>0;}
-function socialHasUnreadPartyActivity(){return socialUnreadSummary().partyRequests>0;}
+function socialHasUnreadInboxActivity(){const s=socialUnreadSummary();return s.privateMessages+s.notifications>0;}
+function socialHasUnreadPartyActivity(){const s=socialUnreadSummary();return s.partyInvites+s.partyRequests>0;}
 function socialOfficialBannerAlreadyNotified(row){
   if(!authUser||socialNotificationSqlReady!==true||!row)return false;
   const resource='banner:'+String(row.id==null?'':row.id);
@@ -1392,12 +1452,15 @@ async function socialUpdateHandle(value,requiredClaim=false){
       if(settingsContextCurrent()&&typeof accountSettingsSetStatus==='function')accountSettingsSetStatus('username',message,true);
       return;
     }
-    if(requiredClaim){ usernameClaimBusy(false); const el=usernameClaimElements(); if(el.status) el.status.textContent=usernameClaimPrivateStatus(message); }
+    if(requiredClaim){
+      usernameClaimBusy(false); const el=usernameClaimElements();
+      if(el.status){el.status.textContent=usernameClaimPrivateStatus(message);el.status.className='error';}
+      if(el.input)el.input.setAttribute('aria-invalid','true');
+    }
     else formError(message);
   };
-  if(!/^[A-Za-z0-9_]{3,32}$/.test(username)){ showError('Use 3–32 letters, numbers, or _.'); return false; }
-  const key=username.toLowerCase();
-  if(usernameIsGeneratedForUser(username,authUser&&authUser.id)){ showError('Choose a real username, not the temporary account label.'); return false; }
+  const validationMessage=socialUsernameValidationMessage(value,authUser&&authUser.id);
+  if(validationMessage){showError(validationMessage);return false;}
   if(!sb||!authUser){ showError('Sign in and reconnect first.'); return false; }
   if(socialAccountSettingsSqlReady===false){ showError('Install Social 02 in Supabase before choosing or changing a username.'); return false; }
   if(requiredClaim&&(!settingsOpen||settingsContextCurrent())) usernameClaimBusy(true,'Saving your unique username...');
@@ -1445,6 +1508,8 @@ async function socialUpdateHandle(value,requiredClaim=false){
       : cooldown
         ? 'Username changes are limited to once every 21 days.'+(Number.isFinite(retryAt)&&typeof accountSettingsDate==='function'?' Try again on '+accountSettingsDate(retryAt)+'.':'')
         : code==='23505'?'That username is already taken. Try another one.'
+        : code==='22023'||message.includes('USERNAME_INVALID')
+          ? (socialUsernameValidationMessage(value,userId)||'That username is not allowed. Choose a different one.')
         : socialSetupMissing(error)?'Username Settings needs the Social 02 SQL update.':'That username is unavailable. Try another one.');
     return false;
   }

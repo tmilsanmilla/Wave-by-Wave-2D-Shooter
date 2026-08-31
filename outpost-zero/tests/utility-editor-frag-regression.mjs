@@ -196,9 +196,10 @@ for(const value of ['19','7','1.4','88','2.1'])assert.match(freezerText,new RegE
 assert.doesNotMatch(fragText,/\b170\b|up to 300 at center/,'Frag details must not retain old hardcoded balance text');
 assert.doesNotMatch(freezerText,/\b105\b|1\.35s|2\.5s/,'Freezer details must not hide admin overrides behind defaults');
 
-for(const file of ['weapons','upgrades','admin-ui','combat','ui'])assert.match(
-  index,new RegExp(`outpost-zero/js/${file}\\.js\\?v=20260830-utility-editor-frag-v1`),
-  `${file}.js must use the utility-editor/Frag cache version`,
+for(const [file,version] of [['weapons','20260831-freezer-buff-v1'],['admin-ui','20260830-utility-editor-frag-v1'],
+  ['upgrades','20260831-hub-tools-settings-v1'],['combat','20260831-practice-infinite-ammo-v1'],['ui','20260831-shop-weapon-picker-v1']])assert.match(
+  index,new RegExp(`outpost-zero/js/${file}\\.js\\?v=${version}`),
+  `${file}.js must use its current cache version`,
 );
 
 console.log('utility editor and Frag regression checks passed');

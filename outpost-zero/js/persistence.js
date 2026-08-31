@@ -684,10 +684,11 @@ function buyPowerup(pu){
 }
 function cosKey(wkey, id){ return wkey+':'+id; }
 function buyCosmetic(wkey, c){
+  if(!wkey||!WEAPONS[wkey]||(typeof isLocked==='function'&&isLocked(wkey))){ sfx('dry'); return false; }
   const k=cosKey(wkey,c.id);
-  if(cosmeticOwned[k]){ cosmeticEquipped[wkey]=c.id; saveMeta(); sfx('swap'); return; }   // already owned -> equip
-  if(coins<COSMETIC_COST){ sfx('dry'); return; }
-  coins-=COSMETIC_COST; cosmeticOwned[k]=true; cosmeticEquipped[wkey]=c.id; saveMeta(); sfx('pickup');
+  if(cosmeticOwned[k]){ cosmeticEquipped[wkey]=c.id; saveMeta(); sfx('swap'); return true; }   // already owned -> equip
+  if(coins<COSMETIC_COST){ sfx('dry'); return false; }
+  coins-=COSMETIC_COST; cosmeticOwned[k]=true; cosmeticEquipped[wkey]=c.id; saveMeta(); sfx('pickup'); return true;
 }
 // color a weapon is currently wearing (equipped cosmetic overrides its default tracer)
 function weaponColor(wkey, fallback){

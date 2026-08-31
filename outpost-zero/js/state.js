@@ -19,10 +19,17 @@ let dailyEndlessRunSettled=true,dailyEndlessClearedWaves=0,dailyEndlessTaskOwner
 let unscopedSniperCelebration={startAt:0,until:0,serial:0,seen:new Set()};
 let diffMode='normal';
 const DEFAULT_PRACTICE_TRACKING_SPEED=1, DEFAULT_PRACTICE_TRACKING_DIRECTION=0;
-const PRACTICE_TRACKING_SPEED_MIN=0.2, PRACTICE_TRACKING_SPEED_MAX=3.5, PRACTICE_TRACKING_SPEED_STEP=0.1;
-const PRACTICE_TRACKING_DIRECTION_STEP=15;
+const PRACTICE_TRACKING_SPEED_MIN=0.5, PRACTICE_TRACKING_SPEED_MAX=5, PRACTICE_TRACKING_SPEED_STEP=0.5;
+const PRACTICE_TRACKING_DIRECTION_STEP=45;
 let practiceMode=null, practiceSpawns=[], practiceRects=[], pracBtnRect=null, arenaBtnRect=null, dpsLog=[], dpsPrevHp=0, dpsTotal=0, dpsStart=0, pracLockMsgT=0, pracNeedMsgT=0, pendingPractice=null;
 let practiceTrackingSpeed=DEFAULT_PRACTICE_TRACKING_SPEED, practiceTrackingDirection=DEFAULT_PRACTICE_TRACKING_DIRECTION;
+let practiceInfiniteAmmo=false;
+function practiceInfiniteAmmoActive(){
+  // Arena uses the Practice simulation plumbing, but it is a real duel. The
+  // tutorial also needs finite magazines for its reload and ammo lessons.
+  return !!(practiceInfiniteAmmo&&practiceMode&&practiceMode!=='arena'&&
+    (typeof tutorialOn==='undefined'||!tutorialOn));
+}
 const ARENA_TARGET=5, ARENA_HP=250, ARENA_ROUND_MS=90000, ARENA_SYNC_MS=50;
 const ARENA_TIMEOUT_HP_RETRY_MS=160, ARENA_TIMEOUT_HP_FALLBACK_MS=1000;
 // Every timed Arena round uses this one rule. Remaining HP is compared as a

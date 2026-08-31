@@ -525,16 +525,16 @@ const EQUIP_ANIMS=[
   {id:'toss',  name:'Juggle',     cost:220, dur:EQUIP_WAIT, d:'hop, spin, catch'},
 ];
 let animOwned={}, animEquipped={};                  // per weapon: owned keys 'smg|spin', equipped {smg:'spin'}
-let shopAnimWeapon=null, animPrevRect=null, animNextRect=null;
+let shopAnimWeapon=null;
 function animDef(id){ return EQUIP_ANIMS.find(a=>a.id===id) || EQUIP_ANIMS[0]; }
 function animKey(wk,id){ return wk+'|'+id; }
 function animOf(wk){ const id=animEquipped[wk]; return (id && (id==='none' || animOwned[animKey(wk,id)])) ? id : 'none'; }
 function buyAnim(a, wk){
   wk=wk||shopAnimWeapon;
-  if(!wk) return;
-  if(a.id==='none' || animOwned[animKey(wk,a.id)]){ animEquipped[wk]=a.id; saveMeta(); sfx('swap'); return; }
-  if(coins<a.cost){ sfx('dry'); return; }
-  coins-=a.cost; animOwned[animKey(wk,a.id)]=true; animEquipped[wk]=a.id; saveMeta(); sfx('pickup');
+  if(!wk||!WEAPONS[wk]||(typeof isLocked==='function'&&isLocked(wk))){ sfx('dry'); return false; }
+  if(a.id==='none' || animOwned[animKey(wk,a.id)]){ animEquipped[wk]=a.id; saveMeta(); sfx('swap'); return true; }
+  if(coins<a.cost){ sfx('dry'); return false; }
+  coins-=a.cost; animOwned[animKey(wk,a.id)]=true; animEquipped[wk]=a.id; saveMeta(); sfx('pickup'); return true;
 }
 // returns {rot, lift, scale} for the weapon in hand while the equip flourish plays
 // where the melee is through its swing right now, 0..1, or null when not swinging.

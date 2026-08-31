@@ -35,10 +35,14 @@ const weaponContext=vm.createContext({console,Math,Number,Object,Array,Set,Map,I
 vm.runInContext(`${weaponsSource}\nglobalThis.__utilities=UTILITIES;`,weaponContext,{filename:'weapons.js'});
 const freezer={...weaponContext.__utilities.freezer};
 assert.deepEqual(
-  {speed:freezer.speed,fuseMs:freezer.fuseMs,radius:freezer.radius,freezeMs:freezer.freezeMs},
-  {speed:9,fuseMs:1350,radius:105,freezeMs:2500},
-  'Freezer must trade its instant wide five-second lock for the revised projectile balance',
+  {cd:freezer.cd,speed:freezer.speed,fuseMs:freezer.fuseMs,radius:freezer.radius,freezeMs:freezer.freezeMs},
+  {cd:12500,speed:11.25,fuseMs:1580,radius:105,freezeMs:2500},
+  'Freezer must have half cooldown, +25% speed, and enough flight time for +35% travel range',
 );
+const dragTravel=(speed,ticks)=>speed*(1-Math.pow(0.985,ticks))/(1-0.985);
+const oldTravel=dragTravel(9,80),buffedTravel=dragTravel(freezer.speed,94);
+assert.ok(Math.abs(buffedTravel/oldTravel-1.35)<0.002,
+  'the faster charge plus its adjusted fuse must produce approximately 35% more maximum travel distance');
 assert.doesNotMatch(String(freezer.blurb||'')+String(freezer.gimmick&&freezer.gimmick.copy||''),/wide radius for 5s/i,
   'the player-facing Freezer description must not advertise the removed instant five-second blast');
 
@@ -75,12 +79,12 @@ assert.equal(context.grenades.length,1,'casting Freezer must launch one visible 
 assert.equal(projectile.freezer,true,'the launched object must be identifiable as a Freezer projectile');
 assert.equal(projectile.x,100,'Freezer must begin at the player instead of appearing at the crosshair');
 assert.equal(projectile.y,100);
-assert.equal(projectile.vx,9,'Freezer must travel at its visible tuned speed');
+assert.equal(projectile.vx,11.25,'Freezer must travel 25% faster');
 assert.ok(Math.abs(projectile.vy)<1e-9);
-assert.equal(projectile.t,2350,'Freezer must stay in flight for its 1.35-second fuse');
+assert.equal(projectile.t,2580,'Freezer must stay in flight long enough to gain 35% total travel range');
 
 context.updateFreezerProjectile(projectile,1);
-assert.equal(projectile.x,109,'a live Freezer must visibly move across the world');
+assert.equal(projectile.x,111.25,'a live Freezer must visibly move across the world');
 assert.equal(context.freezeFx.length,0,'moving one step must not apply an instant crosshair blast');
 assert.equal(context.enemies[0].frozenUntil,0,'targets must not freeze before impact');
 
@@ -98,7 +102,7 @@ assert.equal(context.playerFrozenUntil,3500,'standing in your own Freezer blast 
 assert.equal(context.enemies[0].frozenUntil,3500,'an exposed nearby enemy must receive the shorter freeze');
 assert.equal(context.enemies[1].frozenUntil,0,'a wall must shield enemies from the Freezer blast');
 assert.equal(context.freezeFx.length,1,'impact must create exactly one final icy effect');
-assert.equal(context.freezeFx[0].r,105,'the final visual must use the reduced gameplay radius');
+assert.equal(context.freezeFx[0].r,105,'the travel-range buff must not undo the smaller blast radius');
 
 assert.match(updateSource,/losBlocked|pointInRects/,
   'projectile movement must test solid geometry instead of visually passing through walls');
@@ -124,10 +128,10 @@ assert.match(functionSource(online,'arenaApplyRemoteUtility'),/key==='freezer'[\
 assert.doesNotMatch(functionSource(online,'arenaApplyRemoteUtility'),/key==='freezer'[\s\S]{0,600}utilityFrozenUntil\s*=\s*now/,
   'receiving a cast packet must never freeze the player before the projectile arrives');
 
-for(const [script,version] of [['weapons','20260830-utility-editor-frag-v1'],['upgrades','20260830-utility-editor-frag-v1'],
-  ['gameplay','20260830-freezer-projectile-v1'],['combat','20260830-utility-editor-frag-v1'],
-  ['online','20260830-background-resume-v1'],['rendering','20260830-freezer-projectile-v1'],
-  ['ui','20260830-utility-editor-frag-v1']])
+for(const [script,version] of [['weapons','20260831-freezer-buff-v1'],['upgrades','20260831-hub-tools-settings-v1'],
+  ['gameplay','20260831-tracking-drill-v1'],['combat','20260831-practice-infinite-ammo-v1'],
+  ['online','20260830-background-resume-v1'],['rendering','20260831-practice-infinite-ammo-v1'],
+  ['ui','20260831-shop-weapon-picker-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('PASS Freezer travels, respects walls, self-freezes, and uses the reduced blast');

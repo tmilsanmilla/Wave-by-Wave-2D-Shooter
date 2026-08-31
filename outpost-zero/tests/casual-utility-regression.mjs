@@ -20,7 +20,7 @@ const context=vm.createContext({
   fistFlurryUntil:0,sawChargeUntil:0,comboNextT:0,
   WORLD:{w:2400,h:1800},
   WEAPONS:{ar:{},m9:{},knife:{melee:true},chainsaw:{range:72}},
-  UTILITIES:{medkit:{cd:75000},grenade:{cd:20000},freezer:{cd:25000,speed:9,fuseMs:1350,radius:105,freezeMs:2500},redball:{cd:11000},beachball:{cd:16000}},
+  UTILITIES:{medkit:{cd:75000},grenade:{cd:20000},freezer:{cd:12500,speed:11.25,fuseMs:1580,radius:105,freezeMs:2500},redball:{cd:11000},beachball:{cd:16000}},
   loadout:{primary:'ar',secondary:'m9',melee:'knife',utility:'grenade'},
   storedLoadoutSlot:key=>({ar:'primary',m9:'secondary',knife:'melee',medkit:'utility',grenade:'utility',freezer:'utility',redball:'utility',beachball:'utility'}[key]||null),
   isWeaponPublished:key=>!['unpublished'].includes(key),isLocked:()=>false,

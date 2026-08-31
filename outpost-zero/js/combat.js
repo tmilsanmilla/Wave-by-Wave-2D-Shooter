@@ -168,9 +168,11 @@ function medDeny(why){
 }
 // Dropped world medkits are an Endless inventory item, separate from the
 // equipped Field Medkit's kill recharge. They can be carried with any loadout.
-function collectDroppedMedkit(){
+function collectDroppedMedkit(originX=player.x,originY=player.y){
   if(medStash>=MED_STASH_MAX) return false;
   medStash++;
+  const fromX=Number.isFinite(+originX)?+originX:player.x,fromY=Number.isFinite(+originY)?+originY:player.y;
+  medkitFlyFx.push({fromX,fromY,startAt:now,duration:Math.min(800,420+Math.hypot(player.x-fromX,player.y-fromY)*0.12)});
   waveMsg='\u2695 MEDKIT STORED  '+medStash+'/'+MED_STASH_MAX+'  \u00b7  H TO USE'; waveMsgT=now+1800;
   burst(player.x,player.y,'#f2f2ee',10,3); sfx('pickup');
   if(tutorialOn&&typeof tutorialRecordMedkitCollected==='function') tutorialRecordMedkitCollected();
@@ -377,6 +379,11 @@ function quickMelee(){
 
 function startReload(){
   if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
+  if(typeof practiceInfiniteAmmoActive==='function'&&practiceInfiniteAmmoActive()){
+    // Infinite Practice keeps a full virtual magazine. R is intentionally a
+    // no-op: there is no reload animation, delay, or sound to interrupt aim.
+    player.reloadEnd=0;return false;
+  }
   if(typeof isLocked==='function'&&isLocked(player.cur)){
     if(typeof dropExpiredTemporaryLoadout==='function')dropExpiredTemporaryLoadout([player.cur]);
     sfx('dry');return;
@@ -412,8 +419,9 @@ function tryFire(carryCadence=false){
     resetFireCadence();sfx('dry');return false;
   }
   const w=WEAPONS[player.cur];
+  const infinitePractice=typeof practiceInfiniteAmmoActive==='function'&&practiceInfiniteAmmoActive();
   if(player.reloadEnd>now || player.equipEnd>now) return false;
-  const preShotMag=player.mags[player.cur];
+  const preShotMag=infinitePractice?magSize(player.cur):player.mags[player.cur];
   const frenzyMul=Number.isFinite(+w.frenzyAt)&&preShotMag<=+w.frenzyAt
     ? (Number.isFinite(+w.frenzyRateMul)?+w.frenzyRateMul:1) : 1;
   const shotInterval=w.fireRate*frenzyMul*perks.rate*wm(player.cur).rate*(now<surgeT?0.77:1);
@@ -437,12 +445,12 @@ function tryFire(carryCadence=false){
     meleeSwing(w, 1);
     return true;
   }
-  if(player.mags[player.cur]<1){
+  if(!infinitePractice&&player.mags[player.cur]<1){
     player.lastShot=now; sfx('dry'); if(!w.cell) startReload(); return false;
   }
   // fireworks: lobbed firecracker that detonates at the crosshair (within range)
   if(w.firework){
-    player.lastShot=shotStamp; player.mags[player.cur]--; if(tutorialOn) tutFired++;
+    player.lastShot=shotStamp; if(!infinitePractice)player.mags[player.cur]--; if(tutorialOn) tutFired++;
     const sw=swayScreen();
     const tw=screenToWorld(mouse.x+sw.x, mouse.y+sw.y);
     const playBounds=activeArenaBounds();
@@ -472,12 +480,16 @@ function tryFire(carryCadence=false){
   const fanRound=!!(w.fan&&(startsFan||fanShots>0));
   player.lastShot=shotStamp;
   weaponLastShotAt[shotWeapon]=shotStamp;
-  player.mags[shotWeapon]--; if(tutorialOn) tutFired++;
+  if(!infinitePractice)player.mags[shotWeapon]--; if(tutorialOn) tutFired++;
   // An aimed Python trigger empties exactly the magazine that was loaded when
   // the fan began. Follow-ups use the same real firing path, but ammo added
   // later cannot extend the captured volley or recursively start another one.
   if(startsFan){
-    fanShots=Math.max(0,Math.floor(+player.mags[shotWeapon]||0));
+    // Never derive this from Infinity. Infinite Practice still fires exactly
+    // one normal full-mag Python volley, then releases the firing sequence.
+    fanShots=infinitePractice
+      ? Math.max(0,magSize(shotWeapon)-1)
+      : Math.max(0,Math.floor(+player.mags[shotWeapon]||0));
     fanNextT=now+(+w.fanGapMs||115);
     fanBurstUntil=now+(+w.fanLockMs||900);
   }
@@ -511,9 +523,54 @@ function tryFire(carryCadence=false){
   player.flash = now + 55;
   addShake(w.kick*0.8);
   sfx('shoot',w,shotWeapon);
-  if(player.mags[player.cur]<1 && !w.cell) startReload();
+  if(!infinitePractice&&player.mags[player.cur]<1 && !w.cell) startReload();
   if(w.cell) player.mags[player.cur]=Math.floor(player.mags[player.cur]);   // keep the readout whole
   return true;
+}
+
+// Solve the intercept analytically so the Yellow Warlord aims where a moving
+// player will be, while retaining direct aim when no projectile-speed solution
+// exists. Lead is capped to keep portals or brief dashes from producing wild shots.
+function predictiveAimAngle(shooterX,shooterY,target,projectileSpeed,maxLeadFrames=45){
+  const rx=(+target.x||0)-shooterX,ry=(+target.y||0)-shooterY;
+  const vx=Number.isFinite(+target.motionVx)?+target.motionVx:0,vy=Number.isFinite(+target.motionVy)?+target.motionVy:0;
+  const speed=Math.max(0.001,+projectileSpeed||0.001),a=vx*vx+vy*vy-speed*speed,b=2*(rx*vx+ry*vy),c=rx*rx+ry*ry;
+  let lead=NaN;
+  if(Math.abs(a)<1e-7){ if(Math.abs(b)>1e-7){const t=-c/b;if(t>0)lead=t;} }
+  else {
+    const disc=b*b-4*a*c;
+    if(disc>=0){
+      const root=Math.sqrt(disc),t1=(-b-root)/(2*a),t2=(-b+root)/(2*a);
+      if(t1>0&&t2>0)lead=Math.min(t1,t2);else if(t1>0)lead=t1;else if(t2>0)lead=t2;
+    }
+  }
+  if(!Number.isFinite(lead))lead=0;
+  lead=Math.min(Math.max(0,+maxLeadFrames||0),lead);
+  return Math.atan2(ry+vy*lead,rx+vx*lead);
+}
+function purpleHeavyShotDamage(w=wave){
+  return 150*(1+Math.max(0,Math.floor(+w||30)-30)*0.053);
+}
+function movePracticeTrackingDummy(e,step,bounds,clock=now){
+  if(!e||!bounds)return false;
+  const margin=Math.max(0,(+e.r||0)+2),left=bounds.left+margin,right=bounds.right-margin,
+    top=bounds.top+margin,bottom=bounds.bottom-margin;
+  let dir=Number.isFinite(e.practiceDir)?e.practiceDir:0,vx=Math.cos(dir),vy=Math.sin(dir),
+    remaining=Math.max(0,+step||0);
+  const eps=1e-8;
+  const toX=vx>eps?(right-e.x)/vx:vx<-eps?(left-e.x)/vx:Infinity;
+  const toY=vy>eps?(bottom-e.y)/vy:vy<-eps?(top-e.y)/vy:Infinity;
+  const edgeDistance=Math.max(0,Math.min(toX,toY));
+  let turned=false;
+  if(Number.isFinite(edgeDistance)&&remaining>=edgeDistance){
+    e.x+=vx*edgeDistance;e.y+=vy*edgeDistance;remaining-=edgeDistance;
+    e.practiceTurnMarker={x:e.x,y:e.y,startAt:clock,until:clock+900};
+    vx=-vx;vy=-vy;dir=Math.atan2(vy,vx);turned=true;
+  }
+  e.x=clamp(e.x+vx*remaining,left,right);
+  e.y=clamp(e.y+vy*remaining,top,bottom);
+  e.practiceDir=Math.atan2(Math.sin(dir),Math.cos(dir));
+  return turned;
 }
 
 /* ---------------- update ---------------- */
@@ -588,6 +645,7 @@ function update(dtms){
   }
 
   // movement
+  const motionStartX=player.x,motionStartY=player.y;
   let mx=0,my=0;
   if(keys['w'])my--; if(keys['s'])my++; if(keys['a'])mx--; if(keys['d'])mx++;
   if(mx||my) player.moveT=now;
@@ -611,6 +669,8 @@ function update(dtms){
   collideRects(player);
   clampActorToArena(player);
   if(isArenaMapBattlefield()) arenaPortalStep(player,now);
+  player.motionVx=dt>0?(player.x-motionStartX)/dt:0;
+  player.motionVy=dt>0?(player.y-motionStartY)/dt:0;
 
   // The Offline 1v1 opponent lives in the same fixed 60 Hz simulation as the
   // player, so low or very high render FPS never changes its speed or fire rate.
@@ -1000,27 +1060,10 @@ function update(dtms){
     }
     // practice range targets stand still and never attack
     if(e.practiceStill) continue;
-    // Tracking practice follows the chosen compass direction at a fixed speed.
-    // It reflects off the arena boundary and solid scenery instead of chasing
-    // or attacking the player, keeping the drill predictable and repeatable.
+    // Tracking practice is an open, straight-line drill. At the arena edge the
+    // dummy reverses 180 degrees along the same lane and leaves a brief marker.
     if(e.practiceMoving){
-      const eSm=enemySpeedMul(e), step=e.spd*dt*eSm, bounds=activeArenaBounds(), margin=e.r+2;
-      let dir=Number.isFinite(e.practiceDir)?e.practiceDir:0;
-      let vx=Math.cos(dir), vy=Math.sin(dir);
-      let nx=e.x+vx*step;
-      if(nx<bounds.left+margin||nx>bounds.right-margin||circleHitsRects(nx,e.y,e.r)){
-        vx=-vx; dir=Math.atan2(vy,vx); nx=e.x+vx*step;
-      }
-      if(nx>=bounds.left+margin&&nx<=bounds.right-margin&&!circleHitsRects(nx,e.y,e.r)) e.x=nx;
-      let ny=e.y+Math.sin(dir)*step;
-      if(ny<bounds.top+margin||ny>bounds.bottom-margin||circleHitsRects(e.x,ny,e.r)){
-        vy=-Math.sin(dir); dir=Math.atan2(vy,Math.cos(dir)); ny=e.y+vy*step;
-      }
-      if(ny>=bounds.top+margin&&ny<=bounds.bottom-margin&&!circleHitsRects(e.x,ny,e.r)) e.y=ny;
-      e.practiceDir=Math.atan2(Math.sin(dir),Math.cos(dir));
-      e.x=clamp(e.x,bounds.left+margin,bounds.right-margin);
-      e.y=clamp(e.y,bounds.top+margin,bounds.bottom-margin);
-      collideRects(e);
+      movePracticeTrackingDummy(e,e.spd*dt*enemySpeedMul(e),activeArenaBounds(),now);
       continue;
     }
     // red balls taunt (chase); beach balls repel (flee)
@@ -1066,7 +1109,7 @@ function update(dtms){
         if(now>=e.streamT){                      // constant slow missiles
           e.streamT=now+1300;
           const pa=Math.atan2(player.y-e.y, player.x-e.x);
-          fireHoming(e, pa+rand(-0.3,0.3), 3.5, 0.045, 6500, 16);   // faster missiles
+          fireHoming(e, pa+rand(-0.3,0.3), 3.85, 0.045, 6500, 20);
         }
         if(now>=e.deflectNext){                  // every 8s: 2s of full bullet deflection
           e.deflectUntil=now+2000;
@@ -1090,10 +1133,10 @@ function update(dtms){
           if(step>e.chargeGo) step=e.chargeGo;      // never exceed red's max distance
           e.chargeGo-=step;
           e.x+=e.cvx*step; e.y+=e.cvy*step; vx=0; vy=0;
-        } else if(now>=e.streamT){                  // slower but perfectly accurate high-speed shots
+        } else if(now>=e.streamT){                  // predictive high-speed shots lead the player's real movement
           e.streamT=now+1500;
-          const pa=Math.atan2(player.y-e.y, player.x-e.x);
-          ebullets.push({x:e.x,y:e.y,vx:Math.cos(pa)*15.75,vy:Math.sin(pa)*15.75,life:2200,dmg:22});   // +50% speed
+          const shotSpeed=18.1125,pa=predictiveAimAngle(e.x,e.y,player,shotSpeed,45);
+          ebullets.push({x:e.x,y:e.y,vx:Math.cos(pa)*shotSpeed,vy:Math.sin(pa)*shotSpeed,life:2200,dmg:27.5,predictive:true});
         }
       } else if(e.type==='bossPurple'){          // PURPLE KING: RED's rate of fire, heavier rounds
         if(now>=e.streamT){                      // constant 3-shot fan like RED, double damage
@@ -1111,6 +1154,13 @@ function update(dtms){
             ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,life:2600,dmg:20.7,king:true});
           }
           sfx('shoot',{sndF:180,sndD:0.2});
+        }
+        if(now>=e.heavyT){                       // one visible high-damage round; 150 at its wave-30 debut
+          e.heavyT=now+3000;
+          const shotSpeed=9,pa=predictiveAimAngle(e.x,e.y,player,shotSpeed,35);
+          ebullets.push({x:e.x,y:e.y,vx:Math.cos(pa)*shotSpeed,vy:Math.sin(pa)*shotSpeed,life:3000,
+            dmg:purpleHeavyShotDamage(wave),preScaledDamage:true,king:true,flashing:true,dangerRadius:8});
+          sfx('shoot',{sndF:120,sndD:0.28});
         }
       }
     }
@@ -1256,7 +1306,9 @@ function update(dtms){
         const e=enemies[j];
         if(dist2(b.x,b.y,e.x,e.y) < (e.r+4+(b.fg||0))*(e.r+4+(b.fg||0))){
           if(b.hits && b.hits.has(e)) continue;
-          if(e.deflectUntil>now){                       // BLUE warlord shield: deflect the bullet
+          const purpleDeflect=e.type==='bossPurple'&&now>=(e.purpleDeflectReadyAt||0)&&Math.random()<0.20;
+          if(purpleDeflect){e.purpleDeflectReadyAt=now+650;e.deflectFlashUntil=now+140;}
+          if(e.deflectUntil>now||purpleDeflect){        // BLUE shield or PURPLE's occasional single-shot deflect
             const na=Math.atan2(b.y-e.y, b.x-e.x)+rand(-0.3,0.3);
             const sp=Math.hypot(b.vx,b.vy);
             b.vx=Math.cos(na)*sp; b.vy=Math.sin(na)*sp;
@@ -1326,7 +1378,7 @@ function update(dtms){
       if(dist2(b.x,b.y,player.x,player.y)<(player.r+shotR)*(player.r+shotR)){
         dead=true;
         if(b.botArena) arenaBotHitPlayer((b.dmg||WEAPONS.ar.dmg)*dmgMul(b));
-        else if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg);
+        else if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg,{preScaled:!!b.preScaledDamage});
       }
     }
     if(dead) ebullets.splice(i,1);
@@ -1342,10 +1394,14 @@ function update(dtms){
   // pickups
   for(let i=pickups.length-1;i>=0;i--){
     const p=pickups[i];
-    // Pickups stay on the ground until walked over. Dropped medkits go into a
-    // five-pack stash even at full health, and wait here when that stash is full.
-    const wanted = p.type==='ammo' || p.type==='fuel' || p.type==='chest' ||
-                   (p.type==='med' && medStash<MED_STASH_MAX);
+    // Medkits never wait for walk-over collection. Award any compatibility
+    // pickup immediately, then remove it even at the cap so there is no hidden
+    // sixteenth pack waiting on the floor. Other pickups still require contact.
+    if(p.type==='med'){
+      if(medStash<MED_STASH_MAX)collectDroppedMedkit(p.x,p.y);
+      pickups.splice(i,1);continue;
+    }
+    const wanted = p.type==='ammo' || p.type==='fuel' || p.type==='chest';
     if(wanted && dist2(p.x,p.y,player.x,player.y) < 34*34){
       if(p.type==='ammo'){
         for(const k of [loadout.primary, loadout.secondary]){
@@ -1397,18 +1453,16 @@ function update(dtms){
           chestRewardOpen={coins:coinDrop,gems:awardedGems,taskReward,mod:modName,trickle,end:trickle.start+trickle.dur};
         }
         burst(p.x,p.y,'#ffd24d',18,5); sfx('pickup');
-      } else if(p.type==='med'){
-        if(!collectDroppedMedkit()) continue;
       }
       pickups.splice(i,1);
     }
   }
 }
-function hurtPlayer(dmg){
+function hurtPlayer(dmg,options={}){
   if(now<invincUntil) return;                       // invincibility powerup: no damage
   cancelMedHeal();                                  // a real hit interrupts both quick and long Medkit heals
-  const waveDmg=1+Math.max(0,wave-1)*0.053;
-  let incoming=dmg*waveDmg*perks.armor*DIFFS[diffMode].dmg;
+  const enemyScale=options.preScaled?DIFFS[diffMode].dmg:endlessEnemyDamageMultiplier(wave,diffMode);
+  let incoming=dmg*enemyScale*perks.armor;
   if(playerFrozenUntil>now){
     clearPlayerFreezerFreeze();incoming*=0.5;
     burst(player.x,player.y,'#bfefff',10,4);waveMsg='THAWED \u00b7 HIT REDUCED';waveMsgT=now+900;
@@ -1534,12 +1588,13 @@ function killEnemy(j){
       medDropKillAcc=0;
       // A boss already guarantees a medkit below; that single pack also
       // satisfies a cadence threshold instead of creating two on one kill.
-      if(!t.boss) pickups.push({x:e.x,y:e.y,type:'med'});
+      if(!t.boss) collectDroppedMedkit(e.x,e.y);
     }
     if(Math.random()<0.165) pickups.push({x:e.x+rand(-10,10),y:e.y+rand(-10,10),type:'ammo'});
     taskProgress('endless_kill',1);
     if(t.boss){
-      pickups.push({x:e.x-32,y:e.y,type:'med'},{x:e.x+32,y:e.y,type:'ammo'},{x:e.x,y:e.y+32,type:'ammo'});
+      collectDroppedMedkit(e.x-32,e.y);
+      pickups.push({x:e.x+32,y:e.y,type:'ammo'},{x:e.x,y:e.y+32,type:'ammo'});
       // weapon-mod CHESTS: purple 100%, yellow 33.3%, blue 10%, red 5%
       const CHEST={boss:[0.05,60], bossBlue:[0.10,120], bossYellow:[0.333,250], bossPurple:[1.0,600]}[e.type];
       if(CHEST && Math.random()<CHEST[0])

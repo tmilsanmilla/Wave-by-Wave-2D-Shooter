@@ -594,11 +594,7 @@ function clickSelect(){
     }
     if(inR(adLeftRect)){ try{ window.open(adLeftRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
     if(inR(adRightRect)){ try{ window.open(adRightRect.url,'_blank','noopener'); }catch(e){} sfx('swap'); return; }
-    if(inR(promoBtnRect)){ openPromo(); sfx('swap'); return; }
-    if(inR(shareBtnRect)){ shareReferral(); return; }
-    if(inR(wheelBtnRect)){ openWheel(); sfx('swap'); return; }
     if(inR(streakBtnRect)){ collectStreak(); return; }
-    if(inR(lookupBtnRect)){ resetPlayerEditScroll(); if(canUsePlayerTools()){ playersOpen=true; playersTab='lookup'; fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); } else { scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; } sfx('swap'); return; }
     for(const r of homePlayRects) if(inR(r)){
       if(!r.enabled){ sfx('dry'); return; }
       if(r.id==='play') openModeLeaderboard();
@@ -607,9 +603,25 @@ function clickSelect(){
       else if(r.id==='social'){ selPage='social'; fetchSocial(true); sfx('swap'); }
       return;
     }
-    if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
     if(inR(settingsBtnRect)){ openAccountSettings(); sfx('swap'); return; }
-    if(inR(shopBtnRect)){ selPage='shop'; sfx('swap'); return; }
+    if(inR(shopBtnRect)){ selPage='shop'; shopWeaponPickerOpen=false; sfx('swap'); return; }
+    if(inR(toolsBtnRect)){ selPage='tools'; sfx('swap'); return; }
+    return;
+  }
+  if(selPage==='tools'){
+    for(const r of toolsRects)if(inR(r)){
+      if(r.id==='back'){navigateSelectBack();return;}
+      if(r.id==='howto'){selPage='howto';sfx('swap');return;}
+      if(r.id==='code'){openPromo();sfx('swap');return;}
+      if(r.id==='share'){shareReferral();return;}
+      if(r.id==='spin'){openWheel();sfx('swap');return;}
+      if(r.id==='lookup'){
+        resetPlayerEditScroll();
+        if(canUsePlayerTools()){playersOpen=true;playersTab='lookup';fetchPlayersData();if(isMainAdmin())fetchScoreReqs();}
+        else{scoresOpen=true;peStep='choose';peData=null;peMode='edit';}
+        sfx('swap');return;
+      }
+    }
     return;
   }
   if(selPage==='weapons'){
@@ -691,10 +703,16 @@ function clickSelect(){
       else if(r.id==='signin') toggleAuth();
       else if(r.id==='social_view_friends'){ socialView='friends'; if(typeof socialClosePrivateConversation==='function')socialClosePrivateConversation(); sfx('swap'); }
       else if(r.id==='social_view_inbox'){ socialView='inbox'; sfx('swap'); }
-      else if(r.id==='social_view_party'){ socialView='party'; if(typeof partyPublicRefresh==='function')void partyPublicRefresh(true); sfx('swap'); }
+      else if(r.id==='social_view_party'){
+        socialView='party';
+        if(typeof socialPollPartyInvites==='function')void socialPollPartyInvites(true);
+        if(typeof socialPollCpuGameInvites==='function')void socialPollCpuGameInvites(true);
+        if(typeof partyPublicRefresh==='function')void partyPublicRefresh(true);
+        sfx('swap');
+      }
       else if(r.id==='player_profile'&&typeof socialOpenPlayerProfile==='function'){void socialOpenPlayerProfile(r.userId,r.handle);}
       else if(r.id==='social_retry') fetchSocial(true);
-      else if(r.id==='inbox_refresh'){ if(typeof fetchBanners==='function')fetchBanners(); if(authUser){fetchSocial(true);if(typeof socialPollPartyInvites==='function')void socialPollPartyInvites(true);if(typeof socialPollNotifications==='function')void socialPollNotifications(true);} sfx('swap'); }
+      else if(r.id==='inbox_refresh'){ if(typeof fetchBanners==='function')fetchBanners(); if(authUser){fetchSocial(true);if(typeof socialPollNotifications==='function')void socialPollNotifications(true);} sfx('swap'); }
       else if(r.id==='inbox_load_older'&&typeof socialLoadOlderNotifications==='function'){void socialLoadOlderNotifications();sfx('swap');}
       else if(r.id==='friend_add') socialPromptAddFriend();
       else if(r.id==='friend_accept') socialAcceptFriend(r.rowId);
@@ -736,6 +754,8 @@ function clickSelect(){
         const joined=partyJoinFriendInvite(r.invite);if(joined&&typeof socialPrivateMessageByUiKey==='function'&&typeof socialHandleLegacyInvite==='function')socialHandleLegacyInvite(socialPrivateMessageByUiKey(r.messageKey));
       }
       else if(r.id==='cloud_party_invite_accept'&&typeof socialClaimAndJoinPartyInvite==='function') void socialClaimAndJoinPartyInvite(r.inviteKey);
+      else if(r.id==='cloud_party_invite_dismiss'&&typeof socialDismissPartyInviteByUiKey==='function')void socialDismissPartyInviteByUiKey(r.inviteKey);
+      else if(r.id==='legacy_party_invite_dismiss'&&typeof socialDismissLegacyPartyInviteByMessageKey==='function')socialDismissLegacyPartyInviteByMessageKey(r.messageKey);
       else if(r.id==='cpu_direct_return'){selPage='offlinecpu';offlineCpuView='2v2';offlineCpuInfoKey='';sfx('swap');}
       else if(r.id==='dm_new') socialPromptMessage();
       else if(r.id==='dm_prev'){ socialMessagePage=Math.max(0,socialMessagePage-1); sfx('swap'); }
@@ -750,8 +770,14 @@ function clickSelect(){
       else if(r.id==='public_party_join'&&typeof partyPublicJoinAccepted==='function')partyPublicJoinAccepted(r.requestId);
       else if(r.id==='public_party_accept'&&typeof partyPublicDecide==='function')void partyPublicDecide(r.requestId,true);
       else if(r.id==='public_party_decline'&&typeof partyPublicDecide==='function')void partyPublicDecide(r.requestId,false);
-      else if(r.id==='public_party_refresh'&&typeof partyPublicRefresh==='function')void partyPublicRefresh(true);
+      else if(r.id==='public_party_refresh'){
+        if(typeof socialPollPartyInvites==='function')void socialPollPartyInvites(true);
+        if(typeof socialPollCpuGameInvites==='function')void socialPollCpuGameInvites(true);
+        if(typeof partyPublicRefresh==='function')void partyPublicRefresh(true);
+      }
       else if(r.id==='public_party_search'&&typeof partyPublicPromptSearch==='function')partyPublicPromptSearch();
+      else if(r.id==='party_invite_prev'){socialPartyInvitePage=Math.max(0,socialPartyInvitePage-1);sfx('swap');}
+      else if(r.id==='party_invite_next'){socialPartyInvitePage++;sfx('swap');}
       else if(r.id==='public_party_prev'){publicPartyPage=Math.max(0,publicPartyPage-1);sfx('swap');}
       else if(r.id==='public_party_next'){publicPartyPage++;sfx('swap');}
       return;
@@ -834,20 +860,17 @@ function clickSelect(){
   if(selPage==='arena'){ arenaClick(); return; }
   // category / tutorial / shop pages
   if(inR(backRect)){ navigateSelectBack(); return; }
-  // shop: tabs, weapon picker arrows, then buy/equip rects
+  // shop: tabs, categorized weapon picker, then buy/equip rects
   if(selPage==='howto'){ howToClick(); return; }
   if(selPage==='shop'){
-  for(const r of shopTabRects){ if(inR(r)){ shopTab=r.tab; sfx('swap'); return; } }
-  if(shopTab==='anims'){
-    const pk=WKEYS.filter(k=>!isLocked(k));
-    if(inR(animPrevRect)){ const i=pk.indexOf(shopAnimWeapon); shopAnimWeapon=pk[(i-1+pk.length)%pk.length]; sfx('swap'); return; }
-    if(inR(animNextRect)){ const i=pk.indexOf(shopAnimWeapon); shopAnimWeapon=pk[(i+1)%pk.length]; sfx('swap'); return; }
-  }
-  if(shopTab==='cosmetics'){
-    const pickable=WKEYS.filter(k=>!isLocked(k));
-    if(inR(cosPrevRect)){ const i=pickable.indexOf(shopCosWeapon); shopCosWeapon=pickable[(i-1+pickable.length)%pickable.length]; sfx('swap'); return; }
-    if(inR(cosNextRect)){ const i=pickable.indexOf(shopCosWeapon); shopCosWeapon=pickable[(i+1)%pickable.length]; sfx('swap'); return; }
-  }
+  for(const r of shopTabRects){ if(inR(r)){ shopWeaponPickerOpen=false; shopTab=r.tab; sfx('swap'); return; } }
+  for(const r of shopWeaponPickerRects){ if(inR(r)){
+    if(r.kind==='open') openShopWeaponPicker(r.target);
+    else if(r.kind==='category') shopWeaponPickerCat=r.cat;
+    else if(r.kind==='weapon') chooseShopWeapon(r.key);
+    sfx('swap'); return;
+  } }
+  if(shopWeaponPickerOpen) return;
   // buttons first: the whole-row expand target must never swallow a BUY
   for(const r of shopRects){ if(r.kind!=='expand' && inR(r)){
     if(r.kind==='cosmetic') buyCosmetic(r.wkey, r.cos);
@@ -868,7 +891,8 @@ function clickSelect(){
   if(selPage==='practice'){
     // Tracking controls overlap the mode card, so give them click priority.
     for(const r of practiceRects){ if(r.action&&inR(r)){
-      if(r.action==='tracking-speed') adjustPracticeTrackingSpeed(r.delta);
+      if(r.action==='practice-infinite-ammo') practiceInfiniteAmmo=!practiceInfiniteAmmo;
+      else if(r.action==='tracking-speed') adjustPracticeTrackingSpeed(r.delta);
       else if(r.action==='tracking-direction') adjustPracticeTrackingDirection(r.delta);
       sfx('swap'); return;
     } }
@@ -881,11 +905,11 @@ function clickSelect(){
     if(r.tryIt && inR(r)){ openPracticePick(r.key); sfx('swap'); return; }
   }
   for(const r of cardRects){
-    if(r.gotoShop && inR(r)){ selPage='shop'; shopTab='weapons'; sfx('swap'); return; }
+    if(r.gotoShop && inR(r)){ selPage='shop'; shopTab='weapons'; shopWeaponPickerOpen=false; sfx('swap'); return; }
   }
   for(const r of cardRects){
     if(inR(r)){
-      if(r.gotoShop){ selPage='shop'; shopTab='weapons'; sfx('swap'); return; }   // BUY IN SHOP
+      if(r.gotoShop){ selPage='shop'; shopTab='weapons'; shopWeaponPickerOpen=false; sfx('swap'); return; }   // BUY IN SHOP
       pickWeapon(r.key); return;   // stays on page so you can compare
     }
   }

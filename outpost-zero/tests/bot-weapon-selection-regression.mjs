@@ -164,7 +164,7 @@ assert.match(party,/weapon:weaponId/,'2v2 bot projectiles must carry their allow
 assert.match(party,/\!\[kit\.primary,kit\.secondary\]\.includes\(weapon\)/,'2v2 guests must reject bot shots outside the fixed kit');
 assert.match(party,/swingSeq:Math\.max/,'2v2 snapshots must replicate bot melee animation state');
 assert.match(rendering,/swingProgress=e\.swingT&&\(clock-e\.swingT\)/,'2v2 rendering must show replicated bot swings');
-for(const [script,version] of [['ai','20260830-sniper-fire-v1'],['party','20260830-cpu-combat-v2'],['rendering','20260830-freezer-projectile-v1']])
+for(const [script,version] of [['ai','20260830-sniper-fire-v1'],['party','20260830-cpu-combat-v2'],['rendering','20260831-practice-infinite-ammo-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current CPU cache-buster`);
 
 console.log('SUMMARY PASS bot weapon selection');
