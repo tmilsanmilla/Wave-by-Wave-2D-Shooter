@@ -1761,7 +1761,7 @@ const DAILY_TASK_DEFS=Object.freeze([
   ]},
   {id:'eliminations',title:'GET ELIMINATIONS',reward:150,paths:[
     {id:'duels',label:'1v1 KOs',goal:15},
-    {id:'endless',label:'ENDLESS KILLS',goal:100},
+    {id:'endless',label:'ENDLESS KILLS',goal:200},
   ]},
   {id:'victories',title:'WIN OR OPEN A MOD CHEST',reward:300,paths:[
     {id:'duels',label:'1v1 WINS',goal:2},

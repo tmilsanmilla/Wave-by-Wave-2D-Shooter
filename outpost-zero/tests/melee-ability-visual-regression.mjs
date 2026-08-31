@@ -111,9 +111,13 @@ check('Burning Daggers and Tera Fists have their own weapon silhouettes',
 check('Burning Daggers use one detailed blade for held, local-thrown, and remote-thrown views',
   /function drawBurningDaggerBlade\(/.test(rendering)&&(rendering.match(/drawBurningDaggerBlade\(/g)||[]).length>=4&&
   /partyDaggersThrown/.test(rendering)&&/remoteDaggersThrown/.test(rendering)&&/player\.cur==='bdaggers'&&daggersOut/.test(rendering));
-check('Twin Sai use proper center tines, curved prongs, wrapped grips, and a crossed guard',
+check('Twin Sai use proper center tines, curved prongs, wrapped grips, and the original guard animation',
   /function drawTwinSaiBlade\([\s\S]*quadraticCurveTo\(8,-8\.5[\s\S]*quadraticCurveTo\(8,8\.5/.test(rendering)&&
-  /rotate\(-side\*guard\)[\s\S]*drawTwinSaiBlade\(hostile,parryActive\)/.test(rendering));
+  /const guard=parryActive \? \.34\+Math\.sin\(now\*\.02\)\*\.035 : 0/.test(rendering)&&
+  /rotate\(side\*guard\)[\s\S]*translate\(0,side\*5\)[\s\S]*drawTwinSaiBlade\(hostile,parryActive\)/.test(rendering));
+check('Burning Daggers keep their original held pose and Twin Sai keeps its sweep attack',
+  /key==='bdaggers'[\s\S]{0,180}translate\(0,side\*5\)[\s\S]{0,80}rotate\(side\*\.1\)/.test(rendering)&&
+  /if\(arc<\.6\)/.test(rendering)&&/const thrust=\(player\.swingArc<0\.6\)/.test(rendering));
 check('Twin Sai guard uses its weapon pose without an extra player or opponent ring',
   !/remoteParryActive\)\{[\s\S]{0,260}ctx\.arc\(e\.x,e\.y,r\+10/.test(rendering)&&
   !/localParryActive\)\{[\s\S]{0,260}ctx\.arc\(player\.x,player\.y,player\.r\+10/.test(rendering));

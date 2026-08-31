@@ -51,7 +51,7 @@ const defs=JSON.parse(run(`JSON.stringify(DAILY_TASK_DEFS.map(task=>({
 })))`));
 assert.deepEqual(defs,[
   {id:'games',reward:60,paths:[{id:'duels',goal:5,label:'1v1 DUELS'},{id:'endless',goal:2,label:'ENDLESS GAMES (1+ WAVE)'}]},
-  {id:'eliminations',reward:150,paths:[{id:'duels',goal:15,label:'1v1 KOs'},{id:'endless',goal:100,label:'ENDLESS KILLS'}]},
+  {id:'eliminations',reward:150,paths:[{id:'duels',goal:15,label:'1v1 KOs'},{id:'endless',goal:200,label:'ENDLESS KILLS'}]},
   {id:'victories',reward:300,paths:[{id:'duels',goal:2,label:'1v1 WINS'},{id:'chests',goal:1,label:'MOD CHESTS'}]},
 ]);
 
@@ -75,7 +75,7 @@ assert.equal(splitProgress.after,60,'the unused alternative must not pay a secon
 const allRewards=JSON.parse(run(`(()=>{
   dailyTasks=freshDailyTasks();gems=0;
   taskProgress('duel_game',5);taskProgress('endless_game',999);
-  taskProgress('endless_kill',100);taskProgress('duel_elimination',999);
+  taskProgress('endless_kill',200);taskProgress('duel_elimination',999);
   taskProgress('duel_win',2);taskProgress('mod_chest',999);
   return JSON.stringify({gems,tasks:dailyTasks});
 })()`));
@@ -84,7 +84,7 @@ assert.equal(allRewards.tasks.every(task=>task.done),true);
 
 for(const [eventId,amount,reward,taskId,completedBy] of [
   ['duel_game',5,60,'games','duels'],['endless_game',2,60,'games','endless'],
-  ['duel_elimination',15,150,'eliminations','duels'],['endless_kill',100,150,'eliminations','endless'],
+  ['duel_elimination',15,150,'eliminations','duels'],['endless_kill',200,150,'eliminations','endless'],
   ['duel_win',2,300,'victories','duels'],['mod_chest',1,300,'victories','chests'],
 ]){
   const result=JSON.parse(run(`(()=>{dailyTasks=freshDailyTasks();gems=0;waveMsg='';
@@ -96,7 +96,7 @@ for(const [eventId,amount,reward,taskId,completedBy] of [
 }
 
 const otherSplit=JSON.parse(run(`(()=>{dailyTasks=freshDailyTasks();gems=0;
-  taskProgress('duel_elimination',14);taskProgress('endless_kill',99);taskProgress('duel_win',1);
+  taskProgress('duel_elimination',14);taskProgress('endless_kill',199);taskProgress('duel_win',1);
   return JSON.stringify({gems,tasks:dailyTasks});})()`));
 assert.equal(otherSplit.gems,0,'partial progress across either remaining OR row must not combine');
 assert.equal(otherSplit.tasks[1].done,false);
@@ -254,7 +254,10 @@ assert.match(persistence,/mergeDailyTaskSets\(dailyTasks,m\.tasks\)/,'cloud prof
 assert.match(gameplay,/dailyEndlessClearedWaves<1/,'an immediate Endless exit must not count as a played game');
 assert.match(gameplay,/dailyEndlessTaskOwner=typeof dailyTaskOwnerKey/,'Endless attempts must bind to their starting account');
 assert.match(gameplay,/if\(sb&&authUser&&\(!profileLoaded/,'every direct start/replay path must wait for account progress');
-assert.match(combat,/taskProgress\('endless_kill',1\)/);
+const killEnemySource=combat.slice(combat.indexOf('function killEnemy(j)'));
+const endlessKillHook=killEnemySource.indexOf("taskProgress('endless_kill',1)"),bossOnlyBranch=killEnemySource.indexOf('if(t.boss)');
+assert.ok(endlessKillHook>killEnemySource.indexOf('} else {')&&endlessKillHook<bossOnlyBranch,
+  'every real Endless enemy kill must count once, before any boss-only reward branch');
 assert.match(combat,/taskProgress\('mod_chest',1\)/);
 assert.doesNotMatch(combat,/taskProgress\('(kills|waves|bosses|chests)'/,'retired task metrics must not remain connected');
 assert.match(ai,/arenaBotResolve\(arenaTimeoutWinner\([^;]+\),'timeout'\)/,'CPU timeout wins cannot count as KOs');
@@ -292,7 +295,7 @@ assert.match(gameplay,/changed&&typeof sb!=='undefined'&&sb&&authUser.+saveProfi
 assert.match(ui,/arena\.dailyTaskResult\|\|\(typeof dailyDuelTaskProgressText/,'Arena results must visibly explain daily-task progress or rewards');
 assert.match(ui,/CHEST \+'\+r\.gems\+\(r\.taskReward\?' \\u00b7 DAILY TASK \+'/,'the chest modal must distinguish its random gems from task gems');
 assert.match(combat,/chestRewardOpen=\{coins:coinDrop,gems:awardedGems,taskReward/,'the chest modal must receive the task reward amount');
-for(const [script,version] of [['networking','20260831-hub-tools-settings-v1'],['administration','20260831-admin-archives-v1'],
+for(const [script,version] of [['networking','20260831-hub-tools-settings-v1'],['administration','20260831-endless-200-kills-v1'],
   ['persistence','20260831-shop-weapon-picker-v1'],['state','20260831-practice-infinite-ammo-v1'],['online','20260831-melee-polish-v1'],
   ['ui','20260831-melee-polish-v1'],['loop','20260830-daily-or-tasks-v2']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current cache-buster`);

@@ -135,7 +135,8 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
     ctx.fillStyle=p.blade;ctx.save();ctx.translate(26,-7);ctx.rotate(.5);ctx.fillRect(-5,-10,10,20);ctx.restore();
   }else if(key==='bdaggers'){
     for(const side of [-1,1]){
-      ctx.save();ctx.translate(1,side*6);ctx.rotate(-side*.09);ctx.scale(.88,.88);
+      // Keep the established dual-dagger pose; only the blade artwork changes.
+      ctx.save();ctx.translate(0,side*5);ctx.rotate(side*.1);ctx.scale(.88,.88);
       drawBurningDaggerBlade(hostile,now+side*45);ctx.restore();
     }
   }else if(key==='terafists'){
@@ -145,11 +146,10 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
       ctx.strokeStyle=p.edge;ctx.lineWidth=1.6;ctx.strokeRect(6,y-3,10,6);
     }
   }else if(key==='twinsai'){
-    const guard=parryActive ? .39+Math.sin(now*.02)*.025 : .12;
+    // Preserve the original neutral pose and full-window parry animation.
+    const guard=parryActive ? .34+Math.sin(now*.02)*.035 : 0;
     for(const side of [-1,1]){
-      // Reverse the old fan rotation: the tines cross over the aim line into
-      // a readable guard instead of opening away from incoming fire.
-      ctx.save();ctx.translate(0,side*5);ctx.rotate(-side*guard);ctx.scale(.86,.86);
+      ctx.save();ctx.rotate(side*guard);ctx.translate(0,side*5);ctx.scale(.86,.86);
       drawTwinSaiBlade(hostile,parryActive);ctx.restore();
     }
   }else if(key==='chainsaw'){
@@ -215,7 +215,7 @@ function drawMeleeAbilityVisual(actor,clock,hostile=false,localActor=false){
 }
 function drawMeleeSwingPath(x,y,angle,arc,range,progress){
   ctx.beginPath();
-  if(arc<=.6){
+  if(arc<.6){
     ctx.moveTo(x+Math.cos(angle)*12,y+Math.sin(angle)*12);
     const thrustR=range*(.8+.25*progress);
     ctx.lineTo(x+Math.cos(angle)*thrustR,y+Math.sin(angle)*thrustR);
@@ -708,7 +708,7 @@ function drawWorld(){
     const side=player.swingSide||Math.sign(player.swingA-aimAngle())||1; // which way this swing goes
     const ease=sw<0.25 ? -(sw/0.25)*0.35                     // short wind-up
                        : -0.35 + ((sw-0.25)/0.75)*1.35;      // then the sweep through
-    const thrust=(player.swingArc<=0.6);                     // knife/Sai thrust, not a sweep
+    const thrust=(player.swingArc<0.6);                      // knife-style stab, not a sweep
     if(thrust){
       ctx.translate(Math.sin(sw*Math.PI)*9, 0);              // lunge out and back
     } else {
