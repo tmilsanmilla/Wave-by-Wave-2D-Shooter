@@ -260,7 +260,7 @@ function persistNormalEndlessScoreOnExit(){
   if(typeof submitScore==='function'&&hiScore>0)void submitScore(hiScore);
   return true;
 }
-function startGame(){
+function startGame(options){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
   if(sb&&authUser&&(!profileLoaded||profileOwnerUserId!==String(authUser.id||''))){
     if(typeof modeBoardNotice!=='undefined')modeBoardNotice='LOADING YOUR ACCOUNT PROGRESS\u2026';
@@ -278,7 +278,8 @@ function startGame(){
   }else if(selected.some(k=>isLocked(k))){
     dropUnownedFromLoadout();sfx('dry');return false;
   }
-  resetHeldGameplayInput();
+  if(options&&options.preserveMovement===true)resetRoundTransitionInput(true);
+  else resetHeldGameplayInput();
   resetWeaponGimmickState();
   clearCameraShake();
   selPage='hub';

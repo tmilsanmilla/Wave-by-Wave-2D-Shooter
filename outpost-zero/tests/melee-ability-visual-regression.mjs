@@ -118,9 +118,11 @@ check('Twin Sai use proper center tines, curved prongs, wrapped grips, and the o
 check('Burning Daggers keep their original held pose and Twin Sai keeps its sweep attack',
   /key==='bdaggers'[\s\S]{0,180}translate\(0,side\*5\)[\s\S]{0,80}rotate\(side\*\.1\)/.test(rendering)&&
   /if\(arc<\.6\)/.test(rendering)&&/const thrust=\(player\.swingArc<0\.6\)/.test(rendering));
-check('Twin Sai guard uses its weapon pose without an extra player or opponent ring',
-  !/remoteParryActive\)\{[\s\S]{0,260}ctx\.arc\(e\.x,e\.y,r\+10/.test(rendering)&&
-  !/localParryActive\)\{[\s\S]{0,260}ctx\.arc\(player\.x,player\.y,player\.r\+10/.test(rendering));
+check('Twin Sai guard shows its pulsing circle for player, opponent, and teammate views',
+  /function drawTwinSaiParryCircle\([\s\S]*r\+10\+Math\.sin\(clock\*\.018\)\*2/.test(rendering)&&
+  /partyParryActive\)drawTwinSaiParryCircle\(e\.x,e\.y,r,e\.parryUntil,clock,false\)/.test(rendering)&&
+  /remoteParryActive\)drawTwinSaiParryCircle\(e\.x,e\.y,r,e\.parryUntil,now,true\)/.test(rendering)&&
+  /localParryActive\)drawTwinSaiParryCircle\(player\.x,player\.y,player\.r,parryUntil,now,false\)/.test(rendering));
 check('Returning or expired local daggers end their remote visual early',
   /finishBurningDaggerThrow\(true\)/.test(combat)&&(combat.match(/finishBurningDaggerThrow\(false\)/g)||[]).length===2);
 check('Normal game and round setup clear presentation-only melee state',

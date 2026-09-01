@@ -70,7 +70,7 @@ function drawGunIcon(x,y,key,col,sc){
 }
 function liveUtilityCopy(k,u){
   if(k==='grenade'){
-    const radius=typeof fragBlastRadius==='function'?fragBlastRadius():Math.max(1,+u.range||85),
+    const radius=typeof fragBlastRadius==='function'?fragBlastRadius():Math.max(1,+u.range||93.5),
       damage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0):Math.max(0,+u.dmg||300);
     return 'A compact '+radius+'-radius timed blast deals up to '+damage+
       ' damage at its center, then falls to zero at its edge.';
@@ -103,7 +103,7 @@ function weaponDetails(k){
     if(k==='medkit') rows.push(['QUICK HEAL','G / utility RMB \u00b7 5% max HP over 1s'],['CHANNEL HEAL','equip + LMB \u00b7 20% max HP over 8s'],
       ['HEAL PENALTY','-10% move speed'],['INTERRUPTED BY','taking damage or switching'],['CHARGES','one ready at a time']);
     if(k==='grenade'){
-      const radius=typeof fragBlastRadius==='function'?fragBlastRadius():Math.max(1,+u.range||85),
+      const radius=typeof fragBlastRadius==='function'?fragBlastRadius():Math.max(1,+u.range||93.5),
         damage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0):Math.max(0,+u.dmg||300),
         bossDamage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0,true):damage*0.6;
       rows.push(['DAMAGE','up to '+damage+' at center'],['VS BOSS','up to '+bossDamage],
@@ -1570,11 +1570,13 @@ function drawArena(){
     const spin=performance.now()/260, sy=bodyY+(tiny?66:105), sr=tiny?14:22; ctx.strokeStyle='#e8b658'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(W/2,sy,sr,spin,spin+4.5); ctx.stroke();
     button('cancel','CANCEL SEARCH',bodyY+(tiny?91:154),'#d05548');
   } else if(arena.phase==='room'||arena.phase==='lobby'){
-    ctx.fillStyle='#e8b658'; ctx.font='700 '+(tiny?10:13)+'px ui-monospace,Consolas,monospace'; ctx.fillText(arena.mode==='queue'?'CASUAL QUICK MATCH':'PRIVATE ROOM',W/2,bodyY+8);
-    ctx.fillStyle='#fff0a0'; ctx.font='700 '+(tiny?25:38)+'px ui-monospace,Consolas,monospace'; ctx.fillText(arena.room,W/2,bodyY+(tiny?30:50));
-    ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-24),W/2,bodyY+(tiny?50:85));
-    let y=bodyY+(tiny?60:105);
-    if(arena.mode==='private') y=button('copy','COPY ROOM CODE',y,'#7fd8ff');
+    const showInviteCode=typeof arenaInviteCodeVisible==='function'&&arenaInviteCodeVisible(),
+      roomTitle=arena.mode==='queue'?'CASUAL QUICK MATCH':showInviteCode?'PRIVATE ROOM · INVITE A FRIEND':'PRIVATE 1v1';
+    ctx.fillStyle='#e8b658'; ctx.font='700 '+(tiny?10:13)+'px ui-monospace,Consolas,monospace'; ctx.fillText(roomTitle,W/2,bodyY+8);
+    if(showInviteCode){ctx.fillStyle='#fff0a0';ctx.font='700 '+(tiny?25:38)+'px ui-monospace,Consolas,monospace';ctx.fillText(arena.room,W/2,bodyY+(tiny?30:50));}
+    ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-24),W/2,bodyY+(showInviteCode?(tiny?50:85):(tiny?34:55)));
+    let y=bodyY+(showInviteCode?(tiny?60:105):(tiny?48:76));
+    if(showInviteCode) y=button('copy','COPY ROOM CODE',y,'#7fd8ff');
     if(arena.opponent&&!arena.localReady) y=button('ready','READY',y,'#a7c15e','Both players must be ready.');
     else if(arena.opponent){ ctx.fillStyle='#a7c15e'; ctx.font='700 '+(tiny?9:12)+'px ui-monospace,Consolas,monospace'; ctx.fillText(arena.remoteReady?'STARTING MATCH...':'READY \u00b7 WAITING FOR OPPONENT',W/2,y+(tiny?10:20)); y+=tiny?24:52; }
     button('cancel','LEAVE ROOM',y,'#d05548');

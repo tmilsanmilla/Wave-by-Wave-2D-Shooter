@@ -57,7 +57,7 @@ vm.runInContext(touchSource,touchContext,{filename:'volt-touch-held-fire.js'});
 assert.deepEqual(touchCalls,[false,true],
   'a held touchscreen aim pointer must repeat Volt fire through the shared cadence path');
 
-assert.match(index,/js\/weapons\.js\?v=20260831-bots-volt-layout-v1/,
+assert.match(index,/js\/weapons\.js\?v=20260831-frag-range-v1/,
   'the deployed page must request the full-auto Volt definition instead of a cached semi-auto copy');
 
 console.log('PASS Volt full-auto mouse/touch cadence without changing semi-auto pistols');

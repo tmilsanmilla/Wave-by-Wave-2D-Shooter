@@ -300,6 +300,19 @@ function resetHeldGameplayInput(){
   aiming=false; rmbAim=false;
   fireSuppressT=Math.max(fireSuppressT,now+250);
 }
+function resetRoundTransitionInput(preserveMovement=true){
+  if(preserveMovement!==true){resetHeldGameplayInput();return;}
+  // A new round must retire fire/aim/ability contacts, but somebody already
+  // holding a direction through the countdown should keep moving. Losing the
+  // movement touch ID here makes the joystick ignore that finger until it is
+  // lifted and pressed again.
+  const movementKeys={};
+  for(const k of ['w','a','s','d','arrowup','arrowdown','arrowleft','arrowright'])movementKeys[k]=!!keys[k];
+  const move={id:sticks.move.id,cx:sticks.move.cx,cy:sticks.move.cy,dx:sticks.move.dx,dy:sticks.move.dy};
+  resetHeldGameplayInput();
+  for(const [k,value] of Object.entries(movementKeys))keys[k]=value;
+  if(move.id!==null){Object.assign(sticks.move,move);}
+}
 function buttonAt(x,y,exactOnly=false){
   // Prefer the exact visible target. Weapon slots are rectangular while the
   // action controls are circular, so an overlapping magnetic margin must
@@ -472,15 +485,30 @@ function touchEnd(e,cancelled){
 }
 cv.addEventListener('touchend',e=>touchEnd(e,false),{passive:false});
 cv.addEventListener('touchcancel',e=>touchEnd(e,true),{passive:false});
-// Rotation/resizing changes the fixed control's geometry. Release ownership
-// instead of applying a stale center to the next move event. Visibility loss
-// covers mobile app switching where the browser may omit touchcancel.
+// Rotation changes the fixed control's geometry too much to safely preserve a
+// contact. Ordinary resize is different: mobile browser chrome and fullscreen
+// can resize the canvas while the player's finger is still down. Preserve that
+// movement owner/direction, retire aim/fire contacts, and recenter only after
+// core's resize listener has published the new W/H.
 function resetTouchInputForViewportChange(){
   if(!touchUI)return;
   if(touchInputHasOwner())resetHeldGameplayInput();
   else{touchButtons=[];touchWeaponSelectorBounds=null;}
 }
-addEventListener('resize',resetTouchInputForViewportChange);
+function preserveTouchMovementOnResize(){
+  if(!touchUI)return;
+  const move={id:sticks.move.id,cx:sticks.move.cx,cy:sticks.move.cy,dx:sticks.move.dx,dy:sticks.move.dy};
+  resetHeldTouchContacts(true);
+  resetFireCadence();
+  if(typeof cancelFanTheHammer==='function')cancelFanTheHammer();
+  if(move.id===null)return;
+  Object.assign(sticks.move,move);
+  setTimeout(()=>{
+    if(sticks.move.id!==move.id)return;
+    const center=touchMoveStickCenter();sticks.move.cx=center.x;sticks.move.cy=center.y;
+  },0);
+}
+addEventListener('resize',preserveTouchMovementOnResize);
 addEventListener('orientationchange',resetTouchInputForViewportChange);
 document.addEventListener('visibilitychange',()=>{
   if(document.hidden&&touchInputHasOwner())resetHeldGameplayInput();

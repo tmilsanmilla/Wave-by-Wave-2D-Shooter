@@ -1127,6 +1127,7 @@ function partyCpuMakeBot(id,team,x,y,startAt){
 // and one local human. No channel or packet work is allowed in this core.
 function cpuTeamBeginRound(options){
   const round=Math.max(1,Math.floor(+options.round||1));
+  const continuingRound=Math.floor(+partyCpuMatch.round||0)>0;
   const clock=Number.isFinite(+options.clock)?+options.clock:cpuTeamClock();
   const startDelay=clamp(+options.startDelay||0,0,10000);
   const selectedMap=typeof arenaMapValid==='function'&&arenaMapValid(options.mapId)?String(options.mapId):'arena';
@@ -1134,11 +1135,11 @@ function cpuTeamBeginRound(options){
   const kits={};
   for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(options.kits&&options.kits[id],id===localId); if(!kit)return false;kits[id]=kit; }
   const mine=kits[localId]; if(!mine)return false;
-  resetHeldGameplayInput();
+  resetRoundTransitionInput(continuingRound);
   resetWeaponGimmickState();
   partyCpuMatch.loadouts=kits;partyCpuMatch.localLoadout=mine;
   loadout={primary:mine.primary,secondary:mine.secondary,melee:mine.melee,utility:null};
-  if(startGame()===false)return false;
+  if(startGame({preserveMovement:continuingRound})===false)return false;
   practiceMode='arena';arena=freshArena(options.status||'2v2 vs CPUs');arena.mode=options.mode;arena.active=true;arena.phase='countdown';
   arena.botDifficulty=options.mode==='ai2v2'?clamp(Math.floor(+partyCpuMatch.botDifficulty||0),0,4):2;
   arena.botModelId=options.mode==='ai2v2'?partyCpuMatch.botModelId:'';
@@ -1274,8 +1275,8 @@ function offlineCpu2v2RoundTick(){
 function offlineCpu2v2Resolve(winner){
   if(!isLocalCpu2v2()||partyCpuMatch.phase!=='fight'||partyCpuMatch.roundResolved)return false;
   const scores={allies:partyCpuMatch.scores.allies||0,cpus:partyCpuMatch.scores.cpus||0};if(winner)scores[winner]++;
-  partyCpuMatch.roundResolved=true;partyCpuMatch.scores=scores;arena.clearProjectiles=true;resetHeldGameplayInput();
   const matchOver=!!winner&&scores[winner]>=PARTY_CPU_TARGET;
+  partyCpuMatch.roundResolved=true;partyCpuMatch.scores=scores;arena.clearProjectiles=true;resetRoundTransitionInput(!matchOver);
   if(matchOver){
     if(typeof recordCompletedAiTrainingMatch==='function')recordCompletedAiTrainingMatch(winner==='allies',partyCpuMatch);
     recordCompletedBotLadderMatch(winner==='allies',partyCpuMatch);
@@ -1942,7 +1943,7 @@ function partyCpuApplyRoundResult(p){
   partyCpuMatch.pendingUnscopedHits=new Set();
   if(partyCpuMatch.roundResolved&&(partyCpuMatch.phase==='round_end'||partyCpuMatch.phase==='match_end'))return false;
   partyCpuMatch.roundResolved=true;partyCpuMatch.scores={allies:Math.max(0,Math.floor(+p.scores?.allies||0)),cpus:Math.max(0,Math.floor(+p.scores?.cpus||0))};
-  bullets=[];partyCpuMatch.shots=[];partyCpuMatch.visualShots=[];resetHeldGameplayInput();
+  bullets=[];partyCpuMatch.shots=[];partyCpuMatch.visualShots=[];resetRoundTransitionInput(!p.matchOver);
   if(p.matchOver){
     partyCpuMatch.phase='match_end';const won=p.winner==='allies';sfx(won?'pickup':'die');
     if(typeof recordCompletedAiTrainingMatch==='function')recordCompletedAiTrainingMatch(won,partyCpuMatch);

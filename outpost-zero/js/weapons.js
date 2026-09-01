@@ -184,7 +184,7 @@ const UTILITIES = {
   medkit : { name:'FIELD MEDKIT', cd:75000, rechargeKills:10,
              gimmick:{id:'field_medkit_dual_heal',copy:'Choose a quick 5% heal or an interruptible 20% channel heal.'},
              blurb:'Quick 5% heal, or equip [4] + LMB for a 20% heal over 8s. Recharge by killing enemies.' },
-  grenade: { name:'FRAG GRENADE', cd:20000, dmg:300, range:85,
+  grenade: { name:'FRAG GRENADE', cd:20000, dmg:300, range:93.5,
              gimmick:{id:'frag_center_falloff',copy:'A compact timed blast hits hardest at its center, then falls to zero at its edge.'},
              blurb:'Tap to throw at your crosshair. Compact blast, friendly to you only.' },
   freezer: { name:'FREEZER',      cd:12500, speed:11.25, fuseMs:1580, radius:105, freezeMs:2500,

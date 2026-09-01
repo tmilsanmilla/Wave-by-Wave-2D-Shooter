@@ -162,6 +162,15 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
     ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(11,-2.5);ctx.lineTo(31,0);ctx.lineTo(11,2.5);ctx.closePath();ctx.fill();
   }
 }
+function drawTwinSaiParryCircle(x,y,r,until,clock,hostile=false){
+  const remain=clamp((until-clock)/TWIN_SAI_PARRY_MS,0,1);
+  if(remain<=0)return false;
+  const color=hostile?'255,107,97':'191,232,255';
+  ctx.save();
+  ctx.strokeStyle='rgba('+color+','+(0.45+remain*.45)+')';ctx.lineWidth=3/zoom;
+  ctx.beginPath();ctx.arc(x,y,r+10+Math.sin(clock*.018)*2,0,TAU);ctx.stroke();
+  ctx.restore();return true;
+}
 function drawMeleeAbilityVisual(actor,clock,hostile=false,localActor=false){
   if(!actor)return false;
   const key=String(actor.meleeFxKey||''),max=MELEE_ABILITY_VISUAL_MS[key],until=+actor.meleeFxUntil||0;
@@ -245,6 +254,7 @@ function drawPartyCpuActors(){
     const partyParryActive=ally&&clock<(e.parryUntil||0)&&partyCpuMatch.loadouts&&
       partyCpuMatch.loadouts[e.id]&&partyCpuMatch.loadouts[e.id].melee==='twinsai';
     const partyDaggersThrown=e.cur==='bdaggers'&&e.meleeFxKey==='bdaggers'&&clock<(e.meleeFxUntil||0);
+    if(partyParryActive)drawTwinSaiParryCircle(e.x,e.y,r,e.parryUntil,clock,false);
     if(partyParryActive){
       ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette('twinsai',false,true);ctx.restore();
     }else if(wk.melee){
@@ -296,6 +306,7 @@ function drawArenaOpponentWorld(){
   ctx.fillStyle='rgba(0,0,0,0.35)'; ctx.beginPath(); ctx.ellipse(e.x+3,e.y+5,r,r*.7,0,0,TAU); ctx.fill();
   ctx.fillStyle=showOpponentHitFlash&&now<(e.hitT||0)?'#ffffff':'#d05548'; ctx.beginPath(); ctx.arc(e.x,e.y,r,0,TAU); ctx.fill();
   ctx.strokeStyle='#ff8b80'; ctx.lineWidth=2/zoom; ctx.stroke();
+  if(remoteParryActive)drawTwinSaiParryCircle(e.x,e.y,r,e.parryUntil,now,true);
   const wk=WEAPONS[e.cur]||WEAPONS.ar, len=Math.min(38,wk.len||24);
   const remoteUtility=e.utilityOut&&e.loadout&&typeof casualArenaUtilityKey==='function'
     ?casualArenaUtilityKey(e.loadout.utility,false):'';
@@ -683,6 +694,7 @@ function drawWorld(){
     ctx.strokeStyle='rgba(191,239,255,0.92)';ctx.lineWidth=4/zoom;ctx.beginPath();
     ctx.arc(player.x,player.y,player.r+12+Math.sin(now*.012)*2,0,TAU);ctx.stroke();
   }
+  if(localParryActive)drawTwinSaiParryCircle(player.x,player.y,player.r,parryUntil,now,false);
   ctx.fillStyle='rgba(0,0,0,0.3)';
   ctx.beginPath(); ctx.ellipse(player.x+3,player.y+5,player.r,player.r*0.7,0,0,TAU); ctx.fill();
   ctx.save();

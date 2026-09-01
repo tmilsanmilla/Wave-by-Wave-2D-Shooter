@@ -104,7 +104,7 @@ function makeClient(id,opponentId,hostId,clockRef){
     storedLoadoutSlot:key=>key==='ar'?'primary':key==='m9'?'secondary':key==='knife'?'melee':key?'utility':'',
     isWeaponPublished:()=>true,isLocked:()=>false,isBotArena:()=>false,isCpuTeamArena:()=>false,
     clamp:(value,min,max)=>Math.max(min,Math.min(max,value)),
-    resetHeldGameplayInput:()=>{},resetWeaponGimmickState:()=>{},clearCameraShake:()=>{},
+    resetHeldGameplayInput:()=>{},resetRoundTransitionInput:()=>{},resetWeaponGimmickState:()=>{},clearCameraShake:()=>{},
     startGame:()=>true,arenaResetMapRuntime:()=>{},duelArenaSpawn:side=>({x:side?1300:300,y:450,angle:side?Math.PI:0}),
     duelArenaFitZoom:()=>1,resetMeleeAbilityVisual:()=>{},medKillsRequired:()=>3,magSize:()=>30,
     sfx:()=>{},aimAngle:()=>0,dropUnownedFromLoadout:()=>{},arenaRecordDailyOutcome:()=>false,
@@ -148,9 +148,31 @@ assert.equal(guest.ctx.arena.roundEndAt,80000,'a duplicated old snapshot must no
 // A delayed away message from an earlier match cannot disable disconnect
 // handling in the current epoch. A current message remains valid.
 guest.ctx.arena.opponent.backgrounded=false;guest.ctx.arena.opponent.away=false;
-guest.ctx.arenaReceive('background',{from:'host',room:'ROOM01',epoch:3,round:9,backgrounded:true});
+guest.ctx.arenaReceive('background',{from:'host',room:'ROOM01',epoch:3,round:9,backgrounded:true,presenceSeq:1});
 assert.equal(guest.ctx.arena.opponent.backgrounded,false,'stale-epoch background packets must be ignored');
-guest.ctx.arenaReceive('background',{from:'host',room:'ROOM01',epoch:4,round:3,backgrounded:true});
+guest.ctx.arenaReceive('background',{from:'host',room:'ROOM01',epoch:4,round:2,backgrounded:true,presenceSeq:1});
+assert.equal(guest.ctx.arena.opponent.backgrounded,false,'a delayed background packet from an earlier round must be ignored');
+guest.ctx.arenaReceive('background',{from:'host',room:'ROOM01',epoch:4,round:3,backgrounded:true,presenceSeq:1});
 assert.equal(guest.ctx.arena.opponent.backgrounded,true,'the current opponent may still publish a current-epoch away state');
+const awayTimer=guest.ctx.arena.disconnectTimer,awayDeadline=guest.ctx.arena.disconnectDeadline;
+guest.ctx.arenaSetBackgrounded(true);
+assert.equal(guest.ctx.arena.disconnectSide,'both','two away players must enter the mutual no-result hold');
+guest.ctx.arenaReceive('resume_state',snapshot);
+assert.equal(guest.ctx.arena.disconnectTimer,awayTimer,
+  'a delayed host snapshot is not proof that its tab returned foreground');
+assert.equal(guest.ctx.arena.disconnectDeadline,awayDeadline,
+  'a resume snapshot must not replace or extend an opponent-away deadline');
+assert.equal(guest.ctx.arena.disconnectSide,'both',
+  'a hidden tab receiving a snapshot must remain in the mutual no-result hold');
+guest.ctx.arenaSetBackgrounded(false);
+assert.equal(guest.ctx.arena.disconnectSide,'opponent',
+  'only a real local foreground return may reduce the mutual hold to the opponent');
+guest.ctx.arenaReceive('background',{from:'host',room:'ROOM01',epoch:4,round:3,backgrounded:false,presenceSeq:1});
+assert.equal(guest.ctx.arena.opponent.backgrounded,true,
+  'same-sequence contradictory foreground metadata must not cancel an away timer');
+assert.equal(guest.ctx.arena.disconnectTimer,awayTimer);
+guest.ctx.arenaReceive('background',{from:'host',room:'ROOM01',epoch:4,round:3,backgrounded:false,presenceSeq:2});
+assert.equal(guest.ctx.arena.opponent.backgrounded,false,'a newer foreground sequence must restore the opponent');
+assert.equal(guest.ctx.arena.disconnectTimer,null,'the newer foreground sequence must clear the away timer');
 
 console.log('PASS background resume replays authoritative control without ACK stalls, stale clocks, or stale Presence');

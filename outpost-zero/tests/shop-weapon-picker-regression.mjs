@@ -101,8 +101,8 @@ for(const [source,name] of [[progression,'buyAnim'],[read('js/persistence.js'),'
   assert.match(purchase,/return false/);
 }
 
-for(const [script,version] of [['progression','20260831-shop-weapon-picker-v1'],['persistence','20260831-shop-weapon-picker-v1'],
-  ['cpu-state','20260831-shop-weapon-picker-v1'],['input','20260831-bots-volt-layout-v1'],['ui','20260831-bots-volt-layout-v1']])
+for(const [script,version] of [['progression','20260831-frag-range-v2'],['persistence','20260831-shop-weapon-picker-v1'],
+  ['cpu-state','20260831-shop-weapon-picker-v1'],['input','20260831-duel-stability-v1'],['ui','20260831-frag-range-v1']])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),
     `${script}.js needs the categorized Shop picker cache tag`);
 

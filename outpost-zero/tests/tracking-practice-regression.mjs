@@ -64,9 +64,9 @@ assert.match(rendering,/e\.practiceMoving&&e\.practiceTurnMarker[\s\S]{0,500}ctx
   'a small fading circle must render where the dummy reverses');
 assert.match(ui,/open arena \\u00b7 0\.5\\u00d7 speed steps to 5\\u00d7 \\u00b7 eight 45\\u00b0 directions/,
   'the Practice card must explain the open arena, speed steps, cap, and directions');
-for(const [script,version] of [['state','20260831-practice-infinite-ammo-v1'],['world','20260831-tracking-drill-v1'],
-  ['gameplay','20260831-tracking-drill-v1'],['combat','20260831-melee-polish-v1'],
-  ['rendering','20260831-melee-polish-v1'],['ui','20260831-bots-volt-layout-v1']])
+for(const [script,version] of [['state','20260831-duel-stability-v1'],['world','20260831-tracking-drill-v1'],
+  ['gameplay','20260831-duel-stability-v1'],['combat','20260831-utility-preround-v1'],
+  ['rendering','20260831-twin-sai-circle-v1'],['ui','20260831-frag-range-v1']])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),`${script}.js needs its current cache tag`);
 
 console.log('PASS open-lane Tracking Dummy controls, reversal, and marker');

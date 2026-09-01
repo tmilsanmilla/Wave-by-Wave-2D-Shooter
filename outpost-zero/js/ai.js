@@ -1705,7 +1705,8 @@ function startBotArena(options){
 }
 function arenaBotStartRound(){
   if(!isBotArena()||!arena.opponent) return;
-  resetHeldGameplayInput();
+  const continuingRound=arena.round>0;
+  resetRoundTransitionInput(continuingRound);
   resetWeaponGimmickState();
   clearCameraShake();
   arena.round++; arena.roundResolved=false; arena.phase='countdown'; arena.nextRoundAt=0;

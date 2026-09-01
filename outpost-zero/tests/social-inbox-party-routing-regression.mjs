@@ -119,8 +119,8 @@ assert.match(social,/function socialOfficialBannerAlreadyNotified[\s\S]{0,260}so
 assert.match(adminInbox,/read_at\s+timestamptz/i,'the existing Inbox SQL must persist each account read time');
 assert.match(adminInbox,/server_now/i,'the existing Inbox RPC must provide trusted server time');
 
-for(const [script,version] of [['social','20260831-username-validation-v1'],['input','20260831-bots-volt-layout-v1'],
-  ['ui','20260831-bots-volt-layout-v1']])
+for(const [script,version] of [['social','20260831-username-validation-v1'],['input','20260831-duel-stability-v1'],
+  ['ui','20260831-frag-range-v1']])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),`${script}.js needs its current cache tag`);
 
 console.log('PASS Party owns invitations and read official updates auto-archive after one server-timed day');

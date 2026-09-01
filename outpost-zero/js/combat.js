@@ -129,11 +129,20 @@ function meleeSwing(w, mul, flurryGenerated=false){
   if(targets.length||(arenaMeleeHit&&!(typeof isCpuTeamArena==='function'&&isCpuTeamArena()))) sfx('hit');
   addShake(w.kick); sfx('slash');
 }
+function utilityEquipAllowed(){
+  if(practiceMode!=='arena')return true;
+  return typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()&&!!arena&&
+    ['countdown','fight'].includes(arena.phase)&&!arena.networkHold&&player.hp>0;
+}
 function equipUtility(){
-  if(state!=='play' || !loadout.utility) return;
-  if((typeof arenaUtilityUseAllowed==='function'&&!arenaUtilityUseAllowed())||
+  const key=String(loadout.utility||'');
+  if(state!=='play'||!key||!UTILITIES[key]) return;
+  // Drawing a utility is harmless preparation, just like drawing a melee.
+  // Casting/healing remains protected by arenaUtilityUseAllowed() below.
+  if(!utilityEquipAllowed()||
      (typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen())){sfx('dry');return;}
-  if(typeof isLocked==='function'&&isLocked(loadout.utility)){
+  if((practiceMode==='arena'&&typeof casualArenaUtilityKey==='function'&&casualArenaUtilityKey(key,true)!==key)||
+     (typeof isLocked==='function'&&isLocked(key))){
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
   }
   resetFireCadence();
@@ -244,7 +253,7 @@ function clearPlayerFreezerFreeze(){
 }
 function fragBlastRadius(){
   const configured=UTILITIES&&UTILITIES.grenade?+UTILITIES.grenade.range:NaN;
-  return Number.isFinite(configured)?Math.max(1,configured):85;
+  return Number.isFinite(configured)?Math.max(1,configured):93.5;
 }
 function fragDamageAtDistance(distance,boss=false){
   const configured=UTILITIES&&UTILITIES.grenade?+UTILITIES.grenade.dmg:NaN,

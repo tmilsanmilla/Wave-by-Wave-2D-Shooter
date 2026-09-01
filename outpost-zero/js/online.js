@@ -4,7 +4,9 @@
    Supabase Presence/Broadcast carries the live match. This first version is
    intentionally CASUAL: ranked ratings need a trusted game server, not a
    browser that can be edited by either player. */
-const ARENA_FORFEIT_GRACE_MS=5000;
+const ARENA_FORFEIT_GRACE_MS=15000;
+const ARENA_PROTOCOL=3;
+let arenaDisconnectHoldSerial=0;
 const CASUAL_ARENA_UTILITY_KEYS=Object.freeze(['medkit','grenade','freezer','redball','beachball']);
 function casualArenaUtilityKey(raw,requireOwned=false){
   const key=String(raw||'');
@@ -155,8 +157,18 @@ function arenaPresenceList(ch){
 function arenaPageBackgrounded(){
   return typeof document!=='undefined'&&(document.hidden===true||document.visibilityState==='hidden');
 }
-function arenaPairCode(ids){
-  const s=[...ids].sort().join('|'); let h=2166136261;
+function arenaPairMembers(entries){
+  if(!Array.isArray(entries)) return [];
+  return entries.map(raw=>{
+    const object=raw&&typeof raw==='object',id=String(object?raw.id:raw||''),value=object?+raw.joined:0;
+    return {id,joined:Number.isSafeInteger(value)&&value>=0?value:0};
+  }).filter(x=>x.id).sort((a,b)=>a.id.localeCompare(b.id));
+}
+function arenaPairCode(entries){
+  // Queue timestamps make a fresh attempt a fresh Realtime room, even when
+  // the same two accounts are matched again. Old room packets can therefore
+  // never be mistaken for control packets from the new 0-0 match.
+  const s=arenaPairMembers(entries).map(x=>x.id+'@'+x.joined).join('|'); let h=2166136261;
   for(let i=0;i<s.length;i++){ h^=s.charCodeAt(i); h=Math.imul(h,16777619); }
   return ('Q'+(h>>>0).toString(36).toUpperCase().padStart(7,'0')).slice(0,6);
 }
@@ -278,7 +290,8 @@ function arenaApplyMapVoteOpen(p){
   const epoch=Math.floor(+p.epoch||0);
   if(epoch<arena.matchEpoch) return false;
   if(epoch>arena.matchEpoch){
-    arena.matchEpoch=epoch; arena.round=0; arena.scores=Object.assign({},p.scores||{});
+    if(arena.disconnectAt||arena.disconnectTimer||arena.networkHold)arenaClearDisconnectHold(false);
+    arena.matchEpoch=epoch; arena.round=0; arena.scores=Object.assign({},p.scores||{});arena.matchCommitted=false;
     arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
     arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();arena.receivedHitDamage=new Map();
     arena.hitSeq=0; arena.sentHitKinds=new Map();arena.sentHitDamage=new Map();arena.pendingHitFeedback=new Map(); arena.winRecorded=false;
@@ -460,7 +473,10 @@ function arenaApplyResumeState(p){
     else arenaApplyResumeRoundClock(start);
   }
   if(roundResult)arenaApplyRoundResult(roundResult);
-  if(arena.disconnectAt||arena.disconnectTimer||arena.networkHold)arenaClearDisconnectHold(false);
+  // A host snapshot proves this local channel can receive again, but it is not
+  // proof that an opponent who declared itself away has returned foreground.
+  if(arena.disconnectSide==='self'&&(arena.disconnectAt||arena.disconnectTimer||arena.networkHold))arenaClearDisconnectHold(false);
+  else if(arena.disconnectSide==='both'&&!arena.localBackgrounded&&!arenaPageBackgrounded())arena.disconnectSide='opponent';
   arena.resumeNeededUntil=0;arena.resumeRequestAt=0;arena.resumeRequestId='';arena.syncAt=0;
   return true;
 }
@@ -838,17 +854,27 @@ function stepRemoteFireworkVisuals(list,dtms){
     if(arena.remoteFireworkFx[i].life<=0)arena.remoteFireworkFx.splice(i,1);
   }
 }
-/* A match becomes binding as soon as both ready players enter map voting and
-   stays binding between rounds. Leaving a room before that point is harmless;
-   leaving after it is a whole-match forfeit, not merely one lost round. */
+/* A match becomes binding only after this client has received a sane, live
+   combat state from the opponent. Presence churn while a fresh room is still
+   loading can therefore never turn an untouched 0-0 screen into a result. */
 function arenaForfeitEligible(){
   if(!arena||!authUser||!arena.matchChannel||!arena.opponent||isBotArena()||
      (typeof isCpuTeamArena==='function'&&isCpuTeamArena())) return false;
-  return Math.floor(+arena.matchEpoch||0)>0&&
-    ['map_vote','map_reveal','countdown','fight','ko_wait','round_end'].includes(arena.phase);
+  return arena.matchCommitted===true&&Math.floor(+arena.matchEpoch||0)>0&&Math.floor(+arena.round||0)>0&&
+    !!String(arena.mapVoteId||'')&&['countdown','fight','ko_wait','round_end'].includes(arena.phase);
 }
-function arenaForfeitResultId(loserId){
-  return ['arena-forfeit',String(arena&&arena.room||''),Math.floor(+arena?.matchEpoch||0),String(loserId||'')].join(':');
+function arenaForfeitResultId(loserId,mapVoteId=arena&&arena.mapVoteId){
+  return ['arena-forfeit-v3',String(arena&&arena.room||''),Math.floor(+arena?.matchEpoch||0),String(mapVoteId||''),String(loserId||'')].join(':');
+}
+function arenaLeavePacketValid(p){
+  if(!arena||!authUser||!arena.opponent||!p||typeof p.forfeit!=='boolean')return false;
+  const loser=String(p.loser||''),expectedMap=String(arena.mapVoteId||'');
+  if(String(p.from||'')!==loser||loser!==String(arena.opponent.id)||String(p.room||'')!==String(arena.room)||
+     Math.floor(+p.epoch||0)!==Math.floor(+arena.matchEpoch||0)||Math.floor(+p.round||0)!==Math.floor(+arena.round||0)||
+     String(p.mapVoteId||'')!==expectedMap)return false;
+  return p.forfeit===true
+    ?!!expectedMap&&p.resultId===arenaForfeitResultId(loser,expectedMap)
+    :p.resultId==='';
 }
 function arenaHasCompletedDailyTaskRound(){
   return !!arena&&(['ko_wait','round_end'].includes(arena.phase)||Math.floor(+arena.round||0)>1||
@@ -860,7 +886,8 @@ function arenaClearDisconnectHold(resumeClocks){
   const timeoutLocked=arena.phase==='fight'&&arena.timeoutHpId===arenaTimeoutHpId()&&
     arena.timeoutHp instanceof Map&&authUser&&arena.timeoutHp.has(String(authUser.id));
   if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
-  arena.disconnectTimer=null; arena.disconnectAt=0; arena.disconnectSide=''; arena.networkHold=false;
+  arena.disconnectTimer=null; arena.disconnectAt=0; arena.disconnectDeadline=0; arena.disconnectSide='';
+  arena.disconnectKind='';arena.disconnectPresenceSeq=0;arena.networkHold=false;
   if(!resumeClocks||!heldFor) return heldFor;
   if(arena.active&&arena.roundStartAt&&!timeoutLocked){
     arena.roundStartAt+=heldFor; arena.roundEndAt+=heldFor;
@@ -876,8 +903,9 @@ function arenaClearDisconnectHold(resumeClocks){
 function arenaApplyForfeitResult(p){
   if(!arena||!authUser||!arena.opponent||!p) return false;
   const me=String(authUser.id),opp=String(arena.opponent.id),winner=String(p.winner||''),loser=String(p.loser||'');
-  const resultId=arenaForfeitResultId(loser),epoch=Math.floor(+p.epoch||0);
-  if(String(p.room||'')!==String(arena.room)||epoch!==Math.floor(+arena.matchEpoch||0)||
+  const mapVoteId=String(arena.mapVoteId||''),resultId=arenaForfeitResultId(loser,mapVoteId),epoch=Math.floor(+p.epoch||0);
+  if(p.forfeit!==true||!mapVoteId||String(p.from||'')!==winner||String(p.mapVoteId||'')!==mapVoteId||
+     String(p.room||'')!==String(arena.room)||epoch!==Math.floor(+arena.matchEpoch||0)||Math.floor(+p.round||0)!==Math.floor(+arena.round||0)||
      p.resultId!==resultId||winner===loser||![me,opp].includes(winner)||![me,opp].includes(loser)||
      !([winner,loser].includes(me)&&[winner,loser].includes(opp))) return false;
   if(arena.forfeitResultId) return arena.forfeitResultId===resultId;
@@ -894,7 +922,7 @@ function arenaApplyForfeitResult(p){
   arena.scores=scores; arena.roundResolved=true; arena.nextRoundAt=0; arena.active=false;
   arena.remoteShots=[];arena.remoteFireworks=[];arena.remoteFireworkFx=[];
   arena.mapVoteStartPending=false; arena.rematchVotes=new Set(); arena.forfeitResultId=resultId;
-  arena.forfeitPacket={room:arena.room,epoch:arena.matchEpoch,round:arena.round,resultId,winner,loser,
+  arena.forfeitPacket={from:winner,room:arena.room,epoch:arena.matchEpoch,round:arena.round,mapVoteId,forfeit:true,resultId,winner,loser,
     reason:String(p.reason||'disconnect').slice(0,24)};
   if(typeof arenaRecordDailyMatch==='function')arenaRecordDailyMatch(me,winner,hadCompletedRound);
   if(winner===me&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(arenaWinResultId(arena,authUser)); }
@@ -921,59 +949,81 @@ function arenaBroadcastForfeitResult(packet){
 }
 function arenaClaimOpponentForfeit(reason='disconnect'){
   if(!arenaForfeitEligible()||arena.departureAnnounced) return false;
-  const packet={room:arena.room,epoch:arena.matchEpoch,round:arena.round,
+  const packet={from:String(authUser.id),room:arena.room,epoch:arena.matchEpoch,round:arena.round,mapVoteId:arena.mapVoteId,forfeit:true,
     resultId:arenaForfeitResultId(arena.opponent.id),winner:String(authUser.id),loser:String(arena.opponent.id),reason};
   if(!arenaApplyForfeitResult(packet)) return false;
   arenaBroadcastForfeitResult(packet); return true;
 }
 function arenaApplyOwnDisconnectLoss(reason='disconnect'){
   if(!arenaForfeitEligible()) return false;
-  const me=String(authUser.id),packet={room:arena.room,epoch:arena.matchEpoch,round:arena.round,
+  const me=String(authUser.id),packet={from:String(arena.opponent.id),room:arena.room,epoch:arena.matchEpoch,round:arena.round,mapVoteId:arena.mapVoteId,forfeit:true,
     resultId:arenaForfeitResultId(me),winner:String(arena.opponent.id),loser:me,reason};
   arena.departureAnnounced=packet.resultId;
   // This client never credits the opponent. The still-connected opponent does
   // that once after its own Presence confirmation, preventing two winners if
   // both clients lose the channel at the same time.
-  arenaSend('leave',{forfeit:true,resultId:packet.resultId,loser:me,reason});
+  arenaSend('leave',{forfeit:true,mapVoteId:arena.mapVoteId,resultId:packet.resultId,loser:me,reason});
   return arenaApplyForfeitResult(packet);
 }
-function arenaBeginDisconnectHold(side,ch){
-  if(!arenaForfeitEligible()) return false;
-  side=side==='opponent'?'opponent':'self';
-  const newlyHeld=!(arena.disconnectAt||arena.disconnectTimer),knownBackground=side==='opponent'
-    ?!!(arena.opponent&&(arena.opponent.backgrounded||arena.opponent.away))
-    :!!(arena.localBackgrounded||arenaPageBackgrounded());
-  if(!newlyHeld){
-    if(arena.disconnectSide&&arena.disconnectSide!==side) arena.disconnectSide='both';
+function arenaBeginDisconnectHold(side,ch,kind='disconnect'){
+  if(!arena||!authUser||!arena.matchChannel||!arena.opponent||arena.phase==='match_end')return false;
+  side=side==='opponent'?'opponent':'self';kind=kind==='background'?'background':'disconnect';
+  const clock=Date.now(),newlyHeld=!(arena.disconnectAt||arena.disconnectDeadline),heldChannel=ch||arena.matchChannel,
+    holdSide=side==='opponent'&&(arena.localBackgrounded||arenaPageBackgrounded())?'both':side;
+  if(newlyHeld){
+    arena.disconnectAt=clock;arena.disconnectDeadline=clock+ARENA_FORFEIT_GRACE_MS;arena.disconnectSide=holdSide;
+    arena.disconnectKind=kind;arena.disconnectToken=++arenaDisconnectHoldSerial;
   }else{
-    arena.disconnectAt=Date.now(); arena.disconnectSide=side;
+    if(arena.disconnectSide&&arena.disconnectSide!==holdSide)arena.disconnectSide='both';
+    if(kind==='background')arena.disconnectKind='background';
   }
-  // A transient Presence loss must never stop the other player's controls,
-  // projectiles, synchronization, or shared wall-clock round timer.
+  if(side==='opponent')arena.disconnectPresenceSeq=Math.max(Math.floor(+arena.disconnectPresenceSeq||0),
+    Math.floor(+arena.opponent.presenceSeq||0));
+  // The connected player keeps full controls and the original shared clock.
+  // Only the result is delayed while the missing/backgrounded player returns.
   arena.networkHold=false;
-  const seconds=Math.ceil(ARENA_FORFEIT_GRACE_MS/1000);
-  arena.status=knownBackground
-    ?(side==='opponent'?'Opponent is away — match continues.':'Game is reconnecting in the background — match continues.')
-    :arena.disconnectSide==='opponent'
-    ?'Opponent connection lost — match continues; forfeit in '+seconds+' seconds...'
+  const seconds=Math.ceil(Math.max(0,arena.disconnectDeadline-clock)/1000);
+  arena.status=arena.disconnectSide==='opponent'
+    ?(kind==='background'?'Opponent switched away — match continues; return within '+seconds+' seconds.':
+      'Opponent connection lost — match continues; return within '+seconds+' seconds.')
     :arena.disconnectSide==='self'
-      ?'Connection interrupted — match continues; reconnect within '+seconds+' seconds.'
-      :'Both connections are interrupted — match clock still running.';
-  // Presence can emit many identical sync snapshots. Keep the first deadline
-  // instead of letting duplicate absence packets extend the grace forever.
-  if(!newlyHeld) return true;
-  if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
-  // Closing/reloading still sends an explicit leave packet. An open tab that
-  // declared itself backgrounded can return to this same live round later.
-  if(knownBackground){arena.disconnectTimer=null;return true;}
-  const epoch=arena.matchEpoch,heldChannel=ch;
-  arena.disconnectTimer=setTimeout(()=>{
-    if(arena.matchChannel!==heldChannel||!arena.disconnectAt||arena.matchEpoch!==epoch) return;
-    const disconnected=arena.disconnectSide;
+      ?'Connection interrupted — reconnect within '+seconds+' seconds; the match continues.'
+      :'Both connections are interrupted — the match clock still continues.';
+  // Duplicate Presence and background packets keep the first immutable
+  // deadline. If an earlier callback already ran, schedule only its remainder.
+  if(arena.disconnectTimer)return true;
+  const epoch=arena.matchEpoch,opponentId=String(arena.opponent.id),token=arena.disconnectToken,deadline=arena.disconnectDeadline;
+  const finish=()=>{
+    if(!arena||!arena.disconnectAt||arena.disconnectToken!==token)return;
+    if(arena.matchChannel!==heldChannel||arena.matchEpoch!==epoch||String(arena.opponent&&arena.opponent.id)!==opponentId){
+      arenaClearDisconnectHold(false);return;
+    }
+    if(arena.phase==='match_end'){arenaClearDisconnectHold(false);return;}
+    const remaining=deadline-Date.now();
+    if(remaining>0){arena.disconnectTimer=setTimeout(finish,remaining);return;}
+    const disconnected=arena.disconnectSide,checksOpponent=disconnected==='opponent'||disconnected==='both';
+    if(checksOpponent){
+      const present=arenaPresenceList(heldChannel).find(meta=>String(meta.id)===opponentId&&+meta.protocol===ARENA_PROTOCOL),
+        seq=Math.max(0,Math.floor(+present?.presenceSeq||0));
+      const threshold=Math.floor(+arena.disconnectPresenceSeq||0),freshReturn=arena.disconnectKind==='background'?seq>threshold:seq>=threshold;
+      if(present&&present.backgrounded!==true&&present.away!==true&&freshReturn){
+        arena.opponent.presenceSeq=seq;arena.opponent.backgrounded=false;arena.opponent.away=false;
+        arenaClearDisconnectHold(false);arena.status='Opponent returned — match continues.';arena.syncAt=0;
+        arenaRequestResume(true);return;
+      }
+    }
+    const binding=arenaForfeitEligible(),reason=arena.disconnectKind||kind;
     arenaClearDisconnectHold(false);
-    if(disconnected==='opponent') arenaClaimOpponentForfeit('disconnect');
-    else arenaApplyOwnDisconnectLoss(disconnected==='both'?'mutual_disconnect':'disconnect');
-  },ARENA_FORFEIT_GRACE_MS);
+    if(disconnected==='both'){
+      leaveArena('Both players were away too long. No result was recorded.',false,true);
+    }else if(!binding){
+      leaveArena(disconnected==='opponent'
+        ?'The other player did not return. No result was recorded.'
+        :'The connection did not recover. No result was recorded.',false);
+    }else if(disconnected==='opponent')arenaClaimOpponentForfeit(reason);
+    else arenaApplyOwnDisconnectLoss(reason);
+  };
+  arena.disconnectTimer=setTimeout(finish,Math.max(0,deadline-clock));
   return true;
 }
 function arenaNotifyDeparture(reason='left'){
@@ -986,9 +1036,12 @@ function arenaNotifyDeparture(reason='left'){
   // A hard page exit cannot promise that write, so do not show phantom credit.
   if(forfeit&&['left','signed_out'].includes(reason)&&typeof arenaRecordDailyMatch==='function')
     arenaRecordDailyMatch(loser,'',arenaHasCompletedDailyTaskRound());
-  arena.departurePromise=arenaSend('leave',{forfeit,resultId,loser,reason:String(reason||'left').slice(0,24)});
+  arena.departurePromise=arenaSend('leave',{forfeit,mapVoteId:String(arena.mapVoteId||''),resultId,loser,reason:String(reason||'left').slice(0,24)});
   return forfeit;
 }
+// Closing, reloading, or switching browser tabs can all produce page lifecycle
+// events. Presence owns that decision and gives the player the same grace
+// window; only the explicit in-game Leave and sign-out actions are immediate.
 function arenaForfeitOnPageExit(){ return arenaNotifyDeparture('page_exit'); }
 function arenaForfeitBeforeSignOut(){
   const announced=arenaNotifyDeparture('signed_out');
@@ -1071,22 +1124,30 @@ function arenaOwnPresence(){
   const valid=arenaLoadoutReady();
   const backgrounded=!!(arena.localBackgrounded||arenaPageBackgrounded());
   arena.presenceSeq=Math.max(Math.floor(Date.now()*1000),Math.floor(+arena.presenceSeq||0)+1);
-  return {id:authUser.id,name:displayName(authUser),joined:arena.joinedAt||Date.now(),host:!!arena.wantsHost,
+  return {id:authUser.id,name:displayName(authUser),joined:arena.joinedAt||Date.now(),protocol:ARENA_PROTOCOL,host:!!arena.wantsHost,
           ready:valid&&!!arena.localReady,primary:valid?loadout.primary:'',secondary:valid?loadout.secondary:'',melee:valid?loadout.melee:'',
           utility:valid?(casualArenaUtilityKey(loadout.utility,true)||''):'',backgrounded,away:backgrounded,presenceSeq:arena.presenceSeq};
 }
 function arenaApplyRemoteBackground(p){
   if(!p||!arena||!arena.opponent||String(p.from||'')!==String(arena.opponent.id)||typeof p.backgrounded!=='boolean')return false;
-  if(arena.matchEpoch>0&&Math.floor(+p.epoch||0)!==arena.matchEpoch)return false;
-  const backgrounded=p.backgrounded===true;
-  arena.opponent.backgrounded=backgrounded;arena.opponent.away=backgrounded;
+  if(arena.matchEpoch>0&&(Math.floor(+p.epoch||0)!==arena.matchEpoch||Math.floor(+p.round||0)!==Math.floor(+arena.round||0)))return false;
+  const seq=Math.floor(+p.presenceSeq||0),currentSeq=Math.floor(+arena.opponent.presenceSeq||0);
+  if(!Number.isSafeInteger(seq)||seq<=0||seq<currentSeq)return false;
+  const backgrounded=p.backgrounded===true,currentBackgrounded=!!(arena.opponent.backgrounded||arena.opponent.away);
+  // Equal sequence numbers are idempotent only. A contradictory foreground
+  // packet must be newer than the away packet whose timer it would cancel.
+  if(seq===currentSeq){
+    if(backgrounded!==currentBackgrounded)return false;
+    if(backgrounded)arenaBeginDisconnectHold('opponent',arena.matchChannel,'background');
+    return true;
+  }
+  arena.opponent.presenceSeq=seq;arena.opponent.backgrounded=backgrounded;arena.opponent.away=backgrounded;
   if(backgrounded){
-    // A background signal can race the Presence removal. Cancel a timer that
-    // was armed before the signal arrived, without ever adjusting the clocks.
-    if(arena.disconnectSide==='opponent'&&(arena.disconnectAt||arena.disconnectTimer||arena.networkHold))arenaClearDisconnectHold(false);
-    arena.status='Opponent is away — match continues.';
+    // A background signal can race Presence removal. It joins the existing
+    // deadline instead of cancelling or extending it.
+    arenaBeginDisconnectHold('opponent',arena.matchChannel,'background');
   }else{
-    if(arena.disconnectSide==='opponent'&&(arena.disconnectAt||arena.disconnectTimer||arena.networkHold))arenaClearDisconnectHold(false);
+    if(['opponent','both'].includes(arena.disconnectSide)&&(arena.disconnectAt||arena.disconnectTimer||arena.networkHold))arenaClearDisconnectHold(false);
     arena.status='Opponent returned — match continues.';arena.syncAt=0;
     if(authUser&&String(authUser.id)===String(arena.hostId))arenaSendResumeState(arena.opponent.id,'presence-return');
   }
@@ -1097,6 +1158,7 @@ function arenaSetBackgrounded(value=arenaPageBackgrounded()){
   const backgrounded=value===true;
   if(backgrounded&&!arena.localBackgrounded){
     arena.backgroundedAt=Date.now();arena.backgroundGameNow=now;
+    if(arena.disconnectSide==='opponent'&&(arena.disconnectAt||arena.disconnectTimer))arena.disconnectSide='both';
   }else if(!backgrounded&&arena.localBackgrounded){
     const elapsed=Math.max(0,Date.now()-(+arena.backgroundedAt||Date.now()));
     // Online cooldowns and guards follow the match's wall time even if the
@@ -1106,12 +1168,17 @@ function arenaSetBackgrounded(value=arenaPageBackgrounded()){
       now=Math.max(now,(+arena.backgroundGameNow||now)+elapsed);
     arena.backgroundedAt=0;arena.backgroundGameNow=0;arena.syncAt=0;
     if(arena.disconnectSide==='self'&&(arena.disconnectAt||arena.disconnectTimer||arena.networkHold))arenaClearDisconnectHold(false);
+    else if(arena.disconnectSide==='both')arena.disconnectSide='opponent';
   }
   arena.localBackgrounded=backgrounded;
   if(arena.matchChannel&&authUser){
-    try{const tracked=arena.matchChannel.track(arenaOwnPresence());if(tracked&&typeof tracked.catch==='function')tracked.catch(()=>{});}catch(e){}
-    arenaSend('background',{backgrounded});
-    if(!backgrounded){arenaControlClockCatchUp(Date.now());arenaRequestResume(true);}
+    const presence=arenaOwnPresence();
+    try{
+      const tracked=arena.matchChannel.track(presence);
+      if(tracked&&typeof tracked.catch==='function')tracked.catch(()=>{});
+    }catch(e){}
+    arenaSend('background',{backgrounded,presenceSeq:presence.presenceSeq});
+    if(!backgrounded){arenaControlClockCatchUp(Date.now());arenaRequestResume(true);arenaMaybeStart();}
   }
   return true;
 }
@@ -1120,7 +1187,7 @@ function arenaRefreshUsername(){
   if(!authUser||!arena) return false;
   try{
     if(arena.queueChannel){
-      const queued=arena.queueChannel.track({id:authUser.id,name:displayName(authUser),joined:arena.joinedAt||Date.now()});
+      const queued=arena.queueChannel.track({id:authUser.id,name:displayName(authUser),joined:arena.joinedAt||Date.now(),protocol:ARENA_PROTOCOL});
       if(queued&&typeof queued.catch==='function') queued.catch(()=>{});
     }
     if(arena.matchChannel){
@@ -1144,14 +1211,14 @@ function arenaQuickMatch(){
   if(!arenaGuard()) return false;
   leaveArena('',false);
   arena.mode='queue'; arena.phase='queue'; arena.status='Searching for another signed-in operator...'; arena.joinedAt=Date.now();
-  const ch=sb.channel('oz-arena-queue-v1',{config:{presence:{key:authUser.id}}});
+  const ch=sb.channel('oz-arena-queue-v3',{config:{presence:{key:authUser.id}}});
   ch.on('presence',{event:'sync'},()=>arenaQueueSync(ch));
   ch.on('broadcast',{event:'pair_offer'},msg=>arenaQueueOffer(ch,msg&&msg.payload));
   ch.subscribe(async st=>{
     if(ch!==arena.queueChannel) return;
     if(st==='SUBSCRIBED'){
       arena.status='Searching for another signed-in operator...';
-      try{ await ch.track({id:authUser.id,name:displayName(authUser),joined:arena.joinedAt}); }catch(e){}
+      try{ await ch.track({id:authUser.id,name:displayName(authUser),joined:arena.joinedAt,protocol:ARENA_PROTOCOL}); }catch(e){}
     } else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT') arena.status='Could not reach matchmaking. Try again.';
   });
   arena.queueChannel=ch;
@@ -1159,7 +1226,7 @@ function arenaQuickMatch(){
 }
 function arenaQueueSync(ch){
   if(ch!==arena.queueChannel||arena.matchChannel||!authUser) return;
-  const list=arenaPresenceList(ch), idx=list.findIndex(x=>x.id===authUser.id), clock=Date.now();
+  const list=arenaPresenceList(ch).filter(x=>+x.protocol===ARENA_PROTOCOL), idx=list.findIndex(x=>x.id===authUser.id), clock=Date.now();
   if(idx<0) return;
   const present=new Set(list.map(x=>String(x.id)));
   let c=arena.queueCandidate;
@@ -1175,9 +1242,9 @@ function arenaQueueSync(ch){
   if(!c){
     const pairStart=idx-(idx%2), pair=list.slice(pairStart,pairStart+2);
     if(pair.length<2){ arena.status='Searching for another signed-in operator...'; return; }
-    const ids=pair.map(x=>String(x.id)).sort();
-    const other=ids.find(id=>id!==String(authUser.id)), code=arenaPairCode(ids);
-    c=arena.queueCandidate={id:other,code,ids,lockedAt:clock,expiresAt:clock+8000,nextOfferAt:0,retryTimer:null};
+    const members=arenaPairMembers(pair),ids=members.map(x=>x.id),memberKey=members.map(x=>x.id+'@'+x.joined).join('|');
+    const other=ids.find(id=>id!==String(authUser.id)), code=arenaPairCode(members);
+    c=arena.queueCandidate={id:other,code,ids,members,memberKey,lockedAt:clock,expiresAt:clock+8000,nextOfferAt:0,retryTimer:null};
   }
 
   const otherMeta=list.find(x=>String(x.id)===c.id);
@@ -1190,11 +1257,11 @@ function arenaQueueSync(ch){
   // at-most-once, so either side can recover from one missed packet.
   if(bothPresent && clock>=c.nextOfferAt){
     c.nextOfferAt=clock+900;
-    try{ ch.send({type:'broadcast',event:'pair_offer',payload:{from:authUser.id,to:c.id,code:c.code,ids:c.ids}}); }catch(e){}
+    try{ ch.send({type:'broadcast',event:'pair_offer',payload:{from:authUser.id,to:c.id,code:c.code,ids:c.ids,members:c.members}}); }catch(e){}
   }
   const offer=arena.queueOffer;
   const reciprocal=offer&&offer.from===c.id&&offer.to===authUser.id&&offer.code===c.code
-                   &&Array.isArray(offer.ids)&&offer.ids.slice().map(String).sort().join('|')===c.ids.join('|');
+                   &&offer.memberKey===c.memberKey&&Array.isArray(offer.ids)&&offer.ids.slice().map(String).sort().join('|')===c.ids.join('|');
   if(bothPresent&&reciprocal){
     if(c.retryTimer) clearTimeout(c.retryTimer);
     arena.status='Opponent confirmed. Connecting...';
@@ -1210,16 +1277,18 @@ function arenaQueueSync(ch){
 }
 function arenaQueueOffer(ch,p){
   if(ch!==arena.queueChannel||!authUser||!p||String(p.to)!==String(authUser.id)) return;
-  const ids=Array.isArray(p.ids)?p.ids.map(String).sort():[];
-  if(ids.length!==2||new Set(ids).size!==2||!ids.includes(String(authUser.id))||!ids.includes(String(p.from))) return;
-  if(p.code!==arenaPairCode(ids)) return;
+  const members=arenaPairMembers(p.members),ids=members.map(x=>x.id),memberKey=members.map(x=>x.id+'@'+x.joined).join('|');
+  if(ids.length!==2||members.some(x=>!x.joined)||new Set(ids).size!==2||
+     !ids.includes(String(authUser.id))||!ids.includes(String(p.from))||p.code!==arenaPairCode(members)) return;
+  const present=new Map(arenaPresenceList(ch).filter(x=>+x.protocol===ARENA_PROTOCOL).map(x=>[String(x.id),Math.floor(+x.joined||0)]));
+  if(members.some(x=>present.get(x.id)!==x.joined)) return;
   // The first client may already be opening the match room while the second
   // is still waiting for its reciprocal packet. Keep answering on the queue
   // channel until Presence confirms that both clients reached the room.
   if(arena.matchChannel){
     const c=arena.queueCandidate;
-    if(c&&c.id===String(p.from)&&c.code===p.code&&c.ids.join('|')===ids.join('|')){
-      try{ ch.send({type:'broadcast',event:'pair_offer',payload:{from:authUser.id,to:c.id,code:c.code,ids:c.ids}}); }catch(e){}
+    if(c&&c.id===String(p.from)&&c.code===p.code&&c.memberKey===memberKey&&c.ids.join('|')===ids.join('|')){
+      try{ ch.send({type:'broadcast',event:'pair_offer',payload:{from:authUser.id,to:c.id,code:c.code,ids:c.ids,members:c.members}}); }catch(e){}
     }
     return;
   }
@@ -1228,17 +1297,17 @@ function arenaQueueOffer(ch,p){
   if(!arena.queueCandidate) arenaQueueSync(ch);
   let c=arena.queueCandidate;
   if(c&&c.id!==String(p.from)){
-    const present=new Set(arenaPresenceList(ch).map(x=>String(x.id)));
+    const presentIds=new Set(present.keys());
     // Presence churn by itself never changes the lock. A valid reciprocal
     // offer can replace it only when the old, still-unconfirmed peer is gone.
-    if(!present.has(c.id)&&present.has(String(p.from))){
+    if(!presentIds.has(c.id)&&presentIds.has(String(p.from))){
       if(c.retryTimer) clearTimeout(c.retryTimer);
       arena.queueOffer=null;
-      c=arena.queueCandidate={id:String(p.from),code:p.code,ids,lockedAt:Date.now(),expiresAt:Date.now()+8000,nextOfferAt:0,retryTimer:null};
+      c=arena.queueCandidate={id:String(p.from),code:p.code,ids,members,memberKey,lockedAt:Date.now(),expiresAt:Date.now()+8000,nextOfferAt:0,retryTimer:null};
     }
   }
-  if(!c||c.id!==String(p.from)||c.code!==p.code||c.ids.join('|')!==ids.join('|')) return;
-  arena.queueOffer={from:String(p.from),to:String(p.to),code:p.code,ids,receivedAt:Date.now()};
+  if(!c||c.id!==String(p.from)||c.code!==p.code||c.memberKey!==memberKey||c.ids.join('|')!==ids.join('|')) return;
+  arena.queueOffer={from:String(p.from),to:String(p.to),code:p.code,ids,members,memberKey,receivedAt:Date.now()};
   arenaQueueSync(ch);
 }
 function arenaCreatePrivate(){
@@ -1259,19 +1328,23 @@ function arenaPromptJoin(){
 function arenaConnectRoom(code,wantsHost,mode,expectedIds){
   if(!sb||!authUser) return;
   arena.room=code; arena.mode=mode; arena.phase='room'; arena.status=mode==='queue'?'Joining match...':'Waiting for the other player...';
-  arena.wantsHost=!!wantsHost; arena.expectedIds=expectedIds; arena.joinedAt=arena.joinedAt||Date.now();
-  arena.localReady=mode==='queue'; arena.remoteReady=false;
+  arena.protocol=ARENA_PROTOCOL;arena.wantsHost=!!wantsHost; arena.expectedIds=expectedIds; arena.joinedAt=arena.joinedAt||Date.now();
+  // Quick Match becomes ready only after Presence has shown both expected
+  // accounts inside this exact room. A one-sided transition must not arm a
+  // match (and its disconnect/forfeit rules) at a fresh 0-0 score.
+  arena.localReady=false; arena.remoteReady=false;
   const ch=sb.channel('oz-arena-v1-'+code,{config:{broadcast:{self:false,ack:false},presence:{key:authUser.id}}});
   for(const ev of ['state','shot','melee','firework','utility','hit','hit_result','round_timeout_hp','ko','round_start','round_result','ready','background','resume_request','resume_state','rematch','rematch_start','forfeit_result',
                     'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_tnt_hit','map_hazard','map_hazard_ack','leave','room_full'])
-    ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload));
+    ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload,ch));
   ch.on('presence',{event:'sync'},()=>arenaMatchPresenceSync(ch));
   ch.subscribe(async st=>{
     if(ch!==arena.matchChannel) return;
     if(st==='SUBSCRIBED'){
       if(arena.disconnectSide==='self'&&(arena.disconnectAt||arena.disconnectTimer||arena.networkHold))arenaClearDisconnectHold(false);
+      else if(arena.disconnectSide==='both'&&!arena.localBackgrounded&&!arenaPageBackgrounded())arena.disconnectSide='opponent';
       if(!(arena.phase==='match_end'&&arena.forfeitResultId))
-        arena.status=mode==='queue'?'Opponent found. Preparing match...':(wantsHost?'Room '+code+' created. Waiting for another player...':'Joining room '+code+'...');
+        arena.status=mode==='queue'?'Opponent found. Preparing match...':(wantsHost?'Private room created. Share the invite code while you wait.':'Joining private room...');
       try{ await ch.track(arenaOwnPresence()); }catch(e){}
       arenaRequestResume(true);
     } else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'||st==='CLOSED'){
@@ -1294,30 +1367,39 @@ function arenaMatchPresenceSync(ch){
     arenaSend('room_full',{to:authUser.id});
     leaveArena('That room already has two players.',false); return;
   }
+  const incompatible=chosen.find(x=>String(x.id)!==String(authUser.id)&&+x.protocol!==ARENA_PROTOCOL);
+  if(arena.protocol===ARENA_PROTOCOL&&incompatible){
+    leaveArena('Arena version mismatch — REFRESH REQUIRED. Both players must refresh, then create a new room.',false);return;
+  }
   const oldOpp=arena.opponent,om=chosen.find(x=>x.id!==authUser.id),
     wasDisconnected=!!(arena.disconnectAt||arena.disconnectTimer||arena.networkHold),wasBackgrounded=!!(oldOpp&&oldOpp.backgrounded);
+  // A Presence sync proves this local channel is alive again. If the opponent
+  // is still absent/away, keep only their original deadline.
+  if(arena.disconnectSide==='self'&&wasDisconnected)arenaClearDisconnectHold(false);
+  else if(arena.disconnectSide==='both'&&!arena.localBackgrounded&&!arenaPageBackgrounded())arena.disconnectSide='opponent';
   if(oldOpp&&!om){
     if(arena.phase==='match_end'&&arena.forfeitResultId) return;
-    if(arenaForfeitEligible()){
-      arenaBeginDisconnectHold('opponent',ch);
-    }else if(!arena.networkHold){
-      arena.networkHold=true; arena.disconnectAt=Date.now(); arena.disconnectSide='opponent';
-      arena.status='Opponent reconnecting \u2014 holding the room for 15 seconds...';
-      const heldChannel=ch;
-      arena.disconnectTimer=setTimeout(()=>{
-        if(arena.matchChannel===heldChannel&&arena.networkHold) leaveArena('The other player disconnected.',false);
-      },15000);
-    }
+    arenaBeginDisconnectHold('opponent',ch,oldOpp.backgrounded||oldOpp.away?'background':'disconnect');
     return;
   }
-  if(!om){ arena.status=arena.mode==='queue'?'Waiting for matched player to connect...':'Share room code '+arena.room+' with your friend.'; return; }
-  if(arena.networkHold||arena.disconnectAt||arena.disconnectTimer) arenaClearDisconnectHold(false);
+  if(!om){arena.status=arena.mode==='queue'?'Waiting for matched player to connect...':
+      arena.wantsHost?'Share the invite code with your friend.':'Waiting for the private-room host...';return;}
   const remoteKit=typeof arenaRemoteLoadout==='function'?arenaRemoteLoadout(om):
-    {primary:om.primary,secondary:om.secondary,melee:om.melee};
+    {primary:om.primary,secondary:om.secondary,melee:om.melee},
+    oldPresenceSeq=Math.max(0,Math.floor(+oldOpp?.presenceSeq||0)),omPresenceSeq=Math.max(0,Math.floor(+om.presenceSeq||0)),
+    presenceBackgrounded=om.backgrounded===true||om.away===true,
+    oldBackgrounded=!!(oldOpp&&(oldOpp.backgrounded||oldOpp.away)),
+    freshPresence=!oldOpp||omPresenceSeq>oldPresenceSeq||(omPresenceSeq===oldPresenceSeq&&presenceBackgrounded===oldBackgrounded),
+    remoteBackgrounded=freshPresence?presenceBackgrounded:oldBackgrounded;
   arena.opponent=Object.assign(oldOpp||{x:WORLD.w/2+380,y:WORLD.h/2,tx:WORLD.w/2+380,ty:WORLD.h/2,angle:Math.PI,hp:ARENA_HP,cur:remoteKit&&remoteKit.primary||'ar',utilityOut:false,
                                  parrySeq:0,parryUntil:0,parryReadyAt:0,meleeFxSeq:0,meleeFxKey:'',meleeFxStart:0,meleeFxUntil:0,meleeFxAngle:0,meleeFxReadyAt:0,meleeFxBlades:[],meleeFxWallRecallSeq:0,lastSeen:Date.now()},
                                {id:om.id,name:om.name||'opponent',loadout:remoteKit||{primary:'ar',secondary:'m9',melee:'knife'},remoteLoadoutValid:!!remoteKit,
-                                backgrounded:om.backgrounded===true||om.away===true,away:om.backgrounded===true||om.away===true});
+                                presenceSeq:Math.max(oldPresenceSeq,omPresenceSeq),backgrounded:remoteBackgrounded,away:remoteBackgrounded});
+  if(remoteBackgrounded)arenaBeginDisconnectHold('opponent',ch,'background');
+  else if(arena.networkHold||arena.disconnectAt||arena.disconnectTimer){
+    const freshReturn=arena.disconnectKind!=='background'||omPresenceSeq>Math.floor(+arena.disconnectPresenceSeq||0);
+    if(freshReturn)arenaClearDisconnectHold(false);
+  }
   // Stay visible in the quick queue until both confirmed IDs have actually
   // arrived in the match room. This closes the one-sided transition race.
   if(arena.mode==='queue'&&arena.expectedIds&&arena.expectedIds.every(id=>chosen.some(x=>String(x.id)===String(id)))&&arena.queueChannel){
@@ -1331,7 +1413,7 @@ function arenaMatchPresenceSync(ch){
   else if(arena.mapVotePhase==='voting') arena.status='Vote for a map — '+Math.max(1,Math.ceil((arena.mapVoteDeadline-Date.now())/1000))+' seconds.';
   else if(arena.mapVotePhase==='reveal') arena.status=arenaMapName(arena.mapId)+' selected.';
   else if(arena.opponent.backgrounded)arena.status='Opponent is away — match continues.';
-  else arena.status=arena.mode==='queue'?'Match found: '+arena.opponent.name:(arena.opponent.name+' joined room '+arena.room+'.');
+  else arena.status=arena.mode==='queue'?'Match found: '+arena.opponent.name:(arena.opponent.name+' joined the private room.');
   if(arena.mode==='queue'&&!arena.localReady) arenaSetReady(true);
   arenaMaybeStart();
   if(wasDisconnected||(wasBackgrounded&&!arena.opponent.backgrounded))arenaRequestResume(true);
@@ -1344,13 +1426,24 @@ function arenaSetReady(ready){
   arenaMaybeStart();
 }
 function arenaMaybeStart(){
-  if(!authUser||!arena.opponent||arena.active||arena.phase==='match_end'||['voting','reveal','locked'].includes(arena.mapVotePhase)) return;
+  if(!authUser||!arena.opponent||arena.active||arena.phase==='match_end'||['voting','reveal','locked'].includes(arena.mapVotePhase)) return false;
   if(authUser.id===arena.hostId && arena.localReady&&arena.remoteReady){
-    arena.matchEpoch++; arena.scores={[authUser.id]:0,[arena.opponent.id]:0}; arena.round=0; arenaStartMapVote();
+    const held=!!(arena.disconnectAt||arena.disconnectTimer||arena.networkHold);
+    // Receiving a ready packet or Realtime callback is not proof that either
+    // hidden player returned to the tab. Keep the lobby grace window intact.
+    if(arena.localBackgrounded||arenaPageBackgrounded()||arena.opponent.backgrounded||arena.opponent.away||
+       ['opponent','both'].includes(arena.disconnectSide))return false;
+    if(held){
+      if(arena.disconnectSide!=='self')return false;
+      arenaClearDisconnectHold(false);
+    }
+    arena.matchEpoch++; arena.scores={[authUser.id]:0,[arena.opponent.id]:0}; arena.round=0;arena.matchCommitted=false;arenaStartMapVote();
+    return true;
   }
+  return false;
 }
-function arenaReceive(event,p){
-  if(!p||p.room!==arena.room||!authUser) return;
+function arenaReceive(event,p,sourceChannel=arena&&arena.matchChannel){
+  if(!arena||sourceChannel!==arena.matchChannel||!p||p.room!==arena.room||!authUser) return;
   if(p.to&&p.to!==authUser.id) return;
   if(event==='room_full'){ leaveArena('That room already has two players.',false); return; }
   if(!arena.opponent||p.from!==arena.opponent.id) return;
@@ -1422,6 +1515,12 @@ function arenaReceive(event,p){
   if(event==='round_timeout_hp'){ arenaApplyTimeoutHp(p); arenaControlClockCatchUp(Date.now()); return; }
   if(event==='state'){
     if(p.round!==arena.round) return;
+    const remoteHp=typeof p.hp==='number'&&Number.isFinite(p.hp)&&p.hp>=0&&p.hp<=ARENA_HP?p.hp:null;
+    // Null/string/NaN HP used to collapse through `+value || 0`, and a fresh
+    // packet could therefore look like a knockout before either player moved.
+    // A first zero is also not proof of live combat; normal hit/KO envelopes
+    // still resolve a genuine opening one-shot.
+    if(remoteHp===null||(remoteHp===0&&arena.matchCommitted!==true))return;
     if(Date.now()<arena.roundEndAt&&activeArenaMapId()==='construction'&&p.tntDamage&&typeof p.tntDamage==='object')
       arenaMergeTntDamageSnapshot(String(p.from),p.tntDamage);
     const r=arena.opponent, bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:0,top:0,right:WORLD.w,bottom:WORLD.h}, margin=Math.max(1,+r.r||15);
@@ -1440,7 +1539,9 @@ function arenaReceive(event,p){
     if(typeof p.utilityOut==='boolean')r.utilityOut=!!(p.utilityOut&&r.loadout&&r.loadout.utility);
     arenaApplyRemoteParryState(r,p,now);
     arenaApplyRemoteMeleeAbilityState(r,p,r.loadout,now);
-    r.hp=clamp(+p.hp||0,0,ARENA_HP); r.lastSeen=Date.now();
+    r.hp=remoteHp;r.lastSeen=Date.now();
+    if(remoteHp>0&&arena.phase==='fight'&&Math.floor(+arena.round||0)>0&&Math.floor(+arena.matchEpoch||0)>0&&
+       !!String(arena.mapVoteId||'')&&Date.now()<arena.roundEndAt)arena.matchCommitted=true;
     if(authUser.id===arena.hostId&&r.hp<=0&&Date.now()<arena.roundEndAt){
       if(arenaHazardCauseValid(p)) arenaHostRecordHazardHp(p.hazardEventId,p.hazardTntId,r.id,0);
       else if(arena.phase==='fight') arenaHostResolve(authUser.id,arenaUnscopedKillCause(p,authUser.id));
@@ -1465,8 +1566,12 @@ function arenaReceive(event,p){
     arena.rematchVotes.add(p.from); arenaCheckRematch(); return;
   }
   if(event==='leave'){
-    if(arenaForfeitEligible()&&!arena.departureAnnounced){ arenaClaimOpponentForfeit(String(p.reason||'left')); return; }
-    if(arena.phase!=='match_end') leaveArena('The other player left the Arena.',false);
+    if(!arenaLeavePacketValid(p))return;
+    if(String(p.reason||'')==='page_exit'){
+      arenaBeginDisconnectHold('opponent',sourceChannel,'background');return;
+    }
+    if(p.forfeit&&arenaForfeitEligible()&&!arena.departureAnnounced){arenaClaimOpponentForfeit(String(p.reason||'left'));return;}
+    if(!p.forfeit&&!arenaForfeitEligible()&&arena.phase!=='match_end')leaveArena('The other player left the Arena.',false);
   }
 }
 function arenaHostStartRound(){
@@ -1474,17 +1579,19 @@ function arenaHostStartRound(){
   const p={from:authUser.id,room:arena.room,epoch:arena.matchEpoch,round:arena.round+1,startDelay:3000,startAt:Date.now()+3000,
            scores:Object.assign({},arena.scores),mapId:arenaMapValid(arena.mapId)?arena.mapId:'arena',
            mapVoteId:arena.mapVoteId,mapResultId:arena.mapVoteResult&&arena.mapVoteResult.resultId};
+  const channel=arena.matchChannel;
   arenaApplyRoundStart(p); arenaSend('round_start',p);
   // Broadcast control messages are not guaranteed delivery, so repeat the
   // same idempotent start packet while both clients are still on this round.
   for(const wait of [300,900]) setTimeout(()=>{
-    if(arena.matchChannel&&arena.matchEpoch===p.epoch&&arena.round===p.round) arenaSend('round_start',p);
+    if(arena.matchChannel===channel&&arena.matchEpoch===p.epoch&&arena.round===p.round) arenaSend('round_start',p);
   },wait);
 }
 function arenaApplyRematchStart(p){
   const epoch=Math.floor(+p?.epoch||0);
   if(!authUser||!arena.opponent||p.from!==arena.hostId||epoch<=arena.matchEpoch) return false;
-  arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};
+  if(arena.disconnectAt||arena.disconnectTimer||arena.networkHold)arenaClearDisconnectHold(false);
+  arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};arena.matchCommitted=false;
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
   arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();arena.receivedHitDamage=new Map();
   arena.hitSeq=0; arena.sentHitKinds=new Map();arena.sentHitDamage=new Map();arena.pendingHitFeedback=new Map(); arena.pendingUnscopedHits=new Set();
@@ -1509,11 +1616,12 @@ function arenaApplyRoundStart(p){
   const epoch=Math.floor(+p.epoch||0);
   if(epoch>arena.matchEpoch) arenaApplyRematchStart(p); // also recovers if rematch_start arrives late
   if(epoch!==arena.matchEpoch||p.round<=arena.round) return;
+  const continuingRound=arena.active&&arena.round>0;
   const packetMap=arenaMapValid(p.mapId)?String(p.mapId):'arena';
   if(arena.mapVoteResult&&(arena.mapVoteResult.mapId!==packetMap||
      (p.mapResultId&&arena.mapVoteResult.resultId!==p.mapResultId))) return;
   arena.mapId=packetMap; arena.mapVotePhase='locked'; arena.mapVoteStartPending=false;
-  resetHeldGameplayInput();
+  resetRoundTransitionInput(continuingRound);
   resetWeaponGimmickState();
   clearCameraShake();
   arena.round=p.round; arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=false;
@@ -1779,26 +1887,51 @@ function arenaLocalKO(cause=null){
 }
 function arenaHostResolve(winnerId,cause=null){
   if(!authUser||authUser.id!==arena.hostId||arena.roundResolved||!arena.opponent) return;
-  arena.roundResolved=true;
   const scores=Object.assign({},arena.scores);
   if(winnerId) scores[winnerId]=(scores[winnerId]||0)+1;
   const over=winnerId&&(scores[winnerId]||0)>=ARENA_TARGET;
   const p={from:authUser.id,room:arena.room,epoch:arena.matchEpoch,round:arena.round,winner:winnerId,scores,matchOver:!!over,
+           mapVoteId:arena.mapVoteId,
            roundEndReason:cause&&cause.kind==='timeout'?'timeout':'knockout',
            nextDelay:over?0:2600,nextAt:over?0:Date.now()+2600};
   Object.assign(p,arenaUnscopedKillCause(cause,winnerId)||{});
-  arenaApplyRoundResult(p); arenaSend('round_result',p);
+  if(!arenaApplyRoundResult(p)) return false;
+  const channel=arena.matchChannel;
+  arenaSend('round_result',p);
   for(const wait of [300,900]) setTimeout(()=>{
-    if(arena.matchChannel&&arena.matchEpoch===p.epoch&&arena.round===p.round) arenaSend('round_result',p);
+    if(arena.matchChannel===channel&&arena.matchEpoch===p.epoch&&arena.round===p.round) arenaSend('round_result',p);
   },wait);
+  return true;
+}
+function arenaRoundResultSnapshot(p){
+  if(!p||!authUser||!arena.opponent||String(p.from||'')!==String(arena.hostId)||String(p.room||'')!==String(arena.room)||
+     Math.floor(+p.epoch||0)!==arena.matchEpoch||!Number.isSafeInteger(+p.round)||+p.round!==arena.round||+p.round<1||
+     !['fight','ko_wait'].includes(arena.phase)||!arena.mapVoteId||String(p.mapVoteId||'')!==String(arena.mapVoteId)||
+     !p.scores||typeof p.scores!=='object'||Array.isArray(p.scores)) return null;
+  const ids=[String(authUser.id),String(arena.opponent.id)],read=(source,id)=>{
+    if(!source||!Object.prototype.hasOwnProperty.call(source,id)) return null;
+    const value=+source[id]; return Number.isSafeInteger(value)&&value>=0&&value<=ARENA_TARGET?value:null;
+  },current={},scores={};
+  for(const id of ids){ current[id]=read(arena.scores,id); scores[id]=read(p.scores,id); if(current[id]===null||scores[id]===null)return null; }
+  const winner=p.winner===null||p.winner===undefined||p.winner===''?'':String(p.winner);
+  if(winner&&!ids.includes(winner)) return null;
+  for(const id of ids){
+    const expected=current[id]+(winner===id?1:0);
+    if(scores[id]!==expected||expected>ARENA_TARGET) return null;
+  }
+  const matchOver=!!winner&&scores[winner]>=ARENA_TARGET;
+  if(typeof p.matchOver!=='boolean'||p.matchOver!==matchOver) return null;
+  return {winner:winner||null,scores,matchOver};
 }
 function arenaApplyRoundResult(p){
-  if(!p||Math.floor(+p.epoch||0)!==arena.matchEpoch||p.round!==arena.round) return;
+  if(arena.roundResolved&&(arena.phase==='round_end'||arena.phase==='match_end')) return false;
+  const snapshot=arenaRoundResultSnapshot(p);if(!snapshot)return false;
+  arena.matchCommitted=true;
+  p=Object.assign({},p,snapshot);
   if(String(p.from||'')===String(arena.hostId))arena.lastRoundResultPacket={
     from:String(arena.hostId),room:String(arena.room),epoch:arena.matchEpoch,round:arena.round,winner:p.winner,
     scores:Object.assign({},p.scores||arena.scores),matchOver:!!p.matchOver,
-    roundEndReason:p.roundEndReason==='timeout'?'timeout':p.roundEndReason==='knockout'?'knockout':'',killKind:p.killKind,killHitId:p.killHitId};
-  if(arena.roundResolved&&(arena.phase==='round_end'||arena.phase==='match_end')) return;
+    mapVoteId:String(arena.mapVoteId),roundEndReason:p.roundEndReason==='timeout'?'timeout':p.roundEndReason==='knockout'?'knockout':'',killKind:p.killKind,killHitId:p.killHitId};
   arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=true;
   const roundEndReason=p.roundEndReason==='knockout'?'knockout':p.roundEndReason==='timeout'?'timeout':'';
   if(typeof arenaRecordDailyOutcome==='function')arenaRecordDailyOutcome(authUser.id,p.winner,roundEndReason,!!p.matchOver,true);
@@ -1809,6 +1942,7 @@ function arenaApplyRoundResult(p){
   const nextDelay=Number.isFinite(+p.nextDelay)?clamp(+p.nextDelay,0,10000):clamp((+p.nextAt||0)-Date.now(),0,10000);
   arena.nextRoundAt=p.matchOver?0:Date.now()+nextDelay;
   if(p.matchOver){
+    if(arena.disconnectAt||arena.disconnectTimer||arena.networkHold)arenaClearDisconnectHold(false);
     arena.phase='match_end'; arena.active=false; arena.rematchVotes=new Set();
     if(p.winner===authUser.id&&!arena.winRecorded){ arena.winRecorded=true; submitArenaWin(arenaWinResultId(arena,authUser)); }
     if(arena.savedUtility!==undefined){ loadout.utility=arena.savedUtility; arena.savedUtility=undefined; }
@@ -1820,6 +1954,7 @@ function arenaApplyRoundResult(p){
     waveMsg=p.winner?(p.winner===authUser.id?'ROUND WON':'ROUND LOST'):'ROUND DRAW'; waveMsgT=now+2200;
     sfx(p.winner===authUser.id?'pickup':'die');
   }
+  return true;
 }
 function arenaVoteRematch(){
   if(arena.phase!=='match_end'||!authUser) return;
@@ -1844,7 +1979,7 @@ function arenaSwitchWeapons(){
   modeBoardNotice='SWITCH WEAPONS BEFORE YOUR NEXT 1v1';modeBoardNoticeT=performance.now()+3200;
   return true;
 }
-function leaveArena(status,toHub){
+function leaveArena(status,toHub,suppressDeparture=false){
   if(!arena) return;
   if(typeof isPartyCpuMatch==='function'&&isPartyCpuMatch()){ partyCpuAbort(status||'You left the Party CPU match.',true); return; }
   if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()){ offlineCpu2v2Leave(status,toHub); return; }
@@ -1858,7 +1993,7 @@ function leaveArena(status,toHub){
   if(wasBot&&!arena.botAdminTest&&typeof arenaRecordDailyMatch==='function')
     arenaRecordDailyMatch(LOCAL_DUEL_PLAYER,'',arenaHasCompletedDailyTaskRound());
   if(wasBot&&typeof cancelBotLadderSubmission==='function')cancelBotLadderSubmission(arena);
-  const oldMatchChannel=arena.matchChannel,forfeitAnnounced=oldMatchChannel&&authUser?arenaNotifyDeparture('left'):false;
+  const oldMatchChannel=arena.matchChannel,forfeitAnnounced=!suppressDeparture&&oldMatchChannel&&authUser?arenaNotifyDeparture('left'):false;
   if(arena.disconnectTimer) clearTimeout(arena.disconnectTimer);
   if(arena.hazardArbitrations instanceof Map) for(const a of arena.hazardArbitrations.values()) if(a&&a.timer) clearTimeout(a.timer);
   arenaDropChannel(arena.queueChannel);
@@ -1894,12 +2029,16 @@ function leaveArena(status,toHub){
   if(toHub){ pendingGameMode=null; modeBoardMode=null; }
   selPage=toHub?'hub':'arena'; menuOpen=false; aiming=false; rmbAim=false;
 }
+function arenaInviteCodeVisible(code=arena&&arena.room){
+  return !!(arena&&arena.mode==='private'&&arena.phase==='room'&&arena.wantsHost&&!arena.opponent&&code&&String(code)===String(arena.room||''));
+}
 function arenaCopyCode(){
-  const code=arena.room; if(!code) return;
+  const code=arena.room;if(!arenaInviteCodeVisible(code))return false;
+  const stillVisible=()=>arenaInviteCodeVisible(code);
   try{
     const p=navigator.clipboard&&navigator.clipboard.writeText(code);
-    if(p&&p.then) p.then(()=>arena.status='Room code copied: '+code).catch(()=>arena.status='Room code: '+code);
-    else arena.status='Room code: '+code;
-  }catch(e){ arena.status='Room code: '+code; }
-  sfx('pickup');
+    if(p&&p.then)p.then(()=>{if(stillVisible())arena.status='Room code copied.';}).catch(()=>{if(stillVisible())arena.status='Room code: '+code;});
+    else if(stillVisible())arena.status='Room code: '+code;
+  }catch(e){if(stillVisible())arena.status='Room code: '+code;}
+  sfx('pickup');return true;
 }

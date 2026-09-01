@@ -296,13 +296,13 @@ assert.match(ui,/arena\.dailyTaskResult\|\|\(typeof dailyDuelTaskProgressText/,'
 assert.match(ui,/CHEST \+'\+r\.gems\+\(r\.taskReward\?' \\u00b7 DAILY TASK \+'/,'the chest modal must distinguish its random gems from task gems');
 assert.match(combat,/chestRewardOpen=\{coins:coinDrop,gems:awardedGems,taskReward/,'the chest modal must receive the task reward amount');
 for(const [script,version] of [['networking','20260831-bots-volt-layout-v1'],['administration','20260831-bots-volt-layout-v1'],
-  ['persistence','20260831-shop-weapon-picker-v1'],['state','20260831-practice-infinite-ammo-v1'],['online','20260831-melee-polish-v1'],
-  ['ui','20260831-bots-volt-layout-v1'],['loop','20260831-bots-volt-layout-v1']])
+  ['persistence','20260831-shop-weapon-picker-v1'],['state','20260831-duel-stability-v1'],['online','20260831-duel-stability-v1'],
+  ['ui','20260831-frag-range-v1'],['loop','20260831-bots-volt-layout-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current cache-buster`);
 for(const script of ['party'])
-  assert.match(index,new RegExp(`js/${script}\\.js\\?v=20260831-bots-volt-layout-v1`),`${script}.js needs the current CPU cache-buster`);
-for(const [script,version] of [['gameplay','20260831-tracking-drill-v1'],['combat','20260831-melee-polish-v1'],
-  ['ai','20260831-bots-volt-layout-v1']])
+  assert.match(index,new RegExp(`js/${script}\\.js\\?v=20260831-duel-stability-v1`),`${script}.js needs the current CPU cache-buster`);
+for(const [script,version] of [['gameplay','20260831-duel-stability-v1'],['combat','20260831-utility-preround-v1'],
+  ['ai','20260831-duel-stability-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('SUMMARY PASS daily task alternatives');

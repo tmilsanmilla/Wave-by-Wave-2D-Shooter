@@ -255,7 +255,10 @@ function openForm(opts){
         inp.oninput=()=>{ const p=inp.selectionStart; inp.value=String(inp.value||'').toUpperCase();
                           try{ inp.setSelectionRange(p,p); }catch(e){} };
       }
-      if(f.type!=='text'){ if(f.min!==undefined) inp.min=f.min; if(f.max!==undefined) inp.max=f.max; }
+      if(f.type!=='text'){
+        if(f.min!==undefined) inp.min=f.min;if(f.max!==undefined) inp.max=f.max;
+        if(f.step!==undefined) inp.step=f.step;
+      }
     }
     lab.appendChild(span); lab.appendChild(inp);
     if(f.was!==undefined && f.was!==null){
@@ -284,7 +287,9 @@ function formValues(){
     const raw=String(el.value||'').trim();
     if(f.type==='text'||f.type==='select'){ out[f.id]= f.upper ? raw.toUpperCase() : raw; continue; }
     if(raw===''){ out[f.id]=null; continue; }
-    let v=Math.round(+raw||0);
+    const step=+f.step,stepped=Number.isFinite(step)&&step>0;
+    let v=stepped?Math.round((+raw||0)/step)*step:Math.round(+raw||0);
+    if(stepped){const decimals=(String(step).split('.')[1]||'').length;v=+v.toFixed(Math.min(8,decimals));}
     if(f.min!==undefined) v=Math.max(f.min,v);
     if(f.max!==undefined) v=Math.min(f.max,v);
     out[f.id]=v;

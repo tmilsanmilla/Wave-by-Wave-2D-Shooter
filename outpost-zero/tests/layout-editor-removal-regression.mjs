@@ -18,9 +18,18 @@ assert.doesNotMatch(adminUi,/LAYOUT EDITOR|actionBtn\('layout'|id==='layout'/,
   'Admin Tools must not offer the removed editor');
 assert.doesNotMatch(ui+adminUi,/\boff[XYCol]+\(|withBlockColour\(|layoutBlock\(/,
   'normal Home rendering must not depend on editor offsets or color overrides');
-for(const script of ['networking','weapons','administration','admin-ui','input','ai','party','ui','loop','bootstrap'])
+for(const script of ['networking','administration','loop','bootstrap'])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=20260831-bots-volt-layout-v1`),
     `${script}.js must not be served from a cache that still expects Layout Editor globals`);
+for(const script of ['input','ai','party'])
+  assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=20260831-duel-stability-v1`),
+    `${script}.js must load the current duel-stability build`);
+assert.match(index,/outpost-zero\/js\/admin-ui\.js\?v=20260831-frag-range-v2/,
+  'the latest Admin UI cache tag must include Layout removal and exact Frag range editing');
+assert.match(index,/outpost-zero\/js\/weapons\.js\?v=20260831-frag-range-v1/,
+  'the latest Weapons cache tag must include Layout removal and the Frag range update');
+assert.match(index,/outpost-zero\/js\/ui\.js\?v=20260831-frag-range-v1/,
+  'the latest UI cache tag must include Layout removal, room-code privacy, and live Frag details');
 
 assert.match(ui,/boardPanelRect=\{x:homeBoardsX,y:homeBoardsY,w:homeBoardsW,h:homeBoardsH\}/);
 assert.match(ui,/drawHomeLeaderboards\(homeBoardsX,homeBoardsY,homeBoardsW,homeBoardsH\)/);

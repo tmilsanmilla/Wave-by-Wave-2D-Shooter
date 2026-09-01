@@ -627,7 +627,8 @@ function showWeaponForm(){
   if(nextSeason) d.published=false;
   const fields=[];
   for(const f of weaponEditorFields(k)) if(typeof d[f.k]==='number')
-    fields.push({id:f.k, label:f.label, min:f.min, max:f.max, value:d[f.k], was:def[f.k]});
+    fields.push({id:f.k, label:f.label, min:f.min, max:f.max, value:d[f.k], was:def[f.k],
+      step:k==='grenade'&&f.k==='range'?0.5:1});
   if(typeof d.price==='number')
     fields.push({id:'price', label:'GEM PRICE', min:0, max:9999, value:d.price, was:weaponPrice(k)});
   openForm({

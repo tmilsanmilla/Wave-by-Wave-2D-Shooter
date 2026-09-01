@@ -9,6 +9,7 @@ const weaponsSource=read('js/weapons.js');
 const upgrades=read('js/upgrades.js');
 const adminUi=read('js/admin-ui.js');
 const combat=read('js/combat.js');
+const progression=read('js/progression.js');
 const ui=read('js/ui.js');
 const admin02=read('sql/administration/Admin-02-admins.sql');
 const index=read('../index.html');
@@ -48,8 +49,8 @@ const equipment=JSON.parse(vm.runInContext('JSON.stringify(__equipment)',weaponC
 
 assert.deepEqual(
   {dmg:equipment.UTILITIES.grenade.dmg,range:equipment.UTILITIES.grenade.range,cd:equipment.UTILITIES.grenade.cd},
-  {dmg:300,range:85,cd:20000},
-  'Frag must keep 300 center damage while cutting its old 170 blast radius exactly in half',
+  {dmg:300,range:93.5,cd:20000},
+  'Frag must keep 300 center damage while increasing its 85 blast radius by exactly 10%',
 );
 
 const expectedUtilityFields={
@@ -72,14 +73,14 @@ const fragRadiusSource=functionSource(combat,'fragBlastRadius');
 const fragDamageSource=functionSource(combat,'fragDamageAtDistance');
 const fragContext=vm.createContext({
   console,Math,Number,Object,Array,Set,Map,Infinity,
-  UTILITIES:{grenade:{dmg:300,range:85,cd:20000}},
+  UTILITIES:{grenade:{dmg:300,range:93.5,cd:20000}},
 });
 vm.runInContext(`${fragRadiusSource}\n${fragDamageSource}`,fragContext,{filename:'frag-helpers.js'});
 const frag=(distance,boss=false)=>fragContext.fragDamageAtDistance(distance,boss);
-assert.equal(fragContext.fragBlastRadius(),85,'Frag runtime radius must come from its editable range');
+assert.equal(fragContext.fragBlastRadius(),93.5,'Frag runtime radius must use the exact 10% range increase');
 assert.equal(frag(0),300,'Frag must retain full damage at the epicenter');
-assert.equal(frag(42.5),150,'Frag must fall to half damage halfway through its smaller radius');
-assert.equal(frag(85),0,'Frag damage must reach zero at the edge');
+assert.equal(frag(46.75),150,'Frag must retain the same linear falloff and reach half damage halfway through its new radius');
+assert.equal(frag(93.5),0,'Frag damage must reach zero at the new edge');
 assert.equal(frag(500),0,'Frag damage must remain zero outside the blast');
 assert.equal(frag(0,true),180,'Frag must retain 180 boss damage at the epicenter');
 
@@ -131,6 +132,21 @@ for(const [key,expected] of Object.entries(expectedUtilityFields)){
   assert.ok(ids.length>0,`${key} must expose a meaningful editable stat in addition to Gem Price`);
   for(const field of expected)assert.ok(ids.includes(field),`${key} editor must expose ${field}`);
 }
+vm.runInContext(`__editor.openWeaponEdit('grenade')`,editorContext);
+const fragRangeField=(lastForm&&lastForm.fields||[]).find(field=>field.id==='range');
+assert.equal(fragRangeField?.value,93.5,'the Frag editor must open with the exact live radius');
+assert.equal(fragRangeField?.step,0.5,'the Frag range input must explicitly support its half-unit radius');
+const formInputs={ff_range:{value:'93.5'},ff_dmg:{value:'300.6'}},formContext=vm.createContext({
+  Math,Number,String,
+  formFields:[{...fragRangeField},{id:'dmg',min:1,max:9999}],
+  $:id=>formInputs[id]||null,
+});
+vm.runInContext(functionSource(progression,'formValues'),formContext,{filename:'form-values.js'});
+const formRoundTrip=vm.runInContext('formValues()',formContext);
+assert.deepEqual({...formRoundTrip},{range:93.5,dmg:301},
+  'formValues must preserve the exact 93.5 Frag radius without changing integer-only fields');
+assert.match(functionSource(progression,'openForm'),/inp\.step=f\.step/,
+  'the generated number input must expose the configured half-step to the browser');
 vm.runInContext(`__editor.openWeaponEdit('ar')`,editorContext);
 const arFields=(lastForm&&lastForm.fields||[]).map(field=>field.id);
 for(const utilityOnly of ['cd','rechargeKills','fuseMs','radius','freezeMs'])
@@ -196,8 +212,8 @@ for(const value of ['19','7','1.4','88','2.1'])assert.match(freezerText,new RegE
 assert.doesNotMatch(fragText,/\b170\b|up to 300 at center/,'Frag details must not retain old hardcoded balance text');
 assert.doesNotMatch(freezerText,/\b105\b|1\.35s|2\.5s/,'Freezer details must not hide admin overrides behind defaults');
 
-for(const [file,version] of [['weapons','20260831-bots-volt-layout-v1'],['admin-ui','20260831-bots-volt-layout-v1'],
-  ['upgrades','20260831-hub-tools-settings-v1'],['combat','20260831-melee-polish-v1'],['ui','20260831-bots-volt-layout-v1']])assert.match(
+for(const [file,version] of [['weapons','20260831-frag-range-v1'],['admin-ui','20260831-frag-range-v2'],['progression','20260831-frag-range-v2'],
+  ['upgrades','20260831-hub-tools-settings-v1'],['combat','20260831-utility-preround-v1'],['ui','20260831-frag-range-v1']])assert.match(
   index,new RegExp(`outpost-zero/js/${file}\\.js\\?v=${version}`),
   `${file}.js must use its current cache version`,
 );
