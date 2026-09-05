@@ -54,7 +54,7 @@ assert.doesNotMatch(online,/joined room ['"]?\+?arena\.room|joined room ['"]?\+?
   'confirmed status text must not include the internal code');
 assert.match(online,/JOIN PRIVATE ARENA[\s\S]{0,180}ROOM CODE/,
   'the code input must remain available where a guest actually needs it');
-assert.match(index,/js\/online\.js\?v=20260831-duel-stability-v1/);
-assert.match(index,/js\/ui\.js\?v=20260831-frag-range-v1/);
+assert.match(index,/js\/online\.js\?v=20260902-ai-cleanup-v1/);
+assert.match(index,/js\/ui\.js\?v=20260902-ai-cleanup-v1/);
 
 console.log('PASS confirmed 1v1 hides room codes while preserving invite flow');

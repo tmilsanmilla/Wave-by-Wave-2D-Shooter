@@ -161,7 +161,7 @@ function openUsernameClaim(mode='checking',message='Checking your account userna
   if(el.title) el.title.textContent=mode==='required'?'CHOOSE YOUR USERNAME':mode==='error'?'USERNAME REQUIRED':'CHECKING USERNAME';
   if(el.hint) el.hint.textContent=mode==='required'
     ? (socialAccountSettingsSqlReady===false
-      ? 'The Social 02 database update is required before you can choose or change a username.'
+      ? 'The Player 03 Social Menu database update is required before you can choose or change a username.'
       : 'Open Settings to choose the unique public username shown throughout the game. Until then, creator/main staff may use your email as the account label.')
     : mode==='error'?'Your username could not be verified. Retry the secure profile check or sign out.':'Checking the public username attached to your account.';
   if(el.status){el.status.textContent=usernameClaimPrivateStatus(message);el.status.className=mode==='error'?'error':'';}
@@ -241,7 +241,7 @@ async function socialFetchOwnProfile(userId){
   const legacyFields='user_id,handle,handle_key,display_name,updated_at';
   let result=await sb.from(SOCIAL_PROFILE_TABLE).select(currentFields).eq('user_id',userId).maybeSingle();
   let settingsSqlReady=true;
-  // During a staggered deploy, Social 02 may not be installed yet. Existing
+  // During a staggered deploy, Player 03 Social Menu may not be installed yet. Existing
   // chosen usernames remain verifiable through the older Social schema, but
   // choosing/changing a name still stays disabled until the secure RPC lands.
   if(result&&result.error&&socialUsernameClockMissing(result.error)){
@@ -251,7 +251,7 @@ async function socialFetchOwnProfile(userId){
   }
   return {result,settingsSqlReady};
 }
-function socialSetupStatus(){ return 'SECURE SOCIAL STORAGE IS NOT ENABLED · RUN SOCIAL SQL SETUP'; }
+function socialSetupStatus(){ return 'SECURE SOCIAL STORAGE IS NOT ENABLED · RUN PLAYER 03 SOCIAL MENU'; }
 function socialDropRealtime(){
   if(socialChannel&&sb){ try{ sb.removeChannel(socialChannel); }catch(e){} }
   socialChannel=null; socialRealtimeRetryAt=0;
@@ -450,7 +450,7 @@ function socialMergePartyInviteTargets(localTargets,remoteTargets){
     if(source==='friend'&&!recipientId&&!deliveryKey)return;
     const existing=byHandle.get(handleKey);
     if(existing){
-      // The server target token lets an accepted friend use the Social 03
+      // The server target token lets an accepted friend use the Player 03
       // delivery path while the local relationship keeps FRIENDS precedence.
       if(!existing.deliveryKey&&deliveryKey)existing.deliveryKey=deliveryKey;
       if(!existing.recipientId&&recipientId)existing.recipientId=recipientId;
@@ -469,7 +469,7 @@ function socialMergePartyInviteTargets(localTargets,remoteTargets){
 }
 async function socialPartyInviteTargets(){
   const local=socialLocalPartyInviteTargets();
-  // Social 03 owns the remote wrappers. Until that migration is installed,
+  // Player 03 Social Menu owns the remote wrappers. Until that migration is installed,
   // accepted-friend invitations retain their existing local fallback.
   if(typeof socialFetchOnlinePartyInviteTargets!=='function')return {targets:local,onlineReady:false};
   const remote=await socialFetchOnlinePartyInviteTargets();
@@ -1032,7 +1032,7 @@ async function socialPersistConversationAction(peerId,action){
     socialClosePrivateConversation();sfx('swap');return true;
   }catch(error){
     if(authUser&&String(authUser.id||'')===owner){
-      if(socialPartyInviteRpcMissing(error)){socialConversationSqlReady=false;socialStatus='RERUN SOCIAL 01 TO ENABLE ARCHIVE + DELETE';}
+      if(socialPartyInviteRpcMissing(error)){socialConversationSqlReady=false;socialStatus='RERUN PLAYER 03 SOCIAL MENU TO ENABLE ARCHIVE + DELETE';}
       else socialStatus='COULD NOT UPDATE THAT CONVERSATION';
       sfx('dry');
     }
@@ -1159,7 +1159,7 @@ async function socialSetPlayerBlocked(username,blocked){
     socialStatus=blocked?'@'+clean+' BLOCKED \u00b7 MESSAGES AND INVITES STOPPED':'@'+clean+' UNBLOCKED';
     await fetchSocial(true);sfx(blocked?'dry':'swap');return true;
   }catch(error){
-    socialStatus=socialSetupMissing(error)?'RERUN SOCIAL 01 AND SOCIAL 04 TO ENABLE PROFILE BLOCKING':'COULD NOT CHANGE THAT BLOCK';
+    socialStatus=socialSetupMissing(error)?'RERUN PLAYER 03 SOCIAL MENU TO ENABLE PROFILE BLOCKING':'COULD NOT CHANGE THAT BLOCK';
     sfx('dry');return false;
   }
 }
@@ -1376,11 +1376,11 @@ async function fetchSocialOnce(userId){
     }
     if(typeof socialConversationPeer!=='undefined'&&socialConversationPeer&&typeof socialPrivateConversation==='function'&&!socialPrivateConversation(socialConversationPeer)&&typeof socialClosePrivateConversation==='function')socialClosePrivateConversation();
     socialStatus=socialAccountSettingsSqlReady===false
-      ? 'SOCIAL READY · RUN SOCIAL 02 FOR USERNAME SETTINGS'
+      ? 'SOCIAL READY · RUN PLAYER 03 SOCIAL MENU FOR USERNAME SETTINGS'
       : usernameNeedsClaim(socialProfile,authUser)
         ? 'CHOOSE YOUR USERNAME · THIS REPLACES THE TEMPORARY ACCOUNT NAME EVERYWHERE'
         : typeof socialConversationSqlReady!=='undefined'&&socialConversationSqlReady===false
-          ? 'PRIVATE INBOX READY · RERUN SOCIAL 01 TO SAVE ARCHIVE + DELETE'
+          ? 'PRIVATE INBOX READY · RERUN PLAYER 03 SOCIAL MENU TO SAVE ARCHIVE + DELETE'
           : 'PRIVATE INBOX READY · 25 ACTIVE CONVERSATIONS MAX';
     socialLastFetch=Date.now();
     setupSocialRealtime();
@@ -1397,7 +1397,7 @@ async function fetchSocialOnce(userId){
     if(socialSetupMissing(error)) socialStatus=socialSetupStatus();
     else socialStatus='SOCIAL COULD NOT REFRESH · CHECK YOUR CONNECTION AND TRY AGAIN';
     usernameClaimFailed(socialSetupMissing(error)
-      ? 'Account usernames need the Social database update. Retry after the update is installed.'
+      ? 'Account usernames need the Player 03 Social Menu database update. Retry after the update is installed.'
       : 'Could not verify your username. Check your connection and retry.');
     socialDropRealtime(); return false;
   }
@@ -1462,7 +1462,7 @@ async function socialUpdateHandle(value,requiredClaim=false){
   const validationMessage=socialUsernameValidationMessage(value,authUser&&authUser.id);
   if(validationMessage){showError(validationMessage);return false;}
   if(!sb||!authUser){ showError('Sign in and reconnect first.'); return false; }
-  if(socialAccountSettingsSqlReady===false){ showError('Install Social 02 in Supabase before choosing or changing a username.'); return false; }
+  if(socialAccountSettingsSqlReady===false){ showError('Install Player 03 Social Menu in Supabase before choosing or changing a username.'); return false; }
   if(requiredClaim&&(!settingsOpen||settingsContextCurrent())) usernameClaimBusy(true,'Saving your unique username...');
   let markerFailure=false;
   try{
@@ -1510,7 +1510,7 @@ async function socialUpdateHandle(value,requiredClaim=false){
         : code==='23505'?'That username is already taken. Try another one.'
         : code==='22023'||message.includes('USERNAME_INVALID')
           ? (socialUsernameValidationMessage(value,userId)||'That username is not allowed. Choose a different one.')
-        : socialSetupMissing(error)?'Username Settings needs the Social 02 SQL update.':'That username is unavailable. Try another one.');
+        : socialSetupMissing(error)?'Username Settings needs the Player 03 Social Menu SQL update.':'That username is unavailable. Try another one.');
     return false;
   }
 }
@@ -1573,7 +1573,7 @@ async function socialSendPartyInvite(recipientOrTarget,invite){
      expiresAt>clock+(typeof PARTY_FRIEND_INVITE_MAX_MS==='number'?PARTY_FRIEND_INVITE_MAX_MS:10*60*1000)){
     socialStatus='THAT PARTY INVITE COULD NOT BE SECURED';sfx('dry');return false;
   }
-  // Social 02 fallback: accepted friends retain the existing RLS-protected
+  // Player 03 fallback: accepted friends retain the existing RLS-protected
   // private-message envelope. Online non-friends never use this path.
   if(!deliveryKey){
     if(source==='friend'&&recipientId){
@@ -1587,7 +1587,7 @@ async function socialSendPartyInvite(recipientOrTarget,invite){
         socialStatus='PARTY INVITE SENT';void fetchSocial(true);sfx('pickup');return true;
       }catch(error){if(authUser&&String(authUser.id||'')===owner){socialStatus='COULD NOT SEND THAT PARTY INVITE';sfx('dry');}return false;}
     }
-    socialStatus='ONLINE PARTY INVITES NEED THE SOCIAL 03 DATABASE UPDATE';sfx('dry');return false;
+    socialStatus='ONLINE PARTY INVITES NEED THE PLAYER 03 SOCIAL MENU DATABASE UPDATE';sfx('dry');return false;
   }
   const operationId=uuidOf(invite&&invite.operationId)||(typeof socialPartyInviteOperationId==='function'?socialPartyInviteOperationId():'');
   if(!operationId){socialStatus='THAT PARTY INVITE COULD NOT BE SECURED';sfx('dry');return false;}
@@ -1614,7 +1614,7 @@ async function socialSendPartyInvite(recipientOrTarget,invite){
     if(socialPartyInviteRpcMissing(error)){
       socialPartyInviteSqlReady=false;
       if(source==='friend'&&recipientId)return socialSendLegacyPartyInvite(recipientId,invite);
-      socialStatus='ONLINE PARTY INVITES NEED THE SOCIAL 03 DATABASE UPDATE';
+      socialStatus='ONLINE PARTY INVITES NEED THE PLAYER 03 SOCIAL MENU DATABASE UPDATE';
     }else socialStatus='THAT PLAYER IS NO LONGER AVAILABLE FOR A PARTY INVITE';
     sfx('dry');return false;
   }
@@ -1763,7 +1763,7 @@ async function sendSocialMessage(){
     if(typeof socialConversationPeer!=='undefined')socialConversationPeer=peer;if(typeof socialConversationPage!=='undefined')socialConversationPage=1000000;
     await fetchSocial(true);setTimeout(closeMsgCompose,350);
   }catch(error){
-    $('msgstatus').textContent=String(error&&error.message||'').includes('SOCIAL_01_REQUIRED')?'rerun Social 01 to message players who are not friends':
+    $('msgstatus').textContent=String(error&&error.message||'').includes('SOCIAL_01_REQUIRED')?'rerun Player 03 Social Menu to message players who are not friends':
       socialSetupMissing(error)?socialSetupStatus():'could not send — check the username or block status';
   }finally{if(sendButton)sendButton.disabled=false;}
 }

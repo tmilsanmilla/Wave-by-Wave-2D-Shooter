@@ -163,7 +163,6 @@ async function initAuth(){
       prepareLastLoadoutForAccount(initialProfileUserId);
       prepareBotLadderForAccount(authUser?String(authUser.id):'');
       void refreshBotLadder(true);
-      if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true);
       sb.auth.onAuthStateChange((_e, sess)=>{
         // A login/logout/recovery event supersedes every in-flight form
         // request. In particular, a late username resolver may never install
@@ -197,8 +196,6 @@ async function initAuth(){
         prepareLastLoadoutForAccount(profileUserId);
         prepareBotLadderForAccount(profileUserId);
         void refreshBotLadder(false);
-        if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(false);
-        if(typeof flushAiTrainingQueue==='function')void flushAiTrainingQueue();
         const profileRequestVersion=++authProfileRequestVersion;
         if(postUsernameGateUserId&&postUsernameGateUserId!==profileUserId) postUsernameGateUserId='';
         if(profileUserId && firstAccountTutorialUserId && firstAccountTutorialUserId!==profileUserId){
@@ -269,52 +266,132 @@ async function initAuth(){
   }
   paintUserbar();
 }
-// ---- REALTIME: push updates instead of making players refresh ----
-let rtChannel=null, rtStatus='off', rtLastEvent=0, rtRetry=0, rtRetryT=0;
-function rtBump(){ rtLastEvent=Date.now(); }
-function teardownRealtime(){
-  if(rtChannel && sb){ try{ sb.removeChannel(rtChannel); }catch(e){} }
-  rtChannel=null; rtStatus='off';
+// ---- REALTIME: one independent channel per owning section ----
+// A Leaderboards outage must not take Weapons, Admin Updates, or either Admin
+// Inbox feed down with it. Social has its own isolated channel in social.js.
+const REALTIME_SECTIONS=Object.freeze([
+  'adminUpdates','leaderboards','weapons','adminInbox','adminReports'
+]);
+const realtimeSections=Object.create(null);
+let rtLastEvent=0;
+function realtimeSection(name){
+  if(!realtimeSections[name])realtimeSections[name]={channel:null,status:'off',retry:0,retryAt:0,lastEvent:0,lastFallbackAt:0,generation:0};
+  return realtimeSections[name];
 }
-function setupRealtime(){
-  if(!sb || typeof sb.channel!=='function') return;
-  teardownRealtime();
-  rtStatus='connecting';
+function rtBump(name){
+  const at=Date.now(),section=realtimeSection(name);rtLastEvent=at;section.lastEvent=at;
+}
+function realtimeSectionLive(name){return realtimeSection(name).status==='live';}
+function teardownRealtimeSection(name){
+  const section=realtimeSection(name),channel=section.channel;
+  section.generation++;section.channel=null;section.status='off';section.retryAt=0;
+  if(channel&&sb){try{sb.removeChannel(channel);}catch(e){}}
+}
+function teardownRealtime(name){
+  if(name){teardownRealtimeSection(name);return;}
+  for(const sectionName of REALTIME_SECTIONS)teardownRealtimeSection(sectionName);
+}
+function realtimeSectionDown(name,generation){
+  const section=realtimeSection(name);
+  if(section.generation!==generation)return;
+  section.status='down';section.retry=Math.min(section.retry+1,6);
+  section.retryAt=Date.now()+Math.min(30000,1000*Math.pow(2,section.retry));
+}
+function startRealtimeSection(name,channelName,attach,onLive){
+  if(!sb||typeof sb.channel!=='function')return false;
+  teardownRealtimeSection(name);
+  const section=realtimeSection(name),generation=section.generation;
+  section.status='connecting';
   try{
-    let ch=sb.channel('oz-live');
-    // everyone: new posts, leaderboard moves, price changes
-    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'banners'},       ()=>{ rtBump(); fetchBanners(); });
-    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'scores'},        payload=>{
-      rtBump(); fetchBoard();
-      // A referrer who is already online should not have to reload to receive
-      // their gift. The login check below remains the fallback when Realtime is
-      // unavailable or the project does not expose row payloads to this client.
-      const changed=payload&&payload.new&&payload.new.game;
-      if(authUser&&changed==='outpost-zero-arena-wins'&&String(payload.new.user_id||'')===String(authUser.id))fetchOwnBest();
-      if(authUser && changed==='outpost-zero-referral:'+authUser.id) payReferralClaims();
-    });
-    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_prices'}, ()=>{ rtBump(); fetchPrices(); });
-    ch=ch.on('postgres_changes', {event:'*', schema:'public', table:'weapon_defs'},   payload=>{
-      rtBump();if(typeof applyWeaponDefRealtime==='function')applyWeaponDefRealtime(payload);fetchWeaponDefs();
-    });
-    // Staff Inbox wakeups contain only this recipient's UUID, an opaque
-    // revision, and a timestamp. Message bodies/private Auth emails stay in
-    // RPC-only storage and never enter the Realtime publication.
-    ch=ch.on('postgres_changes',{event:'*',schema:'public',table:'outpost_zero_admin_msg_wakeups'},()=>{rtBump();if(isAdmin())fetchMsgs();});
-    // Reports themselves are RPC-only and never enter Realtime. This private
-    // reviewer wakeup contains only the signed-in reviewer's own UUID, an
-    // opaque revision, and a timestamp.
-    ch=ch.on('postgres_changes',{event:'*',schema:'public',table:'outpost_zero_report_wakeups'},()=>{rtBump();if(isMainAdmin())fetchUpdatesFeed();});
-    ch.subscribe((st)=>{
-      if(st==='SUBSCRIBED'){ rtStatus='live'; rtRetry=0; rtBump();if(authUser)void flushArenaWinReceipts(); }
-      else if(st==='CHANNEL_ERROR' || st==='TIMED_OUT' || st==='CLOSED'){
-        rtStatus='down';
-        rtRetry=Math.min(rtRetry+1, 6);
-        rtRetryT=Date.now()+Math.min(30000, 1000*Math.pow(2,rtRetry));   // backoff, capped at 30s
+    let channel=attach(sb.channel(channelName));
+    section.channel=channel;
+    channel.subscribe(status=>{
+      if(section.generation!==generation||section.channel!==channel)return;
+      if(status==='SUBSCRIBED'){
+        section.status='live';section.retry=0;section.retryAt=0;rtBump(name);
+        if(typeof onLive==='function')onLive();
+      }else if(status==='CHANNEL_ERROR'||status==='TIMED_OUT'||status==='CLOSED'){
+        realtimeSectionDown(name,generation);
       }
     });
-    rtChannel=ch;
-  }catch(e){ rtStatus='down'; rtChannel=null; }
+    return true;
+  }catch(error){
+    section.channel=null;realtimeSectionDown(name,generation);return false;
+  }
+}
+function setupAdminUpdatesRealtime(){
+  return startRealtimeSection('adminUpdates','oz-admin-updates-live',channel=>
+    channel.on('postgres_changes',{event:'*',schema:'public',table:'banners'},()=>{rtBump('adminUpdates');fetchBanners();}),
+  ()=>{fetchBanners();});
+}
+function setupLeaderboardsRealtime(){
+  return startRealtimeSection('leaderboards','oz-leaderboards-live',channel=>
+    channel.on('postgres_changes',{event:'*',schema:'public',table:'scores'},payload=>{
+      rtBump('leaderboards');fetchBoard();
+      // A referrer who is already online should not have to reload to receive
+      // their gift. Login-time and fallback reads still cover missed events.
+      const changed=payload&&payload.new&&payload.new.game;
+      if(authUser&&changed==='outpost-zero-arena-wins'&&String(payload.new.user_id||'')===String(authUser.id))fetchOwnBest();
+      if(authUser&&changed==='outpost-zero-referral:'+authUser.id)payReferralClaims();
+    }),
+  ()=>{fetchBoard();if(authUser)void flushArenaWinReceipts();});
+}
+function setupWeaponsRealtime(){
+  return startRealtimeSection('weapons','oz-weapons-live',channel=>{
+    channel=channel.on('postgres_changes',{event:'*',schema:'public',table:'weapon_prices'},()=>{rtBump('weapons');fetchPrices();});
+    return channel.on('postgres_changes',{event:'*',schema:'public',table:'weapon_defs'},payload=>{
+      rtBump('weapons');if(typeof applyWeaponDefRealtime==='function')applyWeaponDefRealtime(payload);fetchWeaponDefs();
+    });
+  },()=>{fetchPrices();fetchWeaponDefs();});
+}
+function addPrivateWakeupHandlers(channel,table,sectionName,callback){
+  for(const event of ['INSERT','UPDATE'])channel=channel.on('postgres_changes',{event,schema:'public',table},()=>{
+    rtBump(sectionName);callback();
+  });
+  return channel;
+}
+function setupAdminInboxRealtime(){
+  return startRealtimeSection('adminInbox','oz-admin-inbox-live',channel=>
+    addPrivateWakeupHandlers(channel,'outpost_zero_admin_msg_wakeups','adminInbox',()=>{if(isAdmin())fetchMsgs();}),
+  ()=>{if(isAdmin())fetchMsgs();});
+}
+function setupAdminReportsRealtime(){
+  return startRealtimeSection('adminReports','oz-admin-reports-live',channel=>
+    addPrivateWakeupHandlers(channel,'outpost_zero_report_wakeups','adminReports',()=>{if(isMainAdmin())fetchUpdatesFeed();}),
+  ()=>{if(isMainAdmin())fetchUpdatesFeed();});
+}
+function setupRealtimeSection(name){
+  if(name==='adminUpdates')return setupAdminUpdatesRealtime();
+  if(name==='leaderboards')return setupLeaderboardsRealtime();
+  if(name==='weapons')return setupWeaponsRealtime();
+  if(name==='adminInbox')return setupAdminInboxRealtime();
+  if(name==='adminReports')return setupAdminReportsRealtime();
+  return false;
+}
+function setupRealtime(){
+  if(!sb||typeof sb.channel!=='function')return false;
+  teardownRealtime();
+  for(const name of REALTIME_SECTIONS)setupRealtimeSection(name);
+  return true;
+}
+function realtimeRetryTick(at=Date.now()){
+  if(!sb)return;
+  for(const name of REALTIME_SECTIONS){
+    const section=realtimeSection(name);
+    if(section.status==='down'&&section.retryAt&&at>=section.retryAt)setupRealtimeSection(name);
+  }
+}
+function realtimeFallbackTick(at=Date.now()){
+  if(!sb)return;
+  const due=(name,callback)=>{
+    const section=realtimeSection(name);
+    if(section.status==='live'||at-section.lastFallbackAt<30000)return;
+    section.lastFallbackAt=at;callback();
+  };
+  due('adminUpdates',()=>fetchBanners());
+  due('weapons',()=>{fetchPrices();fetchWeaponDefs();});
+  due('adminInbox',()=>{if(authUser&&isAdmin())fetchMsgs();});
+  due('adminReports',()=>{if(authUser&&isMainAdmin())fetchUpdatesFeed();});
 }
 async function submitScore(sc){
   if(typeof usernameGateBlocksGameplay==='function'&&usernameGateBlocksGameplay()) return;
@@ -724,7 +801,7 @@ async function toggleAuth(options){
     if(!expectedUserId||expectedUserId!==liveUserId){closeAccountMenu(true);return false;}
     if(accountSettingsOpen)closeAccountSettings(true);
     if(typeof persistNormalEndlessScoreOnExit==='function')persistNormalEndlessScoreOnExit();
-    if(typeof isBotArena==='function'&&isBotArena()&&!arena.botAdminTest&&typeof arenaRecordDailyMatch==='function')
+    if(typeof isBotArena==='function'&&isBotArena()&&typeof arenaRecordDailyMatch==='function')
       arenaRecordDailyMatch(LOCAL_DUEL_PLAYER,'',typeof arenaHasCompletedDailyTaskRound==='function'&&arenaHasCompletedDailyTaskRound());
     try{if(typeof arenaForfeitBeforeSignOut==='function')await arenaForfeitBeforeSignOut();}
     catch(error){console.warn('arena sign-out forfeit failed',error);}

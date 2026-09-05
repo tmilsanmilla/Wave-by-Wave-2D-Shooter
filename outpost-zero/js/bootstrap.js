@@ -10,13 +10,11 @@ bindDomEvents();
 bindCoreEvents();
 bindSocialDomControls();
 if(typeof bindBotLadderSyncEvents==='function')bindBotLadderSyncEvents();
-if(typeof bindAiTrainingSyncEvents==='function')bindAiTrainingSyncEvents();
 
 initAuth().finally(()=>{
   if(!sb){
     if(typeof purgeUnpublishedWeaponState==='function'&&purgeUnpublishedWeaponState()&&typeof saveMetaLocal==='function')saveMetaLocal();
   }
-  if(typeof flushAiTrainingQueue==='function')void flushAiTrainingQueue();
 });
 
 // A referral survives while the visitor signs in. Give that visitor a clear,

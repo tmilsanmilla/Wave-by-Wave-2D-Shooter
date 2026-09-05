@@ -1,9 +1,18 @@
 -- OUTPOST ZERO / ADMIN 03: INBOX
 -- Player/global notifications plus the staff Inbox, Archive, Reports, and
--- human-readable audit LOG access. Run after Admin 01, Admin 02, and Social 01.
+-- human-readable audit LOG access. Run after Admin 01, Admin 02, and Player 03.
 -- Safe to rerun; notification, message, report, and audit history is preserved.
 
 begin;
+
+-- Fail closed: policy setup lives in Admin 04 Security. Install it first.
+do $section_security_required$
+begin
+  if to_regprocedure('public._outpost_zero_apply_admin_security(text)') is null then
+    raise exception 'Run Admin 04 Security first; this transaction made no changes';
+  end if;
+end;
+$section_security_required$;
 
 create table if not exists public.admin_msgs(
   id bigint generated always as identity primary key,
@@ -45,21 +54,6 @@ create table if not exists public.outpost_zero_admin_msg_wakeups(
   revision bigint not null default 1 check(revision>0),
   updated_at timestamptz not null default clock_timestamp()
 );
-alter table public.outpost_zero_admin_msg_wakeups enable row level security;
-alter table public.outpost_zero_admin_msg_wakeups force row level security;
-do $wake_policies$
-declare item record;
-begin
-  for item in select policyname from pg_policies
-    where schemaname='public' and tablename='outpost_zero_admin_msg_wakeups'
-  loop execute format('drop policy %I on public.outpost_zero_admin_msg_wakeups',item.policyname);end loop;
-end;
-$wake_policies$;
-create policy outpost_zero_admin_msg_wakeups_own_read
-  on public.outpost_zero_admin_msg_wakeups for select to authenticated
-  using(auth.uid()=recipient_id);
-revoke all on table public.outpost_zero_admin_msg_wakeups from public,anon,authenticated;
-grant select(recipient_id,revision,updated_at) on public.outpost_zero_admin_msg_wakeups to authenticated;
 
 create or replace function public._outpost_zero_wake_admin_message_participants()
 returns trigger language plpgsql security definer set search_path=pg_catalog,public
@@ -75,7 +69,6 @@ begin
   return new;
 end;
 $function$;
-revoke all on function public._outpost_zero_wake_admin_message_participants() from public,anon,authenticated;
 drop trigger if exists outpost_zero_admin_msg_wakeup_trigger on public.admin_msgs;
 create trigger outpost_zero_admin_msg_wakeup_trigger
 after insert on public.admin_msgs for each row
@@ -107,12 +100,12 @@ create index if not exists outpost_zero_reports_actor_rate_idx
 
 -- Fail before creating a partial API. Administration 01 supplies the private
 -- audit boundary used for bans/gifts; Administration 02 supplies safe banners
--- and server-derived admin roles; Social 01 supplies usernames/friendships.
+-- and server-derived admin roles; Player 03 supplies usernames/friendships.
 do $block$
 begin
   if to_regclass('public.social_profiles') is null
      or to_regclass('public.friendships') is null then
-    raise exception 'Administration 03 requires Social 01';
+    raise exception 'Administration 03 requires Player 03 Social Menu';
   end if;
   if to_regclass('public.outpost_zero_admin_audit') is null
      or to_regprocedure('public._outpost_zero_admin_role()') is null
@@ -282,34 +275,8 @@ create table if not exists public.outpost_zero_notification_reads (
 create index if not exists outpost_zero_notification_reads_user_idx
   on public.outpost_zero_notification_reads(user_id, notification_id desc);
 
--- Neither table has a browser policy. FORCE RLS plus zero raw grants means a
--- modified client cannot enumerate recipients, forge an author, insert an
--- event, or mark another account's row.
-alter table public.outpost_zero_notifications enable row level security;
-alter table public.outpost_zero_notifications force row level security;
-alter table public.outpost_zero_notification_reads enable row level security;
-alter table public.outpost_zero_notification_reads force row level security;
 
-do $block$
-declare v_policy record;
-begin
-  for v_policy in
-    select schemaname, tablename, policyname from pg_policies
-    where schemaname = 'public'
-      and tablename in ('outpost_zero_notifications', 'outpost_zero_notification_reads')
-  loop
-    execute format('drop policy %I on %I.%I',
-      v_policy.policyname, v_policy.schemaname, v_policy.tablename);
-  end loop;
-end;
-$block$;
 
-revoke all on table public.outpost_zero_notifications
-  from public, anon, authenticated;
-revoke all on table public.outpost_zero_notification_reads
-  from public, anon, authenticated;
-revoke all on sequence public.outpost_zero_notifications_notification_id_seq
-  from public, anon, authenticated;
 
 -- Browser-safe notification keys are text (`n_123`), never JSON numbers that
 -- could lose bigint precision in JavaScript. This parser is internal only.
@@ -530,7 +497,7 @@ after insert or update of approved or delete on public.banners
 for each row execute function public._outpost_zero_notify_banner();
 
 -- Friend events are bound again to auth.uid() inside the AFTER trigger even
--- though Social 01 already enforces the transition. This prevents a future
+-- though Player 03 already enforces the transition. This prevents a future
 -- policy mistake from turning a browser-selected participant into an author.
 create or replace function public._outpost_zero_notify_friendship()
 returns trigger
@@ -667,8 +634,6 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_admin_target_user_id(text,boolean)
-  from public,anon,authenticated;
 
 -- Creator/main-only targeted message. The recipient may be a chosen username
 -- or any account's exact email; the receipt remains username-first.
@@ -947,57 +912,8 @@ begin
 end;
 $function$;
 
--- Creating/replacing functions grants PUBLIC execute by default. Close all
--- helpers/triggers and expose only the four authenticated Inbox RPCs.
-revoke all on function public._outpost_zero_notification_id(text)
-  from public, anon, authenticated;
-revoke all on function public._outpost_zero_notification_handle(uuid)
-  from public, anon, authenticated;
-revoke all on function public._outpost_zero_notify_admin_audit()
-  from public, anon, authenticated;
-revoke all on function public._outpost_zero_notify_banner()
-  from public, anon, authenticated;
-revoke all on function public._outpost_zero_notify_friendship()
-  from public, anon, authenticated;
-revoke all on function public.send_outpost_zero_admin_notification(text, text, text, uuid)
-  from public, anon, authenticated;
-revoke all on function public.list_my_outpost_zero_notifications(text, integer)
-  from public, anon, authenticated;
-revoke all on function public.get_my_outpost_zero_notification_summary()
-  from public, anon, authenticated;
-revoke all on function public.mark_my_outpost_zero_notifications_read(text[])
-  from public, anon, authenticated;
 
-grant execute on function public.send_outpost_zero_admin_notification(text, text, text, uuid)
-  to authenticated;
-grant execute on function public.list_my_outpost_zero_notifications(text, integer)
-  to authenticated;
-grant execute on function public.get_my_outpost_zero_notification_summary()
-  to authenticated;
-grant execute on function public.mark_my_outpost_zero_notifications_read(text[])
-  to authenticated;
 
--- Staff Inbox and Reports are separate protected tables inside this one Inbox
--- module. Admin messages are RPC-only: even a modified staff client cannot
--- select the internal from_email/to_email columns or receive them over
--- Realtime. Visible email fallbacks are resolved per viewer inside the RPC.
-alter table public.admin_msgs enable row level security;
-alter table public.admin_msgs force row level security;
-do $policies$
-declare item record;
-begin
-  for item in select policyname from pg_policies where schemaname='public' and tablename='admin_msgs'
-  loop execute format('drop policy %I on public.admin_msgs',item.policyname);end loop;
-end;
-$policies$;
-revoke all on table public.admin_msgs from public,anon,authenticated;
-do $sequences$
-declare sequence_name text;
-begin
-  sequence_name:=pg_get_serial_sequence('public.admin_msgs','id');
-  if sequence_name is not null then execute format('revoke all on sequence %s from public,anon,authenticated',sequence_name);end if;
-end;
-$sequences$;
 
 create or replace function public._outpost_zero_admin_message_username(p_user_id uuid)
 returns text language sql stable security definer set search_path=pg_catalog,public
@@ -1165,40 +1081,7 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_admin_message_username(uuid) from public,anon,authenticated;
-revoke all on function public._outpost_zero_admin_message_identity_label(uuid) from public,anon,authenticated;
-revoke all on function public._outpost_zero_admin_target_user_id(text,boolean) from public,anon,authenticated;
-revoke all on function public.list_my_outpost_zero_admin_messages(integer) from public,anon,authenticated;
-revoke all on function public.send_outpost_zero_admin_message(text,text,uuid) from public,anon,authenticated;
-revoke all on function public.mark_my_outpost_zero_admin_messages_read(bigint[]) from public,anon,authenticated;
-revoke all on function public.archive_my_outpost_zero_admin_message(bigint) from public,anon,authenticated;
-grant execute on function public.list_my_outpost_zero_admin_messages(integer) to authenticated;
-grant execute on function public.send_outpost_zero_admin_message(text,text,uuid) to authenticated;
-grant execute on function public.mark_my_outpost_zero_admin_messages_read(bigint[]) to authenticated;
-grant execute on function public.archive_my_outpost_zero_admin_message(bigint) to authenticated;
 
--- Reports are RPC-only. The browser cannot choose a reporter name, user ID,
--- staff flag, timestamp, or resolved state, and cannot read the raw legacy
--- rows. SECURITY DEFINER functions below derive identity from auth.uid().
-alter table public.reports enable row level security;
-alter table public.reports force row level security;
-do $report_policies$
-declare item record;
-begin
-  for item in select policyname from pg_policies where schemaname='public' and tablename='reports'
-  loop execute format('drop policy %I on public.reports',item.policyname);end loop;
-end;
-$report_policies$;
-revoke all on table public.reports from public,anon,authenticated;
-do $report_sequence$
-declare sequence_name text;
-begin
-  sequence_name:=pg_get_serial_sequence('public.reports','id');
-  if sequence_name is not null then
-    execute format('revoke all on sequence %s from public,anon,authenticated',sequence_name);
-  end if;
-end;
-$report_sequence$;
 
 -- These helpers are private to the report RPC boundary. Listing and exporting
 -- construct a small allowlisted meta object instead of returning legacy JSON,
@@ -1440,19 +1323,6 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_redact_report_text(text) from public,anon,authenticated;
-revoke all on function public._outpost_zero_report_public_name(text,uuid) from public,anon,authenticated;
-revoke all on function public._outpost_zero_sanitized_report_meta(jsonb) from public,anon,authenticated;
-revoke all on function public.submit_outpost_zero_report(text,jsonb,text) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_reports(boolean,bigint,integer) from public,anon,authenticated;
-revoke all on function public.resolve_outpost_zero_report(bigint) from public,anon,authenticated;
-revoke all on function public.resolve_outpost_zero_reports(integer) from public,anon,authenticated;
-revoke all on function public.export_outpost_zero_reports(integer) from public,anon,authenticated;
-grant execute on function public.submit_outpost_zero_report(text,jsonb,text) to authenticated;
-grant execute on function public.list_outpost_zero_reports(boolean,bigint,integer) to authenticated;
-grant execute on function public.resolve_outpost_zero_report(bigint) to authenticated;
-grant execute on function public.resolve_outpost_zero_reports(integer) to authenticated;
-grant execute on function public.export_outpost_zero_reports(integer) to authenticated;
 
 -- Realtime publishes only a per-recipient revision hint, never a report row.
 -- The UUID in each row is visible solely to that same signed-in account.
@@ -1461,19 +1331,6 @@ create table if not exists public.outpost_zero_report_wakeups(
   revision bigint not null default 1 check(revision>0),
   updated_at timestamptz not null default clock_timestamp()
 );
-alter table public.outpost_zero_report_wakeups enable row level security;
-alter table public.outpost_zero_report_wakeups force row level security;
-do $report_wakeup_policies$
-declare item record;
-begin
-  for item in select policyname from pg_policies where schemaname='public' and tablename='outpost_zero_report_wakeups'
-  loop execute format('drop policy %I on public.outpost_zero_report_wakeups',item.policyname);end loop;
-end;
-$report_wakeup_policies$;
-create policy outpost_zero_report_wakeups_own_read on public.outpost_zero_report_wakeups
-  for select to authenticated using(auth.uid()=recipient_id);
-revoke all on table public.outpost_zero_report_wakeups from public,anon,authenticated;
-grant select(recipient_id,revision,updated_at) on public.outpost_zero_report_wakeups to authenticated;
 
 create or replace function public._outpost_zero_wake_report_reviewers()
 returns trigger language plpgsql security definer set search_path=pg_catalog,public
@@ -1501,7 +1358,6 @@ begin
   return null;
 end;
 $function$;
-revoke all on function public._outpost_zero_wake_report_reviewers() from public,anon,authenticated;
 drop trigger if exists outpost_zero_report_wakeup_trigger on public.reports;
 drop trigger if exists outpost_zero_report_insert_wakeup_trigger on public.reports;
 drop trigger if exists outpost_zero_report_update_wakeup_trigger on public.reports;
@@ -1522,6 +1378,12 @@ begin
   if exists(select 1 from pg_catalog.pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='reports') then
     execute 'alter publication supabase_realtime drop table public.reports';
   end if;
+  if exists(select 1 from pg_catalog.pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='outpost_zero_notifications') then
+    execute 'alter publication supabase_realtime drop table public.outpost_zero_notifications';
+  end if;
+  if exists(select 1 from pg_catalog.pg_publication_tables where pubname='supabase_realtime' and schemaname='public' and tablename='outpost_zero_notification_reads') then
+    execute 'alter publication supabase_realtime drop table public.outpost_zero_notification_reads';
+  end if;
   begin execute 'alter publication supabase_realtime add table public.outpost_zero_admin_msg_wakeups';
   exception when duplicate_object then null;end;
   begin execute 'alter publication supabase_realtime add table public.outpost_zero_report_wakeups';
@@ -1529,9 +1391,33 @@ begin
 end;
 $realtime$;
 
+-- Admin Inbox owns its own yearly retention. Messages appear in Archive after
+-- a manual archive or seven days after being read, and are physically removed
+-- only after they are at least one year old. Unread messages are never purged.
+-- A named pg_cron schedule updates the legacy Maintenance job in place.
+do $admin_inbox_retention$
+declare v_job_id bigint;
+begin
+  if to_regprocedure('cron.schedule(text,text,text)') is not null then
+    v_job_id := cron.schedule(
+      'purge-old-admin-msgs',
+      '0 3 1 1 *',
+      $cron$delete from public.admin_msgs
+        where created_at < clock_timestamp() - interval '1 year'
+          and (archived or (read and read_at is not null
+            and read_at <= clock_timestamp() - interval '7 days'))$cron$
+    );
+    if to_regprocedure('cron.alter_job(bigint,text,text,text,text,boolean)') is not null then
+      perform cron.alter_job(v_job_id, active => true);
+    end if;
+  end if;
+end;
+$admin_inbox_retention$;
+
 -- Make the newly installed Inbox/Reports RPC signatures visible immediately.
 -- This NOTIFY is transactional, so a failed Admin 03 run cannot advertise a
 -- partial schema to PostgREST.
 notify pgrst, 'reload schema';
 
+select public._outpost_zero_apply_admin_security('Admin 03');
 commit;

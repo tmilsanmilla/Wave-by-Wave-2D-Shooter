@@ -1,11 +1,12 @@
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 
 const root=path.resolve(import.meta.dirname,'..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const read=file=>file.endsWith('.sql')?readFeatureSql(root,file):fs.readFileSync(path.join(root,file),'utf8');
 const admin02=read('sql/administration/Admin-02-admins.sql');
 const admin03=read('sql/administration/Admin-03-inbox.sql');
-const weapons=read('sql/weapons/Weapons-01-weapons.sql');
+const weapons=read('sql/player/Player-02-weapons-and-cosmetics.sql');
 const readme=read('sql/README.md');
 let passed=0,failed=0;
 function check(name,condition){
@@ -22,7 +23,7 @@ check('Weapon save is a Creator/Main-only SECURITY DEFINER RPC',
   /grant execute on function public\.save_outpost_zero_weapon_definition\(text,jsonb,integer,boolean\) to authenticated/.test(admin02));
 check('Weapon save has a call-time setup error, not an install-time table dependency',
   /to_regclass\('public\.weapon_defs'\) is null/.test(admin02)&&
-  /RUN_WEAPONS_01_BEFORE_SAVING_WEAPONS/.test(admin02)&&
+  /RUN_PLAYER_02_BEFORE_SAVING_WEAPONS/.test(admin02)&&
   /execute \$sql\$[\s\S]+insert into public\.weapon_defs/.test(admin02));
 check('Weapon key, fields, values, price, and next-season publication are strict',
   /VALID_WEAPON_KEY_REQUIRED/.test(admin02)&&/UNKNOWN_WEAPON_STAT/.test(admin02)&&
@@ -37,7 +38,7 @@ check('Admin 02 conditionally removes existing raw weapon writes',
   /revoke insert,update,delete,truncate,references,trigger/.test(admin02)&&
   /information_schema\.column_privileges/.test(admin02)&&
   /revoke %s \(%I\) on table public\.%I from %s/.test(admin02));
-check('Weapons 01 is future-safe and grants only reads',
+check('Player 02 is future-safe and grants only reads',
   !/weapon_(?:prices|defs)_manage/.test(weapons)&&
   !/grant (?:insert|update|delete)/i.test(weapons)&&
   /grant select on table public\.weapon_prices, public\.weapon_defs/.test(weapons));
@@ -50,11 +51,16 @@ check('Bulk report resolution is bounded, newest-first, scoped, and count-only',
   /r\.game='outpost-zero' and not r\.resolved/.test(admin03)&&
   /REPORT_LIMIT_MUST_BE_1_TO_10000/.test(admin03)&&
   /jsonb_build_object\('resolved_count',v_changed\)/.test(admin03)&&!/resolved_ids/.test(admin03));
-check('Deployment guide requires only Admin 02 then Admin 03 reruns',
-  /rerun only these files in order/.test(readme)&&
-  /1\. `administration\/Admin-02-admins\.sql`/.test(readme)&&
-  /2\. `administration\/Admin-03-inbox\.sql`/.test(readme)&&
-  /does not need to be rerun for this update/.test(readme));
+const adminDeploymentOrder=[
+  'administration/Admin-04-security.sql',
+  'player/Player-02-weapons-and-cosmetics.sql',
+  'administration/Admin-01-admin-menu.sql',
+  'administration/Admin-02-admins.sql',
+  'administration/Admin-03-inbox.sql'
+].map(file=>readme.indexOf('`'+file+'`'));
+check('Deployment guide installs Admin security first and Player 02 before the three Admin features',
+  adminDeploymentOrder.every((position,index)=>position>=0&&
+    (index===0||position>adminDeploymentOrder[index-1])));
 
 console.log(`SUMMARY ${passed} passed, ${failed} failed`);
 if(failed)process.exit(1);

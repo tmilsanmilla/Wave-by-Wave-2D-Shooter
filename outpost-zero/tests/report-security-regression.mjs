@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 
 const root=path.resolve(import.meta.dirname,'..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const read=file=>file.endsWith('.sql')?readFeatureSql(root,file):fs.readFileSync(path.join(root,file),'utf8');
 const sql=read('sql/administration/Admin-03-inbox.sql');
 const administration=read('js/administration.js');
 const networking=read('js/networking.js');
@@ -71,7 +72,8 @@ check('Realtime publishes an own-row wakeup instead of report contents',
   /add table public\.outpost_zero_report_wakeups/.test(sql)&&
   /outpost_zero_report_new_rows r where r\.game='outpost-zero'/.test(sql)&&
   /n\.resolved is distinct from o\.resolved/.test(sql)&&
-  /table:'outpost_zero_report_wakeups'/.test(networking)&&
+  /startRealtimeSection\('adminReports','oz-admin-reports-live'/.test(networking)&&
+  /addPrivateWakeupHandlers\(channel,'outpost_zero_report_wakeups','adminReports'/.test(networking)&&
   !/table:'reports'/.test(networking));
 
 console.log(`SUMMARY ${passed} passed, ${failed} failed`);

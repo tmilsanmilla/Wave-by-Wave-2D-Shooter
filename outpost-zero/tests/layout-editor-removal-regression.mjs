@@ -18,17 +18,19 @@ assert.doesNotMatch(adminUi,/LAYOUT EDITOR|actionBtn\('layout'|id==='layout'/,
   'Admin Tools must not offer the removed editor');
 assert.doesNotMatch(ui+adminUi,/\boff[XYCol]+\(|withBlockColour\(|layoutBlock\(/,
   'normal Home rendering must not depend on editor offsets or color overrides');
-for(const script of ['networking','administration','loop','bootstrap'])
-  assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=20260831-bots-volt-layout-v1`),
+for(const [script,version] of [['networking','20260902-ai-cleanup-v1'],['loop','20260831-bots-volt-layout-v1'],['bootstrap','20260902-ai-cleanup-v1']])
+  assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),
     `${script}.js must not be served from a cache that still expects Layout Editor globals`);
+assert.match(index,/outpost-zero\/js\/administration\.js\?v=20260902-ai-cleanup-v1/,
+  'administration.js must load the role-safe exact-email lookup build');
 for(const script of ['input','ai','party'])
-  assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=20260831-duel-stability-v1`),
+  assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=20260902-ai-cleanup-v1`),
     `${script}.js must load the current duel-stability build`);
-assert.match(index,/outpost-zero\/js\/admin-ui\.js\?v=20260831-frag-range-v2/,
+assert.match(index,/outpost-zero\/js\/admin-ui\.js\?v=20260902-ai-cleanup-v1/,
   'the latest Admin UI cache tag must include Layout removal and exact Frag range editing');
 assert.match(index,/outpost-zero\/js\/weapons\.js\?v=20260831-frag-range-v1/,
   'the latest Weapons cache tag must include Layout removal and the Frag range update');
-assert.match(index,/outpost-zero\/js\/ui\.js\?v=20260831-frag-range-v1/,
+assert.match(index,/outpost-zero\/js\/ui\.js\?v=20260902-ai-cleanup-v1/,
   'the latest UI cache tag must include Layout removal, room-code privacy, and live Frag details');
 
 assert.match(ui,/boardPanelRect=\{x:homeBoardsX,y:homeBoardsY,w:homeBoardsW,h:homeBoardsH\}/);

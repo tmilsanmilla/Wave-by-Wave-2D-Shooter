@@ -78,7 +78,16 @@ function meleeSwing(w, mul, flurryGenerated=false){
     if(Math.abs(da) <= arc/2 + Math.asin(Math.min(1,e.r/(d+1)))*0.8) targets.push(e);
   }
   let arenaMeleeHit=false;
-  if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()&&arenaCanAct()){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena()&&arenaCanAct()){
+    for(const e of multideviceTargets()){
+      const er=e.r||15,d=Math.hypot(e.x-player.x,e.y-player.y);if(d>w.range+er)continue;
+      const da=Math.atan2(Math.sin(Math.atan2(e.y-player.y,e.x-player.x)-base),Math.cos(Math.atan2(e.y-player.y,e.x-player.x)-base));
+      if(arenaMeleeLineClear(player.x,player.y,e.x,e.y)&&Math.abs(da)<=arc/2+Math.asin(Math.min(1,er/(d+1)))*.8){
+        multideviceHit(e,w.dmg*perks.dmg*wm(player.cur).dmg*mul,'melee');arenaMeleeHit=true;
+        if(player.cur==='terafists'&&!flurryGenerated)teraHitCharge=Math.min(teraHitsRequired(),teraHitCharge+1);
+      }
+    }
+  }else if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()&&arenaCanAct()){
     for(const e of partyCpuMatch.bots.filter(b=>b.team==='B'&&b.hp>0)){
       const er=e.r||15,d=Math.hypot(e.x-player.x,e.y-player.y); if(d>w.range+er)continue;
       let da=Math.atan2(e.y-player.y,e.x-player.x)-base;da=Math.atan2(Math.sin(da),Math.cos(da));
@@ -297,7 +306,7 @@ function detonateFreezer(projectile){
       e.frozenUntil=Math.max(+e.frozenUntil||0,now+freezeMs);burst(e.x,e.y,'#9fe6ff',6,3);
     }
   }
-  if(dist2(player.x,player.y,projectile.x,projectile.y)<R*R&&
+  if(!projectile.multideviceAlly&&dist2(player.x,player.y,projectile.x,projectile.y)<R*R&&
      freezerBlastClear(projectile.x,projectile.y,player.x,player.y))applyPlayerFreezerFreeze(freezeMs);
   return true;
 }
@@ -794,7 +803,13 @@ function update(dtms){
           if(e.hp<=0) killEnemy(j);
         }
       }
-      if(!fw&&g.arenaUtility&&!g.remoteUtility&&typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()&&arenaCanAct()&&arena.opponent){
+      if(typeof isMultideviceArena==='function'&&isMultideviceArena()&&arenaCanAct()&&!g.remoteUtility&&(fw||g.arenaUtility)){
+        for(const target of multideviceTargets()){
+          const d=Math.hypot(target.x-g.x,target.y-g.y);
+          if(d<rad&&!losBlocked(g.x,g.y,target.x,target.y))
+            multideviceHit(target,fw?65*(1-d/(rad*1.3)):fragDamageAtDistance(d),fw?'firework':'utility_grenade');
+        }
+      }else if(!fw&&g.arenaUtility&&!g.remoteUtility&&typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()&&arenaCanAct()&&arena.opponent){
         const d2g=dist2(arena.opponent.x,arena.opponent.y,g.x,g.y),clear=typeof losBlocked!=='function'||
           !losBlocked(g.x,g.y,arena.opponent.x,arena.opponent.y);
         if(clear&&d2g<rad*rad){
@@ -868,6 +883,11 @@ function update(dtms){
         break;
       }
     }
+    if(now>=b.hitT&&b.arenaUtility&&!b.remoteUtility&&typeof isMultideviceArena==='function'&&isMultideviceArena()&&arenaCanAct()){
+      for(const target of multideviceTargets())if(dist2(target.x,target.y,b.x,b.y)<((target.r||15)+br)**2){
+        multideviceHit(target,(b.dmg||8)*perks.dmg,b.fire?'utility_beachball':'utility_redball');b.hitT=now+280;
+      }
+    }
     if(now>=b.hitT&&b.arenaUtility&&!b.remoteUtility&&typeof isCasualOnlineArena==='function'&&
        isCasualOnlineArena()&&arenaCanAct()&&arena.opponent&&
        dist2(arena.opponent.x,arena.opponent.y,b.x,b.y)<(arena.opponent.r+br)*(arena.opponent.r+br)){
@@ -933,7 +953,7 @@ function update(dtms){
         break;                                       // never damage through the wall this frame
       }
       if(practiceMode==='arena'&&arenaCanAct()){
-        const arenaTargets=typeof isCpuTeamArena==='function'&&isCpuTeamArena()
+        const arenaTargets=typeof isMultideviceArena==='function'&&isMultideviceArena()?multideviceTargets():typeof isCpuTeamArena==='function'&&isCpuTeamArena()
           ? partyCpuMatch.bots.filter(t=>t.team==='B'&&t.hp>0)
           : (arena&&arena.opponent&&arena.opponent.hp>0?[arena.opponent]:[]);
         for(const target of arenaTargets){
@@ -1288,7 +1308,20 @@ function update(dtms){
       // CASUAL ARENA: the shooter detects contact against the synchronized
       // opponent and sends one deduplicated damage event. Campaign perks and
       // status effects are reset/disabled when the round starts.
-      if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()&&arenaCanAct()){
+      if(typeof isMultideviceArena==='function'&&isMultideviceArena()&&arenaCanAct()){
+        for(const target of multideviceTargets()){
+          if(b.multideviceHits&&b.multideviceHits.has(target.id))continue;
+          const rr=(target.r||15)+4+(b.fg||0);
+          if(dist2(b.x,b.y,target.x,target.y)<rr*rr){
+            const kind=b.parryReflect?'parry':b.weapon==='sniper'&&b.unscopedShot?'unscoped_sniper':'shot',
+              meta=b.parryReflect?{rootHitId:b.parryRootHitId,parryDepth:b.parryDepth}:undefined;
+            multideviceHit(target,b.dmg*dmgMul(b),kind,meta);(b.multideviceHits||(b.multideviceHits=new Set())).add(target.id);
+            if(b.pierce>0)b.pierce--;else dead=true;
+            if(dead)break;
+          }
+        }
+        if(dead)break;
+      }else if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()&&arenaCanAct()){
         for(const target of partyCpuMatch.bots.filter(x=>x.team==='B'&&x.hp>0)){
           if(b.partyHits&&b.partyHits.has(target.id))continue;
           const rr=(target.r||15)+4+(b.fg||0);

@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 import vm from 'node:vm';
 
 const root=path.resolve(import.meta.dirname,'..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const read=file=>file.endsWith('.sql')?readFeatureSql(root,file):fs.readFileSync(path.join(root,file),'utf8');
 const networking=read('js/networking.js'),online=read('js/online.js'),loop=read('js/loop.js'),ui=read('js/ui.js');
-const sql=read('sql/leaderboards/Leaderboards-01-leaderboards.sql');
+const sql=read('sql/player/Player-01-stats.sql');
 
 function functionSource(source,name){
   let start=source.indexOf(`function ${name}(`);if(start<0)throw new Error('missing '+name);
@@ -102,7 +103,7 @@ assert.match(networking,/if\(anySuccess\)\{boardT=Date\.now\(\)/,
   'only a confirmed board response may advance the last-success clock');
 assert.doesNotMatch(loop,/boardT=Date\.now\(\);\s*fetchBoard\(\)/,
   'the polling loop must not mark a failed request as a successful refresh');
-assert.match(loop,/rtStatus===['"]live['"]&&authUser \? 180000 : 30000/,
+assert.match(loop,/realtimeSectionLive\(['"]leaderboards['"]\)&&authUser \? 180000 : 30000/,
   'signed-out public boards must retain the privacy-safe short polling fallback');
 assert.match(ui,/YOUR WINS ['"]?\+?arenaOwnWinTotal|\('YOUR WINS '\+arenaOwnWinTotal\)/,
   'a signed-in player must see their own saved total even when outside the top five');

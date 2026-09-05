@@ -13,7 +13,7 @@ const edge=fs.readFileSync(path.join(root,'..','supabase/functions/outpost-zero-
 const admin01=read('sql/administration/Admin-01-admin-menu.sql');
 const admin02=read('sql/administration/Admin-02-admins.sql');
 const admin03=read('sql/administration/Admin-03-inbox.sql');
-const leaderboard=read('sql/leaderboards/Leaderboards-01-leaderboards.sql');
+const leaderboard=read('sql/player/Player-01-stats.sql');
 
 function functionSource(source,name){
   const match=new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(`).exec(source);
@@ -136,6 +136,79 @@ function authHarness(response){
   assert.equal(result.ok,true);
   assert.equal(h.calls.some(call=>call[0]==='detached'),true,
     'email sign-in retains an isolated direct fallback while an Edge deployment is unavailable');
+}
+
+const playerLookupFunctions=['lookupPlayer','playerLookupFailureMessage']
+  .map(name=>functionSource(administration,name)).join('\n');
+
+function playerLookupHarness({roleAfterRefresh='main',rpcError=null}={}){
+  const calls=[];
+  const context={calls,
+    rpcHandler:async(name,args)=>{
+      calls.push({kind:'rpc',name,args});
+      if(name==='outpost_zero_admin_get_player_by_username'){
+        if(rpcError)return {data:null,error:rpcError};
+        return {data:{high_score:321,gems:8,coins:4,owned:{},pow:{}},error:null};
+      }
+      if(name==='admin_list_outpost_zero_weapon_grants_by_username')return {data:[],error:null};
+      throw new Error('unexpected RPC '+name);
+    }
+  };
+  vm.createContext(context);
+  vm.runInContext(`
+    let main=false,peBusyToken=0,peEditorSession=0,playerLookupRequestSeq=0,peBusy=false,peData=null,peEdit=null,
+      peNotice='',peGiftMode='permanent',peTarget='',peStep='choose';
+    const authUser={id:'creator-id'},sb={rpc:(name,args)=>rpcHandler(name,args)};
+    function resetPlayerEditScroll(){}
+    function cleanAccountEmail(value){const email=String(value||'').trim().toLowerCase();return /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)?email:'';}
+    function adminAccountIdentifier(value){const email=cleanAccountEmail(value);if(email)return email;const username=String(value||'').trim().replace(/^@/,'');return /^[A-Za-z0-9_]{3,32}$/.test(username)?username:'';}
+    function isMainAdmin(){return main;}
+    function canUsePlayerTools(){return main;}
+    function isAdmin(){return main;}
+    function currentAuthUserId(){return String(authUser.id||'');}
+    async function fetchAdmins(){
+      calls.push({kind:'role'});main=${JSON.stringify(roleAfterRefresh)}==='main';
+      if(!main){peBusyToken++;peEditorSession++;peData=null;peEdit=null;peNotice='';}
+      return true;
+    }
+    function normalizedPlayerData(value,publicOnly){return {score:+value.high_score||0,gems:+value.gems||0,coins:+value.coins||0,owned:{},pow:{},tempGrants:{},publicOnly:!!publicOnly};}
+    function normalizedPlayerTempGrants(){return {};}
+    function clonePlayerTempGrants(){return {};}
+    function leaderboardUsername(){return 'public-player';}
+    function adminRpcMissing(error){const code=String(error&&error.code||'').toUpperCase();return code==='PGRST202'||code==='42883'||/could not find (?:the )?function/i.test(String(error&&error.message||''));}
+    ${playerLookupFunctions}
+    this.lookupApi={lookup:lookupPlayer,snapshot:()=>JSON.stringify({peData,peTarget,peStep,peNotice,main})};
+  `,context,{filename:'exact-email-player-lookup.vm.js'});
+  return {calls,api:context.lookupApi};
+}
+
+{
+  const {calls,api}=playerLookupHarness();
+  assert.equal(await api.lookup(' Owner@Example.COM '),true);
+  assert.deepEqual(calls.map(call=>call.kind==='role'?'role':call.name),[
+    'role','outpost_zero_admin_get_player_by_username','admin_list_outpost_zero_weapon_grants_by_username'
+  ],'exact-email lookup waits for the signed-in staff role before choosing an RPC');
+  assert.equal(calls[1].args.p_target_username,'owner@example.com',
+    'Creator/Main exact email is normalized and sent to the protected Admin 01 RPC');
+  const state=JSON.parse(api.snapshot());
+  assert.equal(state.peData.publicOnly,false);
+  assert.equal(state.peTarget,'owner@example.com');
+  assert.equal(state.peStep,'panel');
+}
+
+{
+  const {calls,api}=playerLookupHarness({roleAfterRefresh:''});
+  assert.equal(await api.lookup('owner@example.com'),false);
+  assert.deepEqual(calls.map(call=>call.kind),['role'],
+    'an ordinary account cannot probe exact emails through either player RPC');
+  assert.match(JSON.parse(api.snapshot()).peNotice,/Creator\/Main only/);
+}
+
+{
+  const {api}=playerLookupHarness({rpcError:{code:'PGRST202',message:'Could not find the function'}});
+  assert.equal(await api.lookup('owner@example.com'),false);
+  assert.match(JSON.parse(api.snapshot()).peNotice,/current Admin 01 Admin Menu SQL/,
+    'a stale live RPC is identified as setup work instead of a fake not-found result');
 }
 
 console.log('PASS email-or-username targeting and credential-verified account choice regression');

@@ -106,7 +106,7 @@ addEventListener('keydown', e=>{
   if(appealOpen){ if(e.key==='Escape') closeAppeal(); return; }
   if(promoOpen){ if(e.key==='Escape') closePromo(); return; }
   if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
-  if(adminPanelOpen||aiLearningOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||weaponSuggestionsOpen||requestsOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); if(updatesOpen)resetReportScroll();reportActionMenuOpen=reportAmountMenuOpen=false; wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; weaponSuggestionsOpen=false;requestsOpen=false;adminPanelOpen=false; aiLearningOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
+  if(adminPanelOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||weaponSuggestionsOpen||requestsOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); if(updatesOpen)resetReportScroll();reportActionMenuOpen=reportAmountMenuOpen=false; wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; weaponSuggestionsOpen=false;requestsOpen=false;adminPanelOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
   if(['w','a','s','d',' '].includes(k)) e.preventDefault();
   keys[k]=true;
@@ -539,7 +539,6 @@ let utilLockMsgT=0;
 // keeping one list for both drawing and clicking is what stops CLOSE landing on a hidden screen.
 const MODALS=[
   {k:'adminPanel', is:()=>adminPanelOpen,  draw:()=>drawAdminPanel(),  click:()=>adminPanelClick()},
-  {k:'aiLearning', is:()=>aiLearningOpen, draw:()=>drawAiLearning(), click:()=>aiLearningClick()},
   {k:'updates',    is:()=>updatesOpen,     draw:()=>drawUpdates(),     click:()=>updatesClick()},
   {k:'admins',     is:()=>adminsOpen,      draw:()=>drawAdminsMenu(),  click:()=>adminsClick()},
   {k:'requests',   is:()=>requestsOpen,    draw:()=>drawAdminRequests(),click:()=>adminRequestsClick()},
@@ -682,16 +681,14 @@ function clickSelect(){
         sfx('dry'); return;
       }
       if(r.id==='ranked') {
-        // Fail closed even if a stale cached draw rect still marks Ranked as enabled.
-        modeBoardNotice='COMING SOON'; modeBoardNoticeT=performance.now()+2800;
-        sfx('dry');
+        selPage='ranked';void duelServiceRankedRefresh();sfx('swap');
       }
       else if(r.id==='party_menu'||r.id==='party_open') { selPage='social'; fetchSocial(true); sfx('swap'); }
       // Legacy ids remain routable for older cached canvases, but the live
       // Play dashboard always enters the dedicated Party menu first.
       else if(r.id==='party_create') partyPromptCreate();
       else if(r.id==='party_join') partyPromptJoin();
-      else if(r.id==='offline_cpu_menu') { offlineCpuView='modes';offlineCpuInfoKey='';offlineCpuFocusId='cpu_root_1v1';offlineCpuKeyboardActive=false;selPage='offlinecpu'; if(typeof refreshBotLadder==='function')void refreshBotLadder(true); if(typeof refreshActiveBotModel==='function')void refreshActiveBotModel(true); sfx('swap'); }
+      else if(r.id==='offline_cpu_menu') { offlineCpuView='modes';offlineCpuInfoKey='';offlineCpuFocusId='cpu_root_1v1';offlineCpuKeyboardActive=false;selPage='offlinecpu'; if(typeof refreshBotLadder==='function')void refreshBotLadder(true); sfx('swap'); }
       else chooseGameMode(r.mode,'modeboard');
       return;
     }
@@ -705,6 +702,7 @@ function clickSelect(){
     return;
   }
   if(selPage==='ranked'){
+    for(const r of leaderboardRowRects)if(inR(r)){openBoardPlayer(r);return;}
     if(inR(backRect)){ navigateSelectBack(); return; }
     for(const r of rankedRects) if(inR(r)){
       if(!r.enabled){
@@ -712,6 +710,8 @@ function clickSelect(){
         sfx('dry'); return;
       }
       if(r.id==='signin') toggleAuth();
+      else if(r.id==='rank_view'){void duelServiceRankedRefresh(r.mode);sfx('swap');}
+      else if(r.id==='rank_queue')chooseGameMode(r.mode,'ranked');
       return;
     }
     return;
@@ -824,6 +824,7 @@ function clickSelect(){
         if(cpuOrigin){selPage='offlinecpu';offlineCpuView='2v2';offlineCpuInfoKey='';}else{selPage='social';fetchSocial(true);}sfx('swap');
       }
       else if(r.id==='browse') {
+        if(typeof duelService!=='undefined'&&duelService.invite){duelServiceOpenInvite();return;}
         if(!partyRequirePlayers()) return;
         // The old lobby exposed a dedicated cancel button. PLAY now safely
         // clears a stale setup/waiting session before opening the simple chooser.
@@ -875,6 +876,10 @@ function clickSelect(){
       selPage=c.cat; sfx('swap'); return;
     }
     if(inR(deployRect)){ launchSelectedMode(); return; }
+    return;
+  }
+  if(selPage==='multidevice'){
+    for(const r of duelMenuRects)if(inR(r)&&r.enabled){if(r.id==='cancel')void duelServiceCancel();return;}
     return;
   }
   if(selPage==='arena'){ arenaClick(); return; }

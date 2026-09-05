@@ -87,7 +87,7 @@ async function partyPublicPublish(force=false){
     const row=Array.isArray(result.data)?result.data[0]:result.data,id=partyPublicUuid(row&&row.party_id);
     if(party!==current||!current.accepted||!current.publicParty){if(id)void partyPublicClose(id);return false;}
     if(id)current.publicPartyId=id;publicPartySqlReady=true;publicPartyPollAt=0;return !!id;
-  }catch(error){const message=String(error&&error.message||'').toUpperCase();if(partyPublicRpcMissing(error)){publicPartySqlReady=false;party.status='PUBLIC PARTIES NEED SOCIAL 03 SQL.';}
+  }catch(error){const message=String(error&&error.message||'').toUpperCase();if(partyPublicRpcMissing(error)){publicPartySqlReady=false;party.status='PUBLIC PARTIES NEED PLAYER 03 SOCIAL MENU.';}
     else if(/PARTY_NAME_TAKEN|UNIQUE/.test(message)){party.publicParty=false;party.status='THAT PUBLIC PARTY NAME IS TAKEN · CREATE AGAIN WITH A UNIQUE NAME.';}
     else party.status='PUBLIC PARTY DIRECTORY COULD NOT UPDATE.';return false;}
 }
@@ -512,6 +512,7 @@ function partyApplyState(p,force){
 function partyReceive(event,p){
   if(!p||p.code!==party.code||!party.self) return;
   const from=String(p.from||'');
+  if(event==='duel_invite'){if(typeof duelServicePartyReceive==='function')void duelServicePartyReceive(p);return;}
   if(String(event||'').startsWith('cpu_')){ partyCpuReceive(event,p); return; }
   if(event==='friend_invite_register'){
     if(!partyIsHost()||party.directCpu||partyCpuSessionOpen()||String(p.to||'')!==party.self.id||!partyMember(from)||from===party.self.id||
@@ -682,7 +683,7 @@ function partyConnect(code,creating,name){
   if(creating){ party.accepted=true; party.hostId=self.id; party.hostEpoch=1; party.members=[self]; partySetDefaultPairings(); }
   const ch=sb.channel('oz-party-v1-'+clean,{config:{presence:{key:self.id}}}); party.channel=ch;
   ch.on('presence',{event:'sync'},()=>partyPresenceSync(ch));
-  for(const event of ['join_request','join_accept','join_reject','state_request','party_state','identity_update','action_request','kick','chat_request','chat_message','friend_invite_register','friend_invite_register_ack','leave',
+  for(const event of ['join_request','join_accept','join_reject','state_request','party_state','identity_update','action_request','kick','chat_request','chat_message','friend_invite_register','friend_invite_register_ack','leave','duel_invite',
                        'cpu_prepare','cpu_ready','cpu_cancel','cpu_abort','cpu_round_start','cpu_player_state','cpu_player_shot','cpu_bot_snapshot','cpu_bot_shot','cpu_reflected_shot','cpu_reflection_hit','cpu_damage','cpu_hit','cpu_kill_confirm','cpu_round_result'])
     ch.on('broadcast',{event},msg=>{if(ch===party.channel)partyReceive(event,msg&&msg.payload);});
   ch.subscribe(async st=>{
@@ -783,13 +784,13 @@ function partyPromptFriendInvite(){
       return target.source==='friend'&&!!(target.recipientId||target.deliveryKey);
     }).slice(0,40).map((target,index)=>({...target,optionKey:'invite_player_'+index}));
     if(!choices.length){
-      party.status=result&&result.onlineReady?'NO FRIENDS OR OTHER ONLINE PLAYERS ARE AVAILABLE':'ADD A FRIEND, OR RUN SOCIAL 03 TO INVITE ONLINE PLAYERS';
+      party.status=result&&result.onlineReady?'NO FRIENDS OR OTHER ONLINE PLAYERS ARE AVAILABLE':'ADD A FRIEND, OR RUN PLAYER 03 SOCIAL MENU TO INVITE ONLINE PLAYERS';
       sfx('dry');return false;
     }
     partyFriendInviteFormOwnerId=formOwner;
     openForm({title:'INVITE A PLAYER',hint:(result&&result.onlineReady
         ?'FRIENDS are accepted friends. ONLINE NOW shows other active players. The server checks availability again when you send.'
-        :'Choose an accepted friend. Install Social 03 to also invite other players who are online.'),saveLabel:'SEND INVITE',
+        :'Choose an accepted friend. Install Player 03 Social Menu to also invite other players who are online.'),saveLabel:'SEND INVITE',
       fields:[{id:'recipient',label:'FRIENDS / ONLINE',type:'select',value:choices[0].optionKey,
         options:choices.map(target=>({value:target.optionKey,label:(target.source==='friend'
           ?(target.isOnline?'FRIEND \u00b7 ONLINE \u00b7 @':'FRIEND \u00b7 @'):'ONLINE NOW \u00b7 @')+target.handle}))}],
@@ -958,11 +959,12 @@ function partyModeNotice(message){
   arena.status=message; sfx('dry'); return false;
 }
 function partyChooseSetupMode(mode){
+  if(typeof duelServiceChooseParty==='function')return duelServiceChooseParty(mode);
   const required=partySetupPlayerCount(mode), label=mode==='1v1v1'?'1v1v1':mode==='1v1'?'1v1':mode==='2v2'?'2v2':'';
   if(!required) return partyModeNotice('THAT PARTY SETUP IS NOT AVAILABLE');
   if(!partyIsHost()) return partyModeNotice('ONLY THE PARTY LEADER CAN EDIT PAIRINGS');
   if(!party.accepted||party.members.length!==required) return partyModeNotice(label+' NEEDS EXACTLY '+required+' PARTY PLAYERS');
-  if(!partySetMode(mode,label+' PAIRINGS READY \u00b7 GAMEPLAY COMING SOON')) return false;
+  if(!partySetMode(mode,label+' PAIRINGS READY')) return false;
   selPage='party'; return true;
 }
 function partySetMode(mode,message){
@@ -1098,13 +1100,12 @@ function partyCpuMaybeStart(){
 }
 function partyCpuMakeBot(id,team,x,y,startAt){
   const localMatch=isLocalCpu2v2(),difficulty=localMatch?(team==='A'?0:clamp(Math.floor(+partyCpuMatch.botDifficulty||0),0,4)):2,
-    modelId=localMatch?(partyCpuMatch.botModelId||(typeof activeBotModelId==='string'?activeBotModelId:'apex-v5')):'',
-    tuning=localMatch&&typeof arenaBotTuning==='function'?arenaBotTuning(difficulty,modelId):{reactionMs:450};
+    tuning=localMatch&&typeof arenaBotTuning==='function'?arenaBotTuning(difficulty):{reactionMs:450};
   const seed=typeof cpuAiSeed==='function'?cpuAiSeed(partyCpuMatch.aiSeed,partyCpuMatch.round,arena&&arena.mapId,id):1;
   const bot={id,team,name:team==='A'?'ALLY CPU':'',r:15,hp:PARTY_CPU_HP,x,y,tx:x,ty:y,angle:team==='A'?0:Math.PI,
     loadout:Object.assign({},CPU_AI_LOADOUT),reloadEnd:0,lastShot:0,flash:0,hitT:0,thinkAt:startAt,aimNoiseAt:startAt,aimNoise:0,
     strafe:1,strafeUntil:startAt,reactionAt:startAt+tuning.reactionMs,moveX:0,moveY:0,lastThinkX:x,lastThinkY:y,
-    botDifficulty:difficulty,botModelId:modelId,
+    botDifficulty:difficulty,
     aiSeed:seed,aiRng:seed,aiTracks:{},aiRole:team==='A'?'guardian':(String(id).endsWith('1')?'anchor':'flanker'),
     aiTactic:'hold',aiTacticUntil:startAt,aiTacticMinUntil:startAt,aiPlanMoveX:0,aiPlanMoveY:0,
     targetId:'',targetLockUntil:0,targetThinkAt:startAt,tntThinkAt:startAt,tntPlan:null,
@@ -1115,7 +1116,6 @@ function partyCpuMakeBot(id,team,x,y,startAt){
     aiPeekExposedAt:0,aiPeekWindowUntil:0,aiPeekPunishScore:0,aiPrefirePressureUntil:0,
     aiDodgeThreat:null,aiDodgeReadyAt:0,aiDodgeWillReact:false,aiDodgeUntil:0,aiDodgeCooldownUntil:0,aiDodgeFireUntil:0,
     aiDodgeX:0,aiDodgeY:0,aiDodgeSide:0,aiDodgeSideRepeat:0,aiDodgePlannedSide:0,aiDodgeHandled:new WeakSet(),
-    aiTrainingTntAvoided:new Set(),aiTrainingWallAt:0,
     lastAttackerId:'',underFireUntil:0};
   cpuAiInitBotWeapons(bot,startAt);
   bot.strafe=typeof cpuAiNext==='function'&&cpuAiNext(bot)<.5?-1:1;
@@ -1142,7 +1142,6 @@ function cpuTeamBeginRound(options){
   if(startGame({preserveMovement:continuingRound})===false)return false;
   practiceMode='arena';arena=freshArena(options.status||'2v2 vs CPUs');arena.mode=options.mode;arena.active=true;arena.phase='countdown';
   arena.botDifficulty=options.mode==='ai2v2'?clamp(Math.floor(+partyCpuMatch.botDifficulty||0),0,4):2;
-  arena.botModelId=options.mode==='ai2v2'?partyCpuMatch.botModelId:'';
   arena.matchEpoch=partyCpuMatch.epoch;arena.mapId=selectedMap;arena.mapVotePhase=options.mode==='ai2v2'?'locked':'idle';
   partyCpuMatch.mapId=selectedMap;
   arena.round=round;arena.roundStartAt=clock+startDelay;arena.roundEndAt=arena.roundStartAt+PARTY_CPU_ROUND_MS;
@@ -1186,13 +1185,6 @@ function partyCpuHostStartRound(){
   if(!partyCpuIsHost()) return false;
   const loadouts={};
   for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(partyCpuMatch.loadouts[id]); if(!kit) return false; loadouts[id]=kit; }
-  // The authority creates one privacy-minimized event for the whole first-to-5.
-  // Guests never mirror it. The fixed unranked Party profile is tagged as the
-  // full Apex V5 tactical behavior at the agreed difficulty-2 execution slot.
-  if(!partyCpuMatch.aiTrainingEventId&&typeof initializeAiTrainingMatch==='function'){
-    partyCpuMatch.botLadderMode='party2v2';partyCpuMatch.botDifficulty=2;partyCpuMatch.botModelId='apex-v5';
-    initializeAiTrainingMatch(partyCpuMatch);
-  }
   const p={from:party.self.id,matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,round:partyCpuMatch.round+1,
     startDelay:3000,scores:{allies:partyCpuMatch.scores.allies||0,cpus:partyCpuMatch.scores.cpus||0},loadouts};
   if(!partyCpuApplyRoundStart(p)) return false;
@@ -1240,7 +1232,7 @@ function startOfflineCpu2v2(options={}){
   if(arena&&(arena.queueChannel||arena.matchChannel))leaveArena('',false);
   const savedLoadout={primary:loadout.primary,secondary:loadout.secondary,melee:loadout.melee,utility:loadout.utility};
   partyCpuMatch=freshPartyCpuMatch();partyCpuMatch.local=true;partyCpuMatch.phase='setup';
-  initializeBotLadderMatch(partyCpuMatch,'ai2v2',botLadderReadyForMatch()?botLadder.tier:0,false);
+  initializeBotLadderMatch(partyCpuMatch,'ai2v2',botLadderReadyForMatch()?botLadder.tier:0);
   partyCpuMatch.epoch=Math.max(1,Math.floor(now));partyCpuMatch.hostEpoch=1;partyCpuMatch.hostId=LOCAL_CPU2V2_PLAYER;
   partyCpuMatch.humanIds=[LOCAL_CPU2V2_PLAYER];partyCpuMatch.humanNames[LOCAL_CPU2V2_PLAYER]='YOU';
   partyCpuMatch.loadouts[LOCAL_CPU2V2_PLAYER]=mine;partyCpuMatch.localLoadout=mine;partyCpuMatch.savedLoadout=savedLoadout;
@@ -1278,7 +1270,6 @@ function offlineCpu2v2Resolve(winner){
   const matchOver=!!winner&&scores[winner]>=PARTY_CPU_TARGET;
   partyCpuMatch.roundResolved=true;partyCpuMatch.scores=scores;arena.clearProjectiles=true;resetRoundTransitionInput(!matchOver);
   if(matchOver){
-    if(typeof recordCompletedAiTrainingMatch==='function')recordCompletedAiTrainingMatch(winner==='allies',partyCpuMatch);
     recordCompletedBotLadderMatch(winner==='allies',partyCpuMatch);
     partyCpuMatch.phase='match_end';arena.phase='match_end';arena.active=false;partyCpuMatch.nextRoundAt=0;
     state='select';selPage='arena';menuOpen=false;aiming=false;rmbAim=false;pendingGameMode='ai2v2';loadoutBackPage='offlinecpu';
@@ -1298,7 +1289,7 @@ function offlineCpu2v2Rematch(options={}){
     arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'Resolve the pending CPU ladder result before Play Again.';
     sfx('dry');return false;
   }
-  initializeBotLadderMatch(partyCpuMatch,'ai2v2',botLadderReadyForMatch()?botLadder.tier:0,false);
+  initializeBotLadderMatch(partyCpuMatch,'ai2v2',botLadderReadyForMatch()?botLadder.tier:0);
   partyCpuMatch.epoch=Math.max(partyCpuMatch.epoch+1,Math.floor(now));partyCpuMatch.round=0;partyCpuMatch.scores={allies:0,cpus:0};
   partyCpuMatch.roundResolved=false;partyCpuMatch.phase='map_vote';
   arena.active=true;arena.phase='lobby';arena.matchEpoch=partyCpuMatch.epoch;
@@ -1394,7 +1385,6 @@ function partyCpuSpawnBotShot(bot,target,profile,weaponId=bot&&bot.cur){
   const shot={id,ownerId:bot.id,team:bot.team,targetId:target&&target.id||'',x:bot.x+Math.cos(a)*7,y:bot.y+Math.sin(a)*7,
     vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,life:weaponBulletLife(weaponId,1200),dmg:damage,dist:0,rng:w.range,fall:w.fall,weapon:weaponId};
   partyCpuMatch.seenShots.add(id); partyCpuMatch.shots.push(shot);
-  if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(bot,'bot_shots');
   if(!isLocalCpu2v2())partySend('cpu_bot_shot',{matchEpoch:partyCpuMatch.epoch,hostEpoch:partyCpuMatch.hostEpoch,round:partyCpuMatch.round,shot});
 }
 function partyCpuHostMelee(bot,target,clock,useAbility=false){
@@ -1405,10 +1395,6 @@ function partyCpuHostMelee(bot,target,clock,useAbility=false){
     if(target.team==='A'&&partyCpuMatch.humans[target.id]){partyCpuHostDamageHuman(target,attack,damage);return;}
     const live=partyCpuMatch.bots.find(candidate=>candidate===target&&candidate.team!==bot.team&&candidate.hp>0);if(!live)return;
     const dealt=Math.min(live.hp,damage);live.hp=Math.max(0,live.hp-damage);live.lastAttackerId=bot.id;
-    if(bot.team==='B'&&typeof recordAiTrainingBotSignal==='function'){
-      recordAiTrainingBotSignal(bot,'bot_hits');recordAiTrainingBotSignal(bot,'bot_damage_dealt',dealt);
-    }
-    if(live.team==='B'&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(live,'bot_damage_taken',dealt);
     partyCpuRecordThreat(bot.id,live.team,dealt,clock);cpuAiRegisterIncomingHit(live,clock);
     partyCpuMatch.snapshotAt=0;partyCpuHostEvaluate();
   };
@@ -1444,7 +1430,7 @@ function partyCpuHostStep(dtms,clock){
     peekSettleMin:80,peekSettleMax:260,peekPunishHoldMs:300,peekCommitSpeed:1.13};
   for(const b of partyCpuMatch.bots){
     if(b.hp<=0) continue;
-    const localMatch=isLocalCpu2v2(),profile=localMatch?Object.assign({},arenaBotTuning(b.botDifficulty,b.botModelId||partyCpuMatch.botModelId),{approach:560,retreat:260,maxRange:1050}):partyProfile;
+    const localMatch=isLocalCpu2v2(),profile=localMatch?Object.assign({},arenaBotTuning(b.botDifficulty),{approach:560,retreat:260,maxRange:1050}):partyProfile;
     const enemyTeam=b.team==='A'?'B':'A',foes=partyCpuActors(enemyTeam),allies=partyCpuActors(b.team);
     const target=partyCpuThreatTarget(b,enemyTeam,clock);if(!target)continue;
     const targetVisible=!cpuAiLosBlocked(b.x,b.y,target.x,target.y),guardVisible=targetVisible&&target.team==='A'&&
@@ -1460,9 +1446,7 @@ function partyCpuHostStep(dtms,clock){
       b.tntThinkAt=clock+CPU_AI_TNT_RETHINK_MS;b.tntPlan=cpuAiTntPlan(b,foes,allies,shotProfile,clock);
     }else if(isMelee||(localMatch&&!profile.useTnt))b.tntPlan=null;
     if(clock>=b.thinkAt){
-      if((!localMatch||profile.useStuckRecovery)&&cpuAiObserveMovement(b,clock)){
-        b.aiTacticUntil=clock;if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_stuck_recoveries');
-      }
+      if((!localMatch||profile.useStuckRecovery)&&cpuAiObserveMovement(b,clock))b.aiTacticUntil=clock;
       b.thinkAt=clock+profile.thinkMs;
       if(clock>=b.aimNoiseAt){b.aimNoise=cpuAiRange(b,-profile.aimNoise,profile.aimNoise);b.aimNoiseAt=clock+cpuAiRange(b,450,750);}
       const move=cpuAiPickMove(b,target,allies,clock,profile,b.tntPlan);b.moveX=move.x;b.moveY=move.y;
@@ -1481,18 +1465,11 @@ function partyCpuHostStep(dtms,clock){
       meleeMove=!dodge.active?cpuAiMeleeMovement(b,target):null,
       peek=dodge.active?dodge:(meleeMove||cpuAiApplyPeekBehavior(b,target,b.moveX,b.moveY,clock,profile,b.tntPlan)),
       tacticSpeed=dodge.active?1:b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=profile.moveSpeed*tacticSpeed*peek.speedScale*dt,
-      moveStartX=b.x,moveStartY=b.y,nx=b.x+peek.x*spd,ny=b.y+peek.y*spd,
+      nx=b.x+peek.x*spd,ny=b.y+peek.y*spd,
       blockedX=pointInRects(nx,b.y),blockedY=pointInRects(b.x,ny);
     if(!blockedX)b.x=nx; if(!blockedY)b.y=ny;
     clampActorToArena(b);collideRects(b);clampActorToArena(b);
-    if(typeof recordAiTrainingBotSignal==='function'){
-      recordAiTrainingBotSignal(b,'bot_distance_px',Math.hypot(b.x-moveStartX,b.y-moveStartY));
-      if((blockedX||blockedY)&&clock>=(b.aiTrainingWallAt||0)){
-        b.aiTrainingWallAt=clock+250;recordAiTrainingBotSignal(b,'bot_wall_contacts');
-      }
-    }
-    const usedPortal=typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena()&&typeof arenaPortalStep==='function'&&arenaPortalStep(b,clock);
-    if(usedPortal&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(b,'bot_portal_uses');
+    if(typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena()&&typeof arenaPortalStep==='function')arenaPortalStep(b,clock);
     b.tx=b.x;b.ty=b.y;
     if(clock<b.reactionAt||clock<(+b.aiDodgeFireUntil||0)||clock<(+b.equipEnd||0)||b.reloadEnd||cpuAiPeekWithholdsFire(b))continue;
     if(isMelee){
@@ -1576,10 +1553,6 @@ function partyCpuHostDamageHuman(target,shot,dmg){
   if(!cpuTeamIsAuthority()||!target||target.team!=='A'||target.hp<=0||partyCpuMatch.phase!=='fight')return false;
   const hit=clamp(+dmg||0,0,PARTY_CPU_HP);if(!hit)return false;
   if(partyCpuHostTryParry(target,shot,hit))return true;
-  const before=target.id===cpuTeamLocalId()?Math.max(0,+player.hp||0):Math.max(0,+target.hp||0),dealt=Math.min(before,hit);
-  if(typeof recordAiTrainingBotSignalById==='function'){
-    recordAiTrainingBotSignalById(shot.ownerId,'bot_hits');recordAiTrainingBotSignalById(shot.ownerId,'bot_damage_dealt',dealt);
-  }
   partyCpuRecordThreat(shot.ownerId,target.team,hit,partyCpuAiClock());
   if(target.id===cpuTeamLocalId())partyCpuTakeLocalDamage(hit);
   else {
@@ -1630,10 +1603,6 @@ function partyCpuStepShots(dtms){
           if(target.team===b.team||target.hp<=0||target.id===b.ownerId||(b.targetId&&target.id!==b.targetId)) continue;
           if(dist2(b.x,b.y,target.x,target.y)<(target.r+4)*(target.r+4)){
             const dealt=Math.min(target.hp,b.dmg);target.hp=Math.max(0,target.hp-b.dmg);
-            if(b.team==='B'&&typeof recordAiTrainingBotSignalById==='function'){
-              recordAiTrainingBotSignalById(b.ownerId,'bot_hits');recordAiTrainingBotSignalById(b.ownerId,'bot_damage_dealt',dealt);
-            }
-            if(target.team==='B'&&typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(target,'bot_damage_taken',dealt);
             partyCpuRecordThreat(b.ownerId,target.team,dealt,partyCpuAiClock());
             target.lastAttackerId=b.ownerId;cpuAiRegisterIncomingHit(target,partyCpuAiClock());
             if(b.reflected){
@@ -1903,8 +1872,7 @@ function partyCpuConfirmUnscopedKill(hit,target,beforeHp){
 function cpuTeamApplyBotHit(target,dmg,attackerId=cpuTeamLocalId(),kind='shot',hitId=''){
   if(!cpuTeamIsAuthority()||partyCpuMatch.phase!=='fight'||!target||target.team!=='B'||target.hp<=0)return false;
   const hit=clamp(+dmg||0,0,PARTY_CPU_HP);if(!hit)return false;
-  const before=Math.max(0,+target.hp||0),dealt=Math.min(before,hit);
-  if(typeof recordAiTrainingBotSignal==='function')recordAiTrainingBotSignal(target,'bot_damage_taken',dealt);
+  const before=Math.max(0,+target.hp||0);
   target.hp=Math.max(0,target.hp-hit);target.lastAttackerId=String(attackerId||'');cpuAiRegisterIncomingHit(target,partyCpuAiClock());
   partyCpuRecordThreat(attackerId,target.team,hit,partyCpuAiClock());
   partyCpuConfirmUnscopedKill({from:String(attackerId||''),kind,id:String(hitId||'')},target,before);
@@ -1946,7 +1914,6 @@ function partyCpuApplyRoundResult(p){
   bullets=[];partyCpuMatch.shots=[];partyCpuMatch.visualShots=[];resetRoundTransitionInput(!p.matchOver);
   if(p.matchOver){
     partyCpuMatch.phase='match_end';const won=p.winner==='allies';sfx(won?'pickup':'die');
-    if(typeof recordCompletedAiTrainingMatch==='function')recordCompletedAiTrainingMatch(won,partyCpuMatch);
     partyCpuReturnToLobby(won?'YOUR TEAM WON THE 2v2 VS CPUs MATCH!':'THE CPUs WON THE 2v2 MATCH.');
   }else{
     partyCpuMatch.phase='round_end';arena.phase='round_end';partyCpuMatch.nextRoundAt=Date.now()+clamp(+p.nextDelay||0,0,10000);
@@ -1982,8 +1949,7 @@ function partyCpuReceive(event,p){
 }
 function partyCpuReturnToLobby(message){
   const was=partyCpuSessionOpen()||isPartyCpuMatch(),direct=!!(party&&party.directCpu);
-  const saved=partyCpuMatch&&partyCpuMatch.savedLoadout,
-    trainingNotice=typeof aiTrainingMatchStatusText==='function'?aiTrainingMatchStatusText(partyCpuMatch,true):'';
+  const saved=partyCpuMatch&&partyCpuMatch.savedLoadout;
   if(isPartyCpuMatch()||practiceMode==='arena'){
     practiceMode=null;enemies=[];bullets=[];ebullets=[];pickups=[];damageNumbers=[];grenades=[];pearls=[];balls=[];flames=[];freezeFx=[];splitBalls=[];
     daggersOut=null;comboStep=0;comboNextT=0;parryUntil=0;parrySeq=0;fistFlurryUntil=0;sawChargeUntil=0;
@@ -1993,7 +1959,7 @@ function partyCpuReturnToLobby(message){
   if(saved)loadout={primary:saved.primary||null,secondary:saved.secondary||null,melee:saved.melee||null,utility:saved.utility||null};
   if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
   if(was){state='select';selPage=direct?'offlinecpu':'party';if(direct){offlineCpuView='2v2';offlineCpuInfoKey='';}menuOpen=false;aiming=false;rmbAim=false;resetHeldGameplayInput();}
-  const result=(trainingNotice?trainingNotice+' · ':'')+String(message||'');if(message)party.status=result;
+  const result=String(message||'');if(message)party.status=result;
   // Keep the private transport alive through the host's 350/950ms result or
   // abort retries, then tear it down. The direct flow never returns to Party UI.
   if(direct)partyDirectCpuClose(result||'CPU GAME CLOSED',1250);

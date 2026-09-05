@@ -1,9 +1,18 @@
 -- OUTPOST ZERO / ADMIN 01: ADMIN MENU
 -- Self-contained Admin Menu storage, audited actions, username tools, grants,
 -- bans, appeals, requests, and the permanent creator/main audit LOG.
--- Run after Social 01, Profiles 01, and Leaderboards 01. Safe to rerun.
+-- Run after Player 03 Social Menu and Player 01 Stats. Safe to rerun.
 
 begin;
+
+-- Fail closed: policy setup lives in Admin 04 Security. Install it first.
+do $section_security_required$
+begin
+  if to_regprocedure('public._outpost_zero_apply_admin_security(text)') is null then
+    raise exception 'Run Admin 04 Security first; this transaction made no changes';
+  end if;
+end;
+$section_security_required$;
 
 -- Core rows required by the Admin Menu. Existing rows are never replaced.
 create table if not exists public.admins(
@@ -11,9 +20,6 @@ create table if not exists public.admins(
   role text not null check(lower(btrim(role)) in ('main','co','tester')),
   created_at timestamptz default now()
 );
-alter table public.admins enable row level security;
-alter table public.admins force row level security;
-revoke all on table public.admins from public,anon,authenticated;
 
 -- The creator is pinned to an Auth UUID, not an email. On the first run only,
 -- resolve that UUID from a transaction-local setting supplied privately in the
@@ -24,9 +30,6 @@ create table if not exists public.outpost_zero_admin_config(
   creator_user_id uuid not null unique references auth.users(id) on delete restrict,
   seeded_at timestamptz not null default clock_timestamp()
 );
-alter table public.outpost_zero_admin_config enable row level security;
-alter table public.outpost_zero_admin_config force row level security;
-revoke all on table public.outpost_zero_admin_config from public,anon,authenticated;
 
 do $creator_seed$
 declare
@@ -66,8 +69,6 @@ as $function$
   select c.creator_user_id from public.outpost_zero_admin_config c
   where c.singleton limit 1
 $function$;
-revoke all on function public._outpost_zero_creator_user_id()
-  from public,anon,authenticated;
 
 create table if not exists public.bans(
   id bigint generated always as identity primary key,
@@ -195,24 +196,7 @@ create table if not exists public.ban_appeals(
   requester_user_id uuid references auth.users(id) on delete set null
 );
 
-alter table public.bans enable row level security;
-alter table public.bans force row level security;
-alter table public.player_requests enable row level security;
-alter table public.player_requests force row level security;
-alter table public.ban_appeals enable row level security;
-alter table public.ban_appeals force row level security;
 
--- Remove every legacy direct policy. Narrow SECURITY DEFINER RPCs below are
--- the only supported browser boundary for bans, requests, and appeals.
-do $policies$
-declare item record;
-begin
-  for item in select schemaname,tablename,policyname from pg_policies
-    where schemaname='public' and tablename in ('bans','player_requests','ban_appeals')
-  loop execute format('drop policy %I on %I.%I',item.policyname,item.schemaname,item.tablename);end loop;
-end;
-$policies$;
-revoke all on table public.bans,public.player_requests,public.ban_appeals from public,anon,authenticated;
 
 -- Active rows grant temporary access. Expired rows intentionally remain as
 -- harmless history until they are replaced by a later grant. Every effective
@@ -312,21 +296,7 @@ create unique index if not exists ban_appeals_requester_operation_uidx
   on public.ban_appeals (requester_user_id, operation_id)
   where requester_user_id is not null and operation_id is not null;
 
-alter table public.outpost_zero_weapon_grants enable row level security;
-alter table public.outpost_zero_weapon_grants force row level security;
-alter table public.outpost_zero_admin_audit enable row level security;
-alter table public.outpost_zero_admin_audit force row level security;
-alter table public.player_requests enable row level security;
-alter table public.ban_appeals enable row level security;
 
--- No direct policies are intentional. SECURITY DEFINER functions below own
--- all allowed access and always reduce it to auth.uid() or a verified admin.
-revoke all on table public.outpost_zero_weapon_grants
-  from public, anon, authenticated;
-revoke all on table public.outpost_zero_admin_audit
-  from public, anon, authenticated;
-revoke all on sequence public.outpost_zero_admin_audit_event_id_seq
-  from public, anon, authenticated;
 
 -- Resolve the role entirely from server-owned state. The signed JWT supplies
 -- auth.uid(), but the email itself is reread from auth.users. A stale or
@@ -463,12 +433,6 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_admin_role()
-  from public, anon, authenticated;
-revoke all on function public._outpost_zero_is_admin_main()
-  from public, anon, authenticated;
-revoke all on function public._outpost_zero_write_admin_audit(uuid, text, text, jsonb, uuid)
-  from public, anon, authenticated;
 
 -- Compatibility implementations used only by the audited Admin 01 wrapper.
 -- They independently check the caller and are never browser-executable.
@@ -550,10 +514,6 @@ begin
 end;
 $function$;
 
-revoke all on function public.admin_role() from public,anon;
-grant execute on function public.admin_role() to authenticated;
-revoke all on function public.admin_get_player(text) from public,anon,authenticated;
-revoke all on function public.admin_edit_player(text,jsonb) from public,anon,authenticated;
 
 -- Signed-in players can read only their own active temporary grants. Returning
 -- server_now lets the client build a monotonic in-session countdown without
@@ -1131,8 +1091,6 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_validate_admin_patch(jsonb)
-  from public, anon, authenticated;
 
 -- The new player-edit boundary validates a small patch, calls the already
 -- installed admin_edit_player RPC, compares actual before/after rows, and
@@ -1398,9 +1356,6 @@ begin
   begin
     if to_regprocedure('public.admin_edit_player(text,jsonb)') is not null then
       execute 'select public.admin_edit_player($1, $2)::boolean'
-        into v_legacy_ok using v_target_email, p_patch;
-    elsif to_regprocedure('public.admin_edit_player(text,json)') is not null then
-      execute 'select public.admin_edit_player($1, $2::json)::boolean'
         into v_legacy_ok using v_target_email, p_patch;
     else
       raise exception 'required admin_edit_player RPC is not installed'
@@ -2291,79 +2246,8 @@ begin
 end;
 $function$;
 
-revoke all on function public.get_my_outpost_zero_weapon_grants()
-  from public, anon, authenticated;
-revoke all on function public.admin_list_outpost_zero_weapon_grants(text)
-  from public, anon, authenticated;
-revoke all on function public.admin_set_outpost_zero_weapon_grant(text, text, integer, text, uuid)
-  from public, anon, authenticated;
-revoke all on function public.admin_revoke_outpost_zero_weapon_grant(text, text, text, uuid)
-  from public, anon, authenticated;
-revoke all on function public.outpost_zero_admin_edit_player(text, jsonb, uuid)
-  from public, anon, authenticated;
-revoke all on function public.submit_outpost_zero_player_request(text, jsonb, uuid)
-  from public, anon, authenticated;
-revoke all on function public.list_outpost_zero_player_requests(integer)
-  from public, anon, authenticated;
-revoke all on function public.resolve_outpost_zero_player_request(bigint, text, uuid)
-  from public, anon, authenticated;
-revoke all on function public.get_my_outpost_zero_ban(text)
-  from public, anon, authenticated;
-revoke all on function public.list_outpost_zero_bans(integer)
-  from public, anon, authenticated;
-revoke all on function public.submit_outpost_zero_ban_appeal(text, uuid)
-  from public, anon, authenticated;
-revoke all on function public.list_outpost_zero_ban_appeals(integer)
-  from public, anon, authenticated;
-revoke all on function public.resolve_outpost_zero_ban_appeal(bigint, text, uuid)
-  from public, anon, authenticated;
-revoke all on function public.list_outpost_zero_admin_audit(bigint, integer)
-  from public, anon, authenticated;
 
-grant execute on function public.get_my_outpost_zero_weapon_grants()
-  to authenticated;
-grant execute on function public.resolve_outpost_zero_player_request(bigint, text, uuid)
-  to authenticated;
-grant execute on function public.get_my_outpost_zero_ban(text)
-  to anon, authenticated;
-grant execute on function public.submit_outpost_zero_ban_appeal(text, uuid)
-  to authenticated;
-grant execute on function public.resolve_outpost_zero_ban_appeal(bigint, text, uuid)
-  to authenticated;
 
--- Close the bypass after the audited wrapper exists. The wrapper owner can
--- still call the legacy implementation; browser roles cannot call it directly.
-do $block$
-begin
-  if to_regprocedure('public.admin_edit_player(text,jsonb)') is not null then
-    execute 'revoke all on function public.admin_edit_player(text, jsonb) from public, anon, authenticated';
-  end if;
-  if to_regprocedure('public.admin_edit_player(text,json)') is not null then
-    execute 'revoke all on function public.admin_edit_player(text, json) from public, anon, authenticated';
-  end if;
-  if to_regclass('public.player_log') is not null then
-    execute 'revoke all on table public.player_log from public, anon, authenticated';
-  end if;
-  revoke all on table public.player_requests from public, anon, authenticated;
-  revoke all on table public.ban_appeals from public, anon, authenticated;
-  revoke all on table public.bans from public, anon, authenticated;
-
-  -- Serial/identity sequences are not stable API names across old installs.
-  -- Resolve them from the actual tables, then retire browser use if present.
-  if pg_get_serial_sequence('public.player_requests', 'id') is not null then
-    execute format(
-      'revoke all on sequence %s from public, anon, authenticated',
-      pg_get_serial_sequence('public.player_requests', 'id')
-    );
-  end if;
-  if pg_get_serial_sequence('public.ban_appeals', 'id') is not null then
-    execute format(
-      'revoke all on sequence %s from public, anon, authenticated',
-      pg_get_serial_sequence('public.ban_appeals', 'id')
-    );
-  end if;
-end;
-$block$;
 
 -- Creator/Main-only account labels. A chosen public username always wins; an
 -- exact Auth email is returned only when that account still has no chosen
@@ -2460,10 +2344,6 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_admin_identity_label(uuid) from public,anon,authenticated;
-revoke all on function public._outpost_zero_admin_identity_kind(uuid) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_admin_identity_labels(uuid[]) from public,anon,authenticated;
-grant execute on function public.list_outpost_zero_admin_identity_labels(uuid[]) to authenticated;
 
 -- Username-addressed wrappers keep Auth emails server-side. Creator/Main may
 -- also supply any account's exact email; results remain username-first and
@@ -2472,7 +2352,7 @@ grant execute on function public.list_outpost_zero_admin_identity_labels(uuid[])
 do $preflight$
 begin
   if to_regclass('public.social_profiles') is null then
-    raise exception 'Admin 01 requires Social 01 (social_profiles)';
+    raise exception 'Admin 01 requires Player 03 Social Menu (social_profiles)';
   end if;
   if to_regprocedure('public.admin_get_player(text)') is null
      or to_regprocedure('public.outpost_zero_admin_edit_player(text,jsonb,uuid)') is null
@@ -2528,8 +2408,6 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_target_email_for_username(text)
-  from public, anon, authenticated;
 
 create or replace function public.outpost_zero_admin_get_player_by_username(
   p_target_username text
@@ -2719,21 +2597,7 @@ begin
 end;
 $function$;
 
-revoke all on function public.outpost_zero_admin_get_player_by_username(text) from public, anon, authenticated;
-revoke all on function public.admin_list_outpost_zero_weapon_grants_by_username(text) from public, anon, authenticated;
-revoke all on function public.admin_set_outpost_zero_weapon_grant_by_username(text,text,integer,text,uuid) from public, anon, authenticated;
-revoke all on function public.admin_revoke_outpost_zero_weapon_grant_by_username(text,text,text,uuid) from public, anon, authenticated;
-revoke all on function public.outpost_zero_admin_edit_player_by_username(text,jsonb,uuid) from public, anon, authenticated;
-revoke all on function public.submit_outpost_zero_player_request_by_username(text,jsonb,uuid) from public, anon, authenticated;
-revoke all on function public.list_outpost_zero_player_requests_by_username(integer) from public, anon, authenticated;
 
-grant execute on function public.outpost_zero_admin_get_player_by_username(text) to authenticated;
-grant execute on function public.admin_list_outpost_zero_weapon_grants_by_username(text) to authenticated;
-grant execute on function public.admin_set_outpost_zero_weapon_grant_by_username(text,text,integer,text,uuid) to authenticated;
-grant execute on function public.admin_revoke_outpost_zero_weapon_grant_by_username(text,text,text,uuid) to authenticated;
-grant execute on function public.outpost_zero_admin_edit_player_by_username(text,jsonb,uuid) to authenticated;
-grant execute on function public.submit_outpost_zero_player_request_by_username(text,jsonb,uuid) to authenticated;
-grant execute on function public.list_outpost_zero_player_requests_by_username(integer) to authenticated;
 
 -- Browser-safe moderation feeds. Private Auth emails remain useful internal
 -- compatibility keys, but neither an admin RPC nor Realtime may serialize
@@ -2914,33 +2778,7 @@ begin
 end;
 $function$;
 
--- Retire every email-addressed/listing boundary. The username wrappers above
--- remain SECURITY DEFINER so they can call these internal implementations,
--- but modified clients cannot call them directly or enumerate private keys.
-revoke all on function public.admin_list_outpost_zero_weapon_grants(text) from public,anon,authenticated;
-revoke all on function public.admin_set_outpost_zero_weapon_grant(text,text,integer,text,uuid) from public,anon,authenticated;
-revoke all on function public.admin_revoke_outpost_zero_weapon_grant(text,text,text,uuid) from public,anon,authenticated;
-revoke all on function public.outpost_zero_admin_edit_player(text,jsonb,uuid) from public,anon,authenticated;
-revoke all on function public.submit_outpost_zero_player_request(text,jsonb,uuid) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_player_requests(integer) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_bans(integer) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_ban_appeals(integer) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_admin_audit(bigint,integer) from public,anon,authenticated;
-revoke all on function public._outpost_zero_public_username(uuid) from public,anon,authenticated;
-revoke all on function public._outpost_zero_admin_identity_label(uuid) from public,anon,authenticated;
-revoke all on function public._outpost_zero_admin_identity_kind(uuid) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_admin_identity_labels(uuid[]) from public,anon,authenticated;
-revoke all on function public._outpost_zero_scrub_private_admin_json(jsonb) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_bans_by_username(integer) from public,anon,authenticated;
-revoke all on function public.unban_outpost_zero_ban(bigint,uuid) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_ban_appeals_by_username(integer) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_admin_audit_by_username(bigint,integer) from public,anon,authenticated;
 
-grant execute on function public.list_outpost_zero_bans_by_username(integer) to authenticated;
-grant execute on function public.unban_outpost_zero_ban(bigint,uuid) to authenticated;
-grant execute on function public.list_outpost_zero_ban_appeals_by_username(integer) to authenticated;
-grant execute on function public.list_outpost_zero_admin_audit_by_username(bigint,integer) to authenticated;
-grant execute on function public.list_outpost_zero_admin_identity_labels(uuid[]) to authenticated;
 
 -- REALTIME OWNERSHIP
 -- Admin Menu storage is private RPC-only state. Explicitly remove every table
@@ -2952,6 +2790,7 @@ declare relation_name text;
 begin
   foreach relation_name in array array[
     'admins',
+    'outpost_zero_admin_config',
     'bans',
     'player_requests',
     'ban_appeals',
@@ -2980,4 +2819,5 @@ $realtime$;
 -- Admin 01 statement commits successfully.
 notify pgrst, 'reload schema';
 
+select public._outpost_zero_apply_admin_security('Admin 01');
 commit;

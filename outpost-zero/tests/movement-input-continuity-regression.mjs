@@ -92,7 +92,10 @@ const startBody=functionSource(gameplay,'startGame');
 assert.match(startBody,/resetHeldGameplayInput\(\)/,'a normal first launch still needs the full stale-input reset');
 assert.match(startBody,/preserveMovement===true[\s\S]{0,80}resetRoundTransitionInput/,
   'continuing CPU-team rounds must be able to preserve movement through shared setup');
-for(const script of ['state','input','gameplay','ai','online','party'])
-  assert.match(index,new RegExp(`js/${script}\\.js\\?v=20260831-duel-stability-v1`),script+' must load the duel-stability cache version');
+for(const [script,version] of [['state','20260831-duel-stability-v1'],['input','20260902-ai-cleanup-v1'],
+  ['ai','20260902-ai-cleanup-v1'],['online','20260902-ai-cleanup-v1'],['party','20260902-ai-cleanup-v1']])
+  assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),script+' must load its current cache version');
+assert.match(index,/js\/gameplay\.js\?v=20260831-practice-loan-v1/,
+  'gameplay must load the Practice-loan build while retaining duel continuity fixes');
 
 console.log('PASS movement survives ordinary resize and continuing-round setup without preserving fire input');

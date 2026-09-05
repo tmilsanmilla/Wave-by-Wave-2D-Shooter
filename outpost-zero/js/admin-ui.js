@@ -2017,81 +2017,6 @@ function adminAuditClick(){
     if(r.row){openReader(adminAuditActionTitle(r.row.action).toUpperCase(),r.row.createdAt,adminAuditDetailsText(r.row),'main');sfx('swap');return;}
   }
 }
-function drawAiLearning(){
-  if(!isMainAdmin()){aiLearningOpen=false;return;}
-  if(!isMainAdmin()){ closeAiLearning(); return; }
-  aiLearningRects=[];
-  ctx.fillStyle='rgba(4,6,3,0.97)';ctx.fillRect(0,0,W,H);
-  const tiny=W<520||H<430,pw=Math.min(920,W-12),ph=Math.min(650,H-10),px=W/2-pw/2,py=H/2-ph/2;
-  ctx.fillStyle='#080f12';ctx.fillRect(px,py,pw,ph);ctx.strokeStyle='#7fd8ff';ctx.lineWidth=1.5;ctx.strokeRect(px+.5,py+.5,pw,ph);
-  ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#bfe8ff';ctx.font='700 '+(tiny?15:20)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('AI BOT MODELS',W/2,py+(tiny?18:25));
-  ctx.fillStyle='#8a9268';ctx.font=(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('TACTICAL RELEASES · PLAYER DIFFICULTY IS SEPARATE · TESTS USE IMPOSSIBLE',pw-18),W/2,py+(tiny?34:44));
-
-  const cardX=px+(tiny?6:14),cardW=pw-(tiny?12:28),headerY=py+(tiny?47:61),headerH=tiny?22:28,
-    btnH=tiny?25:32,btnY=py+ph-btnH-(tiny?6:10),noticeH=tiny?48:58,noticeY=btnY-noticeH-(tiny?4:7),
-    listY=headerY+headerH,gap=tiny?2:4,available=noticeY-listY-(tiny?4:8),rowH=Math.max(22,(available-gap*4)/5),
-    modelW=cardW*(tiny?.22:.18),noteW=cardW*(tiny?.35:.42),testW=cardW*(tiny?.18:.17),bringW=cardW-modelW-noteW-testW,
-    colX=[cardX,cardX+modelW,cardX+modelW+noteW,cardX+modelW+noteW+testW,cardX+cardW];
-  ctx.fillStyle='rgba(127,216,255,.12)';ctx.fillRect(cardX,headerY,cardW,headerH);ctx.strokeStyle='#315568';ctx.lineWidth=1;ctx.strokeRect(cardX+.5,headerY+.5,cardW,headerH);
-  const headers=['Model','What improved','Test Model','Bring Back Model'];
-  ctx.textAlign='center';ctx.fillStyle='#bfe8ff';ctx.font='700 '+(tiny?7:8)+'px ui-monospace,Consolas,monospace';
-  for(let i=0;i<headers.length;i++){
-    if(i){ctx.strokeStyle='#315568';ctx.beginPath();ctx.moveTo(colX[i]+.5,headerY);ctx.lineTo(colX[i]+.5,headerY+headerH);ctx.stroke();}
-    ctx.fillText(headers[i],(colX[i]+colX[i+1])/2,headerY+headerH/2);
-  }
-  BOT_MODEL_RELEASES.forEach((model,i)=>{
-    const y=listY+i*(rowH+gap),selected=aiLearningSelectedModelId===model.id,live=activeBotModelId===model.id,
-      training=typeof aiTrainingModelSummary==='function'?aiTrainingModelSummary(model.id):null,
-      rowCol=live?'rgba(167,193,94,.13)':selected?'rgba(127,216,255,.10)':'rgba(255,255,255,.035)';
-    ctx.fillStyle=rowCol;ctx.fillRect(cardX,y,cardW,rowH);ctx.strokeStyle=live?'#a7c15e':selected?'#7fd8ff':'#315568';ctx.lineWidth=live||selected?1.5:1;ctx.strokeRect(cardX+.5,y+.5,cardW,rowH);
-    for(let c=1;c<4;c++){ctx.strokeStyle='#263d48';ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(colX[c]+.5,y);ctx.lineTo(colX[c]+.5,y+rowH);ctx.stroke();}
-    ctx.textAlign='left';ctx.fillStyle=live?'#a7c15e':selected?'#bfe8ff':'#e8d9a8';ctx.font='700 '+(tiny?7:9)+'px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(model.name,modelW-(tiny?7:12)),cardX+(tiny?4:7),y+rowH*.38);
-    ctx.fillStyle=live?'#a7c15e':'#65725d';ctx.font='700 '+(tiny?6:7)+'px ui-monospace,Consolas,monospace';
-    const cloudGames=training&&typeof aiTrainingCompactNumber==='function'?aiTrainingCompactNumber(training.matches):'';
-    ctx.fillText(fitLine((live?'LIVE NOW':'ARCHIVED')+(cloudGames?' · MATCH DATA '+cloudGames:''),modelW-(tiny?7:12)),cardX+(tiny?4:7),y+rowH*.70);
-    ctx.fillStyle=selected?'#d7efff':'#9ca58b';ctx.font=(tiny?'7':'8')+'px ui-monospace,Consolas,monospace';ctx.textBaseline='top';
-    wrapTextClamped(model.improved,colX[1]+(tiny?4:7),y+rowH/2-(tiny?7:8),noteW-(tiny?8:14),tiny?8:10,2);ctx.textBaseline='middle';
-
-    const pad=tiny?3:6,bh=Math.max(20,rowH-(tiny?4:14)),by=y+(rowH-bh)/2,
-      test={id:'model_test_'+model.id,modelId:model.id,x:colX[2]+pad,y:by,w:testW-pad*2,h:bh,enabled:true},
-      restore={id:'model_restore_'+model.id,modelId:model.id,x:colX[3]+pad,y:by,w:bringW-pad*2,h:bh,enabled:!live&&!aiLearningRestoreBusyId};
-    aiLearningRects.push(test,restore);
-    const drawModelAction=(r,label,col)=>{
-      const hot=r.enabled&&mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
-      ctx.fillStyle=!r.enabled?'rgba(255,255,255,.025)':hot?col:'rgba(0,0,0,.36)';ctx.fillRect(r.x,r.y,r.w,r.h);
-      ctx.strokeStyle=r.enabled?col:'#3d463c';ctx.lineWidth=1;ctx.strokeRect(r.x+.5,r.y+.5,r.w,r.h);
-      ctx.fillStyle=!r.enabled?'#65725d':hot?'#101208':col;ctx.textAlign='center';ctx.font='700 '+(tiny?6:7)+'px ui-monospace,Consolas,monospace';ctx.fillText(label,r.x+r.w/2,r.y+r.h/2);
-    };
-    drawModelAction(test,'TEST MODEL','#7fd8ff');
-    drawModelAction(restore,live?'LIVE NOW':aiLearningRestoreBusyId===model.id?'WORKING…':'BRING BACK','#e8b658');
-  });
-
-  ctx.fillStyle='rgba(232,182,88,.07)';ctx.fillRect(cardX,noticeY,cardW,noticeH);ctx.strokeStyle='#5b4c2a';ctx.strokeRect(cardX+.5,noticeY+.5,cardW,noticeH);
-  ctx.textAlign='center';ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?6:8)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(aiLearningNotice||'Tests never deploy a model.',cardW-12),W/2,noticeY+noticeH*.32);
-  ctx.fillStyle='#7f876e';ctx.font=(tiny?'6':'7')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(typeof aiTrainingAdminStatusText==='function'?aiTrainingAdminStatusText():'MATCH EVIDENCE · CLOUD UNAVAILABLE',cardW-12),W/2,noticeY+noticeH*.55);
-  ctx.fillText(fitLine('BRING BACK REQUIRES CONFIRMATION · CHANGES FUTURE MATCHES ONLY · PLAYER RANKS NEVER CHANGE',cardW-12),W/2,noticeY+noticeH*.79);
-
-  const closeW=Math.min(220,cardW),closeX=W/2-closeW/2,close={id:'model_close',x:closeX,y:btnY,w:closeW,h:btnH,enabled:!aiLearningRestoreBusyId};aiLearningRects.push(close);
-  const closeHot=close.enabled&&mouse.x>=close.x&&mouse.x<=close.x+close.w&&mouse.y>=close.y&&mouse.y<=close.y+close.h;
-  ctx.fillStyle=closeHot?'#d05548':'rgba(255,255,255,.05)';ctx.fillRect(close.x,close.y,close.w,close.h);ctx.strokeStyle=close.enabled?'#d05548':'#3d463c';ctx.strokeRect(close.x+.5,close.y+.5,close.w,close.h);
-  ctx.fillStyle=closeHot?'#101208':close.enabled?'#e8d9a8':'#65725d';ctx.textAlign='center';ctx.font='700 '+(tiny?8:10)+'px ui-monospace,Consolas,monospace';ctx.fillText('CLOSE',W/2,btnY+btnH/2);
-  ctx.textAlign='left';ctx.textBaseline='alphabetic';
-}
-function aiLearningClick(){
-  if(!isMainAdmin()){ closeAiLearning(); return; }
-  for(const r of aiLearningRects){
-    if(!r.enabled||mouse.x<r.x||mouse.x>r.x+r.w||mouse.y<r.y||mouse.y>r.y+r.h) continue;
-    if(String(r.id).indexOf('model_test_')===0){aiLearningSelectedModelId=r.modelId;startAiLearningBotTest(r.modelId);}
-    else if(String(r.id).indexOf('model_restore_')===0){aiLearningSelectedModelId=r.modelId;void confirmAiLearningModelRestore(r.modelId);}
-    else if(r.id==='model_close')closeAiLearning();
-    sfx('swap');return;
-  }
-}
 function drawAdminPanel(){
   if(!isAdmin()){adminPanelOpen=false;return;}
   ctx.fillStyle='rgba(4,6,3,0.96)'; ctx.fillRect(0,0,W,H);
@@ -2217,6 +2142,7 @@ function timeDragField(){                            // TIMETURNER E: slow every
 function arenaMeleeTargetsAt(x,y,radius){
   if(practiceMode!=='arena'||!arenaCanAct()) return [];
   const lineClear=t=>typeof arenaMeleeLineClear!=='function'||arenaMeleeLineClear(x,y,t.x,t.y);
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceTargets().filter(t=>lineClear(t)&&dist2(t.x,t.y,x,y)<(radius+(t.r||15))*(radius+(t.r||15)));
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){
     return partyCpuMatch.bots.filter(t=>t.team==='B'&&t.hp>0&&lineClear(t)&&
       dist2(t.x,t.y,x,y)<(radius+(t.r||15))*(radius+(t.r||15)));
@@ -2228,6 +2154,7 @@ function arenaMeleeSpecialHit(target,dmg,kind,sourceX,sourceY){
   if(!target||practiceMode!=='arena'||!arenaCanAct()) return false;
   const x=Number.isFinite(+sourceX)?+sourceX:player.x,y=Number.isFinite(+sourceY)?+sourceY:player.y;
   if(typeof arenaMeleeLineClear==='function'&&!arenaMeleeLineClear(x,y,target.x,target.y)) return false;
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceHit(target,dmg,kind);
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()) return partyCpuHitBot(target,dmg,kind);
   arenaHitOpponent(dmg,kind); return true;
 }

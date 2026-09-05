@@ -39,11 +39,11 @@ assert.deepEqual(damage.m9,[19,24,29,33,38]);
 assert.equal(damage.ar.at(-1),damage.normal,'Impossible must deal the normal 48-damage SCAR-H hit before falloff');
 
 const prediction=JSON.parse(run(`JSON.stringify({
-  beginner:arenaBotTuning(0,'apex-v5'),easy:arenaBotTuning(1,'apex-v5')
+  beginner:arenaBotTuning(0),easy:arenaBotTuning(1)
 })`));
-assert.equal(prediction.beginner.usePrediction,false,'the newest model must not re-enable predictive shots for Beginner');
+assert.equal(prediction.beginner.usePrediction,false,'the current tactical feature set must not re-enable predictive shots for Beginner');
 assert.deepEqual({lead:prediction.beginner.leadFactor,max:prediction.beginner.maxLeadMs},{lead:0,max:0});
-assert.equal(prediction.easy.usePrediction,true,'Easy and later tiers must retain the active model prediction feature');
+assert.equal(prediction.easy.usePrediction,true,'Easy and later tiers must retain predictive aiming');
 
 assert.deepEqual({route:tiers[0].routeVariation,fixed:tiers[0].fixedRoutes,fake:tiers[0].peekFakeChance,adapt:tiers[0].prefireAdapt,
   timing:tiers[0].peekTimingVariance,move:[tiers[0].moveCommitMin,tiers[0].moveCommitMax],

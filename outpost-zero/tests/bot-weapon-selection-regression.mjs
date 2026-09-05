@@ -118,7 +118,7 @@ const partyContext=vm.createContext({
   cpuAiRange:()=>0,cpuAiBotLoadout:run('cpuAiBotLoadout'),cpuAiTryBotMelee:run('cpuAiTryBotMelee'),
   cpuAiRangedDamage:run('cpuAiRangedDamage'),
   partyCpuEnvelope:()=>true,partyCpuIsHost:()=>false,cpuTeamClock:()=>5000,partyCpuTakeLocalDamage:()=>{},
-  party:{self:{id:'local'}},player:{hp:250},recordAiTrainingBotSignal:()=>{},partyCpuHostEvaluate:()=>{},
+  party:{self:{id:'local'}},player:{hp:250},partyCpuHostEvaluate:()=>{},
   partyCpuRecordThreat:()=>{},cpuAiRegisterIncomingHit:()=>{},
   partyCpuHostDamageHuman:(_target,attack,damage)=>{hostMelee={attack,damage};return true;},
 });
@@ -172,7 +172,7 @@ assert.match(party,/weapon:weaponId/,'2v2 bot projectiles must carry their allow
 assert.match(party,/\!\[kit\.primary,kit\.secondary\]\.includes\(weapon\)/,'2v2 guests must reject bot shots outside the fixed kit');
 assert.match(party,/swingSeq:Math\.max/,'2v2 snapshots must replicate bot melee animation state');
 assert.match(rendering,/swingProgress=e\.swingT&&\(clock-e\.swingT\)/,'2v2 rendering must show replicated bot swings');
-for(const [script,version] of [['ai','20260831-duel-stability-v1'],['party','20260831-duel-stability-v1'],['rendering','20260831-twin-sai-circle-v1']])
+for(const [script,version] of [['ai','20260902-ai-cleanup-v1'],['party','20260902-ai-cleanup-v1'],['rendering','20260831-mobile-quick-melee-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current CPU cache-buster`);
 
 console.log('SUMMARY PASS bot weapon selection');

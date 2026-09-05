@@ -140,8 +140,14 @@ assert.equal(vm.runInContext('arenaUtilityFrozen()',context),false);
 assert.match(persistence,/\['arena2v2','ai1v1','ai2v2','partycpu2v2','ranked','ranked1v1','ranked2v2'\]/,
   'CPU/team/ranked routes must retain their explicit utility denial list');
 assert.doesNotMatch(persistence,/\['arena','arena2v2'/,'Casual arena must not be stripped by loadout restoration');
-assert.match(ui,/const rows=\(aiMode\|\|partyCpuMode\)\?CATS\.slice\(0,3\):CATS/,
-  'Casual loadout must show Utility while CPU duel loadouts remain three-slot');
+const rowSelector=ui.match(/const rows=([^;]+);\s*const rowH=/)||ui.match(/const rows=(\([^;]+\)\?CATS\.slice\(0,3\):CATS);/);
+assert.ok(rowSelector,'loadout must have an explicit category selector');
+for(const flags of [{aiMode:false,partyCpuMode:false,multiMode:false},{aiMode:true,partyCpuMode:false,multiMode:false},
+  {aiMode:false,partyCpuMode:true,multiMode:false},{aiMode:false,partyCpuMode:false,multiMode:true}]){
+  const rows=vm.runInNewContext(rowSelector[1],{...flags,CATS:['primary','secondary','melee','utility']});
+  assert.equal(rows.includes('utility'),!flags.aiMode&&!flags.partyCpuMode&&!flags.multiMode,
+    'Casual1v1 retains Utility; CPU, team and ranked loadouts keep their three-slot restriction');
+}
 assert.doesNotMatch(ui,/if\(pendingGameMode==='arena'\)[\s\S]{0,140}loadout\.utility=null/,
   'launching Casual must not erase the selected utility');
 assert.match(combat,/arenaHitOpponent\(fragDamageAtDistance\(Math\.sqrt\(d2g\)\),'utility_grenade'\)/,

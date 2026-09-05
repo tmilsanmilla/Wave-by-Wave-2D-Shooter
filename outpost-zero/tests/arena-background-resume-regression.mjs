@@ -52,6 +52,7 @@ const context={
   displayName:user=>user&&user.email||'player',
   storedLoadoutSlot:key=>key==='ar'?'primary':key==='m9'?'secondary':key==='knife'?'melee':key?'utility':'',
   isWeaponPublished:()=>true,isLocked:()=>false,isBotArena:()=>false,isCpuTeamArena:()=>false,
+  activeArenaMapId:()=> 'arena',
   clamp:(value,min,max)=>Math.max(min,Math.min(max,value)),
   arenaSend:()=>Promise.resolve(),arenaDropChannel:()=>{},
   duelArenaFitZoom:()=>1,aimAngle:()=>0
@@ -178,7 +179,69 @@ timers.get(expiryTimer).fn();
 assert.equal(forfeitClaims,1,'an absent player must forfeit after the full grace window');
 assert.equal(context.arena.disconnectTimer,null,'expiry must retire its timer before applying the result');
 
-assert.match(index,/js\/online\.js\?v=20260831-duel-stability-v1/,
+// Presence can be temporarily stale even while current-round Broadcast state
+// is arriving continuously. That verified traffic must keep the match alive,
+// and the UI must not accuse a connected opponent of disconnecting.
+clock+=100;
+context.arenaApplyRemoteBackground({from:'away',room:'ROOM01',epoch:4,round:2,backgrounded:false,presenceSeq:11});
+context.arenaConfirmRemoteTraffic(clock);
+presence={me:[me]};
+context.arenaMatchPresenceSync(channel);
+const trafficTimer=context.arena.disconnectTimer,originalTrafficDeadline=context.arena.disconnectDeadline;
+assert.ok(trafficTimer&&timers.has(trafficTimer),'a missing Presence row still needs a silent-traffic monitor');
+assert.doesNotMatch(context.arena.status,/connection lost|disconnected/i,
+  'a fresh validated state packet must prevent a false disconnect warning');
+clock=originalTrafficDeadline-50;
+context.arenaConfirmRemoteTraffic(clock);
+const verifiedTrafficDeadline=context.arena.disconnectDeadline;
+assert.ok(verifiedTrafficDeadline>originalTrafficDeadline,
+  'current-round traffic must move the silence deadline to a full grace period after that packet');
+clock=originalTrafficDeadline;
+timers.get(trafficTimer).fn();
+assert.equal(forfeitClaims,1,'stale Presence cannot award a forfeit while gameplay traffic remains live');
+assert.ok(context.arena.disconnectTimer&&timers.has(context.arena.disconnectTimer),
+  'the monitor must remain armed in case verified traffic later stops');
+const silentTimer=context.arena.disconnectTimer;
+clock=verifiedTrafficDeadline;
+timers.get(silentTimer).fn();
+assert.equal(forfeitClaims,2,'a real absence must still forfeit once after all verified traffic stops for 15 seconds');
+assert.equal(context.arena.disconnectTimer,null);
+
+// A foreground Broadcast can be lost during socket recovery. Repeating the
+// same visibility sequence in normal state packets must recover that player,
+// while hidden state continues to preserve the away hold.
+clock+=100;
+context.arenaApplyRemoteBackground({from:'away',room:'ROOM01',epoch:4,round:2,backgrounded:false,presenceSeq:12});
+context.arenaApplyRemoteBackground({from:'away',room:'ROOM01',epoch:4,round:2,backgrounded:true,presenceSeq:13});
+const backgroundFallbackTimer=context.arena.disconnectTimer;
+assert.ok(backgroundFallbackTimer&&timers.has(backgroundFallbackTimer));
+clock+=100;
+context.arena.roundEndAt=clock+90000;
+context.arenaReceive('state',{from:'away',room:'ROOM01',epoch:4,round:2,hp:200,x:220,y:100,angle:0,cur:'ar',portalSeq:0,
+  backgrounded:false,presenceSeq:13},channel);
+assert.equal(context.arena.opponent.backgrounded,true,
+  'an equal-sequence contradictory state cannot cancel the authoritative away notice');
+assert.equal(context.arena.disconnectTimer,backgroundFallbackTimer);
+clock+=100;
+context.arenaReceive('state',{from:'away',room:'ROOM01',epoch:4,round:2,hp:200,x:220,y:100,angle:0,cur:'ar',portalSeq:0,
+  backgrounded:false,presenceSeq:14},channel);
+assert.equal(context.arena.opponent.backgrounded,false,
+  'a newer foreground sequence repeated by validated state must restore the opponent');
+assert.equal(context.arena.disconnectTimer,null,
+  'foreground state must clear an away timer even if its one-off Broadcast was dropped');
+assert.equal(forfeitClaims,2);
+
+// A transient local channel error is also disproven by receiving a fully
+// validated current-match packet; it must not survive to become a self loss.
+clock+=100;
+context.arenaBeginDisconnectHold('self',channel,'disconnect');
+assert.equal(context.arena.disconnectSide,'self');
+clock+=50;
+context.arenaReceive('ready',{from:'away',room:'ROOM01',epoch:4,round:2,ready:true},channel);
+assert.equal(context.arena.disconnectTimer,null,'live inbound match traffic must clear a stale self reconnect hold');
+assert.match(context.arena.status,/Connection restored/);
+
+assert.match(index,/js\/online\.js\?v=20260902-ai-cleanup-v1/,
   'the deployed page must load the background-resume Arena code');
 assert.match(index,/js\/state\.js\?v=20260831-duel-stability-v1/,
   'the deployed page must load the matching background-resume Arena state');

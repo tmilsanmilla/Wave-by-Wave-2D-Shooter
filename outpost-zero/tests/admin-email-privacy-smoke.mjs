@@ -1,9 +1,10 @@
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 import process from 'node:process';
 
 const root=path.resolve(path.dirname(new URL(import.meta.url).pathname),'..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const read=file=>file.endsWith('.sql')?readFeatureSql(root,file):fs.readFileSync(path.join(root,file),'utf8');
 const admin01=read('sql/administration/Admin-01-admin-menu.sql');
 const admin02=read('sql/administration/Admin-02-admins.sql');
 const admin03=read('sql/administration/Admin-03-inbox.sql');
@@ -58,7 +59,8 @@ check('Admin message Realtime uses a sanitized wakeup table',
   /auth\.uid\(\)=recipient_id/.test(admin03)&&
   /add table public\.outpost_zero_admin_msg_wakeups/.test(admin03)&&
   /drop table public\.admin_msgs/.test(admin03)&&
-  /table:'outpost_zero_admin_msg_wakeups'/.test(networking)&&
+  /startRealtimeSection\('adminInbox','oz-admin-inbox-live'/.test(networking)&&
+  /addPrivateWakeupHandlers\(channel,'outpost_zero_admin_msg_wakeups','adminInbox'/.test(networking)&&
   !/table:'admin_msgs'/.test(networking));
 check('Admin UI no longer consumes private identity fields',
   !/(?:from_email|to_email|author_email|actor_email|target_email|player_email|user_email|granted_by_email|ROOT_ADMIN)/.test(administration+adminUi+ui)&&

@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 
-const root=path.resolve(import.meta.dirname,'..'),dir=path.join(root,'sql/leaderboards');
-const files=fs.readdirSync(dir).filter(name=>name.endsWith('.sql')).sort();
-assert.deepEqual(files,['Leaderboards-01-leaderboards.sql'],'Leaderboards must have one deployment query');
-const sql=fs.readFileSync(path.join(dir,files[0]),'utf8');
+const root=path.resolve(import.meta.dirname,'..');
+const sql=readFeatureSql(root,'sql/player/Player-01-stats.sql');
 
 assert.equal((sql.match(/^begin;$/gm)||[]).length,1);
 assert.equal((sql.match(/^commit;$/gm)||[]).length,1);
@@ -31,6 +30,8 @@ assert.doesNotMatch(sql,/outpost_zero_scores_authenticated_read[\s\S]{0,120}usin
   'authenticated users must not inherit a raw all-games read policy');
 assert.match(sql,/revoke all on table public\.outpost_zero_arena_win_receipts from public, anon, authenticated/);
 assert.doesNotMatch(sql,/grant [^;]+outpost_zero_arena_win_receipts/i,'private receipts must never be browser-readable');
+assert.match(sql,/revoke all on function public\.outpost_zero_reject_legacy_profile_score\(\)\s+from public, anon, authenticated/,
+  'the internal legacy-row trigger helper must clear direct browser EXECUTE grants');
 
 const published=[...sql.matchAll(/alter publication supabase_realtime add table public\.([a-z0-9_]+)/gi)].map(match=>match[1]);
 assert.deepEqual(published,['scores'],'Leaderboards Realtime owns only score refreshes');
@@ -40,6 +41,6 @@ assert.doesNotMatch(sql,/^\s*(?:drop|truncate) table\b/gmi,
   'consolidation must preserve live score and receipt tables');
 assert.match(sql,/delete from public\.scores\s+where game = 'outpost-zero-profile'/,
   'only the explicitly obsolete privacy snapshot rows are removed');
-assert.match(sql,/notify pgrst, 'reload schema';\s*commit;/);
+assert.match(sql,/notify pgrst, 'reload schema';[\s\S]*select public\._outpost_zero_apply_player_security\('Player 01'\);\s*commit;/);
 
-console.log('leaderboards consolidation regression: PASS');
+console.log('Player 01 leaderboard consolidation regression: PASS');

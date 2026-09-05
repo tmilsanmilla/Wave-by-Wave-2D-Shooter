@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 import vm from 'node:vm';
 
 const root=path.resolve(import.meta.dirname,'..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const read=file=>file.endsWith('.sql')?readFeatureSql(root,file):fs.readFileSync(path.join(root,file),'utf8');
 const weaponsSource=read('js/weapons.js');
 const upgrades=read('js/upgrades.js');
 const adminUi=read('js/admin-ui.js');
@@ -181,7 +182,7 @@ assert.equal(editorContext.UTILITIES.freezer.dmg,undefined,'Freezer must ignore 
 
 const saveRpc=sourceRange(admin02,
   'create or replace function public.save_outpost_zero_weapon_definition(',
-  '-- Existing projects may still have Weapons 01');
+  'do $weapon_write_boundary$');
 assert.match(saveRpc,/v_key[\s\S]*v_field/,'server validation must consider the equipment key and field together');
 for(const field of ['cd','dmg','range','rechargeKills','speed','fuseMs','radius','freezeMs'])
   assert.match(saveRpc,new RegExp(`v_field='${field}'[\\s\\S]{0,220}v_number not between`),
@@ -212,8 +213,8 @@ for(const value of ['19','7','1.4','88','2.1'])assert.match(freezerText,new RegE
 assert.doesNotMatch(fragText,/\b170\b|up to 300 at center/,'Frag details must not retain old hardcoded balance text');
 assert.doesNotMatch(freezerText,/\b105\b|1\.35s|2\.5s/,'Freezer details must not hide admin overrides behind defaults');
 
-for(const [file,version] of [['weapons','20260831-frag-range-v1'],['admin-ui','20260831-frag-range-v2'],['progression','20260831-frag-range-v2'],
-  ['upgrades','20260831-hub-tools-settings-v1'],['combat','20260831-utility-preround-v1'],['ui','20260831-frag-range-v1']])assert.match(
+for(const [file,version] of [['weapons','20260831-frag-range-v1'],['admin-ui','20260902-ai-cleanup-v1'],['progression','20260831-frag-range-v2'],
+  ['upgrades','20260831-hub-tools-settings-v1'],['combat','20260831-utility-preround-v1'],['ui','20260902-ai-cleanup-v1']])assert.match(
   index,new RegExp(`outpost-zero/js/${file}\\.js\\?v=${version}`),
   `${file}.js must use its current cache version`,
 );

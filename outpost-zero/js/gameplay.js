@@ -419,7 +419,7 @@ function spawnPracticeEnemy(sp, id){
   sp.alive=true;
   burst(sp.x, sp.y, '#8d949c', 8, 3);
 }
-let tryLoadoutBackup=null, tryBorrowedWeaponKey=null, tryBorrowedUtilityKey=null;
+let tryLoadoutBackup=null, tryBorrowedWeaponKey=null, tryBorrowedUtilityKey=null, tryPracticeLoanKey=null;
 let practicePickOpen=false, practicePickKey=null, practicePickRects=[], soloPractice=false, practiceReturnPage='practice';
 const PRACTICE_MODES=[
   {id:'range', name:'SHOOTING RANGE', d:'one of every enemy \u00b7 they stand still'},
@@ -427,6 +427,16 @@ const PRACTICE_MODES=[
   {id:'tracking', name:'TRACKING DUMMY', d:'moving target \u00b7 speed + direction'},
   {id:'boss',  name:'WARLORD',        d:'fight a boss one on one'},
 ];
+function soloPracticeLoanAllows(k){
+  const key=String(k||'');
+  if(!key||state!=='play'||!soloPractice||!tryLoadoutBackup||key!==String(tryPracticeLoanKey||''))return false;
+  // The loan exists only inside a real Practice drill. It never authorizes an
+  // Arena match, an unpublished item, another loadout slot, or saved ownership.
+  if(practiceMode==='arena'||!PRACTICE_MODES.some(mode=>mode.id===practiceMode))return false;
+  const adminSeasonPreview=typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(key)&&
+    typeof fallEligible==='function'&&fallEligible();
+  return (typeof isWeaponPublished!=='function'||isWeaponPublished(key))||adminSeasonPreview;
+}
 function normalizePracticeTrackingDirection(value=practiceTrackingDirection){
   const wrapped=((Number(value)||0)%360+360)%360;
   return (Math.round(wrapped/PRACTICE_TRACKING_DIRECTION_STEP)*PRACTICE_TRACKING_DIRECTION_STEP)%360;
@@ -507,7 +517,7 @@ function tryWeaponOnRange(k, mode){
   const published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
   if((!w&&!isUtil)||(!published&&!adminSeasonPreview)){sfx('dry');return false;}
   tryLoadoutBackup={primary:loadout.primary, secondary:loadout.secondary, melee:loadout.melee, utility:loadout.utility};
-  tryBorrowedWeaponKey=null; tryBorrowedUtilityKey=null;
+  tryBorrowedWeaponKey=null; tryBorrowedUtilityKey=null; tryPracticeLoanKey=k;
   if(!WEAPONS[k] && VAULT_WEAPONS[k]){ WEAPONS[k]=VAULT_WEAPONS[k]; tryBorrowedWeaponKey=k; } // borrow it for the range only
   if(isUtil && !UTILITIES[k] && VAULT_UTILITIES[k]){ UTILITIES[k]=VAULT_UTILITIES[k]; tryBorrowedUtilityKey=k; }
   if(isUtil) loadout.utility=k;
@@ -533,7 +543,7 @@ function restoreTryLoadout(){
              melee:tryLoadoutBackup.melee, utility:tryLoadoutBackup.utility};
   if(tryBorrowedWeaponKey&&WEAPONS[tryBorrowedWeaponKey]===VAULT_WEAPONS[tryBorrowedWeaponKey]) delete WEAPONS[tryBorrowedWeaponKey];
   if(tryBorrowedUtilityKey&&UTILITIES[tryBorrowedUtilityKey]===VAULT_UTILITIES[tryBorrowedUtilityKey]) delete UTILITIES[tryBorrowedUtilityKey];
-  tryLoadoutBackup=null; tryStartWeapon=null; tryBorrowedWeaponKey=null; tryBorrowedUtilityKey=null; practiceReturnPage='practice';
+  tryLoadoutBackup=null; tryStartWeapon=null; tryBorrowedWeaponKey=null; tryBorrowedUtilityKey=null; tryPracticeLoanKey=null; practiceReturnPage='practice';
   if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
 }
 function startPractice(mode){

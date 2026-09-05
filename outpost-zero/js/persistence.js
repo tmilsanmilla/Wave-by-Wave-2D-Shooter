@@ -478,9 +478,10 @@ function queueProfileSave(){                          // debounce: batch rapid c
   profileMutationVersion++;profilePending=true;profilePendingUserId=String(authUser.id);profileSaveT=Date.now()+1200;
 }
 function loadMeta(){
-  // Retire the old device/account-specific training cache without importing
-  // its client-forgeable value into the shared global total.
+  // Retire obsolete bot telemetry state. These keys are never read or sent.
   try{ localStorage.removeItem('oz_bot_training_v1'); }catch(e){}
+  try{ localStorage.removeItem('oz_ai_training_queue_v1'); }catch(e){}
+  try{ localStorage.removeItem('oz_ai_training_install_v1'); }catch(e){}
   try{
     const m=JSON.parse(localStorage.getItem('oz_meta')||'{}');
     // `owner:''` is a real guest cache. A UUID belongs to that account. Older
@@ -817,6 +818,9 @@ const TEMP_KEYS = ['flamethrower','fireworks','bdaggers','beachball'];  // Summe
 function isLocked(k){
   if(FALL_KEYS.includes(k)) return !fallEligible();  // unreleased: admins in Test Mode only
   if(typeof isWeaponPublished==='function'&&!isWeaponPublished(k)) return true; // publication outranks ownership, offline preview, and Test Mode
+  // A weapon card can lend exactly one published item inside solo Practice.
+  // This changes runtime access only; it never writes gemOwned or a loadout.
+  if(typeof soloPracticeLoanAllows==='function'&&soloPracticeLoanAllows(k)) return false;
   if(!sb) return false;                              // preview/offline: everything open
   if(testMode) return false;                         // TEST MODE: published shop gear is free; unpublished gear stays locked
   if(GEM_SHOP.some(it=>it.key===k)) return !gemOwned[k]&&!temporarilyOwnsWeapon(k); // timed gifts never enter gemOwned

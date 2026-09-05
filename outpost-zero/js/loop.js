@@ -9,6 +9,7 @@ function frame(){
   last = wall;
   wheelTick(Math.min(Math.max(raw,0),60000));       // total site time; tolerate background tabs without clock jumps
   arenaWallTick(wall);                              // online clocks + snapshots never pause with the campaign clock
+  if(typeof duelServiceTick==='function')duelServiceTick(Date.now());
   partyTick(Date.now());                            // party admission, liveness, and host snapshots keep running on menus
   if(typeof socialTick==='function')socialTick(Date.now()); // private CPU invites surface even away from Social; Realtime has a poll fallback
   partyCpuWallTick(Date.now());                     // host-run Party CPUs and round clocks never depend on render FPS
@@ -67,12 +68,13 @@ function frame(){
     // keep the home-page leaderboard fresh (throttled to every 30s, on wall time)
     // realtime pushes changes; polling stays only as a safety net (rare when live)
     if(sb){
-      if(rtStatus==='down' && rtRetryT && Date.now()>rtRetryT){ rtRetryT=0; setupRealtime(); }
+      if(typeof realtimeRetryTick==='function')realtimeRetryTick(Date.now());
+      if(typeof realtimeFallbackTick==='function')realtimeFallbackTick(Date.now());
       // Signed-out viewers cannot receive raw score-row Realtime events under
       // the privacy policy, so keep their public RPC board on the short poll.
-      const every = rtStatus==='live'&&authUser ? 180000 : 30000;
+      const every = typeof realtimeSectionLive==='function'&&realtimeSectionLive('leaderboards')&&authUser ? 180000 : 30000;
       if(Date.now()-Math.max(boardT,boardRequestT) > every){
-        fetchBoard(); fetchBanners(); fetchPrices(); fetchWeaponDefs(); if(authUser) fetchAdmins(); if(isAdmin()) fetchMsgs();
+        fetchBoard();if(authUser)fetchAdmins();
       }
     }
     drawSelect();

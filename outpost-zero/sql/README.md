@@ -1,387 +1,237 @@
 # Outpost Zero database setup
 
-Database setup is organized by feature so there is no single giant SQL file.
-Each feature has its own numbered scripts and may be installed independently.
+Outpost Zero uses twelve saved SQL queries: Player 01–04, Admin 01–04,
+Multi device 01–03, and the read-only Leaderboard 01. Player and Admin 04 own
+their section's policies and permissions. Feature installers call the matching
+security installer before their transaction commits. Multiplayer 01/02 remain
+closed to browsers until Multi device 03 grants the reviewed RPC access.
 
-For a fresh Outpost Zero installation, use this dependency order:
+## Fresh installation order
 
-1. Social `01` through `04`
-2. `profiles/Profiles-01-profiles.sql`
-3. `leaderboards/Leaderboards-01-leaderboards.sql`
-4. Administration `01` through `03`
-5. `weapons/Weapons-01-weapons.sql`
-6. `ai/01-global-training.sql` if the cross-device CPU ladder is enabled
+Run the complete files in this exact order:
 
-## Social
+1. `player/Player-04-security.sql`
+2. `administration/Admin-04-security.sql`
+3. `player/Player-03-social-menu.sql`
+4. `player/Player-01-stats.sql`
+5. `player/Player-02-weapons-and-cosmetics.sql`
+6. `administration/Admin-01-admin-menu.sql`
+7. `administration/Admin-02-admins.sql`
+8. `administration/Admin-03-inbox.sql`
+9. `multi-device/Multi-device-01-duels.sql`
+10. `multi-device/Multi-device-02-ranked.sql`
+11. `multi-device/Multi-device-03-security.sql`
+12. `leaderboards/Leaderboard-01.sql` (read-only display)
 
-The Social feature provides unique public usernames, friendships, private messages, row
-level security, API privileges, Realtime refresh hints, account-setting rules,
-server-authorized Party invitations, public Parties, and threaded private-conversation state. Public Social profiles, friendships, and messages
-share one core data script because they form the same Social model. All Social
-RLS, browser privileges, RPC permissions, and Realtime publication membership
-are centralized in one final security script.
+Player 03 is the first feature because it creates the private account profile
+and public usernames used by Player 01 and the Admin queries. Security 04 can
+be installed first on either a fresh or existing project; it applies only to
+complete feature APIs. Every installer is rerunnable and transactional.
+Leaderboard 01 only reads existing data and needs no setup transaction.
 
-In the Supabase Dashboard, open **SQL Editor**, paste each file below, and run
-them one at a time in this exact order:
+In the Supabase SQL Editor, use these exact saved-query names without dashes or
+`.sql`:
 
-1. `social/Social-01-social-menu.sql` — profiles, friendships, private messages, threaded Inbox state, Archive/Delete, and username messaging
-2. `social/Social-02-usernames.sql` — username-setting RPC and the server-enforced 21-day change clock
-3. `social/Social-03-parties.sql` — Realtime online discovery, invitations, public Parties, host approval, unique names, and search
-4. `social/Social-04-security.sql` — every Social RLS policy, browser/table privilege, RPC permission, and Realtime publication rule
+- **Player 01 Stats**
+- **Player 02 Weapons and Cosmetics**
+- **Player 03 Social Menu**
+- **Player 04 Security**
+- **Admin 01 Admin Menu**
+- **Admin 02 Admins**
+- **Admin 03 Inbox**
+- **Admin 04 Security**
+- **Multi device 01 Duels**
+- **Multi device 02 Ranked**
+- **Multi device 03 Security**
+- **Leaderboard 01**
 
-All four scripts are rerunnable. Run the complete sequence again after changing
-the Social schema so tables are preserved while functions, triggers, policies,
-privileges, and realtime membership are refreshed.
+When this project says to **update Supabase**, edit the matching saved query,
+paste the complete current file, press **Save**, and then press **Run**. Merely
+changing the repository or running an unnamed temporary query does not update
+the saved SQL Editor query.
 
-What each Social file does, concretely:
+## Player 01 Stats
 
-- Run Social `01` once on a project that has never installed Social. It creates
-  profiles, friendships, private messages, and per-player conversation state;
-  gives every existing Auth account a collision-safe temporary username; and
-  provisions future accounts automatically. It also groups replies into one
-  conversation per player, keeps at most 25 conversations active, provides
-  per-player Archive/Delete state, and installs username-addressed messaging
-  with block and abuse-limit checks. Deleting hides existing history only for
-  that player; the other participant keeps their copy. Rerunning preserves all
-  rows.
-- Run Social `02` after `01`. It adds `username_changed_at`, moves every username
-  write behind `outpost_zero_set_username`, and enforces one change per 21 days
-  with a database trigger and row lock. Replacing a generated `op_<uuid>` name
-  for the first time never has a wait. Because old databases did not record
-  historical username-change dates, each already-chosen account receives one
-  immediate migration-grace change; the 21-day clock starts when that change is
-  saved. It does not read, store, or publish account emails.
-- Run Social `03` after `02`. It uses Supabase Realtime Presence for the visible
-  online-player list, so it creates no database heartbeat row or heartbeat RPC.
-  The database safely resolves Realtime usernames into viewer-bound opaque
-  picker tokens and short-lived Party invitations. A normal Party invite may
-  go to an accepted friend or a player visible through Realtime; CPU 2v2
-  invites remain accepted-friend-only. The database checks identity, blocks,
-  ticket ownership, and the CPU friendship rule when sending, gives
-  normal Party invites a five-minute lifetime and CPU invites two minutes,
-  makes retries exact-once, and applies per-sender/per-recipient abuse limits.
-  Incoming lists expose only the sender username and invite metadata; only the
-  intended recipient can claim the hidden party code/join token. Claims are
-  safely repeatable by that recipient until expiry so reloads and failed
-  connections can retry. The same file adds the public Party directory, unique
-  case-insensitive Party names, host/name search, and pending join-request queue.
-  The directory returns only the Party name, host username, and Party size; it
-  never returns a code or join token. The host must accept or decline each
-  request. Only an accepted requester receives the short-lived code and token.
-  No email or Auth account UUID is returned. The public Party
-  directory still has a short expiring lease so abandoned listings disappear;
-  that Party-record lease is not player online presence.
-- Run Social `04` last. It is the one Social security file: profile, friendship,
-  message, Party, and Inbox RLS; narrow table/sequence privileges; RPC execution
-  permissions and `SECURITY DEFINER` elevation; and Realtime publication membership. Raw Party capability rows
-  remain unreadable, friendships/messages remain participant-only, and username
-  writes remain limited to the cooldown RPC. Action-specific authentication,
-  block, and rate-limit checks stay inside their RPCs because those checks must
-  execute atomically with the action they protect.
+`player/Player-01-stats.sql` owns leaderboard and CPU-ranking state:
 
-If the legacy Social `05` is the last Social file you already ran, that same
-username code is now named Social `02`; do not rerun it. Run the updated
-`social/Social-01-social-menu.sql` first to add the merged Private Inbox features,
-then run `social/Social-03-parties.sql`, then run `social/Social-04-security.sql`, each
-in its own query. No Leaderboards rerun is required for that Social-only update. If a former Social `06`, `07`,
-or `09` was already installed, the consolidated Social `03` safely upgrades
-those tables and removes the old database online-heartbeat table and functions.
-Deploy the matching game JavaScript at
-the same time, then hard-refresh or sign out/in. Missing the updated `01` keeps
-basic message delivery but disables saved Archive/Delete state and non-friend
-messages. Missing `03` hides online-player invite discovery and disables the public directory.
-Missing the final Social `04` means the consolidated security installation is
-incomplete; do not use the Social features until it succeeds.
+- `scores` stores Endless scores, Arena wins, and referral claims. It has
+  forced RLS, narrow authenticated writes, public reads through bounded RPCs,
+  and the only Player 01 Postgres Realtime feed.
+- `outpost_zero_arena_win_receipts` makes Arena wins exact-once. It has forced
+  RLS, no browser table access, and no Realtime publication.
+- `outpost_zero_bot_ladder` stores each signed-in player's Beginner through
+  Impossible rank.
+- `outpost_zero_bot_ladder_matches` makes CPU results exact-once. Both ladder
+  tables have forced RLS, RPC-only access, and no Realtime publication.
 
-Future database features should get a sibling folder under `sql/` with their
-own numbered scripts and a dependency order documented here.
+The tactical CPU brain remains in game code. Player 01 stores ranking only; it
+does not train, select, or download bot code. Guests use Beginner without a
+database row, and Test Mode never changes rank.
 
-## Profiles
+The public leaderboard RPC exposes only an account ID, safe username label,
+and score. It never exposes Auth email or the private account profile. CPU 1v1
+and fully local CPU 2v2 update the ladder; friend and Party CPU games do not.
 
-Run `profiles/Profiles-01-profiles.sql` after Auth is available and before
-Administration. It is the single owner of the private `profiles` game-save
-blob: storage, owner-only forced RLS, narrow browser privileges, and safe schema
-checks. It removes obsolete Realtime membership and legacy column grants, and
-prevents new non-object save blobs without deleting malformed legacy rows.
-Public usernames remain in `social_profiles` under Social. Profiles
-does not use Postgres Realtime because the game loads and saves the signed-in
-account directly.
+## Player 02 Weapons and Cosmetics
 
-The former Dashboard snippets `Profiles 01` and `Profiles 02` are superseded by
-this one rerunnable query. Run the replacement successfully before deleting the
-old `Profiles 02` snippet. Existing profile rows are preserved.
+`player/Player-02-weapons-and-cosmetics.sql` owns shared equipment data:
 
-## Leaderboards
+- `weapon_prices` stores current shop prices.
+- `weapon_defs` stores live stats, price metadata, and publication state.
 
-The public leaderboard reads live Social usernames through a narrow RPC instead
-of exposing account emails or trusting the name stored with a score. Run this
-after Social core has created and backfilled player usernames:
-
-1. `leaderboards/Leaderboards-01-leaderboards.sql`
-
-Leaderboards 01 merges the former Dashboard queries 01, 02, and 03. It creates
-missing storage without replacing live tables, validates the score and receipt
-shapes before making changes, preserves every real score and Arena receipt, and
-installs all board RPCs, forced RLS, exact-once Arena wins, narrow browser
-grants, and the one required `scores` Realtime membership. It also removes the
-private receipt table from Realtime if an older miscellaneous query published
-it.
-
-In the Dashboard, replace **Leaderboards 01**, Save, and Run it successfully
-before deleting the saved **Leaderboards 02** and **Leaderboards 03** queries.
-If the replacement fails its shape check, leave the old queries in place and
-inspect the reported legacy table mismatch; the failed transaction changes no
-leaderboard data.
-
-This also removes obsolete `outpost-zero-profile` score rows that could contain
-legacy account-email JSON, rewrites old score aliases to Social usernames, and
-installs the narrow username/high-score player lookup used by public profiles.
-It also blocks old browser tabs from recreating those JSON rows and removes
-anonymous direct reads of the raw score table. Signed-in score saving and
-referrals retain authenticated access through the forced-RLS rules in
-Leaderboards 01. The same file owns the `scores` Realtime membership used to
-refresh live boards and referral claims, plus the private, idempotent Arena-win
-receipts and atomic `record_outpost_zero_arena_win` RPC.
-
-This script is rerunnable. Its public RPC exposes only user ID, username, and
-score, and hard-limits requests to the two public Outpost Zero boards and five
-rows. Authenticated direct reads are limited to the two public boards, the
-signed-in account's own rows, and referral claims targeting that account; rows
-for another game sharing `scores` are not exposed by Outpost Zero's policy.
-Accounts created before usernames were required use `USERNAME_NOT_SET` as an
-internal RPC marker instead of publishing an email or UUID-like temporary
-label. This covers both the current 20-character generated handle and the
-legacy 8-character version. The signed-in owner may see their own email from
-their private Auth session until they choose a username. Creator/Main may also
-request a separately role-checked fallback label for unfinished top-five rows;
-regular and signed-out viewers see a non-identifying placeholder. The public
-leaderboard RPC never selects from `auth.users` and never returns an email.
-Blank, malformed, and email-shaped legacy handles are treated as unfinished.
-Cleanup is restricted to score games
-beginning with `outpost-zero`, so it does not rename rows belonging to another
-game that shares the table.
-
-## Weapons
-
-Run `weapons/Weapons-01-weapons.sql` after Admin 01. It owns both
-`weapon_prices` and `weapon_defs`: storage, forced RLS, narrow browser grants,
-RPC-only Creator/Main writes, and Realtime publication for game subscribers.
-This includes `weapon_defs`, which the old miscellaneous Realtime query omitted.
+Both tables have forced RLS, public read-only browser access, Creator/Main
+writes through the validated Admin 02 RPC, and Postgres Realtime refresh feeds.
 Unpublished-weapon ownership remains enforced by the shipped game code.
-After Admin 02 is installed, Creator and Main save validated definitions plus
-the legacy/unscaled shop cost atomically through
-`save_outpost_zero_weapon_definition`. Existing Co-admin/Tester suggestions
-remain reviewable, while the current game no longer shows the old Admin Tools
-suggestion composer.
 
-The saved `Realtime 01` query is legacy only. Admin, Social, Leaderboards, and
-Weapons each own their own security and Realtime membership; do not rerun the
-miscellaneous query because it contains an obsolete Admin-role implementation.
-Delete the saved snippet after the owning sections are verified. Do not delete
-Supabase's `supabase_realtime` publication itself.
+Cosmetics have no standalone SQL table to migrate. Cosmetic colors and equip
+animations are fixed catalogs in game code; each player's owned and equipped
+cosmetics remain inside that player's private `profiles.data` save under
+Player 03. This is intentional: Player 02 is the Weapons and Cosmetics section,
+while Player 03 remains the single owner of the account save blob. Do not add a
+second cosmetic ownership table or duplicate those profile fields.
 
-The Layout Editor has been removed from the game, so the Dashboard-only `UI 01`
-query and its unused `public.ui_layout` table may also be deleted. They are not
-replaced by another SQL file; ordinary interface layout remains in game code.
+## Player 03 Social Menu
 
-## Account password changes
+`player/Player-03-social-menu.sql` owns account saves, usernames, Friends,
+Private Inbox conversations, blocks, Party invitations, and public Parties:
 
-There is no password SQL file. Passwords belong to Supabase Auth, not a public
-game table. The signed-in Settings action calls `supabase.auth.updateUser` with
-the new password; Supabase hashes and stores it in Auth. Do not create a
-password column, function, or trigger in `public`, and never paste a password
-into the SQL Editor.
+- `profiles` is the signed-in player's private game-save blob. It has forced
+  owner-only RLS and no Postgres Realtime feed.
+- `social_profiles` stores public usernames. It has forced RLS; signed-in
+  players may read usernames, while username changes use the cooldown RPC. It
+  is not published through Postgres Changes.
+- `friendships` has forced participant-only RLS and a Realtime refresh feed.
+- `private_messages` has forced participant-only RLS and a Realtime refresh
+  feed.
+- `private_conversation_states` has forced owner-only RLS and a Realtime
+  refresh feed for Inbox, Archive, unread, and delete state.
+- `outpost_zero_party_invite_targets`, `outpost_zero_party_invites`,
+  `outpost_zero_public_parties`, and
+  `outpost_zero_public_party_requests` have forced RLS, RPC-only access, and no
+  Postgres Changes publication because they contain private capability state.
+
+Online-player discovery and immediate public-Party decisions use Supabase
+Realtime Presence/Broadcast. That does not require a database heartbeat table
+or publication of raw Party rows.
+
+Player 03 also owns Social Inbox maintenance. Once per year, it may remove a
+message older than one year only when it has been read, both participants have
+archived or deleted past it, and no newer message reopened either conversation.
+Unread or one-sided history is preserved.
 
 ## Administration
 
-Administration is installed as exactly three rerunnable SQL files. Inbox and
-Suggestions share Admin 03 so the new fourth UI section does not create another
-database script. Run them in this order after Social `01` through `04`,
-`Profiles 01`, and `Leaderboards 01`:
+The Admin area has three features and one shared security installer:
 
-1. `administration/Admin-01-admin-menu.sql`
-2. `administration/Admin-02-admins.sql`
-3. `administration/Admin-03-inbox.sql`
-
-| File | Section | Purpose |
+| Saved query | File | Purpose |
 | --- | --- | --- |
-| Admin 01 | Admin Menu | Secure username-or-email player lookup/editing, temporary and permanent grants, bans, appeals, approval requests, and the append-only audit LOG. |
-| Admin 02 | Admins | Creator/Main/Co/Tester hierarchy, Add/Promote/Demote/Remove, Tester/Co weapon suggestions, heading/details global updates, and non-enumerable promo codes. |
-| Admin 03 | Inbox + Suggestions | Targeted player notifications, one-row global update notifications, staff messages, Archive/read state, Reports, report export, Realtime refresh hints, and LOG access through Admin 01. |
+| Admin 01 Admin Menu | `administration/Admin-01-admin-menu.sql` | Secure username-or-exact-email player lookup/editing, grants, bans, appeals, requests, and the append-only audit LOG. |
+| Admin 02 Admins | `administration/Admin-02-admins.sql` | Creator/Main/Co/Tester roles, promote/demote/remove, weapon suggestions, heading/details updates, and non-enumerable promo codes. |
+| Admin 03 Inbox | `administration/Admin-03-inbox.sql` | Admin Inbox, global and targeted notifications, Archive/read state, Reports, report export/resolve, Suggestions views, and private Realtime wakeups. |
+| Admin 04 Security | `administration/Admin-04-security.sql` | Extracted Admin RLS, table grants, RPC permissions, and approved RPC elevation. |
 
-All three files preserve existing rows and can be rerun. Each transaction
-creates its own required Admin tables before installing functions and security.
-Actor identity and roles are resolved from `auth.uid()` plus server-owned rows;
-the browser cannot claim an actor, role, account ID, private target email, or
-timestamp. Private tables use forced RLS and narrow column/RPC privileges.
+Every Admin feature applies its corresponding RLS from Admin 04 before commit.
+Private tables are forced-RLS and RPC-only. Admin 01 publishes no raw table.
+Admin 02 publishes only `banners`.
+Admin 03 publishes only the recipient-filtered
+`outpost_zero_admin_msg_wakeups` and `outpost_zero_report_wakeups`; raw
+messages, notifications, reports, and receipts stay private.
 
-Admin 01 includes the former Appeals setup and the safe internal compatibility
-functions required by its audited wrapper. Private Auth email resolution occurs
-inside Postgres. Creator/Main may target any account by its exact email, but a
-chosen username remains the returned/displayed identity; email is displayed
-only as the fallback for an account without a username. Co-admins remain
-username-only except for their own fallback identity. Public and non-admin APIs
-remain email-free. On its first run,
-Admin 01 reads the creator username from the private, transaction-local
-`outpost_zero.creator_username` setting and pins that account's Auth UUID in a
-forced-RLS config row. The public file contains no creator identity. Existing
-installations already have the UUID and need no setting. Later username or
-login-email changes do not change the creator role, and clients cannot read the
-UUID. Creator and Main admins may apply permanent currency/score/ownership
-edits directly. Testers remain unable to call these legacy Admin Menu APIs.
+On a completely fresh project, Admin 01 needs the creator's chosen username in
+the transaction-local `outpost_zero.creator_username` setting. It converts that
+username to an Auth UUID and permanently pins the creator account. Existing
+projects already have the pinned UUID and must not reseed it.
 
-Admin 02 owns the staff roster and update lifecycle. The fixed creator may
-manage every tier. Main admins may manage Co-admins and Testers but cannot
-alter the creator or another Main. Co-admin updates remain drafts until a
-creator/Main approves them. Approved updates are canonical `banners` rows;
-Admin 03 turns each into one shared Inbox notification instead of copying a
-row per player. Home/Inbox lists show the short heading and the full reader
-shows details. Creator/Main can read and review the Suggestions queue and save
-strictly validated weapon edits directly; the save function gives a clear
-call-time setup error when Weapons 01 has not been installed yet. Every
-signed-in account may redeem each promo code once; their code catalog has no
-player-readable table policy.
+Admin 03 owns Admin Inbox maintenance. Unread messages are never deleted. A
+manually archived message, or a read message auto-archived for at least seven
+days, becomes eligible only after it is one year old.
 
-Admin 03 owns the private Admin Inbox plus the report data shown in Suggestions.
-Player notifications use recipient-private/global rows and per-account read
-receipts. The staff Inbox uses `admin_msgs`; Testers may read/archive only their
-own messages, while only creator/Main may send. Signed-in reports use a
-server-attributed submission RPC; ordinary accounts have a transactional
-30-second limit while staff do not. Raw report rows have no browser access.
-Creator/Main list, resolve, and export only sanitized rows through bounded
-RPCs. New Outpost Zero reports neither store nor return a staff/player tier;
-any legacy column used by another game is left intact. Bulk Resolve All/Custom
-is an atomic newest-open operation scoped to Outpost Zero. A recipient-private
-Realtime wakeup replaces publication of report contents. The LOG remains the
-append-only Admin 01 audit table and is exposed only through its bounded RPC.
-Realtime subscriptions are refresh
-hints; RLS and RPC checks remain authority.
+## Realtime ownership
 
-For the Suggestions/direct-weapon-edit update, rerun only these files in order:
+Supabase Postgres Changes uses one managed publication named
+`supabase_realtime`. Each owning section independently adds only its
+approved refresh tables and removes its private tables. This isolates feature
+setup without creating competing publications.
 
-1. `administration/Admin-02-admins.sql` — installs the Creator/Main Suggestions
-   review boundary and validated atomic weapon-save RPC. If the weapon tables
-   already exist, it also removes their legacy direct browser write policies
-   and grants.
-2. `administration/Admin-03-inbox.sql` — unifies reports, installs bulk
-   Resolve All/Custom, and keeps list/export/Realtime private.
+Published tables:
 
-Both preserve report, suggestion, and weapon-definition rows when rerun. The
-checked-in `Weapons-01-weapons.sql` also contains the RPC-only perimeter for
-future fresh installs, but it does not need to be rerun for this update because
-Admin 02 tightens already-existing weapon tables conditionally.
+- Admin 02: `banners`
+- Admin 03: `outpost_zero_admin_msg_wakeups`,
+  `outpost_zero_report_wakeups`
+- Player 01: `scores`
+- Player 02: `weapon_prices`, `weapon_defs`
+- Player 03: `friendships`, `private_messages`,
+  `private_conversation_states`
+- Multi device 03: `outpost_zero_duel_wakeups` (only the recipient can read it)
 
-The old Admin 04–08 and Appeals 01 snippets are superseded by these three files
-and must not be rerun after consolidation.
+Every other Outpost Zero table is explicitly kept out of Postgres Changes.
+Realtime events are refresh hints only; RLS and server RPC checks remain the
+authority for stored records. Delete the old saved query named **Realtime 01**
+only after the current section installers run successfully. Delete only its
+SQL Editor query card—never delete
+the managed `supabase_realtime` publication.
 
-## AI bot ladder
+## Replacing the old saved queries
 
-Current installation status: AI `01` is the live CPU ladder migration. AI `02`
-and AI `03` were intentionally skipped. They store model-release history and
-privacy-limited match evidence; neither one trains a bot or is required for CPU
-opponents, difficulty tiers, Score progress, promotion, or demotion. Do not run
-AI `02` or `03` unless those optional history/evidence features are deliberately
-restored later.
+First Save and Run the current installers. Confirm that they finish
+successfully before deleting any old SQL Editor query cards. Then remove the
+superseded standalone Player-source queries, including old Profiles, the old
+Leaderboard setup copies, Weapons, Social, Realtime, Maintenance, Promo, and UI
+query cards. Keep the current **Leaderboard 01** read-only display and all
+twelve listed queries. Deleting saved editor text does not delete game tables.
 
-The tactical bot brain is shared by every player, while signed-in players have
-private cloud ladder progress through five execution tiers: Beginner, Easy,
-Medium, Hard, and Impossible. Guests play Beginner without creating database
-state. Normal completed AI matches update only the signed-in account; creator
-and main-admin comparison tests never update the ladder.
+The Layout Editor is removed, so `public.ui_layout` is not recreated. Promo
+codes remain in Admin 02. Password changes use Supabase Auth directly and never
+belong in a public SQL table. Username-or-email sign-in uses the deployed
+`outpost-zero-sign-in` Edge Function documented in `supabase/README.md`.
 
-The files remain documented for reference. For the current deployment, run
-only `01`. If the optional history/evidence features are restored later, their
-dependency order is:
+## Player 04 Security and Leaderboard 01
 
-1. `ai/01-global-training.sql` — private per-account ladder, exact-once match
-   receipts, RLS, narrow read/submit RPCs, and API grants
-2. `ai/02-model-history.sql` — immutable tactical model releases, the global
-   active-model pointer, creator/main-admin activation, and an append-only audit
-3. `ai/03-game-training.sql` — privacy-limited completed-match training
-   summaries, exact-once offline retries, and creator/main-admin aggregates
+Player 04 contains the exact extracted Player RLS, browser grants, and RPC
+permissions. Its private installer is not executable by browser or service
+roles. Each Player feature requires it and applies its own boundary atomically.
+Gameplay validation remains inside the feature RPCs.
 
-If Social was the last feature you installed, do not rerun or replace any
-Social file for this change; use separate SQL Editor queries for the AI files.
-If AI 01 and AI 02 were already installed but AI 03 was not, AI 03 remains the
-next script for match-evidence summaries. The ladder correction immediately
-below is separate and still requires the updated AI 01 rerun.
+Leaderboard 01 displays existing Endless scores, casual 1v1 wins, and CPU
+rankings. It creates no tables and changes no data. Equal score values share a
+rank; CPU ordering uses difficulty then progress. Player 01 remains the owner
+of all saving and ranking rules. The leaderboard uses the public username
+helper so private emails are not exposed.
 
-For the August 27 CPU-ladder correctness update, paste and run the **entire
-updated `ai/01-global-training.sql` file again**, even if AI 01 was installed
-before. Open a new SQL Editor query, paste that whole file by itself, and press
-Run. This is an in-place rerun: do not replace a table, do not erase ladder
-rows, and do not append the SQL to another file. AI 01 is independent of every
-Social and Administration migration, so none of those files should be rerun
-for this correction. The AI 01 rerun preserves every account and receipt,
-updates the result RPC, and repairs the old Impossible win-streak value `3` to
-the completed/reset value `0` with a newer revision. It also enforces that both
-stored streak counters are always `0`, `1`, or `2`. AI 02 and AI 03 do not need
-to be rerun for this ladder-only correction.
+## Multi device Duels and Ranked
 
-The historical AI 01 filename is retained for ladder compatibility. All three
-AI scripts are rerunnable and do not delete profile data.
-If an older copy of AI 01 created the abandoned shared-XP tables, it revokes the
-old browser API but leaves those tables intact. Supabase may show a general
-warning because it creates `security definer` RPCs; those functions have fixed
-search paths, explicit role grants, authentication checks, and no direct client
-table permissions.
+Multi device 01 stores server-generated match IDs, fixed rosters, queue slots,
+loadouts, readiness, and private refresh notices. Casual queues support 1v1 and
+2v2. Party matches require every invited member to accept and support 1v1,
+2v2, or exactly three players in free-for-all. An invitation does not enroll
+the recipient until they accept. Each account has at most one active slot.
+Queue/setup leases expire after 90 seconds, and all members acknowledge the
+start before a game can report a ranked result.
 
-The read RPC derives the player from `auth.uid()` and returns Beginner defaults
-for guests. The submit RPC accepts a match UUID, win/loss result, and difficulty
-but never accepts a user ID. It validates the match difficulty against the
-server-side current tier, admits each UUID once, rate-limits using server time,
-and calculates wins, losses, streaks, promotions, demotions, and a monotonic
-revision inside the transaction. The server remains canonical. The browser
-keeps only owner-scoped unsynced match receipts plus an advisory ladder cache
-so a reload or temporary outage cannot erase a result; neither is copied into
-the general profile JSON.
+Multi device 02 stores separate **1v1** and **2v2** Elo ratings, immutable
+member reports, and the per-match rating ledger. Players begin at 1,000 Elo.
+Named ranks are Bronze below 900, Silver 900–1,199, Gold 1,200–1,499,
+Platinum 1,500–1,799, Diamond 1,800–2,099, and Master at 2,100 or higher.
+The server uses K=32 Elo, average team ratings for 2v2, and a floor of zero.
+Only queued matches can be ranked; Party matches and free-for-all are unrated.
 
-The player-facing `SCORE` is the SQL `progress` field: each win adds one score,
-score 10 or a third consecutive win promotes to the next tier, and promotion
-resets score plus both streak counters. Every third consecutive loss removes
-one score; at score zero it demotes one tier and resumes at score nine, while
-Beginner zero is the floor. Impossible is the ceiling at score 10, but its win
-streak still cycles `0, 1, 2, 0` on every third win instead of getting stuck.
-Only CPU 1v1 and the fully local one-player-plus-ally-CPU 2v2 update this
-ladder. Invite-a-friend and Party CPU 2v2 matches are deliberately unranked.
+Ranked is **consensus BETA**. All two/four registered accounts must submit the
+same legal first-to-five final score before any Elo changes. Conflicting or
+expired claims change no ratings. The ledger and all rating changes commit
+together, so a retry cannot award a result twice. The first report opens a
+maximum five-minute confirmation window. Setup failures or games abandoned
+before any result report can be cancelled without trapping the queue slot.
 
-AI 02 is separate because model history is global while ladder progress is
-private per account. Every release maps to an allowlisted behavior snapshot
-embedded in the game; Supabase stores no executable code. `TEST MODEL` runs an
-isolated admin comparison and never writes ladder or live-model state. `BRING
-BACK MODEL` atomically changes the global model pointer for future matches,
-keeps newer releases in history, and records who made the change. It does not
-alter any player's difficulty or an already-running match. Direct table access
-is denied, and the activation RPC verifies the creator/main-admin role from the
-signed Supabase JWT and server-side admins table rather than trusting the UI.
+This is not an authoritative game server or an anti-cheat system. Browsers
+still simulate hits, movement, health, and the outcome. Loadout validation
+bounds the submitted shape; it does not prove honest gameplay or ownership.
+Players can collude to report a fabricated result, or deny confirmation of a
+loss. SQL consensus prevents outsiders from submitting a result and protects
+rating accounting; it cannot independently prove who actually won.
 
-AI 03 connects finished normal local AI 1v1, local AI 2v2, and Party CPU 2v2
-games to the shared model-history system. A Party game produces one receipt
-from its authority host only; the other client never submits a duplicate. Party
-CPU uses the fixed full Apex V5 tactical feature set at difficulty 2, so its
-receipt is explicitly tagged `party2v2`, `apex-v5`, and difficulty 2 even when
-an archived global model is active. This keeps Party samples distinguishable
-from local model/difficulty samples during trusted aggregate analysis.
-
-The browser sends one bounded summary with a stable UUID; if the network or RPC
-is unavailable, the same summary remains in an owner-isolated device queue for
-up to 30 days and is retried after reconnect. Guests contribute separately from
-signed-in accounts. Admin comparison tests, unfinished or disconnected Party
-games, non-host Party clients, and player-versus-player matches are not
-submitted. The database stores no email, username, teammate ID, loadout, chat,
-input log, or exact position, and creator/main admins see aggregates rather
-than player rows.
-
-Training summaries do not contain executable code and can never activate a
-model or alter ladder progress. They measure how each frozen model performs and
-where its movement, navigation, TNT, and portal behavior needs work. Turning
-that evidence into a new tactical release still requires a reviewed game-code
-change (or a future trusted training worker); untrusted browser reports are not
-allowed to rewrite the globally active bot automatically.
-
-Because matches run locally, the database cannot independently prove a reported
-win. UUID receipts plus the 30-second, 20-per-hour, and 100-per-day server-time
-limits prevent accidental duplicates and simple request spam on the player
-ladder. Training delivery permits an offline backlog but caps each account or
-installation at 120 per hour and 500 per day. Fully cheat-proof results would
-require a future authoritative match server or server-issued begin-match ticket.
+Multi device 03 owns multiplayer RLS, RPC grants, and private Realtime channel
+access for `oz-duel:<match UUID>`. Room membership does not authenticate the
+claimed sender inside a peer combat packet. Only each participant's refresh
+notice enters Postgres Changes; raw rosters, reports, and rating ledgers remain
+RPC-only. The client refetches after a wakeup, with polling as a fallback while
+actively waiting for a match or result.

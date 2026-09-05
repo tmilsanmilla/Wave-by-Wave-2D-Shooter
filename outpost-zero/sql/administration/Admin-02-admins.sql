@@ -4,6 +4,15 @@
 
 begin;
 
+-- Fail closed: policy setup lives in Admin 04 Security. Install it first.
+do $section_security_required$
+begin
+  if to_regprocedure('public._outpost_zero_apply_admin_security(text)') is null then
+    raise exception 'Run Admin 04 Security first; this transaction made no changes';
+  end if;
+end;
+$section_security_required$;
+
 do $prerequisites$
 begin
   if to_regprocedure('public._outpost_zero_creator_user_id()') is null then
@@ -294,16 +303,6 @@ begin
 end;
 $function$;
 
-alter table public.admins enable row level security;
-alter table public.admins force row level security;
-do $admin_policies$
-declare item record;
-begin
-  for item in select policyname from pg_policies where schemaname='public' and tablename='admins'
-  loop execute format('drop policy %I on public.admins',item.policyname);end loop;
-end;
-$admin_policies$;
-revoke all on table public.admins from public,anon,authenticated;
 
 create or replace function public._outpost_zero_staff_email()
 returns text language sql stable security definer set search_path=pg_catalog,public
@@ -410,56 +409,11 @@ alter table public.banners
   add constraint outpost_zero_banners_safe_author
   check (author in ('CREATOR', 'MAIN ADMIN', 'CO-ADMIN', 'ADMIN UPDATE'));
 
-alter table public.banners enable row level security;
-alter table public.banners force row level security;
 
--- Policies combine with OR. Remove legacy policies first so an old permissive
--- SELECT/INSERT/UPDATE/DELETE policy cannot silently bypass this migration.
-do $block$
-declare
-  v_policy record;
-begin
-  for v_policy in
-    select p.policyname
-    from pg_policies as p
-    where p.schemaname = 'public' and p.tablename = 'banners'
-  loop
-    execute format('drop policy %I on public.banners', v_policy.policyname);
-  end loop;
-end;
-$block$;
 
--- Realtime needs SELECT visibility on the underlying row. Every banners column
--- was checked above and author is now a safe role label. Players/guests see only
--- approved rows; creator/main reviewers may also see pending co-admin drafts.
-create policy outpost_zero_updates_approved_read
-on public.banners
-for select
-to anon, authenticated
-using (approved is true);
 
-create policy outpost_zero_updates_reviewer_draft_read
-on public.banners
-for select
-to authenticated
-using (
-  approved is false
-  and public._outpost_zero_update_role() in ('creator', 'main')
-);
 
-revoke all on table public.banners from public, anon, authenticated;
-grant select on table public.banners to anon, authenticated;
 
--- Sequence access is unnecessary because all inserts run as the definer.
-do $block$
-declare
-  v_sequence text := pg_get_serial_sequence('public.banners', 'id');
-begin
-  if v_sequence is not null then
-    execute format('revoke all on sequence %s from public, anon, authenticated', v_sequence);
-  end if;
-end;
-$block$;
 
 -- Creator/main posts are approved immediately. A co-admin receives a private
 -- pending row that only a creator/main reviewer can approve. The stored author
@@ -671,54 +625,12 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_update_role()
-  from public, anon, authenticated;
-revoke all on function public.list_outpost_zero_admin_roster()
-  from public, anon, authenticated;
-revoke all on function public.promote_outpost_zero_admin(text)
-  from public, anon, authenticated;
-revoke all on function public.demote_outpost_zero_admin(text)
-  from public, anon, authenticated;
-revoke all on function public.remove_outpost_zero_admin(text)
-  from public, anon, authenticated;
-revoke all on function public.post_outpost_zero_update(text)
-  from public, anon, authenticated;
-revoke all on function public.post_outpost_zero_update_v2(text,text)
-  from public, anon, authenticated;
-revoke all on function public.approve_outpost_zero_update(bigint)
-  from public, anon, authenticated;
-revoke all on function public.reject_outpost_zero_update(bigint)
-  from public, anon, authenticated;
-revoke all on function public.delete_outpost_zero_update(bigint)
-  from public, anon, authenticated;
-revoke all on function public.list_outpost_zero_updates(boolean, bigint, integer)
-  from public, anon, authenticated;
-revoke all on function public.list_outpost_zero_updates_v2(boolean,bigint,integer)
-  from public, anon, authenticated;
 
--- The role helper is callable only by authenticated sessions because the RLS
--- draft policy evaluates it for that role. It returns only the caller's own
--- role and accepts no identity. Mutation RPCs remain authenticated-only.
-grant execute on function public._outpost_zero_update_role()
-  to authenticated;
-grant execute on function public.post_outpost_zero_update(text)
-  to authenticated;
-grant execute on function public.post_outpost_zero_update_v2(text,text)
-  to authenticated;
-grant execute on function public.approve_outpost_zero_update(bigint)
-  to authenticated;
-grant execute on function public.reject_outpost_zero_update(bigint)
-  to authenticated;
-grant execute on function public.delete_outpost_zero_update(bigint)
-  to authenticated;
-grant execute on function public.list_outpost_zero_updates(boolean, bigint, integer)
-  to anon, authenticated;
-grant execute on function public.list_outpost_zero_updates_v2(boolean,bigint,integer)
-  to anon, authenticated;
 
 -- Existing projects already publish banners, but make a fresh/partially
 -- configured installation Realtime-ready without duplicating membership.
 do $block$
+declare relation_name text;
 begin
   if not exists (
     select 1
@@ -741,6 +653,25 @@ begin
     -- uses an auth/admin-open/three-minute safety refresh instead.
     alter publication supabase_realtime drop table public.admins;
   end if;
+  foreach relation_name in array array[
+    'outpost_zero_weapon_suggestions',
+    'promo_codes',
+    'promo_redemptions',
+    'outpost_zero_promo_attempts'
+  ] loop
+    if exists (
+      select 1
+      from pg_catalog.pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public'
+        and tablename = relation_name
+    ) then
+      execute format(
+        'alter publication supabase_realtime drop table public.%I',
+        relation_name
+      );
+    end if;
+  end loop;
 end;
 $block$;
 
@@ -766,9 +697,6 @@ create table if not exists public.outpost_zero_weapon_suggestions(
   constraint outpost_zero_weapon_suggestion_review_shape check((status='pending' and reviewer_user_id is null and reviewed_at is null) or (status<>'pending' and reviewer_user_id is not null and reviewed_at is not null))
 );
 create index if not exists outpost_zero_weapon_suggestions_pending_idx on public.outpost_zero_weapon_suggestions(status,created_at desc,id desc);
-alter table public.outpost_zero_weapon_suggestions enable row level security;
-alter table public.outpost_zero_weapon_suggestions force row level security;
-revoke all on table public.outpost_zero_weapon_suggestions from public,anon,authenticated;
 
 create or replace function public.submit_outpost_zero_weapon_suggestion(p_weapon_key text,p_suggestion text)
 returns bigint language plpgsql security definer set search_path=pg_catalog,public
@@ -818,7 +746,7 @@ end;
 $function$;
 
 -- Creator/Main save live weapon edits directly. Dynamic relation access keeps
--- Admin 02 rerunnable before Weapons 01; calling this RPC produces one clear
+-- Admin 02 remains rerunnable if Player 02 is temporarily unavailable; calling this RPC produces one clear
 -- setup error until that storage file has been run. The definition and legacy
 -- unscaled shop cost are saved atomically in the caller's transaction.
 create or replace function public.save_outpost_zero_weapon_definition(
@@ -836,7 +764,7 @@ begin
   if v_role not in ('creator','main') then
     raise exception using errcode='42501',message='MAIN_ADMIN_ACCESS_REQUIRED';end if;
   if to_regclass('public.weapon_defs') is null or to_regclass('public.weapon_prices') is null then
-    raise exception using errcode='55000',message='RUN_WEAPONS_01_BEFORE_SAVING_WEAPONS';end if;
+    raise exception using errcode='55000',message='RUN_PLAYER_02_BEFORE_SAVING_WEAPONS';end if;
   if v_key not in (
     'ar','smg','shotgun','sniper','solarrifle','fireworks','warpwave','railgun',
     'm9','revolver','g18','volt','dart','timeturner',
@@ -905,41 +833,6 @@ begin
 end;
 $function$;
 
--- Existing projects may still have Weapons 01's former direct-write policy
--- and column grants. Tighten those tables now when present, while preserving
--- Admin 02's ability to install before Weapons 01 on a fresh project.
-do $weapon_write_boundary$
-declare v_table text;v_policy record;v_column_grant record;v_grantee_sql text;
-begin
-  foreach v_table in array array['weapon_defs','weapon_prices'] loop
-    if to_regclass('public.'||v_table) is null then continue;end if;
-    for v_policy in
-      select p.policyname from pg_catalog.pg_policies p
-      where p.schemaname='public' and p.tablename=v_table and p.cmd<>'SELECT'
-    loop
-      execute format('drop policy %I on public.%I',v_policy.policyname,v_table);
-    end loop;
-    execute format(
-      'revoke insert,update,delete,truncate,references,trigger on table public.%I from public,anon,authenticated',
-      v_table
-    );
-    -- Legacy Weapons 01 used column-level INSERT/UPDATE grants; a table-level
-    -- REVOKE alone does not reliably remove those independent privileges.
-    for v_column_grant in
-      select cp.grantee,cp.privilege_type,cp.column_name
-      from information_schema.column_privileges cp
-      where cp.table_schema='public' and cp.table_name=v_table
-        and cp.grantee in ('PUBLIC','anon','authenticated')
-        and cp.privilege_type in ('INSERT','UPDATE','REFERENCES')
-    loop
-      v_grantee_sql:=case when v_column_grant.grantee='PUBLIC' then 'public'
-                          else quote_ident(v_column_grant.grantee) end;
-      execute format('revoke %s (%I) on table public.%I from %s',
-        v_column_grant.privilege_type,v_column_grant.column_name,v_table,v_grantee_sql);
-    end loop;
-  end loop;
-end;
-$weapon_write_boundary$;
 
 -- Browser-safe staff identity boundary. Chosen usernames remain primary. An
 -- any exact Auth email may be accepted only by Creator/Main; roster output
@@ -1084,37 +977,6 @@ begin
 end;
 $function$;
 
-revoke all on function public._outpost_zero_staff_role() from public,anon,authenticated;
-revoke all on function public._outpost_zero_staff_email() from public,anon,authenticated;
-revoke all on function public.add_outpost_zero_admin(text,text) from public,anon,authenticated;
-revoke all on function public.submit_outpost_zero_weapon_suggestion(text,text) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_weapon_suggestions(integer,text) from public,anon,authenticated;
-revoke all on function public.review_outpost_zero_weapon_suggestion(bigint,text,text) from public,anon,authenticated;
-revoke all on function public.save_outpost_zero_weapon_definition(text,jsonb,integer,boolean) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_admin_roster() from public,anon,authenticated;
-revoke all on function public.add_outpost_zero_admin(text,text) from public,anon,authenticated;
-revoke all on function public.promote_outpost_zero_admin(text) from public,anon,authenticated;
-revoke all on function public.demote_outpost_zero_admin(text) from public,anon,authenticated;
-revoke all on function public.remove_outpost_zero_admin(text) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_weapon_suggestions(integer,text) from public,anon,authenticated;
-revoke all on function public._outpost_zero_staff_target_email_for_username(text) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_admin_roster_by_username() from public,anon,authenticated;
-revoke all on function public.add_outpost_zero_admin_by_username(text,text) from public,anon,authenticated;
-revoke all on function public.promote_outpost_zero_admin_by_username(text) from public,anon,authenticated;
-revoke all on function public.demote_outpost_zero_admin_by_username(text) from public,anon,authenticated;
-revoke all on function public.remove_outpost_zero_admin_by_username(text) from public,anon,authenticated;
-revoke all on function public.list_outpost_zero_weapon_suggestions_by_username(integer,text) from public,anon,authenticated;
-grant execute on function public._outpost_zero_admin_role() to authenticated;
-grant execute on function public._outpost_zero_staff_role() to authenticated;
-grant execute on function public.submit_outpost_zero_weapon_suggestion(text,text) to authenticated;
-grant execute on function public.review_outpost_zero_weapon_suggestion(bigint,text,text) to authenticated;
-grant execute on function public.save_outpost_zero_weapon_definition(text,jsonb,integer,boolean) to authenticated;
-grant execute on function public.list_outpost_zero_admin_roster_by_username() to authenticated;
-grant execute on function public.add_outpost_zero_admin_by_username(text,text) to authenticated;
-grant execute on function public.promote_outpost_zero_admin_by_username(text) to authenticated;
-grant execute on function public.demote_outpost_zero_admin_by_username(text) to authenticated;
-grant execute on function public.remove_outpost_zero_admin_by_username(text) to authenticated;
-grant execute on function public.list_outpost_zero_weapon_suggestions_by_username(integer,text) to authenticated;
 drop function if exists public.add_outpost_zero_co_admin(text);
 
 -- Promo codes are guessed by the player and checked through one RPC; the code
@@ -1142,18 +1004,6 @@ create table if not exists public.outpost_zero_promo_attempts(
   window_started_at timestamptz not null default clock_timestamp(),
   attempts smallint not null default 0 check(attempts between 0 and 12)
 );
-alter table public.promo_codes enable row level security;
-alter table public.promo_codes force row level security;
-alter table public.promo_redemptions enable row level security;
-alter table public.promo_redemptions force row level security;
-alter table public.outpost_zero_promo_attempts enable row level security;
-alter table public.outpost_zero_promo_attempts force row level security;
-do $promo_policies$ declare p record;begin
-  for p in select schemaname,tablename,policyname from pg_policies
-    where schemaname='public' and tablename in ('promo_codes','promo_redemptions','outpost_zero_promo_attempts')
-  loop execute format('drop policy %I on %I.%I',p.policyname,p.schemaname,p.tablename);end loop;
-end;$promo_policies$;
-revoke all on table public.promo_codes,public.promo_redemptions,public.outpost_zero_promo_attempts from public,anon,authenticated;
 
 -- Old promo snippets treated uses_max as one shared cap, so uses_max=1 let only
 -- one person redeem. Retire those caps in place; the (code,user_id) key is the
@@ -1246,19 +1096,10 @@ begin
   return query select true,c.gems,c.coins,null::text;
 end;$function$;
 
-revoke all on function public.list_outpost_zero_promo_codes() from public,anon,authenticated;
-revoke all on function public.save_outpost_zero_promo_code(text,integer,integer,integer,timestamptz) from public,anon,authenticated;
-revoke all on function public.set_outpost_zero_promo_active(text,boolean) from public,anon,authenticated;
-revoke all on function public.delete_outpost_zero_promo_code(text) from public,anon,authenticated;
-revoke all on function public.redeem_promo(text) from public,anon,authenticated;
-grant execute on function public.list_outpost_zero_promo_codes() to authenticated;
-grant execute on function public.save_outpost_zero_promo_code(text,integer,integer,integer,timestamptz) to authenticated;
-grant execute on function public.set_outpost_zero_promo_active(text,boolean) to authenticated;
-grant execute on function public.delete_outpost_zero_promo_code(text) to authenticated;
-grant execute on function public.redeem_promo(text) to authenticated;
 
 -- Publish the replaced roster/suggestion signatures only after the entire
 -- Admin 02 transaction succeeds.
 notify pgrst, 'reload schema';
 
+select public._outpost_zero_apply_admin_security('Admin 02');
 commit;

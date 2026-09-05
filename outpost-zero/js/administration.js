@@ -28,9 +28,9 @@ let unrankedRun=false;                              // next-season (early access
 let adminOpen=false, adminUsed=false, adminBtnRect={x:-99,y:-99,w:0,h:0}, adminRects=[];
 let testMode=false;                                 // test mode (all admins); storage is a viewer popout now
 let adminPanelOpen=false, adminHubBtnRect=null, suggestionsHubBtnRect=null, adminPanelRects=[];
-let aiLearningOpen=false, aiLearningRects=[], aiLearningDifficulty=4, aiLearningNotice='',aiLearningSelectedModelId='',aiLearningRestoreBusyId='';
 let adminRoles={};                                  // visible account identifier -> staff rank
 let adminRosterRows=[],adminSelfRole='',adminSelfUsername='';
+let adminRosterLoadPromise=null,adminRosterLoadOwnerId='';
 let banners=[], pendingBanners=[], bannerFetchSeq=0, bannerDraftEpoch=0, updatesFeed={reports:[]};
 let reportCopyMode='all',reportCopyCustomCount=25,reportCopyBusy=false,reportCopyStatus='',reportBulkAction='copy';
 let reportActionMenuOpen=false,reportAmountMenuOpen=false,reportView='open';
@@ -49,6 +49,7 @@ let scoresOpen=false, scoresRects=[], scoreEditOpen=false, scoreEditBusy=false, 
 const scoreRequestDecisionBusy=new Set();
 let pePanelTab='items';
 let peGiftMode='permanent', peCustomGiftMinutes=180, peNotice='';
+let playerLookupRequestSeq=0;
 const PE_GIFT_DURATIONS=Object.freeze([
   {id:'permanent',label:'PERMANENT',minutes:0},
   {id:'1h',label:'1 HOUR',minutes:60},
@@ -144,7 +145,7 @@ function clearMainOnlyAdminState(){
   reportFetchSeq++;reportResolveBusy.clear();reportLoadStatus='';resetReportScroll();
   reportCopyBusy=false;reportCopyStatus='';reportCopyMode='all';reportBulkAction='copy';reportActionMenuOpen=reportAmountMenuOpen=false;reportView='open';
   clearAdminAuditCache();scoreReqs=[];updatesOpen=false;updatesFeed={reports:[]};updatesResolved=[];
-  aiLearningOpen=false;adminsOpen=false;storageOpen=false;weaponSuggestionsOpen=false;requestsOpen=false;weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestionView='pending';weaponSuggestions=[];weaponSuggestionPendingRows=[];weaponSuggestionArchiveRows=[];weaponSuggestionPage=0;weaponSuggestionStatus='';clearPostComposerPrivateState();staffReport=false;
+  adminsOpen=false;storageOpen=false;weaponSuggestionsOpen=false;requestsOpen=false;weaponSuggestionRequestSeq++;weaponSuggestionBusy=false;weaponSuggestionView='pending';weaponSuggestions=[];weaponSuggestionPendingRows=[];weaponSuggestionArchiveRows=[];weaponSuggestionPage=0;weaponSuggestionStatus='';clearPostComposerPrivateState();staffReport=false;
   composePickOpen=false;
   if(msgOpen&&typeof msgKind!=='undefined'&&(msgKind==='admin'||msgKind==='player_notification')){msgOpen=false;msgTo='';}
   clearAdminNotificationComposerState();
@@ -161,8 +162,8 @@ function clearCoAndMainAdminState(){
   if(typeof document!=='undefined')for(const id of ['scorewrap','postwrap','repwrap']){const el=document.getElementById(id);if(el)el.style.display='none';}
 }
 function scrubPrivilegedUiForAccountChange(){
-  adminPrivacyEpoch++;adminRosterFetchSeq++;bannerFetchSeq++;bannerDraftEpoch++;pendingBanners=[];adminRoles={};adminRosterRows=[];adminSelfRole='';adminSelfUsername='';
-  adminOpen=adminPanelOpen=aiLearningOpen=adminsOpen=msgsOpen=updatesOpen=archOpen=storageOpen=scoresOpen=weaponSuggestionsOpen=requestsOpen=false;
+  adminPrivacyEpoch++;adminRosterFetchSeq++;adminRosterLoadPromise=null;adminRosterLoadOwnerId='';bannerFetchSeq++;bannerDraftEpoch++;pendingBanners=[];adminRoles={};adminRosterRows=[];adminSelfRole='';adminSelfUsername='';
+  adminOpen=adminPanelOpen=adminsOpen=msgsOpen=updatesOpen=archOpen=storageOpen=scoresOpen=weaponSuggestionsOpen=requestsOpen=false;
   if(typeof playersOpen!=='undefined')playersOpen=false;
   if(typeof promoAdminOpen!=='undefined')promoAdminOpen=false;
   if(typeof weaponEditOpen!=='undefined')weaponEditOpen=false;
@@ -208,40 +209,6 @@ function canSeeStats(){ return canUsePlayerTools(); }
 function canEditPlayer(){ return isMainAdmin(); }
 function canEditLoadedPlayer(){ return canEditPlayer()&&peData&&!peData.publicOnly; }
 function canBan(){ return isMainAdmin(); }            // main admins may ban directly now
-function openAiLearning(){
-  if(!isMainAdmin()){ aiLearningOpen=false; sfx('dry'); return false; }
-  aiLearningDifficulty=4;
-  aiLearningSelectedModelId=typeof activeBotModelId==='string'?activeBotModelId:'apex-v5';
-  aiLearningNotice='Loading the globally active tactical model…';
-  adminPanelOpen=false; aiLearningOpen=true;
-  const history=typeof refreshBotModelHistory==='function'?refreshBotModelHistory(true):Promise.resolve(),
-    training=typeof refreshAiTrainingSummary==='function'?refreshAiTrainingSummary(true):Promise.resolve();
-  void Promise.all([history,training]).then(()=>{
-    if(!aiLearningOpen) return;
-    aiLearningSelectedModelId=activeBotModelId;
-    aiLearningNotice='Tests use Impossible execution for a fair comparison and never change the player ladder.';
-  });
-  return true;
-}
-function closeAiLearning(){ aiLearningOpen=false; aiLearningNotice=''; aiLearningRestoreBusyId=''; }
-async function confirmAiLearningModelRestore(modelId){
-  if(!isMainAdmin()){ closeAiLearning(); sfx('dry'); return false; }
-  const model=typeof botModelRelease==='function'?botModelRelease(modelId):null;
-  if(!model||model.id===activeBotModelId||aiLearningRestoreBusyId)return false;
-  const prompt='Bring back '+model.name+' globally?\n\nFuture CPU matches will use this tactical model. Current matches and every player\'s difficulty/progress stay unchanged.';
-  if(typeof confirm!=='function'||!confirm(prompt)){aiLearningNotice='Bring Back Model cancelled.';return false;}
-  aiLearningRestoreBusyId=model.id;aiLearningSelectedModelId=model.id;
-  aiLearningNotice='Bringing back '+model.name+' for future matches…';
-  try{
-    const row=await activateBotModelRelease(model.id);
-    if(row&&row.accepted===false&&String(row.reason||'')!=='already_active')throw new Error(String(row.reason||'activation rejected'));
-    aiLearningSelectedModelId=activeBotModelId;
-    aiLearningNotice=model.name+' is LIVE NOW for future matches · current matches and player ladders were unchanged.';
-    return true;
-  }catch(e){
-    aiLearningNotice='Bring Back Model failed · '+String(e&&e.message||'model service unavailable');sfx('dry');return false;
-  }finally{aiLearningRestoreBusyId='';}
-}
 const PE_ITEMS=()=>GEM_SHOP.filter(it=>typeof isWeaponPublished!=='function'||isWeaponPublished(it.key)).map(it=>it.key);
 function normalizedPlayerTempGrants(value){
   const out={};
@@ -352,10 +319,24 @@ function normalizedPlayerData(value,publicOnly){
 }
 async function lookupPlayer(target){
   resetPlayerEditScroll();
-  const busyToken=++peBusyToken,session=++peEditorSession;
+  const busyToken=++peBusyToken,session=++peEditorSession,
+    lookupRequest=++playerLookupRequestSeq,lookupOwner=currentAuthUserId();
   peBusy=true; peData=null; peEdit=null; peNotice=''; peGiftMode='permanent';
+  let exactEmail='';
   try{
     const q=String(target||'').trim();
+    exactEmail=typeof cleanAccountEmail==='function'?cleanAccountEmail(q):'';
+    // Role loading is asynchronous after sign-in. Wait for the one shared
+    // roster request before deciding whether a private exact-email lookup is
+    // allowed, otherwise Creator/Main can be misrouted to the public
+    // username-only RPC for the first few moments of a session.
+    if(exactEmail&&!isMainAdmin()&&sb&&authUser)await fetchAdmins();
+    if(exactEmail&&!isMainAdmin()){
+      const accessError=new Error('exact email lookup requires Creator/Main access');
+      accessError.code='OUTPOST_ZERO_EXACT_EMAIL_ACCESS';
+      throw accessError;
+    }
+    if(session!==peEditorSession)return false;
     const privateLookup=typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin();
     if(privateLookup){
       const identifier=adminAccountIdentifier(q);
@@ -393,8 +374,28 @@ async function lookupPlayer(target){
             owned:Object.assign({}, peData.owned), pow:Object.assign({}, peData.pow),
             tempGrants:clonePlayerTempGrants(peData.tempGrants),tempRevokes:{}};
     peStep='panel';
-  }catch(e){ if(session===peEditorSession)peData=null; }
+  }catch(e){
+    const exactEmailAccessDenied=String(e&&e.code||'').toUpperCase()==='OUTPOST_ZERO_EXACT_EMAIL_ACCESS',
+      sameLookup=lookupRequest===playerLookupRequestSeq&&lookupOwner===currentAuthUserId();
+    // A first-time non-staff role check deliberately clears private editor
+    // state. Preserve only this harmless denial explanation for the same
+    // account/request; never restore any player data after that cleanup.
+    if(session===peEditorSession||(exactEmailAccessDenied&&sameLookup)){
+      peData=null;peNotice=playerLookupFailureMessage(e,!!exactEmail);
+    }
+  }
   if(busyToken===peBusyToken)peBusy=false;
+  return session===peEditorSession&&!!peData;
+}
+function playerLookupFailureMessage(error,exactEmail=false){
+  const code=String(error&&error.code||'').toUpperCase(),message=String(error&&error.message||'');
+  if(code==='OUTPOST_ZERO_EXACT_EMAIL_ACCESS'||code==='42501'||/admin access required|creator or main-admin access required/i.test(message))
+    return exactEmail?'Exact email search is available to Creator/Main only.':'Player Lookup access was denied.';
+  if(adminRpcMissing(error))return 'PLAYER LOOKUP NOT CONNECTED · run the current Admin 01 Admin Menu SQL.';
+  if(exactEmail&&/not found/i.test(message))
+    return 'No account matched that exact email. If the account exists, update Admin 01 Admin Menu.';
+  if(/invalid/i.test(message))return exactEmail?'Enter a valid exact account email.':'Enter a valid username.';
+  return 'Player Lookup could not refresh. Try again.';
 }
 function peDirty(){
   return pePermanentDirty()||peTemporaryDirty();
@@ -672,20 +673,19 @@ function closeScoreEdit(){
 async function submitScoreEdit(){
   if(scoreEditBusy)return;
   if(peMode!=='ban'){
-    const rawQuery=String($('scoreemail').value||'').trim(),privateLookup=typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin(),
-      query=privateLookup?adminAccountIdentifier(rawQuery):rawQuery.replace(/^@/,'');
+    const rawQuery=String($('scoreemail').value||'').trim(),exactEmail=typeof cleanAccountEmail==='function'?cleanAccountEmail(rawQuery):'',
+      privateLookup=typeof canUsePlayerTools==='function'?canUsePlayerTools():isAdmin(),
+      query=(privateLookup||exactEmail)?adminAccountIdentifier(rawQuery):rawQuery.replace(/^@/,'');
     if(privateLookup){
-      if(!query||(typeof cleanAccountEmail==='function'&&cleanAccountEmail(query)&&!isMainAdmin())){
-        $('scorestatus').textContent=isMainAdmin()?'enter a username or exact account email':'enter a valid username';return;
-      }
-    } else if(!/^[A-Za-z0-9_]{3,32}$/.test(query)){
+      if(!query){$('scorestatus').textContent=isMainAdmin()?'enter a username or exact account email':'enter a valid username';return;}
+    } else if(!exactEmail&&!/^[A-Za-z0-9_]{3,32}$/.test(query)){
       $('scorestatus').textContent='enter a valid username'; return;
     }
     if(!sb){ $('scorestatus').textContent='preview build \u2014 works on the live site'; return; }
     $('scorestatus').textContent='looking up...';setScoreEditBusy(true);
     try{
-      await lookupPlayer(query);
-      if(!peData){ $('scorestatus').textContent='player account not found'; return; }
+      const found=await lookupPlayer(query);
+      if(!found){ $('scorestatus').textContent=peNotice||'player account not found'; return; }
     }finally{setScoreEditBusy(false);}
     closeScoreEdit(); scoresOpen=true; peStep='panel';
     return;
@@ -1242,7 +1242,21 @@ async function fetchAdminSelfRoleFallback(stillCurrent){
   }
   return {role:'',username:''};
 }
-async function fetchAdmins(){
+function fetchAdmins(force=false){
+  if(!sb||!authUser)return Promise.resolve(false);
+  const owner=currentAuthUserId();
+  if(!force&&adminRosterLoadPromise&&adminRosterLoadOwnerId===owner)return adminRosterLoadPromise;
+  let load;
+  load=(async()=>{
+    try{await fetchAdminsNow();return currentAuthUserId()===owner;}
+    finally{
+      if(adminRosterLoadPromise===load){adminRosterLoadPromise=null;adminRosterLoadOwnerId='';}
+    }
+  })();
+  adminRosterLoadOwnerId=owner;adminRosterLoadPromise=load;
+  return load;
+}
+async function fetchAdminsNow(){
   if(!sb || !authUser) return;
   const request=++adminRosterFetchSeq,epoch=adminPrivacyEpoch,userId=currentAuthUserId(),previousRank=myRank();
   const stillCurrent=()=>request===adminRosterFetchSeq&&adminPrivacyRequestCurrent(epoch,userId);
@@ -1582,7 +1596,7 @@ async function kickAdmin(username){
     const {data,error}=await sb.rpc('remove_outpost_zero_admin_by_username',{p_username:username});
     if(error)throw error;if(data!==true)return;
   }catch(e){return;}
-  await fetchAdmins();
+  await fetchAdmins(true);
 }
 async function promoteAdmin(username){
   if(!canManageAdmins()) return;                     // Main: tester -> co. Creator may also promote co -> main.
@@ -1593,7 +1607,7 @@ async function promoteAdmin(username){
     const {data,error}=await sb.rpc('promote_outpost_zero_admin_by_username',{p_username:username});
     if(error)throw error;if(data!==true)return;
   }catch(e){return;}
-  await fetchAdmins();
+  await fetchAdmins(true);
 }
 async function demoteAdmin(username){
   if(!canManageAdmins())return;
@@ -1603,7 +1617,7 @@ async function demoteAdmin(username){
   if(!ok)return;
   if(!sb){adminRoles[username]=next;return;}
   try{const {data,error}=await sb.rpc('demote_outpost_zero_admin_by_username',{p_username:username});if(error)throw error;if(data!==true)return;}catch(error){return;}
-  await fetchAdmins();
+  await fetchAdmins(true);
 }
 function addAdmin(){
   if(!canManageAdmins())return false;
@@ -1616,7 +1630,7 @@ function addAdmin(){
       $('formstatus').textContent='adding '+role+'…';
       try{
         const result=await sb.rpc('add_outpost_zero_admin_by_username',{p_username:username,p_role:role});
-        if(result.error)throw result.error;closeForm();await fetchAdmins();return true;
+        if(result.error)throw result.error;closeForm();await fetchAdmins(true);return true;
       }catch(error){formError(role==='tester'?'Run Admin 02 Admins to add Testers.':'Could not add that admin.');return false;}
     }});return true;
 }

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 
 const root=path.resolve(import.meta.dirname,'..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
-const publicBoardSql=read('sql/leaderboards/Leaderboards-01-leaderboards.sql');
+const read=file=>file.endsWith('.sql')?readFeatureSql(root,file):fs.readFileSync(path.join(root,file),'utf8');
+const publicBoardSql=read('sql/player/Player-01-stats.sql');
 const securitySql=publicBoardSql;
 
 function sqlFunction(source,name){
@@ -71,7 +72,7 @@ assert.match(publicBoardSql,
 assert.match(publicBoardSql,
   /grant execute on function public\.get_outpost_zero_public_player\(text\) to anon, authenticated;/,
   'the public player lookup remains available without exposing private identity');
-assert.match(publicBoardSql,/notify pgrst, 'reload schema';\s*commit;/,
+assert.match(publicBoardSql,/notify pgrst, 'reload schema';[\s\S]*select public\._outpost_zero_apply_player_security\('Player 01'\);\s*commit;/,
   'the public leaderboard replacement must refresh PostgREST transactionally');
 
 assert.match(arenaWin,
@@ -79,7 +80,7 @@ assert.match(arenaWin,
   'Arena wins must persist the sanitized identity');
 assert.match(arenaWin,/v_name := coalesce\(v_name, 'USERNAME_NOT_SET'\);/,
   'a missing Social profile must also store the sentinel');
-assert.match(securitySql,/notify pgrst, 'reload schema';\s*commit;/,
+assert.match(securitySql,/notify pgrst, 'reload schema';[\s\S]*select public\._outpost_zero_apply_player_security\('Player 01'\);\s*commit;/,
   'the Arena win replacement must refresh PostgREST transactionally');
 
 console.log('PASS leaderboard identities use privacy-safe unfinished-name fallbacks');

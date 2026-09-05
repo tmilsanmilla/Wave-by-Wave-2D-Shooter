@@ -1,0 +1,38 @@
+{
+  "player/Player-01-stats.sql": {
+    "originalSha256": "e5502132e54b2db6308e4387e562d49bc8fce7496c27d67554e4b3ba9bbc70e0",
+    "securitySha256": "53f6e431f37fb76900bc92ae7c6db9bb5c99a2f716a535a95d145fd6ab645380",
+    "featureSha256": "53d36f20cf8af8b3637e366e72f8e3a1d74e5f01d1e4506568b844d06a04bdd4",
+    "statements": 36
+  },
+  "player/Player-02-weapons-and-cosmetics.sql": {
+    "originalSha256": "de18d506a229ce263b8b8088135cced9176fc794e3569f36cf91b8597ece70a7",
+    "securitySha256": "060636a0bc90f82f69a7657b0d3b3c8e96c3568f50bde4a6e3a8d0e1b3a1e001",
+    "featureSha256": "a2cc4d3d2262bce68322d4042e433b83b8a242258d3760951abb4d650d421cf1",
+    "statements": 9
+  },
+  "player/Player-03-social-menu.sql": {
+    "originalSha256": "891365e3350cd778c4bc2aed2d36fce7f6873b4e10a09318a9d7c091b4e0f452",
+    "securitySha256": "d87ef8477497f308784e7979868025695a3b3303cdf2f6685ad9a6d70afb80b3",
+    "featureSha256": "fd3c76d0bfe60b8c9e69eb81bf4628bee2a2156721a0fe67eab8e016479e9629",
+    "statements": 127
+  },
+  "administration/Admin-01-admin-menu.sql": {
+    "originalSha256": "a81693ff8cf93a755835189932bb74938766f1b61bb79f81c40f2649faf8b8ba",
+    "securitySha256": "71404a3008e9c1fa834de2998495f47dc8214d3b382b4c96a782130d73e6ac8a",
+    "featureSha256": "b1daeb092958b2fc13fef6b918a61495fcfa881154486bba6b13c4ab05eb7047",
+    "statements": 94
+  },
+  "administration/Admin-02-admins.sql": {
+    "originalSha256": "74500ed8b664acd0ea8149dd9dffefbf9273e0e32cecb35ae21c1a92ae0475f8",
+    "securitySha256": "b68953525816c35d18c02d02401b1f2973ed95c30d8724373369b52ddb4b297c",
+    "featureSha256": "ef16d785cf7e650c2a26a158881a378b9eeee95ccad2f223d2a7438ba3607c5a",
+    "statements": 85
+  },
+  "administration/Admin-03-inbox.sql": {
+    "originalSha256": "fa9a4fd278f1f8f6d1431ecb6a8f5f41650153597030d677da63fe57e75fd11a",
+    "securitySha256": "6fb925426e02b50b563d60b7f4cd91aad3134b2327956334fa271b95963b6444",
+    "featureSha256": "ef277465f2dd180f061aacd0569428f8ed80033d1ced785bdf0b53eba1e97c8d",
+    "statements": 70
+  }
+}

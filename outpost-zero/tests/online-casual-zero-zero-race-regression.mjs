@@ -56,6 +56,32 @@ assert.match(connectSource,/arena\.localReady=false; arena\.remoteReady=false/,
   'joining one side of a Quick Match must begin unready');
 assert.ok(presenceSource.indexOf("if(!om)")<presenceSource.indexOf("arenaSetReady(true)"),
   'the missing-opponent return must occur before automatic queue readiness');
+assert.doesNotMatch(functionSource(online,'arenaDropChannel'),/\.untrack\(/,
+  'removing a channel must not spend an extra rate-limited Presence operation');
+assert.doesNotMatch(functionSource(online,'arenaSetReady'),/\.track\(/,
+  'ready state must use Broadcast instead of retracking Presence');
+assert.doesNotMatch(functionSource(online,'arenaSetBackgrounded'),/\.track\(/,
+  'hide/show must use Broadcast instead of consuming two Presence operations');
+assert.match(functionSource(online,'arenaTrackMatchPresence'),/result==='ok'/,
+  'match Presence setup must inspect the track acknowledgement instead of silently accepting an error');
+assert.match(presenceSource,/else if\(arena\.localReady\)arenaSend\('ready',\{ready:true\}\)/,
+  'a late Presence retry must make an already-ready peer repeat its idempotent ready Broadcast');
+assert.match(functionSource(online,'arenaSyncTick'),/backgrounded:[\s\S]{0,120}presenceSeq:/,
+  'the repeating state stream must carry current foreground/background sequence metadata');
+assert.match(functionSource(online,'arenaReceive'),/event==='state'[\s\S]{0,1400}arenaApplyRemoteBackground\(p\)/,
+  'validated state must recover a foreground player when the one-off visibility Broadcast was lost');
+
+// Presence tracking must retry resolved error statuses (which do not reject
+// the Promise) and stop immediately after the first acknowledged success.
+const trackResponses=['error','timed out','ok'];let trackCalls=0,trackResumes=0;
+const trackChannel={track:async()=>trackResponses[trackCalls++]};
+const trackContext={Promise,arenaPresenceTrackSerial:0,ARENA_PRESENCE_RETRY_DELAYS_MS:[0,1,1],
+  setTimeout:fn=>{fn();return 1;},arena:{matchChannel:trackChannel,active:false,opponent:null,status:''},authUser:{id:'me'},
+  arenaOwnPresence:()=>({id:'me'}),arenaRequestResume:()=>{trackResumes++;return true;}};
+vm.createContext(trackContext);vm.runInContext('async '+functionSource(online,'arenaTrackMatchPresence'),trackContext);
+assert.equal(await trackContext.arenaTrackMatchPresence(trackChannel),true);
+assert.equal(trackCalls,3,'resolved Presence errors must retry with bounded delays');
+assert.equal(trackResumes,1,'only the acknowledged track may request match recovery');
 
 // A result is authoritative only for this live round and map-vote nonce, and
 // must represent exactly one legal score transition. In particular, a packet
@@ -153,6 +179,7 @@ const hpContext={Math,Number,String,Array,Object,Date:{now:()=>7000},ARENA_HP:25
   clamp:(value,min,max)=>Math.max(min,Math.min(max,value)),activeArenaMapId:()=> 'arena',
   activeArenaBounds:()=>({left:0,top:0,right:1600,bottom:900}),remoteCarriedWeapon:()=>true,
   arenaControlClockCatchUp:()=>{},arenaApplyRemoteParryState:()=>{},arenaApplyRemoteMeleeAbilityState:()=>{},
+  arenaConfirmRemoteTraffic:clock=>{hpContext.arena.opponent.lastSeen=clock;},
   arenaHazardCauseValid:()=>false,arenaHostRecordHazardHp:()=>{},arenaUnscopedKillCause:()=>null,
   arenaHostResolve:()=>{stateResolves++;}};
 vm.createContext(hpContext);vm.runInContext(functionSource(online,'arenaReceive'),hpContext);
@@ -229,6 +256,9 @@ assert.equal(forfeitContext.arenaApplyForfeitResult(forfeitResult),true,'a valid
 assert.equal(forfeitContext.arena.phase,'match_end');
 assert.deepEqual({...forfeitContext.arena.scores},{guest:1,host:5});
 assert.equal(dailyRecords,1);
+assert.match(forfeitContext.arena.status,/match channel stopped responding/,
+  'a transport timeout must describe the match channel instead of claiming the player lost Internet');
+assert.doesNotMatch(forfeitContext.arena.status,/disconnected/i);
 
 const startSource=functionSource(online,'arenaHostStartRound');
 assert.match(startSource,/const channel=arena\.matchChannel[\s\S]{0,500}arena\.matchChannel===channel/,

@@ -41,7 +41,7 @@ function harness(responses,{profile={user_id:'user-1',handle:'Seal_One'},auth={i
   };
   vm.createContext(context);
   vm.runInContext(`
-    let adminRosterFetchSeq=0,adminPrivacyEpoch=0;
+    let adminRosterFetchSeq=0,adminPrivacyEpoch=0,adminRosterLoadPromise=null,adminRosterLoadOwnerId='';
     let adminRoles={stale:'main'},adminRosterRows=[{username:'stale',rank:'main',isSelf:true}];
     let adminSelfRole='',adminSelfUsername='';
     const authUser=${JSON.stringify(auth)},socialProfile=${JSON.stringify(profile)};

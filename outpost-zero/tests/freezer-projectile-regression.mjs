@@ -129,9 +129,9 @@ assert.doesNotMatch(functionSource(online,'arenaApplyRemoteUtility'),/key==='fre
   'receiving a cast packet must never freeze the player before the projectile arrives');
 
 for(const [script,version] of [['weapons','20260831-frag-range-v1'],['upgrades','20260831-hub-tools-settings-v1'],
-  ['gameplay','20260831-duel-stability-v1'],['combat','20260831-utility-preround-v1'],
-  ['online','20260831-duel-stability-v1'],['rendering','20260831-twin-sai-circle-v1'],
-  ['ui','20260831-frag-range-v1']])
+  ['gameplay','20260831-practice-loan-v1'],['combat','20260831-utility-preround-v1'],
+  ['online','20260902-ai-cleanup-v1'],['rendering','20260831-mobile-quick-melee-v1'],
+  ['ui','20260902-ai-cleanup-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('PASS Freezer travels, respects walls, self-freezes, and uses the reduced blast');

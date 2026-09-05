@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 
 const root=path.resolve(import.meta.dirname,'../..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const read=file=>file.endsWith('.sql')?readFeatureSql(root,file):fs.readFileSync(path.join(root,file),'utf8');
 const admin=read('outpost-zero/js/administration.js');
 const adminUi=read('outpost-zero/js/admin-ui.js');
 const progress=read('outpost-zero/js/progression.js');

@@ -1,8 +1,23 @@
--- OUTPOST ZERO / LEADERBOARDS 01: STORAGE + SECURITY + REALTIME
--- One rerunnable owner for public boards, score storage, exact-once Arena wins,
--- browser permissions, and the scores Realtime refresh feed. Run after Social 01.
+-- OUTPOST ZERO / PLAYER 01: STATS
+-- One rerunnable owner for public leaderboards, exact-once Arena wins, and the
+-- private per-account CPU ladder. Run after Player 03 Social Menu.
+--
+-- Data remains in separate tables with separate RLS boundaries. Only public
+-- score changes are published through Supabase Realtime; Arena receipts and
+-- CPU ladder state remain private RPC-only data.
 
 begin;
+
+-- Fail closed: policy setup lives in Player 04 Security. Install it first.
+do $section_security_required$
+begin
+  if to_regprocedure('public._outpost_zero_apply_player_security(text)') is null then
+    raise exception 'Run Player 04 Security first; this transaction made no changes';
+  end if;
+end;
+$section_security_required$;
+
+-- LEADERBOARDS + EXACT-ONCE ARENA WINS
 
 create table if not exists public.scores (
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -19,7 +34,7 @@ alter table public.scores add column if not exists updated_at timestamptz not nu
 do $shape$
 begin
   if to_regclass('public.social_profiles') is null then
-    raise exception 'Leaderboards 01 requires Social 01 (public.social_profiles)';
+    raise exception 'Player 01 Stats requires Player 03 Social Menu (public.social_profiles)';
   end if;
   if not exists (select 1 from information_schema.columns where table_schema='public' and table_name='scores' and column_name='user_id' and udt_name='uuid' and is_nullable='NO')
      or not exists (select 1 from information_schema.columns where table_schema='public' and table_name='scores' and column_name='game' and udt_name='text' and is_nullable='NO')
@@ -112,11 +127,6 @@ begin
 end;
 $receipt_shape$;
 
-alter table public.scores enable row level security;
-alter table public.scores force row level security;
-alter table public.outpost_zero_arena_win_receipts enable row level security;
-alter table public.outpost_zero_arena_win_receipts force row level security;
-
 -- The signed-out leaderboard receives only user id, username, and score. It
 -- never reads email-bearing profile JSON or trusts scores.name for identity.
 -- USERNAME_NOT_SET is the public API sentinel for a missing, blank, reserved,
@@ -147,8 +157,6 @@ drop trigger if exists outpost_zero_reject_legacy_profile_score_trigger
 create trigger outpost_zero_reject_legacy_profile_score_trigger
 before insert or update on public.scores
 for each row execute function public.outpost_zero_reject_legacy_profile_score();
-
-revoke all on function public.outpost_zero_reject_legacy_profile_score() from public;
 
 -- Remove the obsolete public-profile snapshots. Account progress is already
 -- stored in the private profiles table; these score rows duplicated it into a
@@ -253,9 +261,6 @@ as $$
   limit least(greatest(coalesce(p_limit, 5), 1), 5)
 $$;
 
-revoke all on function public.get_outpost_zero_leaderboard(text, integer) from public;
-grant execute on function public.get_outpost_zero_leaderboard(text, integer) to anon, authenticated;
-
 -- Username/UUID lookup for the player card. Keep this deliberately narrower
 -- than both scores and private account progress: callers receive only the same
 -- public identity and high score already shown by the leaderboard.
@@ -324,43 +329,6 @@ as $$
       and sc.game = 'outpost-zero'
   ) s on true
 $$;
-
-revoke all on function public.get_outpost_zero_public_player(text) from public;
-grant execute on function public.get_outpost_zero_public_player(text) to anon, authenticated;
-
--- Signed-out boards use the narrow RPCs above. Signed-in game code sees only
--- its own rows, the two intentionally public boards, and referral claims that
--- target that signed-in account. Rows for another game sharing this table stay
--- outside Outpost Zero's browser perimeter.
-drop policy if exists "read all" on public.scores;
-drop policy if exists "write self" on public.scores;
-drop policy if exists "update self" on public.scores;
-drop policy if exists outpost_zero_scores_authenticated_read on public.scores;
-drop policy if exists outpost_zero_scores_self_insert on public.scores;
-drop policy if exists outpost_zero_scores_self_update on public.scores;
-
-create policy outpost_zero_scores_authenticated_read
-on public.scores for select to authenticated
-using (
-  auth.uid()=user_id
-  or game in ('outpost-zero','outpost-zero-arena-wins')
-  or game='outpost-zero-referral:'||auth.uid()::text
-);
-
-create policy outpost_zero_scores_self_insert
-on public.scores for insert to authenticated
-with check (auth.uid() = user_id and game <> 'outpost-zero-arena-wins');
-
-create policy outpost_zero_scores_self_update
-on public.scores for update to authenticated
-using (auth.uid() = user_id and game <> 'outpost-zero-arena-wins')
-with check (auth.uid() = user_id and game <> 'outpost-zero-arena-wins');
-
-revoke all on table public.scores from public, anon, authenticated;
-revoke all on table public.outpost_zero_arena_win_receipts from public, anon, authenticated;
-grant select on table public.scores to authenticated;
-grant insert(user_id, game, name, score) on table public.scores to authenticated;
-grant update(name, score, updated_at) on table public.scores to authenticated;
 
 create or replace function public.record_outpost_zero_arena_win(
   p_match_id text,
@@ -434,9 +402,6 @@ begin
 end;
 $$;
 
-revoke all on function public.record_outpost_zero_arena_win(text, uuid) from public, anon;
-grant execute on function public.record_outpost_zero_arena_win(text, uuid) to authenticated;
-
 -- Leaderboards owns only scores publication membership. Receipts remain private.
 alter table public.scores replica identity full;
 do $realtime$
@@ -459,6 +424,345 @@ $realtime$;
 
 -- Transactional cache refresh: PostgREST sees the replaced public functions
 -- only if this complete Leaderboards installation commits successfully.
+
+-- PRIVATE CPU LADDER + EXACT-ONCE CPU MATCH RECEIPTS
+
+create table if not exists public.outpost_zero_bot_ladder (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  tier smallint not null default 0 check (tier between 0 and 4),
+  progress smallint not null default 0 check (progress between 0 and 10),
+  win_streak smallint not null default 0,
+  loss_streak smallint not null default 0,
+  wins bigint not null default 0 check (wins >= 0),
+  losses bigint not null default 0 check (losses >= 0),
+  revision bigint not null default 0,
+  updated_at timestamptz not null default now(),
+  constraint outpost_zero_bot_ladder_win_streak_cycle
+    check (win_streak between 0 and 2),
+  constraint outpost_zero_bot_ladder_loss_streak_cycle
+    check (loss_streak between 0 and 2),
+  constraint outpost_zero_bot_ladder_lower_tier_progress
+    check (tier = 4 or progress <= 9)
+);
+
+-- Keep reruns compatible with an early preview of this same ladder table.
+alter table public.outpost_zero_bot_ladder
+  add column if not exists revision bigint not null default 0;
+update public.outpost_zero_bot_ladder set revision = 0
+where revision is null or revision < 0;
+alter table public.outpost_zero_bot_ladder alter column revision set default 0;
+alter table public.outpost_zero_bot_ladder alter column revision set not null;
+
+-- A completed three-result streak is an event, not a stored display value.
+-- An early ladder build could leave Impossible wins at 3 forever because no
+-- promotion existed above tier 4. Repair those rows once and advance their
+-- revision so every cached client accepts the corrected canonical snapshot.
+update public.outpost_zero_bot_ladder
+set win_streak = case when win_streak > 2 then 0 else win_streak end,
+    loss_streak = case when loss_streak > 2 then 0 else loss_streak end,
+    revision = revision + 1,
+    updated_at = pg_catalog.clock_timestamp()
+where win_streak > 2 or loss_streak > 2;
+
+-- Replace the unnamed 0..3 checks from the first ladder release. Named 0..2
+-- constraints make the visible 0, 1, 2, reset cycle a database invariant and
+-- keep this entire file safe to rerun on both old and fresh installations.
+alter table public.outpost_zero_bot_ladder
+  drop constraint if exists outpost_zero_bot_ladder_win_streak_check;
+alter table public.outpost_zero_bot_ladder
+  drop constraint if exists outpost_zero_bot_ladder_loss_streak_check;
+do $block$
+begin
+  if not exists (
+    select 1 from pg_catalog.pg_constraint
+    where conrelid = 'public.outpost_zero_bot_ladder'::regclass
+      and conname = 'outpost_zero_bot_ladder_win_streak_cycle'
+  ) then
+    alter table public.outpost_zero_bot_ladder
+      add constraint outpost_zero_bot_ladder_win_streak_cycle
+      check (win_streak between 0 and 2);
+  end if;
+  if not exists (
+    select 1 from pg_catalog.pg_constraint
+    where conrelid = 'public.outpost_zero_bot_ladder'::regclass
+      and conname = 'outpost_zero_bot_ladder_loss_streak_cycle'
+  ) then
+    alter table public.outpost_zero_bot_ladder
+      add constraint outpost_zero_bot_ladder_loss_streak_cycle
+      check (loss_streak between 0 and 2);
+  end if;
+  if not exists (
+    select 1 from pg_catalog.pg_constraint
+    where conrelid = 'public.outpost_zero_bot_ladder'::regclass
+      and conname = 'outpost_zero_bot_ladder_revision_nonnegative'
+  ) then
+    alter table public.outpost_zero_bot_ladder
+      add constraint outpost_zero_bot_ladder_revision_nonnegative check (revision >= 0);
+  end if;
+end;
+$block$;
+
+-- One private receipt per account + match UUID makes a lost-response retry
+-- exact-once. Result and difficulty are retained so conflicting reuse of a UUID
+-- can be rejected instead of silently changing the original match.
+create table if not exists public.outpost_zero_bot_ladder_matches (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  match_id uuid not null,
+  won boolean not null,
+  difficulty smallint not null check (difficulty between 0 and 4),
+  delta smallint not null check (delta between -1 and 1),
+  promoted boolean not null default false,
+  demoted boolean not null default false,
+  created_at timestamptz not null default now(),
+  primary key (user_id, match_id),
+  check (not (promoted and demoted))
+);
+
+create index if not exists outpost_zero_bot_ladder_matches_user_time_idx
+  on public.outpost_zero_bot_ladder_matches (user_id, created_at desc);
+
+create or replace function public.get_outpost_zero_bot_ladder()
+returns table (
+  tier integer,
+  progress integer,
+  win_streak integer,
+  loss_streak integer,
+  wins bigint,
+  losses bigint,
+  revision bigint,
+  updated_at timestamptz
+)
+language sql
+stable
+security definer
+set search_path = pg_catalog, public
+as $function$
+  select coalesce(l.tier, 0)::integer,
+         coalesce(l.progress, 0)::integer,
+         coalesce(l.win_streak, 0)::integer,
+         coalesce(l.loss_streak, 0)::integer,
+         coalesce(l.wins, 0)::bigint,
+         coalesce(l.losses, 0)::bigint,
+         coalesce(l.revision, 0)::bigint,
+         coalesce(l.updated_at, now())::timestamptz
+  from (select auth.uid() as user_id) as caller
+  left join public.outpost_zero_bot_ladder as l
+    on l.user_id = caller.user_id;
+$function$;
+
+create or replace function public.submit_outpost_zero_bot_ladder(
+  p_match_id uuid,
+  p_won boolean,
+  p_difficulty integer
+)
+returns table (
+  tier integer,
+  progress integer,
+  win_streak integer,
+  loss_streak integer,
+  wins bigint,
+  losses bigint,
+  revision bigint,
+  updated_at timestamptz,
+  accepted boolean,
+  reason text,
+  delta integer,
+  promoted boolean,
+  demoted boolean
+)
+language plpgsql
+volatile
+security definer
+set search_path = pg_catalog, public
+as $function$
+declare
+  v_user_id uuid := auth.uid();
+  v_now timestamptz := clock_timestamp();
+  v_state public.outpost_zero_bot_ladder%rowtype;
+  v_existing public.outpost_zero_bot_ladder_matches%rowtype;
+  v_last_match timestamptz;
+  v_hour_count bigint := 0;
+  v_day_count bigint := 0;
+  v_delta smallint := 0;
+  v_promoted boolean := false;
+  v_demoted boolean := false;
+begin
+  if v_user_id is null then
+    raise exception 'authentication required' using errcode = '42501';
+  end if;
+  if p_match_id is null or p_won is null or p_difficulty is null then
+    raise exception 'match id, result, and difficulty are required' using errcode = '22004';
+  end if;
+  if p_difficulty < 0 or p_difficulty > 4 then
+    raise exception 'difficulty must be between 0 and 4' using errcode = '22023';
+  end if;
+
+  -- This row is the per-user serialization lock. Concurrent tabs cannot both
+  -- admit the same UUID or calculate from stale streak progress.
+  insert into public.outpost_zero_bot_ladder (user_id)
+  values (v_user_id)
+  on conflict (user_id) do nothing;
+
+  select l.* into strict v_state
+  from public.outpost_zero_bot_ladder as l
+  where l.user_id = v_user_id
+  for update;
+
+  select m.* into v_existing
+  from public.outpost_zero_bot_ladder_matches as m
+  where m.user_id = v_user_id
+    and m.match_id = p_match_id;
+
+  if found then
+    return query select v_state.tier::integer, v_state.progress::integer,
+      v_state.win_streak::integer, v_state.loss_streak::integer,
+      v_state.wins, v_state.losses, v_state.revision, v_state.updated_at,
+      false,
+      case when v_existing.won = p_won and v_existing.difficulty = p_difficulty
+        then 'duplicate'::text else 'duplicate_conflict'::text end,
+      case when v_existing.won = p_won and v_existing.difficulty = p_difficulty
+        then v_existing.delta::integer else 0 end,
+      case when v_existing.won = p_won and v_existing.difficulty = p_difficulty
+        then v_existing.promoted else false end,
+      case when v_existing.won = p_won and v_existing.difficulty = p_difficulty
+        then v_existing.demoted else false end;
+    return;
+  end if;
+
+  -- A match counts only at the tier it started on. This rejects a stale tab or
+  -- caller-edited request before any ladder or receipt mutation.
+  if p_difficulty <> v_state.tier then
+    return query select v_state.tier::integer, v_state.progress::integer,
+      v_state.win_streak::integer, v_state.loss_streak::integer,
+      v_state.wins, v_state.losses, v_state.revision, v_state.updated_at,
+      false, 'difficulty_mismatch'::text, 0, false, false;
+    return;
+  end if;
+
+  -- Local matches cannot be authoritatively replayed by the database. Server
+  -- time limits materially constrain direct-RPC farming while remaining below
+  -- the normal duration of a legitimate first-to-five match.
+  select max(m.created_at),
+         count(*) filter (where m.created_at >= v_now - interval '1 hour'),
+         count(*) filter (where m.created_at >= v_now - interval '1 day')
+    into v_last_match, v_hour_count, v_day_count
+  from public.outpost_zero_bot_ladder_matches as m
+  where m.user_id = v_user_id
+    and m.created_at >= v_now - interval '1 day';
+
+  if (v_last_match is not null and v_last_match > v_now - interval '30 seconds')
+     or v_hour_count >= 20
+     or v_day_count >= 100 then
+    return query select v_state.tier::integer, v_state.progress::integer,
+      v_state.win_streak::integer, v_state.loss_streak::integer,
+      v_state.wins, v_state.losses, v_state.revision, v_state.updated_at,
+      false, 'rate_limited'::text, 0, false, false;
+    return;
+  end if;
+
+  if p_won then
+    v_state.wins := v_state.wins + 1;
+    v_state.win_streak := least(v_state.win_streak + 1, 3);
+    v_state.loss_streak := 0;
+    if v_state.progress < 10 then
+      v_state.progress := v_state.progress + 1;
+      v_delta := 1;
+    end if;
+
+    if v_state.tier < 4
+       and (v_state.win_streak >= 3 or v_state.progress >= 10) then
+      v_state.tier := v_state.tier + 1;
+      v_state.progress := 0;
+      v_state.win_streak := 0;
+      v_state.loss_streak := 0;
+      v_promoted := true;
+    elsif v_state.win_streak >= 3 then
+      -- Impossible is the ceiling, but its consecutive-win bar must still
+      -- complete and restart instead of becoming permanently stuck at 3.
+      v_state.win_streak := 0;
+      v_state.loss_streak := 0;
+    end if;
+  else
+    v_state.losses := v_state.losses + 1;
+    v_state.win_streak := 0;
+    v_state.loss_streak := least(v_state.loss_streak + 1, 3);
+
+    if v_state.loss_streak >= 3 then
+      v_state.loss_streak := 0;
+      if v_state.progress > 0 then
+        v_state.progress := v_state.progress - 1;
+        v_delta := -1;
+      elsif v_state.tier > 0 then
+        v_state.tier := v_state.tier - 1;
+        v_state.progress := 9;
+        v_delta := -1;
+        v_demoted := true;
+      end if;
+    end if;
+  end if;
+
+  insert into public.outpost_zero_bot_ladder_matches
+    (user_id, match_id, won, difficulty, delta, promoted, demoted, created_at)
+  values
+    (v_user_id, p_match_id, p_won, p_difficulty, v_delta,
+     v_promoted, v_demoted, v_now);
+
+  update public.outpost_zero_bot_ladder as l
+  set tier = v_state.tier,
+      progress = v_state.progress,
+      win_streak = v_state.win_streak,
+      loss_streak = v_state.loss_streak,
+      wins = v_state.wins,
+      losses = v_state.losses,
+      revision = l.revision + 1,
+      updated_at = v_now
+  where l.user_id = v_user_id
+  returning l.* into v_state;
+
+  return query select v_state.tier::integer, v_state.progress::integer,
+    v_state.win_streak::integer, v_state.loss_streak::integer,
+    v_state.wins, v_state.losses, v_state.revision, v_state.updated_at,
+    true, 'accepted'::text, v_delta::integer, v_promoted, v_demoted;
+end;
+$function$;
+
+-- REALTIME OWNERSHIP
+-- CPU ladder/model history is private RPC-only state. Current and retired AI
+-- tables must never remain in the publication after a legacy Realtime query.
+do $realtime$
+declare relation_name text;
+begin
+  foreach relation_name in array array[
+    'outpost_zero_bot_ladder',
+    'outpost_zero_bot_ladder_matches',
+    'outpost_zero_bot_models',
+    'outpost_zero_bot_model_state',
+    'outpost_zero_bot_model_audit',
+    'outpost_zero_ai_training_matches',
+    'global_bot_training',
+    'global_bot_training_contributions'
+  ] loop
+    if to_regclass(format('public.%I', relation_name)) is not null
+       and exists (
+         select 1 from pg_catalog.pg_publication_tables
+         where pubname = 'supabase_realtime'
+           and schemaname = 'public'
+           and tablename = relation_name
+       ) then
+      execute format(
+        'alter publication supabase_realtime drop table public.%I',
+        relation_name
+      );
+    end if;
+  end loop;
+end;
+$realtime$;
+
+-- Refresh the public RPC schema only if this complete Player 01 transaction
+-- commits successfully.
 notify pgrst, 'reload schema';
+
+-- Apply this section's complete boundary atomically before anything is visible.
+select public._outpost_zero_apply_player_security('Player 01');
 
 commit;

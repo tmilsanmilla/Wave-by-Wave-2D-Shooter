@@ -100,8 +100,8 @@ assert.ok(spreadContext.effSpread()>WEAPONS.sniper.spread,'unscoped AWM fire mus
 spreadContext.player.cur='ar';spreadContext.aiming=true;
 assert.ok(spreadContext.effSpread()>WEAPONS.ar.aimSpread,'ordinary aimed guns must retain recoil bloom');
 
-for(const [script,version] of [['input','20260831-duel-stability-v1'],['gameplay','20260831-duel-stability-v1'],
-  ['combat','20260831-utility-preround-v1'],['ai','20260831-duel-stability-v1']])
+for(const [script,version] of [['input','20260902-ai-cleanup-v1'],['gameplay','20260831-practice-loan-v1'],
+  ['combat','20260831-utility-preround-v1'],['ai','20260902-ai-cleanup-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current gameplay cache-buster`);
 
 console.log('PASS AWM cadence, held-trigger retry, cancellation, and scoped accuracy');

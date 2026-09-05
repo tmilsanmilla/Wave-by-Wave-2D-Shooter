@@ -287,6 +287,7 @@ function drawPartyCpuActors(){
 }
 function drawArenaOpponentWorld(){
   if(practiceMode!=='arena') return;
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena()){drawMultideviceActors();return;}
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){drawPartyCpuActors();return;}
   if(!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
@@ -344,7 +345,11 @@ function drawHostileProjectileWorldPass(playBounds){
   ctx.save();ctx.beginPath();ctx.rect(bounds.left,bounds.top,bounds.right-bounds.left,bounds.bottom-bounds.top);ctx.clip();
   for(const b of ebullets)drawHostileProjectileCue(b,b&&b.h?'homing':b&&b.king?'king':'enemy');
   if(practiceMode==='arena'){
-    if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){
+    if(typeof isMultideviceArena==='function'&&isMultideviceArena()){
+      drawRemoteShotVisuals(arena.remoteShots.filter(b=>b.hostile!==false),true);
+      for(const b of arena.remoteFireworks)if(b.hostile!==false)drawHostileProjectileCue(b,'firework');
+      drawRemoteFireworkExplosionVisuals(arena.remoteFireworkFx);
+    }else if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){
       for(const b of partyCpuMatch.shots)if(b&&b.team==='B')drawHostileProjectileCue(b,'cpu');
     }else{
       drawRemoteShotVisuals(arena.remoteShots,true);
@@ -362,7 +367,8 @@ function collectLiveHostileProjectiles(){
   };
   add(ebullets);
   if(practiceMode==='arena'){
-    if(typeof isCpuTeamArena==='function'&&isCpuTeamArena())add(partyCpuMatch.shots,b=>b.team==='B');
+    if(typeof isMultideviceArena==='function'&&isMultideviceArena()){add(arena.remoteShots,b=>b.hostile!==false);add(arena.remoteFireworks,b=>b.hostile!==false);}
+    else if(typeof isCpuTeamArena==='function'&&isCpuTeamArena())add(partyCpuMatch.shots,b=>b.team==='B');
     else{add(arena.remoteShots);add(arena.remoteFireworks);}
   }
   return result;
@@ -806,8 +812,16 @@ function drawWorld(){
 }
 
 /* ---------------- render: HUD ---------------- */
+function touchCombatSelectorEntries(slots){
+  const entries=[];
+  for(const slot of (Array.isArray(slots)?slots:[])){
+    entries.push({kind:'slot',slot});
+    if(+slot.number===3)entries.push({kind:'quickMelee',key:'f'});
+  }
+  return entries;
+}
 function touchWeaponSelectorLayout(count){
-  count=Math.max(1,Math.min(4,Math.floor(+count||1)));
+  count=Math.max(1,Math.min(5,Math.floor(+count||1)));
   const arenaMini=typeof isArenaMapBattlefield==='function'&&isArenaMapBattlefield();
   const short=H<430, tutorial=!!tutorialOn;
   // Keep one vertical rail at the extreme top-left in every touch layout. It
@@ -893,7 +907,9 @@ function drawHUD(){
   // score / wave
   ctx.textAlign='left'; ctx.textBaseline='top';
   if(practiceMode==='arena'){
-    if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){
+    if(typeof isMultideviceArena==='function'&&isMultideviceArena()){
+      drawMultideviceHud(pad);
+    }else if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){
       const clock=cpuTeamClock(),timer=partyCpuMatch.phase==='countdown'?Math.ceil((partyCpuMatch.roundStartAt-clock)/1000):Math.ceil((partyCpuMatch.roundEndAt-clock)/1000);
       const scoreLine='YOUR TEAM  '+(partyCpuMatch.scores.allies||0)+'  \u2014  '+(partyCpuMatch.scores.cpus||0)+'  CPUs';
       ctx.textAlign='center';ctx.fillStyle='#bfa8ff';ctx.font='700 '+clamp(Math.floor(W/30),13,24)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(scoreLine,W-110),W/2,pad);
@@ -985,13 +1001,29 @@ function drawHUD(){
     {key:loadout.utility,number:4,utility:true},
   ].filter(slot=>slot.key);
   touchButtons=[]; touchWeaponSelectorBounds=null;
-  const touchSlots=touchUI?touchWeaponSelectorLayout(slots.length):null;
+  const selectorEntries=touchUI?touchCombatSelectorEntries(slots):slots.map(slot=>({kind:'slot',slot}));
+  const touchSlots=touchUI?touchWeaponSelectorLayout(selectorEntries.length):null;
   if(touchSlots) touchWeaponSelectorBounds={x:touchSlots.x,y:touchSlots.y,w:touchSlots.width,h:touchSlots.height};
-  for(let i=0;i<slots.length;i++){
+  for(let i=0;i<selectorEntries.length;i++){
     const col=touchSlots?i%touchSlots.columns:i, row=touchSlots?Math.floor(i/touchSlots.columns):0;
     const x=touchSlots?touchSlots.x+col*(touchSlots.w+touchSlots.gap):pad+i*66;
-    const y=touchSlots?touchSlots.y+row*(touchSlots.h+touchSlots.gap):H-102-40, slot=slots[i], k=slot.key;
+    const y=touchSlots?touchSlots.y+row*(touchSlots.h+touchSlots.gap):H-102-40, entry=selectorEntries[i];
     const slotW=touchSlots?touchSlots.w:60, slotH=touchSlots?touchSlots.h:20;
+    if(entry.kind==='quickMelee'){
+      const pressed=pressedBtn==='f';
+      ctx.fillStyle=pressed?'rgba(232,182,88,0.5)':'rgba(143,179,201,0.14)';ctx.fillRect(x,y,slotW,slotH);
+      ctx.strokeStyle=pressed?'#e8b658':'#8fb3c9';ctx.strokeRect(x+0.5,y+0.5,slotW,slotH);
+      ctx.fillStyle=pressed?'#e8b658':'#8fb3c9';ctx.font='700 11px ui-monospace,Consolas,monospace';
+      ctx.fillText('F',x+6,y+8);ctx.textAlign='right';
+      if(slotW>=52)ctx.fillText(fitLine('QUICK',slotW-24),x+slotW-6,y+8);
+      else{
+        const fx=x+slotW-11,fy=y+slotH/2;
+        ctx.strokeStyle=pressed?'#e8b658':'#cdd6b0';ctx.lineWidth=1.4;
+        ctx.strokeRect(fx-6,fy-5,12,7);ctx.beginPath();ctx.moveTo(fx-6,fy+2);ctx.lineTo(fx-6,fy+6);ctx.lineTo(fx+2,fy+6);ctx.stroke();
+      }
+      ctx.textAlign='left';touchButtons.push({key:'f',x,y,w:slotW,h:slotH});continue;
+    }
+    const slot=entry.slot,k=slot.key;
     const isU = slot.utility;
     const cur = isU ? utilityOut : (!utilityOut && k===player.cur);
     const pressed=touchSlots&&pressedBtn===String(slot.number);
@@ -1142,19 +1174,10 @@ function drawHUD(){
       }, now<(dashReadyT||0));
     }
 
-    // --- top-right icon row: melee ability, utility, and carried medkit ---
+    // --- top-right icon row: utility and carried medkit. Quick Melee lives
+    // directly beside the melee selector in the top-left touch rail. ---
     const rY=124, rR=30;
     let rx=W-14-rR;
-    // FIST — activate the equipped melee's special in every playable mode.
-    iconBtn('f', rx, rY, rR, (cx,cy)=>{
-      ctx.lineWidth=2.2;
-      ctx.strokeRect(cx-9,cy-8,18,11);                 // fist block
-      ctx.beginPath();
-      for(let i=0;i<4;i++){ const fx=cx-7+i*4.6; ctx.moveTo(fx,cy-8); ctx.lineTo(fx,cy-11); }
-      ctx.moveTo(cx-9,cy+3); ctx.lineTo(cx-9,cy+8); ctx.lineTo(cx+3,cy+8); // thumb/wrist
-      ctx.stroke();
-    }, !!(loadout.melee&&((loadout.melee==='terafists'&&teraHitCharge<teraHitsRequired())||now<(abilityCD[loadout.melee]||0))));
-    rx-=rR*2+10;
     // GRENADE — utility (G), only when one is equipped
     if(loadout.utility){
       iconBtn('g', rx, rY, rR, (cx,cy)=>{

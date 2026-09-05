@@ -6,7 +6,8 @@
    browser that can be edited by either player. */
 const ARENA_FORFEIT_GRACE_MS=15000;
 const ARENA_PROTOCOL=3;
-let arenaDisconnectHoldSerial=0;
+const ARENA_PRESENCE_RETRY_DELAYS_MS=Object.freeze([0,3000,7000,15000,31000]);
+let arenaDisconnectHoldSerial=0,arenaPresenceTrackSerial=0;
 const CASUAL_ARENA_UTILITY_KEYS=Object.freeze(['medkit','grenade','freezer','redball','beachball']);
 function casualArenaUtilityKey(raw,requireOwned=false){
   const key=String(raw||'');
@@ -18,6 +19,7 @@ function casualArenaUtilityKey(raw,requireOwned=false){
   return key;
 }
 function isCasualOnlineArena(){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return !!(arena.active&&multidevice.channel);
   return !!(practiceMode==='arena'&&arena&&arena.active&&arena.matchChannel&&authUser&&
     ['queue','private'].includes(String(arena.mode||''))&&!isBotArena()&&
     !(typeof isCpuTeamArena==='function'&&isCpuTeamArena()));
@@ -385,7 +387,10 @@ function arenaMapVoteTick(){
 }
 function arenaDropChannel(ch){
   if(!ch||!sb) return;
-  try{ ch.untrack(); }catch(e){}
+  // removeChannel already removes this client's Presence row. Calling
+  // untrack first consumes a second Presence operation and can trip the
+  // service's per-client rate limit during the queue -> match handoff.
+  if(arena&&ch===arena.matchChannel)arenaPresenceTrackSerial++;
   try{ sb.removeChannel(ch); }catch(e){}
 }
 function arenaSend(event,payload){
@@ -541,6 +546,7 @@ function arenaRememberRemoteUtility(id){
   return true;
 }
 function arenaBroadcastUtility(key,data={}){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceBroadcastUtility(key,data);
   key=String(key||'');
   if(!isCasualOnlineArena()||casualArenaUtilityKey(key,true)!==key||
      String(loadout&&loadout.utility||'')!==key||!arenaCanAct())return false;
@@ -637,6 +643,7 @@ function remoteMeleeRemember(seen,id){
   return true;
 }
 function arenaBroadcastMelee(weaponId,angle,arc,range,duration,side){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceBroadcastMelee(weaponId,angle,arc,range,duration,side);
   if(!arena||!authUser||!arena.matchChannel||!arena.opponent||arena.phase!=='fight'||!arenaCanAct()||
      isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())||!remoteMeleeWeaponOwned(loadout,weaponId))return false;
   arena.meleeSeq=Math.max(0,Math.floor(+arena.meleeSeq||0))+1;
@@ -728,6 +735,7 @@ function remoteShotPacketFromBullets(id,weaponId,spawned){
   return {id:String(id),weapon:String(weaponId||''),x:+first.x,y:+first.y,angles};
 }
 function arenaBroadcastShot(weaponId,spawned){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceBroadcastShot(weaponId,spawned);
   if(!arena||!authUser||!arena.matchChannel||!arena.opponent||arena.phase!=='fight'||!arenaCanAct()||
      isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())||!remoteShotWeaponOwned(loadout,weaponId))return false;
   const id=String(authUser.id)+':'+arena.matchEpoch+':'+arena.round+':shot:'+(++arena.shotSeq),packet=remoteShotPacketFromBullets(id,weaponId,spawned);
@@ -739,6 +747,7 @@ function remoteFireworkPacketFromProjectile(id,weaponId,spawned){
     tx:spawned.tx,ty:spawned.ty,fuseMs:REMOTE_FIREWORK_FUSE_MS};
 }
 function arenaBroadcastFirework(weaponId,spawned){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceBroadcastShot(weaponId,spawned,true);
   if(!arena||!authUser||!arena.matchChannel||!arena.opponent||arena.phase!=='fight'||!arenaCanAct()||
      isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())||!remoteFireworkWeaponOwned(loadout,weaponId))return false;
   arena.fireworkSeq=Math.max(0,Math.floor(+arena.fireworkSeq||0))+1;
@@ -900,6 +909,28 @@ function arenaClearDisconnectHold(resumeClocks){
   if(arena.pendingHazards instanceof Map) for(const pending of arena.pendingHazards.values()) pending.nextAt=0;
   return heldFor;
 }
+function arenaConfirmRemoteTraffic(clock=Date.now()){
+  if(!arena||!arena.opponent)return false;
+  clock=Math.max(0,Math.floor(+clock||0));
+  arena.opponent.lastSeen=Math.max(Math.floor(+arena.opponent.lastSeen||0),clock);
+  if(!arena.disconnectAt&&!arena.disconnectTimer)return true;
+  // Receiving a validated current-match packet proves this channel is alive;
+  // a transient local channel error must not become a self-forfeit.
+  if(arena.disconnectSide==='self'){
+    arenaClearDisconnectHold(false);arena.status='Connection restored — match continues.';arena.syncAt=0;
+    return true;
+  }
+  if(arena.disconnectSide==='both'&&!arena.localBackgrounded&&!arenaPageBackgrounded())
+    arena.disconnectSide='opponent';
+  // An explicit background/away notice remains authoritative until a newer
+  // foreground sequence arrives. Ordinary transport holds, however, require
+  // both missing Presence and a full grace period without gameplay traffic.
+  if(arena.disconnectKind==='disconnect'&&['opponent','both'].includes(arena.disconnectSide)){
+    arena.disconnectDeadline=Math.max(Math.floor(+arena.disconnectDeadline||0),clock+ARENA_FORFEIT_GRACE_MS);
+    if(arena.disconnectSide==='opponent')arena.status='Opponent connected — match continues.';
+  }
+  return true;
+}
 function arenaApplyForfeitResult(p){
   if(!arena||!authUser||!arena.opponent||!p) return false;
   const me=String(authUser.id),opp=String(arena.opponent.id),winner=String(p.winner||''),loser=String(p.loser||'');
@@ -932,9 +963,12 @@ function arenaApplyForfeitResult(p){
   resetHeldGameplayInput();
   resetWeaponGimmickState();
   arena.phase='match_end';
+  const resultReason=String(p.reason||'disconnect'),opponentName=String(arena.opponent.name||'your opponent');
   arena.status=winner===me
-    ?'MATCH WON BY FORFEIT — '+String(arena.opponent.name||'your opponent')+' disconnected.'
-    :'MATCH LOST BY FORFEIT — your connection left the match.';
+    ?'MATCH WON BY FORFEIT — '+opponentName+(resultReason==='background'?' was away too long.':
+      resultReason==='left'?' left the match.':resultReason==='signed_out'?' signed out.':' stopped responding.')
+    :'MATCH LOST BY FORFEIT — '+(resultReason==='background'?'you were away too long.':
+      resultReason==='left'?'you left the match.':resultReason==='signed_out'?'you signed out.':'your match channel stopped responding.');
   sfx(winner===me?'pickup':'die');
   return true;
 }
@@ -983,23 +1017,26 @@ function arenaBeginDisconnectHold(side,ch,kind='disconnect'){
   // Only the result is delayed while the missing/backgrounded player returns.
   arena.networkHold=false;
   const seconds=Math.ceil(Math.max(0,arena.disconnectDeadline-clock)/1000);
+  const recentTraffic=side==='opponent'&&kind==='disconnect'&&
+    clock-Math.floor(+arena.opponent.lastSeen||0)<=2000;
   arena.status=arena.disconnectSide==='opponent'
     ?(kind==='background'?'Opponent switched away — match continues; return within '+seconds+' seconds.':
-      'Opponent connection lost — match continues; return within '+seconds+' seconds.')
+      recentTraffic?'Opponent connected — match continues.':'Checking opponent connection — match continues.')
     :arena.disconnectSide==='self'
-      ?'Connection interrupted — reconnect within '+seconds+' seconds; the match continues.'
-      :'Both connections are interrupted — the match clock still continues.';
-  // Duplicate Presence and background packets keep the first immutable
-  // deadline. If an earlier callback already ran, schedule only its remainder.
+      ?'Reconnecting match channel — the match continues.'
+      :'Checking both match channels — the match clock still continues.';
+  // Duplicate Presence and background packets keep the first outage deadline.
+  // Verified gameplay can move a transport-only deadline forward to preserve
+  // a full grace period after the latest live packet.
   if(arena.disconnectTimer)return true;
-  const epoch=arena.matchEpoch,opponentId=String(arena.opponent.id),token=arena.disconnectToken,deadline=arena.disconnectDeadline;
+  const epoch=arena.matchEpoch,opponentId=String(arena.opponent.id),token=arena.disconnectToken;
   const finish=()=>{
     if(!arena||!arena.disconnectAt||arena.disconnectToken!==token)return;
     if(arena.matchChannel!==heldChannel||arena.matchEpoch!==epoch||String(arena.opponent&&arena.opponent.id)!==opponentId){
       arenaClearDisconnectHold(false);return;
     }
     if(arena.phase==='match_end'){arenaClearDisconnectHold(false);return;}
-    const remaining=deadline-Date.now();
+    const remaining=arena.disconnectDeadline-Date.now();
     if(remaining>0){arena.disconnectTimer=setTimeout(finish,remaining);return;}
     const disconnected=arena.disconnectSide,checksOpponent=disconnected==='opponent'||disconnected==='both';
     if(checksOpponent){
@@ -1010,6 +1047,16 @@ function arenaBeginDisconnectHold(side,ch,kind='disconnect'){
         arena.opponent.presenceSeq=seq;arena.opponent.backgrounded=false;arena.opponent.away=false;
         arenaClearDisconnectHold(false);arena.status='Opponent returned — match continues.';arena.syncAt=0;
         arenaRequestResume(true);return;
+      }
+      if(arena.disconnectKind!=='background'){
+        const lastTraffic=Math.floor(+arena.opponent.lastSeen||0),trafficDeadline=lastTraffic>arena.disconnectAt
+          ?lastTraffic+ARENA_FORFEIT_GRACE_MS:0;
+        if(trafficDeadline>Date.now()){
+          arena.disconnectDeadline=Math.max(arena.disconnectDeadline,trafficDeadline);
+          arena.disconnectTimer=setTimeout(finish,Math.max(1,arena.disconnectDeadline-Date.now()));
+          arena.status='Opponent connected — match continues.';
+          return;
+        }
       }
     }
     const binding=arenaForfeitEligible(),reason=arena.disconnectKind||kind;
@@ -1023,7 +1070,7 @@ function arenaBeginDisconnectHold(side,ch,kind='disconnect'){
     }else if(disconnected==='opponent')arenaClaimOpponentForfeit(reason);
     else arenaApplyOwnDisconnectLoss(reason);
   };
-  arena.disconnectTimer=setTimeout(finish,Math.max(0,deadline-clock));
+  arena.disconnectTimer=setTimeout(finish,Math.max(0,arena.disconnectDeadline-clock));
   return true;
 }
 function arenaNotifyDeparture(reason='left'){
@@ -1044,6 +1091,9 @@ function arenaNotifyDeparture(reason='left'){
 // window; only the explicit in-game Leave and sign-out actions are immediate.
 function arenaForfeitOnPageExit(){ return arenaNotifyDeparture('page_exit'); }
 function arenaForfeitBeforeSignOut(){
+  if(typeof duelServiceCancel==='function'&&typeof duelService!=='undefined'&&
+     (typeof isMultideviceArena==='function'&&isMultideviceArena()||duelService.queue||duelService.match||duelService.invite))
+    return Promise.race([duelServiceCancel(),new Promise(resolve=>setTimeout(()=>resolve(false),2500))]).catch(()=>false);
   const announced=arenaNotifyDeparture('signed_out');
   if(announced&&arena.departurePromise&&typeof arena.departurePromise.then==='function')
     return Promise.race([arena.departurePromise,new Promise(resolve=>setTimeout(resolve,150))])
@@ -1128,6 +1178,22 @@ function arenaOwnPresence(){
           ready:valid&&!!arena.localReady,primary:valid?loadout.primary:'',secondary:valid?loadout.secondary:'',melee:valid?loadout.melee:'',
           utility:valid?(casualArenaUtilityKey(loadout.utility,true)||''):'',backgrounded,away:backgrounded,presenceSeq:arena.presenceSeq};
 }
+async function arenaTrackMatchPresence(ch=arena&&arena.matchChannel){
+  if(!ch||!arena||!authUser||ch!==arena.matchChannel)return false;
+  const serial=++arenaPresenceTrackSerial;
+  for(const wait of ARENA_PRESENCE_RETRY_DELAYS_MS){
+    if(wait)await new Promise(resolve=>setTimeout(resolve,wait));
+    if(serial!==arenaPresenceTrackSerial||!arena||!authUser||ch!==arena.matchChannel)return false;
+    let result='error';
+    try{result=await ch.track(arenaOwnPresence());}catch(e){}
+    if(serial!==arenaPresenceTrackSerial||!arena||!authUser||ch!==arena.matchChannel)return false;
+    // Old test doubles and older clients may resolve undefined; the current
+    // Supabase client resolves "ok", "timed out", or "error".
+    if(result==='ok'||result===undefined){arenaRequestResume(true);return true;}
+    if(!arena.active&&!arena.opponent)arena.status='Syncing room presence...';
+  }
+  return false;
+}
 function arenaApplyRemoteBackground(p){
   if(!p||!arena||!arena.opponent||String(p.from||'')!==String(arena.opponent.id)||typeof p.backgrounded!=='boolean')return false;
   if(arena.matchEpoch>0&&(Math.floor(+p.epoch||0)!==arena.matchEpoch||Math.floor(+p.round||0)!==Math.floor(+arena.round||0)))return false;
@@ -1173,11 +1239,14 @@ function arenaSetBackgrounded(value=arenaPageBackgrounded()){
   arena.localBackgrounded=backgrounded;
   if(arena.matchChannel&&authUser){
     const presence=arenaOwnPresence();
-    try{
-      const tracked=arena.matchChannel.track(presence);
-      if(tracked&&typeof tracked.catch==='function')tracked.catch(()=>{});
-    }catch(e){}
-    arenaSend('background',{backgrounded,presenceSeq:presence.presenceSeq});
+    const channel=arena.matchChannel,packet={backgrounded,presenceSeq:presence.presenceSeq};
+    arenaSend('background',packet);
+    // Background state is ephemeral, so repeat the same idempotent sequence;
+    // do not spend another rate-limited Presence track operation here.
+    for(const wait of [250,800])setTimeout(()=>{
+      if(arena.matchChannel===channel&&arena.localBackgrounded===backgrounded&&arena.presenceSeq===packet.presenceSeq)
+        arenaSend('background',packet);
+    },wait);
     if(!backgrounded){arenaControlClockCatchUp(Date.now());arenaRequestResume(true);arenaMaybeStart();}
   }
   return true;
@@ -1345,7 +1414,7 @@ function arenaConnectRoom(code,wantsHost,mode,expectedIds){
       else if(arena.disconnectSide==='both'&&!arena.localBackgrounded&&!arenaPageBackgrounded())arena.disconnectSide='opponent';
       if(!(arena.phase==='match_end'&&arena.forfeitResultId))
         arena.status=mode==='queue'?'Opponent found. Preparing match...':(wantsHost?'Private room created. Share the invite code while you wait.':'Joining private room...');
-      try{ await ch.track(arenaOwnPresence()); }catch(e){}
+      void arenaTrackMatchPresence(ch);
       arenaRequestResume(true);
     } else if(st==='CHANNEL_ERROR'||st==='TIMED_OUT'||st==='CLOSED'){
       if(!arenaBeginDisconnectHold('self',ch)&&!(arena.phase==='match_end'&&arena.forfeitResultId))
@@ -1386,6 +1455,7 @@ function arenaMatchPresenceSync(ch){
       arena.wantsHost?'Share the invite code with your friend.':'Waiting for the private-room host...';return;}
   const remoteKit=typeof arenaRemoteLoadout==='function'?arenaRemoteLoadout(om):
     {primary:om.primary,secondary:om.secondary,melee:om.melee},
+    sameOpponent=!!(oldOpp&&String(oldOpp.id)===String(om.id)),
     oldPresenceSeq=Math.max(0,Math.floor(+oldOpp?.presenceSeq||0)),omPresenceSeq=Math.max(0,Math.floor(+om.presenceSeq||0)),
     presenceBackgrounded=om.backgrounded===true||om.away===true,
     oldBackgrounded=!!(oldOpp&&(oldOpp.backgrounded||oldOpp.away)),
@@ -1406,7 +1476,9 @@ function arenaMatchPresenceSync(ch){
     arenaDropChannel(arena.queueChannel); arena.queueChannel=null;
   }
   arena.hostId=(chosen.find(x=>x.host)||chosen.slice().sort((a,b)=>String(a.id).localeCompare(String(b.id)))[0]).id;
-  arena.remoteReady=!!om.ready&&!!remoteKit;
+  // A ready Broadcast is authoritative for this one-way ready flow. Do not
+  // let an older, static Presence payload change true back to false.
+  arena.remoteReady=!!remoteKit&&((sameOpponent&&arena.remoteReady)||!!om.ready);
   if(!['match_end','map_vote','map_reveal'].includes(arena.phase)) arena.phase=arena.active?arena.phase:'lobby';
   if(arena.phase==='match_end'&&arena.forfeitPacket&&String(arena.forfeitPacket.winner)===String(authUser.id))
     arenaSend('forfeit_result',arena.forfeitPacket);
@@ -1414,15 +1486,21 @@ function arenaMatchPresenceSync(ch){
   else if(arena.mapVotePhase==='reveal') arena.status=arenaMapName(arena.mapId)+' selected.';
   else if(arena.opponent.backgrounded)arena.status='Opponent is away — match continues.';
   else arena.status=arena.mode==='queue'?'Match found: '+arena.opponent.name:(arena.opponent.name+' joined the private room.');
-  if(arena.mode==='queue'&&!arena.localReady) arenaSetReady(true);
+  if(arena.mode==='queue'&&!arena.localReady)arenaSetReady(true);
+  else if(arena.localReady)arenaSend('ready',{ready:true});
   arenaMaybeStart();
   if(wasDisconnected||(wasBackgrounded&&!arena.opponent.backgrounded))arenaRequestResume(true);
 }
 function arenaSetReady(ready){
   if(!arena.matchChannel||!authUser) return;
   arena.localReady=ready!==false;
-  try{ arena.matchChannel.track(arenaOwnPresence()); }catch(e){}
-  arenaSend('ready',{ready:arena.localReady});
+  const channel=arena.matchChannel,packet={ready:arena.localReady};
+  arenaSend('ready',packet);
+  // Presence already identifies the room member. Repeating this small
+  // idempotent broadcast is safer than another rate-limited track update.
+  for(const wait of [250,800])setTimeout(()=>{
+    if(arena.matchChannel===channel&&arena.localReady===packet.ready)arenaSend('ready',packet);
+  },wait);
   arenaMaybeStart();
 }
 function arenaMaybeStart(){
@@ -1449,7 +1527,8 @@ function arenaReceive(event,p,sourceChannel=arena&&arena.matchChannel){
   if(!arena.opponent||p.from!==arena.opponent.id) return;
   if(event==='background'){arenaApplyRemoteBackground(p);return;}
   if(event==='ready'){
-    arena.remoteReady=!!p.ready; arenaMaybeStart(); return;
+    arenaConfirmRemoteTraffic(Date.now());
+    arena.remoteReady=!!p.ready&&!!arena.opponent.remoteLoadoutValid; arenaMaybeStart(); return;
   }
   if(event==='rematch_start' && p.from===arena.hostId){ arenaApplyRematchStart(p); return; }
   if(event==='map_vote_open' && p.from===arena.hostId){ arenaApplyMapVoteOpen(p); return; }
@@ -1521,6 +1600,12 @@ function arenaReceive(event,p,sourceChannel=arena&&arena.matchChannel){
     // A first zero is also not proof of live combat; normal hit/KO envelopes
     // still resolve a genuine opening one-shot.
     if(remoteHp===null||(remoteHp===0&&arena.matchCommitted!==true))return;
+    // Foreground state rides the repeating 20 Hz gameplay stream as well as
+    // its one-off Broadcast. If that Broadcast was lost during reconnect,
+    // this newer sequence still clears the away hold. A genuinely hidden tab
+    // advertises backgrounded:true and therefore cannot spoof a return merely
+    // by emitting a throttled/queued state packet.
+    if(typeof p.backgrounded==='boolean')arenaApplyRemoteBackground(p);
     if(Date.now()<arena.roundEndAt&&activeArenaMapId()==='construction'&&p.tntDamage&&typeof p.tntDamage==='object')
       arenaMergeTntDamageSnapshot(String(p.from),p.tntDamage);
     const r=arena.opponent, bounds=typeof activeArenaBounds==='function'?activeArenaBounds():{left:0,top:0,right:WORLD.w,bottom:WORLD.h}, margin=Math.max(1,+r.r||15);
@@ -1539,7 +1624,7 @@ function arenaReceive(event,p,sourceChannel=arena&&arena.matchChannel){
     if(typeof p.utilityOut==='boolean')r.utilityOut=!!(p.utilityOut&&r.loadout&&r.loadout.utility);
     arenaApplyRemoteParryState(r,p,now);
     arenaApplyRemoteMeleeAbilityState(r,p,r.loadout,now);
-    r.hp=remoteHp;r.lastSeen=Date.now();
+    r.hp=remoteHp;arenaConfirmRemoteTraffic(Date.now());
     if(remoteHp>0&&arena.phase==='fight'&&Math.floor(+arena.round||0)>0&&Math.floor(+arena.matchEpoch||0)>0&&
        !!String(arena.mapVoteId||'')&&Date.now()<arena.roundEndAt)arena.matchCommitted=true;
     if(authUser.id===arena.hostId&&r.hp<=0&&Date.now()<arena.roundEndAt){
@@ -1669,11 +1754,13 @@ function arenaApplyRoundStart(p){
   waveMsg='ROUND '+arena.round+' \u2014 GET READY'; waveMsgT=now+2800; sfx('wave');
 }
 function arenaCanAct(){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceCanAct();
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()) return !!(arena.active&&partyCpuMatch.phase==='fight'&&cpuTeamClock()<partyCpuMatch.roundEndAt&&player.hp>0);
   const clock=isBotArena()?now:Date.now();
   return !!(arena&&arena.active&&!arena.networkHold&&arena.phase==='fight'&&clock<arena.roundEndAt&&player.hp>0);
 }
 function arenaControlClockCatchUp(clock=Date.now()){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return false;
   if(!arena)return false;
   arenaMapVoteTick();
   if(!arena.active||isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())||arena.networkHold)return false;
@@ -1689,6 +1776,7 @@ function arenaControlClockCatchUp(clock=Date.now()){
   return true;
 }
 function arenaWallTick(wall){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena()){multideviceWallTick(wall);return;}
   if(!arena) return;
   arenaResumeTick(Date.now());
   arenaControlClockCatchUp(Date.now());
@@ -1710,6 +1798,7 @@ function arenaWallTick(wall){
   if(arena.networkHold) return;
 }
 function arenaSyncTick(wall){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena()){multideviceSyncTick(wall);return;}
   if(!arena||!arena.active||arena.networkHold||isBotArena()||(typeof isCpuTeamArena==='function'&&isCpuTeamArena())) return;
   const feedbackClock=Date.now();
   if(arena.pendingHitFeedback instanceof Map)for(const [id,pending] of arena.pendingHitFeedback)
@@ -1719,6 +1808,7 @@ function arenaSyncTick(wall){
     if(arena.syncAt<wall-ARENA_SYNC_MS) arena.syncAt=wall+ARENA_SYNC_MS;
     const cause=arena.localKoCause;
     arenaSend('state',{x:player.x,y:player.y,angle:aimAngle(),cur:player.cur,utilityOut:!!utilityOut,hp:Math.max(0,player.hp),
+      backgrounded:!!(arena.localBackgrounded||arenaPageBackgrounded()),presenceSeq:Math.max(0,Math.floor(+arena.presenceSeq||0)),
       parrySeq:Math.max(0,Math.floor(+parrySeq||0)),parryMs:clamp(parryUntil-now,0,TWIN_SAI_PARRY_MS),
       meleeFxSeq:Math.max(0,Math.floor(+player.meleeFxSeq||0)),meleeFxKey:String(player.meleeFxKey||''),
       meleeFxMs:clamp((+player.meleeFxUntil||0)-now,0,MELEE_ABILITY_VISUAL_MAX_MS),
@@ -1874,6 +1964,7 @@ function arenaTakeHit(p){
   }
 }
 function arenaLocalKO(cause=null){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceLocalKO();
   if(arena.phase!=='fight') return;
   const hazard=arenaHazardCauseValid(cause)?{kind:'tnt',eventId:String(cause.eventId),tntId:String(cause.tntId)}:null;
   const shot=hazard?null:arenaUnscopedKillCause(cause,arena.opponent&&arena.opponent.id);
@@ -1980,17 +2071,12 @@ function arenaSwitchWeapons(){
   return true;
 }
 function leaveArena(status,toHub,suppressDeparture=false){
+  if(typeof isMultideviceArena==='function'&&isMultideviceArena())return multideviceLeave(status,toHub);
   if(!arena) return;
   if(typeof isPartyCpuMatch==='function'&&isPartyCpuMatch()){ partyCpuAbort(status||'You left the Party CPU match.',true); return; }
   if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()){ offlineCpu2v2Leave(status,toHub); return; }
-  const wasBot=isBotArena(),returnToAiLearning=wasBot&&arena.botAdminTest&&arena.botAdminReturnToLearning&&
-    typeof isMainAdmin==='function'&&isMainAdmin(),
-    aiLearningReturnPage=String(arena.botAdminReturnPage||'hub'),
-    aiLearningReturnDifficulty=wasBot&&arena.botAdminTest?clamp(Math.floor(+arena.botDifficulty||0),0,4):4,
-    aiLearningReturnModelId=wasBot&&arena.botAdminTest?String(arena.botModelId||LATEST_BOT_MODEL_ID):'',
-    aiLearningSavedLoadout=wasBot&&arena.botAdminTest&&arena.botAdminSavedLoadout?
-      Object.assign({},arena.botAdminSavedLoadout):null;
-  if(wasBot&&!arena.botAdminTest&&typeof arenaRecordDailyMatch==='function')
+  const wasBot=isBotArena();
+  if(wasBot&&typeof arenaRecordDailyMatch==='function')
     arenaRecordDailyMatch(LOCAL_DUEL_PLAYER,'',arenaHasCompletedDailyTaskRound());
   if(wasBot&&typeof cancelBotLadderSubmission==='function')cancelBotLadderSubmission(arena);
   const oldMatchChannel=arena.matchChannel,forfeitAnnounced=!suppressDeparture&&oldMatchChannel&&authUser?arenaNotifyDeparture('left'):false;
@@ -2002,9 +2088,6 @@ function leaveArena(status,toHub,suppressDeparture=false){
   if(forfeitAnnounced) setTimeout(()=>arenaDropChannel(oldMatchChannel),150);
   else arenaDropChannel(oldMatchChannel);
   if(arena.savedUtility!==undefined) loadout.utility=arena.savedUtility;
-  if(aiLearningSavedLoadout) loadout={primary:aiLearningSavedLoadout.primary||null,
-    secondary:aiLearningSavedLoadout.secondary||null,melee:aiLearningSavedLoadout.melee||null,
-    utility:aiLearningSavedLoadout.utility||null};
   if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();
   if(practiceMode==='arena'){
     practiceMode=null;
@@ -2017,12 +2100,6 @@ function leaveArena(status,toHub,suppressDeparture=false){
   if(state==='play'||state==='over'||state==='upgrade') state='select';
   if(wasBot){
     pendingGameMode=null; modeBoardMode=toHub?null:'endless';
-    if(returnToAiLearning){
-      modeBoardMode=null; selPage=aiLearningReturnPage; aiLearningDifficulty=aiLearningReturnDifficulty;aiLearningSelectedModelId=aiLearningReturnModelId;
-      aiLearningNotice='Returned from '+botModelRelease(aiLearningReturnModelId).name+' at IMPOSSIBLE. Account ladder was unchanged.';
-      aiLearningOpen=true; menuOpen=false; aiming=false; rmbAim=false;
-      return;
-    }
     selPage=toHub?'hub':'offlinecpu'; menuOpen=false; aiming=false; rmbAim=false;
     return;
   }

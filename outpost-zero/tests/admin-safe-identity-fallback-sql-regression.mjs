@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import { readFeatureSql } from './sql-feature-security.mjs';
 import path from 'node:path';
 
 const root=path.resolve(import.meta.dirname,'..');
-const read=file=>fs.readFileSync(path.join(root,file),'utf8');
+const read=file=>file.endsWith('.sql')?readFeatureSql(root,file):fs.readFileSync(path.join(root,file),'utf8');
 const admin01=read('sql/administration/Admin-01-admin-menu.sql');
 const admin02=read('sql/administration/Admin-02-admins.sql');
 const admin03=read('sql/administration/Admin-03-inbox.sql');

@@ -140,6 +140,7 @@ function menuClick(){
   }
   if(hit(menuRects.report)){ openReport(); sfx('swap'); return; }
   if(hit(menuRects.exit)){
+    if(typeof isMultideviceArena==='function'&&isMultideviceArena()){ void duelServiceCancel(); sfx('swap'); return; }
     if(typeof isPartyCpuMatch==='function'&&isPartyCpuMatch()){ partyCpuAbort('You left the Party CPU match.',true); sfx('swap'); return; }
     if(typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()){ offlineCpu2v2Leave('Left Offline 2v2.',false); sfx('swap'); return; }
     if(isBotArena()){ leaveArena('Left Offline 1v1.',false); sfx('swap'); return; }

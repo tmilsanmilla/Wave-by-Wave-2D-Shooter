@@ -347,7 +347,7 @@ function drawSelect(){
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(firstAccountWelcomeOpen){ drawFirstAccountWelcome(); return; }
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='weapons') drawWeaponsHome(); else if(selPage==='weaponbrowse') drawWeaponBrowser(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='offlinecpu') drawOfflineCpuModes(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='social') drawSocial(); else if(selPage==='party') drawParty(); else if(selPage==='partymodes') drawPartyModes(); else if(selPage==='tools') drawTools(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
+  if(selPage==='hub') drawHub(); else if(selPage==='weapons') drawWeaponsHome(); else if(selPage==='weaponbrowse') drawWeaponBrowser(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='offlinecpu') drawOfflineCpuModes(); else if(selPage==='multidevice') drawMultideviceMenu(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='social') drawSocial(); else if(selPage==='party') drawParty(); else if(selPage==='partymodes') drawPartyModes(); else if(selPage==='tools') drawTools(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
   drawDetail();
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
@@ -717,7 +717,7 @@ function drawTools(){
     {id:'code',title:'\uD83C\uDF81 REDEEM CODE',sub:'enter an active Outpost Zero promo code',col:'#a7c15e'},
     {id:'share',title:'\uD83D\uDD17 SHARE INVITE',sub:'send your referral link to a new player',col:'#bfa8ff'},
     {id:'spin',title:'\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+' READY)':wheelCountdown()),sub:'daily reward wheel',col:wheelReady>0?'#e8b658':'#6b6450'},
-    {id:'lookup',title:'\uD83D\uDD0D PLAYER LOOKUP',sub:'find a player by username or account email',col:'#7fd8ff'}
+    {id:'lookup',title:'\uD83D\uDD0D PLAYER LOOKUP',sub:isMainAdmin()?'find by username or exact account email':'find a player by username',col:'#7fd8ff'}
   ];
   const backH=compact?34:40,backY=H-backH-(compact?8:14),top=compact?54:H*0.055+64,
     gap=compact?5:9,contentW=Math.min(500,W-margin*2),x=W/2-contentW/2,
@@ -1405,7 +1405,7 @@ function drawPractice(){
 }
 function drawArena(){
   selBg(); arenaRects=[];
-  const botMode=isBotArena(),botAdminTest=botMode&&!!arena.botAdminTest,cpuTeamMode=typeof isLocalCpu2v2==='function'&&isLocalCpu2v2(),localMode=botMode||cpuTeamMode;
+  const botMode=isBotArena(),cpuTeamMode=typeof isLocalCpu2v2==='function'&&isLocalCpu2v2(),localMode=botMode||cpuTeamMode;
   const tiny=H<430, dense=H<620;
   const mapVoting=arena.phase==='map_vote'&&arena.mapVotePhase==='voting';
   const mapReveal=arena.phase==='map_reveal'&&arena.mapVotePhase==='reveal';
@@ -1424,7 +1424,6 @@ function drawArena(){
   ctx.fillStyle=cpuTeamMode?'#bfa8ff':botMode?'#7fd8ff':'#d05548'; ctx.font='700 '+(tiny?20:(W<440?25:34))+'px ui-monospace,Consolas,monospace';
   const arenaTitle=mapVoting?('MAP VOTE \u00b7 '+mapSeconds+'s'):mapReveal?'MAP SELECTED':
                    cpuTeamMode?('\u2694 OFFLINE 2v2 \u00b7 '+botDifficultyName(partyCpuMatch.botDifficulty)):
-                   botAdminTest?('\uD83E\uDDE0 AI TEST \u00b7 '+botModelRelease(arena.botModelId).name+' \u00b7 IMPOSSIBLE'):
                    botMode?('\u2694 1v1 VS '+botDifficultyName(arena.botDifficulty)+' CPU'):(W<430?'\u2694 1v1 \u00b7 NEW/BETA':'\u2694 ONLINE 1v1 \u00b7 NEW \u00b7 BETA');
   ctx.fillText(fitLine(arenaTitle,W-18),W/2,titleY);
   ctx.fillStyle=queueNoticeActive?'#ff6b5d':'#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
@@ -1434,7 +1433,6 @@ function drawArena(){
     onlineBetaPrefix=(!localMode||cpuTeamMode)&&!compactCasualMeta&&!compactCpuTeamMeta?'NEW \u00b7 BETA \u00b7 BEING TESTED \u00b7 ':'';
   const arenaSub=queueNoticeActive?modeBoardNotice:compactBetaReveal?('NEW/BETA \u00b7 '+arenaMapName(arena.mapId)+' \u00b7 WEIGHTED VOTE'):onlineBetaPrefix+(mapVoting?('CHANGE YOUR VOTE UNTIL TIMER ENDS \u00b7 '+voteSummary):
                    mapReveal?('SELECTED MAP: '+arenaMapName(arena.mapId)+' \u00b7 WON THE WEIGHTED VOTE \u00b7 '+voteSummary):
-                   botAdminTest?'ADMIN COMPARISON \u00b7 ACCOUNT LADDER WILL NOT CHANGE':
                    cpuTeamMode?(compactCpuTeamMeta?'NEW/BETA \u00b7 LOCAL CPU 2v2 \u00b7 FIRST TO 5 \u00b7 NO REWARDS':'ONE DEVICE ONLY \u00b7 CPU 2v2 \u00b7 FIRST TO 5 \u00b7 NO REWARDS'):
                    botMode?(W<430?'CPU 1v1 \u00b7 FIRST TO 5 \u00b7 COUNTS FOR DAILY TASKS':'ONE DEVICE ONLY \u00b7 FIRST TO 5 \u00b7 NO MATCH REWARDS \u00b7 COUNTS FOR DAILY TASKS'):
                    compactCasualMeta?'NEW/BETA \u00b7 ONLINE \u00b7 FIRST TO 5 \u00b7 COUNTS FOR DAILY TASKS':
@@ -1519,9 +1517,7 @@ function drawArena(){
     ctx.fillStyle='#e8d9a8';ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace';ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268';ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
     ctx.fillStyle='#8a9268';ctx.fillText(fitLine(botLadderMatchResultText(partyCpuMatch),pw-20),W/2,bodyY+(tiny?72:108));
-    ctx.fillStyle='#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
-    ctx.fillText(fitLine(typeof aiTrainingMatchStatusText==='function'?aiTrainingMatchStatusText(partyCpuMatch):'',pw-20),W/2,bodyY+(tiny?82:122));
-    let y=bodyY+(tiny?94:140),settled=botLadderMatchSettled(partyCpuMatch),rematchReady=settled&&(!authUser||
+    let y=bodyY+(tiny?84:126),settled=botLadderMatchSettled(partyCpuMatch),rematchReady=settled&&(!authUser||
       (typeof botLadderReadyForMatch==='function'&&botLadderReadyForMatch()&&
        (typeof botLadderSecureMatchReady!=='function'||botLadderSecureMatchReady()))),
       blockedNote=typeof botLadderSecureMatchReady==='function'&&!botLadderSecureMatchReady()?'Secure result saving is unavailable. Return to the CPU ladder.':
@@ -1540,16 +1536,11 @@ function drawArena(){
     ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?30:42)+'px ui-monospace,Consolas,monospace'; ctx.fillText(me+'  \u2014  '+them,W/2,bodyY+(tiny?40:62));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?62:94));
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(ladderResult,pw-20),W/2,bodyY+(tiny?72:108));
-    if(!botAdminTest){ctx.fillStyle=arena.dailyTaskResult?'#a7c15e':'#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
-      const dailyText=arena.dailyTaskResult||(typeof dailyDuelTaskProgressText==='function'?dailyDuelTaskProgressText():'');
-      ctx.fillText(fitLine(dailyText,pw-20),W/2,bodyY+(tiny?82:122));}
+    ctx.fillStyle=arena.dailyTaskResult?'#a7c15e':'#7fd8ff';ctx.font='700 '+(tiny?'7':'9')+'px ui-monospace,Consolas,monospace';
+    const dailyText=arena.dailyTaskResult||(typeof dailyDuelTaskProgressText==='function'?dailyDuelTaskProgressText():'');
+    ctx.fillText(fitLine(dailyText,pw-20),W/2,bodyY+(tiny?82:122));
     let y=bodyY+(tiny?94:140);
-    if(botAdminTest){
-      y=bodyY+(tiny?84:126);
-      y=button('bottestagain','TEST '+botModelRelease(arena.botModelId).name+' AGAIN',y,'#a7c15e','Same Impossible execution and deterministic AI seed.');
-      button('botlearningback','BACK TO AI BOT MODELS',y,'#7fd8ff');
-    }else{
-      const settled=botLadderMatchSettled(arena),rematchReady=settled&&(!authUser||
+    const settled=botLadderMatchSettled(arena),rematchReady=settled&&(!authUser||
         (typeof botLadderReadyForMatch==='function'&&botLadderReadyForMatch()&&
          (typeof botLadderSecureMatchReady!=='function'||botLadderSecureMatchReady()))),
         blockedNote=typeof botLadderSecureMatchReady==='function'&&!botLadderSecureMatchReady()?'Secure result saving is unavailable. Return to the CPU ladder.':
@@ -1560,7 +1551,6 @@ function drawArena(){
         !settled?'Play Again unlocks after this result is safely recorded.':rematchReady?'New first-to-5 match at your current ladder difficulty.':blockedNote,rematchReady);
       y=button('botloadout','SWITCH WEAPONS',y,'#7fd8ff');
       button('botleave','BACK TO OFFLINE \u00b7 ONE DEVICE ONLY',y,'#8a9268');
-    }
   } else if(!authUser){
     let y=bodyY; y=button('signin','SIGN IN TO PLAY',y,'#e8b658','Online Arena does not allow guest play.');
     button('back','\u2039 BACK TO MENU',y,'#8a9268');
@@ -1688,8 +1678,6 @@ function arenaClick(){
     else if(r.id==='teamleave'){
       if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();offlineCpu2v2Leave('',false);
     }
-    else if(r.id==='bottestagain') restartAiLearningBotTest(arena);
-    else if(r.id==='botlearningback') leaveArena('',false);
     else if(r.id==='botrematch') cpuResultRematch('ai1v1');
     else if(r.id==='botloadout'){
       if(typeof cancelCpuLaunchIntent==='function')cancelCpuLaunchIntent();else if(typeof cancelBotLadderLaunch==='function')cancelBotLadderLaunch();
@@ -1739,18 +1727,15 @@ function chooseGameMode(mode,returnPage='modeboard'){
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     modeBoardNotice='CHOOSE YOUR USERNAME TO PLAY'; modeBoardNoticeT=performance.now()+2800; sfx('dry'); return false;
   }
-  if(!['arena','arena2v2','endless','ai1v1','ai2v2'].includes(mode)){ sfx('dry'); return false; }
+  if(!['arena','arena2v2','ranked1v1','ranked2v2','endless','ai1v1','ai2v2'].includes(mode)){ sfx('dry'); return false; }
   // Size is checked before locked/auth states so a party always gets the
   // useful queue-capacity explanation for the button it just chose.
   if(!partyAllowsQueue(mode)) return false;
   if((mode==='ai1v1'||mode==='ai2v2')&&typeof botLadderHasPendingResult==='function'&&botLadderHasPendingResult()){
     modeBoardNotice='WAITING FOR YOUR PREVIOUS AI RESULT TO SAVE';modeBoardNoticeT=performance.now()+2800;sfx('dry');return false;
   }
-  if(mode==='arena2v2'){
-    arena.status='2v2 is locked and coming soon.'; sfx('dry'); return false;
-  }
   loadoutBackPage=returnPage;
-  if(mode==='arena' && !onlinePlayReady()){
+  if(['arena','arena2v2','ranked1v1','ranked2v2'].includes(mode) && !onlinePlayReady()){
     if(navigator.onLine===false || !sb){ arena.status='Online games are unavailable. Reconnect and try again.'; sfx('dry'); return false; }
     arenaAuthPending=true; $('aguest').style.display='none';
     $('authmsg').textContent='Sign in is required for Online multiplayer on different devices.';
@@ -1789,6 +1774,10 @@ function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=
     pracNeedMsgT=now+1600; sfx('dry'); return false;
   }
   if(pendingGameMode==='partycpu2v2') return partyCpuSubmitLoadout();
+  if(String(pendingGameMode||'').startsWith('partyduel_')){void duelServicePartyReady(pendingGameMode.slice(10));return true;}
+  if(['arena2v2','ranked1v1','ranked2v2'].includes(pendingGameMode)){
+    void duelServiceQueue(pendingGameMode==='ranked1v1'?'1v1':'2v2',pendingGameMode.startsWith('ranked'));return true;
+  }
   // Party membership can change while the loadout screen is open, so the
   // selection-page check alone is not enough to protect queue capacities.
   if(!partyAllowsQueue(pendingGameMode)) return false;
@@ -1809,6 +1798,7 @@ function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=
   pendingGameMode=null; pendingPractice=null; modeBoardMode=null; startGame(); return true;
 }
 function navigateSelectBack(){
+  if(selPage==='multidevice'){void duelServiceCancel();return;}
   if(detailKey){ detailKey=null; sfx('swap'); return; }
   if(selPage==='shop'&&shopWeaponPickerOpen){ shopWeaponPickerOpen=false; sfx('swap'); return; }
   if(selPage==='weaponbrowse'){ selPage='weapons'; sfx('swap'); return; }
@@ -1925,9 +1915,9 @@ function drawModeLeaderboard(){
   const sections=[
     {title:'ONLINE',sub:'MULTIPLE DEVICES',col:'#d05548',cols:2,actions:[
       {id:'casual_1v1',mode:'arena',label:'1v1',note:authUser?'NEW \u00b7 BETA \u00b7 FIRST TO 5':'NEW \u00b7 BETA \u00b7 SIGN IN',col:'#d05548',enabled:connected},
-      {id:'casual_2v2',mode:'arena2v2',label:'2v2  \uD83D\uDD12',note:'COMING SOON',col:'#6b7455',enabled:false}]},
+      {id:'casual_2v2',mode:'arena2v2',label:'2v2',note:'NEW · BETA · FOUR PLAYERS',col:'#bfa8ff',enabled:connected}]},
     {title:'RANKED',sub:'COMPETITIVE \u00b7 RANK + ELO',col:'#e8b658',cols:1,actions:[
-      {id:'ranked',label:'PLAY RANKED  \uD83D\uDD12',note:'COMING SOON',col:'#e8b658',enabled:false}]},
+      {id:'ranked',label:'PLAY RANKED',note:'BETA · RANK + ELO · 1v1 / 2v2',col:'#e8b658',enabled:connected}]},
     {title:'OFFLINE',sub:'ONE DEVICE',col:'#a7c15e',cols:2,actions:[
       {id:'offline_endless',mode:'endless',label:'ENDLESS',col:'#a7c15e',enabled:true},
       {id:'offline_cpu_menu',label:'PLAY AGAINST CPU',note:'1v1 OR 2v2',col:'#7fd8ff',enabled:true}]}
@@ -2108,41 +2098,7 @@ function drawOfflineCpuModes(){
   }
   drawBack();ctx.textAlign='left';ctx.textBaseline='alphabetic';
 }
-function drawRanked(){
-  selBg(); rankedRects=[]; leaderboardRowRects=[];
-  const tiny=H<390, compact=H<560, margin=tiny?9:compact?13:20, col='#e8b658';
-  ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillStyle=col; ctx.font='700 '+(tiny?20:compact?28:38)+'px ui-monospace,Consolas,monospace'; ctx.fillText('RANKED',W/2,tiny?5:14);
-  const noticeActive=typeof modeBoardNotice!=='undefined'&&modeBoardNotice&&typeof modeBoardNoticeT!=='undefined'&&typeof now!=='undefined'&&now<modeBoardNoticeT;
-  ctx.fillStyle=noticeActive?'#ff6b5d':'#8a9268'; ctx.font=(tiny?'7':compact?'9':'11')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(noticeActive?modeBoardNotice:'COMPETITIVE \u00b7 RATING-PROTECTED MATCHES',W-20),W/2,tiny?27:compact?48:61);
-  const totalW=Math.min(650,W-margin*2), x0=W/2-totalW/2, gap=tiny?5:8, statsY=tiny?39:compact?68:88, statsH=tiny?45:compact?58:76, sw=(totalW-gap*2)/3;
-  const stats=[['RANK',authUser?'UNRANKED':'SIGN IN'],['ELO','\u2014'],['PLACEMENTS','0 / 5']];
-  for(let i=0;i<3;i++){
-    const x=x0+i*(sw+gap); ctx.fillStyle='rgba(0,0,0,0.44)'; ctx.fillRect(x,statsY,sw,statsH); ctx.strokeStyle=col; ctx.strokeRect(x+0.5,statsY+0.5,sw,statsH);
-    ctx.fillStyle='#8a9268'; ctx.font='700 '+(tiny?6:compact?8:9)+'px ui-monospace,Consolas,monospace'; ctx.fillText(stats[i][0],x+sw/2,statsY+(tiny?6:9));
-    ctx.fillStyle='#e8d9a8'; ctx.font='700 '+(tiny?12:sw<105?14:(compact||sw<150)?17:23)+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(stats[i][1],sw-8),x+sw/2,statsY+(tiny?20:compact?27:34));
-  }
-  const lbY=statsY+statsH+gap, lbH=tiny?48:compact?66:90;
-  ctx.fillStyle='rgba(0,0,0,0.40)'; ctx.fillRect(x0,lbY,totalW,lbH); ctx.strokeStyle='#6f6238'; ctx.strokeRect(x0+0.5,lbY+0.5,totalW,lbH);
-  ctx.textAlign='left'; ctx.fillStyle=col; ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace'; ctx.fillText('RANKED LEADERBOARD',x0+9,lbY+7);
-  ctx.textAlign='right'; ctx.fillText('ELO',x0+totalW-9,lbY+7);
-  ctx.textAlign='center'; ctx.fillStyle='#626153'; ctx.font=(tiny?'7':compact?'8':'10')+'px ui-monospace,Consolas,monospace'; ctx.fillText('NO RATED RESULTS \u00b7 SECURE MATCH SERVERS COMING SOON',W/2,lbY+lbH/2);
-  const modeY=lbY+lbH+gap, modeH=tiny?42:compact?54:68, modeGap=tiny?5:8, modeW=(totalW-modeGap)/2;
-  const modes=[{id:'ranked_1v1',mode:'ranked1v1',label:'RANKED 1v1  \uD83D\uDD12'},{id:'ranked_2v2',mode:'ranked2v2',label:'RANKED 2v2  \uD83D\uDD12'}];
-  for(let i=0;i<2;i++){
-    const x=x0+i*(modeW+modeGap), r={id:modes[i].id,mode:modes[i].mode,x,y:modeY,w:modeW,h:modeH,enabled:false}; rankedRects.push(r);
-    ctx.fillStyle='rgba(38,38,38,0.78)'; ctx.fillRect(x,modeY,modeW,modeH); ctx.strokeStyle='#4a4a45'; ctx.strokeRect(x+0.5,modeY+0.5,modeW,modeH);
-    ctx.fillStyle='#696960'; ctx.font='700 '+(tiny?10:compact?14:18)+'px ui-monospace,Consolas,monospace'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(fitLine(modes[i].label,modeW-10),x+modeW/2,modeY+modeH/2-5);
-    ctx.fillStyle='#55554f'; ctx.font='700 '+(tiny?6:compact?7:8)+'px ui-monospace,Consolas,monospace'; ctx.fillText('SECURE SERVER REQUIRED',x+modeW/2,modeY+modeH/2+(tiny?10:13));
-  }
-  if(!authUser){
-    const sy=modeY+modeH+gap, sh=tiny?28:compact?34:40, r={id:'signin',x:x0,y:sy,w:totalW,h:sh,enabled:true}; rankedRects.push(r);
-    const hot=mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h; ctx.fillStyle=hot?col:'rgba(232,182,88,0.12)'; ctx.fillRect(r.x,r.y,r.w,r.h); ctx.strokeStyle=col; ctx.strokeRect(r.x+0.5,r.y+0.5,r.w,r.h); ctx.fillStyle=hot?'#101208':'#e8d9a8'; ctx.font='700 '+(tiny?9:compact?11:13)+'px ui-monospace,Consolas,monospace'; ctx.fillText('SIGN IN FOR FUTURE RANKED ACCESS',W/2,r.y+r.h/2);
-  }
-  const bh=tiny?30:compact?34:40; backRect={x:margin,y:H-bh-(tiny?5:9),w:Math.min(160,W-margin*2),h:bh};
-  const hot=mouse.x>=backRect.x&&mouse.x<=backRect.x+backRect.w&&mouse.y>=backRect.y&&mouse.y<=backRect.y+backRect.h; ctx.fillStyle=hot?'#8a9268':'rgba(0,0,0,0.42)'; ctx.fillRect(backRect.x,backRect.y,backRect.w,backRect.h); ctx.strokeStyle='#8a9268'; ctx.strokeRect(backRect.x+0.5,backRect.y+0.5,backRect.w,backRect.h); ctx.fillStyle=hot?'#101208':'#cdd6b0'; ctx.font='700 '+(tiny?9:compact?10:12)+'px ui-monospace,Consolas,monospace'; ctx.fillText('\u2039 PLAY MENU',backRect.x+backRect.w/2,backRect.y+backRect.h/2);
-  ctx.textAlign='left'; ctx.textBaseline='alphabetic';
-}
+function drawRanked(){ drawDuelRanked(); }
 function drawModes(){
   selBg(); modeRects=[];
   ctx.textAlign='center'; ctx.textBaseline='top';
@@ -2497,7 +2453,7 @@ function drawSocial(){
     ctx.textAlign='left';ctx.textBaseline='top';ctx.fillStyle=col;ctx.font='700 '+(tiny?7:compact?9:11)+'px ui-monospace,Consolas,monospace';ctx.fillText(fitLine(directoryTitle,p.w-16),p.x+8,titleY2);
     const visible=maxRows?rows.slice(publicPartyPage*maxRows,(publicPartyPage+1)*maxRows):[];
     if(!authUser)panelMessage(p,'SIGN IN TO REQUEST OR CREATE A PUBLIC PARTY',listTop+listH/2,'#8a9268');
-    else if(publicPartySqlReady===false)panelMessage(p,'RUN SOCIAL 03 TO ENABLE PUBLIC PARTIES',listTop+listH/2,'#d05548');
+    else if(publicPartySqlReady===false)panelMessage(p,'RUN PLAYER 03 SOCIAL MENU TO ENABLE PUBLIC PARTIES',listTop+listH/2,'#d05548');
     else if(publicPartyPolling&&!rows.length)panelMessage(p,'LOADING PUBLIC PARTIES...',listTop+listH/2,'#8a9268');
     else if(!rows.length)panelMessage(p,'NO PUBLIC PARTIES ARE OPEN · CREATE THE FIRST',listTop+listH/2,'#8a9268');
     for(let i=0;i<visible.length;i++){
@@ -2699,7 +2655,7 @@ function drawPartyLobby(){
   ctx.fillStyle=playHot?'#bfa8ff':'rgba(38,30,50,0.92)'; ctx.fillRect(margin,playY,W-margin*2,playH);
   ctx.strokeStyle='#bfa8ff'; ctx.lineWidth=2; ctx.strokeRect(margin+0.5,playY+0.5,W-margin*2-1,playH-1);
   ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillStyle=playHot?'#101208':'#f0e4ff';
-  const cpuPlayLabel=!party.cpuIntent?'PLAY':party.members.length!==2?'WAITING FOR FRIEND':partyIsHost()?'START CPU 2v2':'WAITING FOR HOST';
+  const cpuPlayLabel=!party.cpuIntent?(typeof duelService!=='undefined'&&duelService.invite?'JOIN '+duelService.invite.mode+' MATCH':'PLAY'):party.members.length!==2?'WAITING FOR FRIEND':partyIsHost()?'START CPU 2v2':'WAITING FOR HOST';
   ctx.font='700 '+(party.cpuIntent?(tiny?13:compact?19:27):(tiny?22:compact?28:38))+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(cpuPlayLabel,W-margin*2-18),W/2,playY+playH*(tiny?0.44:0.43));
   ctx.fillStyle=canPlay?(playHot?'#2b2430':'#9b8dab'):(playHot?'#52262b':'#d05548'); ctx.font='700 '+(tiny?6:compact?8:10)+'px ui-monospace,Consolas,monospace';
   const cpuPlayNote=!party.cpuIntent?(canPlay?'1v1v1 \u00b7 1v1 \u00b7 2v2 \u00b7 EXISTING MODES':'NEED AT LEAST 2 PARTY PLAYERS'):
@@ -2729,9 +2685,9 @@ function drawPartyModes(){
   const gridW=Math.min(780,W-margin*2), gridX=W/2-gridW/2, gap=tiny?6:compact?9:13;
   const cardW=(gridW-gap)/2, cardH=(gridH-gap)/2;
   const cards=[
-    {id:'party_mode_1v1v1',mode:'1v1v1',title:'1v1v1',note:'EXACTLY 3 PLAYERS \u00b7 EDIT PAIRINGS',foot:'GAMEPLAY COMING SOON',col:'#bfa8ff'},
-    {id:'party_mode_1v1',mode:'1v1',title:'1v1',note:'EXACTLY 2 PLAYERS \u00b7 EDIT PAIRINGS',foot:'GAMEPLAY COMING SOON',col:'#7fd8ff'},
-    {id:'party_mode_2v2',mode:'2v2',title:'2v2',note:'EXACTLY 4 PLAYERS \u00b7 EDIT PAIRINGS',foot:'GAMEPLAY COMING SOON',col:'#d05548'},
+    {id:'party_mode_1v1v1',mode:'1v1v1',title:'1v1v1',note:'EXACTLY 3 PLAYERS · EVERYONE FOR THEMSELVES',foot:'PARTY ONLY · UNRANKED · SIGN IN',col:'#bfa8ff'},
+    {id:'party_mode_1v1',mode:'1v1',title:'1v1',note:'EXACTLY 2 PLAYERS',foot:'PRIVATE DUEL · UNRANKED · SIGN IN',col:'#7fd8ff'},
+    {id:'party_mode_2v2',mode:'2v2',title:'2v2',note:'EXACTLY 4 PLAYERS · TWO TEAMS',foot:'PRIVATE TEAMS · UNRANKED · SIGN IN',col:'#d05548'},
     {id:'party_mode_existing',mode:'existing',title:'EXISTING GAME MODE',note:'NORMAL HOME PLAY \u00b7 NOT SYNCHRONIZED',foot:'PARTY STAYS CONNECTED',col:'#a7c15e'}
   ];
   for(let i=0;i<cards.length;i++){
@@ -2770,6 +2726,8 @@ function drawParty(){
 }
 function drawLoadout(){
   selBg(); catBtns=[];
+  const multiMode=['arena2v2','ranked1v1','ranked2v2'].includes(pendingGameMode)||String(pendingGameMode||'').startsWith('partyduel_'),
+    multiLabel=String(pendingGameMode||'').startsWith('partyduel_')?'PARTY '+pendingGameMode.slice(10):pendingGameMode==='arena2v2'?'CASUAL 2v2':pendingGameMode==='ranked1v1'?'RANKED 1v1':'RANKED 2v2';
   const arenaMode=pendingGameMode==='arena', ai1v1Mode=pendingGameMode==='ai1v1', ai2v2Mode=pendingGameMode==='ai2v2', aiMode=ai1v1Mode||ai2v2Mode,
     partyCpuMode=pendingGameMode==='partycpu2v2', practiceSetup=pendingGameMode==='practice',
     practiceLabel={range:'SHOOTING RANGE',dps:'DPS DUMMY',tracking:'TRACKING DUMMY',boss:'WARLORD PRACTICE'}[pendingPractice]||'PRACTICE';
@@ -2780,14 +2738,14 @@ function drawLoadout(){
   ctx.fillText('YOUR LOADOUT',W/2,H*0.035);
   const betaLoadout=arenaMode||partyCpuMode||ai2v2Mode;
   ctx.fillStyle=queueNoticeActive?'#ff6b5d':betaLoadout?'#e8b658':'#8a9268'; ctx.font=(W<430?(betaLoadout?'8':'9'):'11')+'px ui-monospace,Consolas,monospace';
-  const loadoutSub=arenaMode?(W<430?'NEW/BETA \u00b7 SAVED \u00b7 1v1 \u00b7 ONLINE':'NEW \u00b7 BETA \u00b7 TESTING \u00b7 AUTO-SAVED \u00b7 CASUAL 1v1 \u00b7 ONLINE'):
+  const loadoutSub=multiMode?'BETA · '+multiLabel+' · MULTI-DEVICE · NO UTILITIES':arenaMode?(W<430?'NEW/BETA \u00b7 SAVED \u00b7 1v1 \u00b7 ONLINE':'NEW \u00b7 BETA \u00b7 TESTING \u00b7 AUTO-SAVED \u00b7 CASUAL 1v1 \u00b7 ONLINE'):
                    partyCpuMode?(W<430?'NEW/BETA \u00b7 SAVED \u00b7 CPU 2v2 \u00b7 2 DEVICES \u00b7 NO REWARDS':'NEW \u00b7 BETA \u00b7 TESTING \u00b7 AUTO-SAVED \u00b7 PARTY CPU 2v2 \u00b7 MULTIPLE DEVICES \u00b7 NO REWARDS'):
                    ai2v2Mode?(W<430?'NEW/BETA \u00b7 SAVED \u00b7 CPU 2v2 \u00b7 LOCAL \u00b7 NO REWARDS':'NEW \u00b7 BETA \u00b7 TESTING \u00b7 AUTO-SAVED \u00b7 CPU 2v2 \u00b7 LOCAL \u00b7 NO REWARDS'):
                    ai1v1Mode?'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 1v1 VS AI \u00b7 NO UPGRADES':
                    practiceSetup?'OFFLINE \u00b7 PRACTICE \u00b7 '+practiceLabel+' \u00b7 NO SCORE OR REWARDS':
                           'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 ENDLESS \u00b7 UTILITY OPTIONAL';
   ctx.fillText(fitLine(queueNoticeActive?modeBoardNotice:betaLoadout?loadoutSub:('AUTO-SAVED FOR EVERY MODE \u00b7 '+loadoutSub),W-24),W/2,H*0.035+40);
-  const rows=(aiMode||partyCpuMode)?CATS.slice(0,3):CATS;
+  const rows=(aiMode||partyCpuMode||multiMode)?CATS.slice(0,3):CATS;
   const bw=Math.min(540,W-40), x0=W/2-bw/2, gap=H<600?9:14;
   const top=H*0.035+68, footer=112;
   const rowH=clamp(Math.floor((H-top-footer-gap*(rows.length-1))/rows.length),H<420?32:H<500?40:48,78);
@@ -2811,7 +2769,7 @@ function drawLoadout(){
   ctx.fillStyle=hot?modeCol:ready?(partyCpuMode?'rgba(191,168,255,0.16)':aiMode?'rgba(127,216,255,0.16)':arenaMode?'rgba(208,85,72,0.18)':'rgba(232,182,88,0.16)'):'rgba(0,0,0,0.35)'; ctx.fillRect(dx,dy,dw,dh);
   ctx.strokeStyle=ready?modeCol:'#4a4634'; ctx.lineWidth=1.5; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
   ctx.fillStyle=hot?'#101208':ready?'#e8d9a8':'#6b7455'; ctx.font='700 16px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
-  ctx.fillText(ready?(partyCpuMode?'READY FOR PARTY 2v2':arenaMode?'START QUEUING FOR 1v1':ai2v2Mode?'START 2v2 VS CPUs':ai1v1Mode?'START 1v1 VS AI':practiceSetup?'START '+practiceLabel:'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
+  ctx.fillText(ready?(multiMode?'READY FOR '+multiLabel:partyCpuMode?'READY FOR PARTY 2v2':arenaMode?'START QUEUING FOR 1v1':ai2v2Mode?'START 2v2 VS CPUs':ai1v1Mode?'START 1v1 VS AI':practiceSetup?'START '+practiceLabel:'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
   const bbW=120, bbH=30, bbX=16, bbY=H-bbH-14; backRect={x:bbX,y:bbY,w:bbW,h:bbH};
   const backHot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
   ctx.fillStyle=backHot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH); ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
