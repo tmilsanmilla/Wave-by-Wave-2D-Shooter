@@ -85,7 +85,7 @@ assert.deepEqual(pressure.held,{fire:false,pressure:false},'a recognized guard m
 assert.equal(pressure.after,0);assert.equal(pressure.burstUntil,0);
 
 const parry=JSON.parse(run(`(()=>{
-  const config=botDifficulty(4),bot={id:'bot',x:100,y:100,angle:0,aiRng:77},target={id:'player',x:220,y:100,r:15};
+  const config=botDifficulty(4),bot={id:'bot',x:100,y:100,angle:0,aiRng:77},target={id:'player',x:220,y:100,r:15,hp:40};
   cpuAiInitBotWeapons(bot,0);bot.aiWeaponThinkAt=0;bot.aiWeaponLockUntil=9000;
   const seen=cpuAiObserveVisibleParry(bot,target,1000,config,true);
   const early=cpuAiObserveVisibleParry(bot,target,1049,config,true);

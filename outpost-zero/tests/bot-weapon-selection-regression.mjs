@@ -165,7 +165,8 @@ assert.match(ai,/cpuAiChooseBotWeapon\(b,player,now,tuning,parryResponse\)/,'1v1
 assert.match(ai,/cpuAiTryBotMelee\(b,player,now,weaponRule\.damage/,'1v1 must execute authoritative knife swings');
 assert.match(ai,/!String\(kind\|\|\'\'\)\.startsWith\(\'melee\'\)&&now<parryUntil/,
   'Twin Sai must not turn a normal swing or melee ability into a reflected bullet');
-assert.match(party,/cpuAiChooseBotWeapon\(b,target,clock,profile,parryResponse\)/,'2v2 must run the shared weapon selector with visible-guard context');
+assert.match(party,/cpuAiChooseBotWeapon\(b,target,clock,profile,parryResponse,partyCpuWeaponRule\('knife'\)\.damage\)/,
+  '2v2 must run the shared weapon selector with visible-guard context and its actual knife damage');
 assert.match(party,/function partyCpuHostMelee/,'2v2 must have an authority-owned melee damage path');
 assert.match(party,/shot\.melee===true/,'2v2 melee must bypass projectile parry');
 assert.match(party,/weapon:weaponId/,'2v2 bot projectiles must carry their allowlisted weapon ID');

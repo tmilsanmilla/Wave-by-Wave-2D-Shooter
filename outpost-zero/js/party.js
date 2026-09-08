@@ -1424,6 +1424,7 @@ function partyCpuHostStep(dtms,clock){
     weaponThinkMs:210,
     pressureAimError:.155,pressureChance:.58,pressureDecisionMs:420,pressureBurstMin:3,pressureBurstMax:4,pressureBurstMs:720,pressureMemoryMs:400,
     parryReactionMs:170,parryRespectChance:.75,parryMeleeChance:.55,parryMeleeCommitMs:900,parryReleaseDelayMs:130,
+    parrySpacingMs:700,parrySpacingRange:260,lethalMeleeCounter:true,
     routeVariation:.66,moveCommitMin:900,moveCommitMax:1450,moveInertia:.58,dodgeChance:.50,dodgeReactionMs:145,dodgeLookaheadMs:500,
     dodgeCommitMs:230,dodgeCooldownMs:280,dodgeFireHoldMs:110,dodgeSpeedScale:1.08,dodgeMargin:9,
     peekFakeChance:.08,prefireAdapt:.72,peekTimingVariance:.58,peekHoldMin:70,peekHoldMax:220,
@@ -1436,7 +1437,7 @@ function partyCpuHostStep(dtms,clock){
     const targetVisible=!cpuAiLosBlocked(b.x,b.y,target.x,target.y),guardVisible=targetVisible&&target.team==='A'&&
       !!partyCpuMatch.humans[target.id]&&clock<(+target.parryUntil||0)&&clock>=(+target.parryUntil||0)-TWIN_SAI_PARRY_MS,
       parryResponse=cpuAiObserveVisibleParry(b,target,clock,profile,guardVisible);
-    cpuAiCompleteBotReload(b,clock);cpuAiChooseBotWeapon(b,target,clock,profile,parryResponse);
+    cpuAiCompleteBotReload(b,clock);cpuAiChooseBotWeapon(b,target,clock,profile,parryResponse,partyCpuWeaponRule('knife').damage);
     const weaponKey=String(b.cur||CPU_AI_LOADOUT.primary),w=WEAPONS[weaponKey]||WEAPONS.ar,weaponRule=partyCpuWeaponRule(weaponKey),
       isMelee=!!w.melee,maxRange=Math.min(+profile.maxRange||weaponRule.maxRange,weaponRule.maxRange),
       rangedDamage=isMelee?weaponRule.damage:cpuAiRangedDamage(weaponRule,profile),
@@ -1462,20 +1463,23 @@ function partyCpuHostStep(dtms,clock){
     const desired=Math.atan2(aimY-b.y,aimX-b.x)+(isMelee?0:(b.aimNoise||0)),turn=cpuAiAngleDelta(desired,b.angle);
     b.angle+=clamp(turn,-profile.turnRate*dt,profile.turnRate*dt);
     const dodge=typeof cpuAiApplyProjectileDodge==='function'?cpuAiApplyProjectileDodge(b,partyCpuDodgeShots(b),clock,profile,b.tntPlan,allies):{active:false},
-      meleeMove=!dodge.active?cpuAiMeleeMovement(b,target):null,
-      peek=dodge.active?dodge:(meleeMove||cpuAiApplyPeekBehavior(b,target,b.moveX,b.moveY,clock,profile,b.tntPlan)),
-      tacticSpeed=dodge.active?1:b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=profile.moveSpeed*tacticSpeed*peek.speedScale*dt,
+      lethalMelee=isMelee&&profile.lethalMeleeCounter&&clock>=b.reactionAt&&clock>=(+b.equipEnd||0)&&!b.reloadEnd&&cpuAiLethalMeleeOption(b,target,clock,weaponRule.damage),
+      spacing=!dodge.active?cpuAiParrySpacingMovement(b,target,clock,profile,b.tntPlan,allies,partyCpuWeaponRule('knife').damage):null,
+      meleeMove=!dodge.active&&!spacing?cpuAiMeleeMovement(b,target):null,
+      peek=lethalMelee?{x:0,y:0,speedScale:1}:dodge.active?dodge:(spacing||meleeMove||cpuAiApplyPeekBehavior(b,target,b.moveX,b.moveY,clock,profile,b.tntPlan)),
+      tacticSpeed=dodge.active||spacing||meleeMove?1:b.aiTactic==='hold'?.38:b.aiTactic==='flank'?.94:b.aiTactic==='cover'?.9:1,spd=profile.moveSpeed*tacticSpeed*peek.speedScale*dt,
       nx=b.x+peek.x*spd,ny=b.y+peek.y*spd,
       blockedX=pointInRects(nx,b.y),blockedY=pointInRects(b.x,ny);
     if(!blockedX)b.x=nx; if(!blockedY)b.y=ny;
     clampActorToArena(b);collideRects(b);clampActorToArena(b);
     if(typeof isOfflineCpuTeamMapArena==='function'&&isOfflineCpuTeamMapArena()&&typeof arenaPortalStep==='function')arenaPortalStep(b,clock);
     b.tx=b.x;b.ty=b.y;
-    if(clock<b.reactionAt||clock<(+b.aiDodgeFireUntil||0)||clock<(+b.equipEnd||0)||b.reloadEnd||cpuAiPeekWithholdsFire(b))continue;
+    if(clock<b.reactionAt||clock<(+b.equipEnd||0)||b.reloadEnd)continue;
     if(isMelee){
       if(partyCpuHostMelee(b,target,clock,true))continue;
       partyCpuHostMelee(b,target,clock);continue;
     }
+    if(clock<(+b.aiDodgeFireUntil||0)||cpuAiPeekWithholdsFire(b))continue;
     if(aimTntId){
       const fresh=cpuAiTntPlan(b,foes,allies,shotProfile,clock),freshTnt=liveTnt.find(t=>String(t.id)===String(fresh.targetId));
       b.tntPlan=fresh;b.tntThinkAt=clock+CPU_AI_TNT_RETHINK_MS;
