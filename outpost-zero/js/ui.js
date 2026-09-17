@@ -815,7 +815,7 @@ function drawTutorial(){
     ['ANIMATIONS','cosmetic weapon-draw flourishes only \u00b7 they never change weapon strength'],
     ['POWER-UPS','pre-buy with coins \u00b7 open POWERUPS on an upgrade screen (or press V) to use stock'],
     ['WAVES','clear a wave \u2192 choose an upgrade'],
-    ['MOD LEVELS','every 10th wave offers ONLY weapon mods'],
+    ['UPGRADES','every cleared wave offers unique perks only \u00b7 no repeatable stat filler'],
     ['WARLORDS','every 5th wave \u2014 they trickle in, not all at once'],
     ['  RED','charges you + sprays shots in every direction'],
     ['  BLUE','slow missiles \u00b7 deflects ALL bullets every 8s (2s)'],
@@ -3585,10 +3585,9 @@ function drawUpgrade(){
   ctx.fillStyle='#a7c15e'; ctx.font='700 '+titleSz+'px ui-monospace,Consolas,monospace';
   const titleY = narrow ? Math.max(64, H*0.10) : H*0.20;
   ctx.fillText('WAVE '+wave+' CLEARED', W/2, titleY);
-  ctx.fillStyle = bossBounty ? '#d0763e' : '#8a9268';
+  ctx.fillStyle='#8a9268';
   ctx.font=(narrow?11:13)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(bossBounty ? 'BOSS BOUNTY \u2014 weapon mods for your loadout'
-                          : 'FIELD REQUISITION \u2014 choose one upgrade', W/2, titleY+(narrow?22:32));
+  ctx.fillText('ENDLESS REQUISITION \u2014 choose one unique upgrade', W/2, titleY+(narrow?22:32));
 
   upgradePowerRect=null; upgradeAdRect=null; upgradeDonateRect=null;
   const n=upgradeChoices.length;

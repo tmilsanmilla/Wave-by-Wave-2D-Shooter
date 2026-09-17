@@ -13,6 +13,10 @@ let playerFrozenUntil=0;
 const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:2500, warpwave:18000, timeturner:12000};
 const TWIN_SAI_PARRY_MS=1000;
 let wmods={}, utilMods={}, bossBounty=false;
+const UPGRADE_EFFECT_BOOST=1.15;
+const boostedPercent=value=>Math.round(value*UPGRADE_EFFECT_BOOST*100)/100;
+const boostedGain=multiplier=>1+(multiplier-1)*UPGRADE_EFFECT_BOOST;
+const boostedReduction=multiplier=>1-(1-multiplier)*UPGRADE_EFFECT_BOOST;
 function wm(k){ return wmods[k] || (wmods[k]={dmg:1,rate:1,mag:1,pellets:0,pierce:0,drain:1,cdAdd:1,slamR:1,range:1,fall:1,spread:1,arc:1}); }
 function um(k){ return utilMods[k] || (utilMods[k]={cd:1}); }
 function abilityCdOf(k){ return Math.max(1500, (ABILITY_CD[k]||0) * wm(k).cdAdd); }
@@ -32,14 +36,15 @@ for(const k of MOD_KEYS){
   for(let tier=1;tier<=3;tier++){
     const n=(isUtil?UTILITIES[k].name:WEAPONS[k].name)+' '+base+' '+ROMAN[tier];
     const prev=tier>1?(isUtil?UTILITIES[k].name:WEAPONS[k].name)+' '+base+' '+ROMAN[tier-1]:null;
+    const headline=boostedPercent([0,12,16,20][tier]);
     WEAPON_MODS.push({wkey:k,n,base,tier,req:prev,
-      d:isUtil?(k==='medkit'?('needs '+[0,12,16,20][tier]+'% fewer kills'):('cooldown '+[0,12,16,20][tier]+'% faster')):
-        isMelee?('+'+[0,12,16,20][tier]+'% damage, faster swing and ability'):
-                ('+'+[0,12,16,20][tier]+'% damage, magazine and range'),
+      d:isUtil?(k==='medkit'?('needs '+headline+'% fewer kills'):('cooldown '+headline+'% faster')):
+        isMelee?('+'+headline+'% damage, faster swing and ability'):
+                ('+'+headline+'% damage, magazine and range'),
       f:()=>{
-        if(isUtil) um(k).cd*=[0,.88,.84,.80][tier];
-        else if(isMelee){ wm(k).dmg*=[0,1.12,1.16,1.20][tier]; wm(k).rate*=[0,.94,.91,.88][tier]; wm(k).cdAdd*=[0,.94,.91,.88][tier]; }
-        else { wm(k).dmg*=[0,1.12,1.16,1.20][tier]; wm(k).mag*=[0,1.08,1.12,1.16][tier]; wm(k).range*=[0,1.06,1.09,1.12][tier]; }
+        if(isUtil) um(k).cd*=boostedReduction([0,.88,.84,.80][tier]);
+        else if(isMelee){ wm(k).dmg*=boostedGain([0,1.12,1.16,1.20][tier]); wm(k).rate*=boostedReduction([0,.94,.91,.88][tier]); wm(k).cdAdd*=boostedReduction([0,.94,.91,.88][tier]); }
+        else { wm(k).dmg*=boostedGain([0,1.12,1.16,1.20][tier]); wm(k).mag*=boostedGain([0,1.08,1.12,1.16][tier]); wm(k).range*=boostedGain([0,1.06,1.09,1.12][tier]); }
       }});
   }
 }
@@ -48,14 +53,14 @@ function availableEquipmentMods(keys){
 }
 const magSize = k => Math.round(WEAPONS[k].mag*perks.mag*wm(k).mag);
 const TIER_CHAINS=[
-  {n:'HOLLOW POINTS', ds:['+15% weapon damage','+20% more weapon damage','+25% more weapon damage'], fs:[()=>perks.dmg*=1.15,()=>perks.dmg*=1.20,()=>perks.dmg*=1.25]},
-  {n:'TRIGGER JOB', ds:['+12% fire rate','+16% more fire rate','+20% more fire rate'], fs:[()=>perks.rate*=0.89,()=>perks.rate*=0.84,()=>perks.rate*=0.80]},
-  {n:'LIGHT BOOTS', ds:['+10% move speed','+15% more move speed','+20% more move speed'], fs:[()=>perks.spd*=1.10,()=>perks.spd*=1.15,()=>perks.spd*=1.20]},
-  {n:'SPEED LOADER', ds:['reload 20% faster','reload 25% faster again','reload 30% faster again'], fs:[()=>perks.reload*=0.80,()=>perks.reload*=0.75,()=>perks.reload*=0.70]},
-  {n:'EXTENDED MAGS', ds:['+30% magazine size','+40% more magazine size','+50% more magazine size'], fs:[()=>perks.mag*=1.30,()=>perks.mag*=1.40,()=>perks.mag*=1.50]},
-  {n:'MATCH BARREL', ds:['25% tighter spread','35% tighter spread again','removes recoil bloom'], fs:[()=>perks.acc*=0.75,()=>perks.acc*=0.65,()=>perks.noBloom=1]},
-  {n:'KEVLAR WEAVE', ds:['take 20% less damage','take 25% less damage again','take 30% less and unlock Second Wind'], fs:[()=>perks.armor*=0.80,()=>perks.armor*=0.75,()=>{perks.armor*=0.70;perks.secondWind=1;}]},
-  {n:'FRAG SHELLS', ds:['enemies explode on death','explosions deal +50% damage','explosions deal double damage'], fs:[()=>perks.explode=1,()=>perks.explode=1.5,()=>perks.explode=2]},
+  {n:'HOLLOW POINTS', ds:['+'+boostedPercent(15)+'% weapon damage','+'+boostedPercent(20)+'% more weapon damage','+'+boostedPercent(25)+'% more weapon damage'], fs:[()=>perks.dmg*=boostedGain(1.15),()=>perks.dmg*=boostedGain(1.20),()=>perks.dmg*=boostedGain(1.25)]},
+  {n:'TRIGGER JOB', ds:['+'+boostedPercent(12)+'% fire rate','+'+boostedPercent(16)+'% more fire rate','+'+boostedPercent(20)+'% more fire rate'], fs:[()=>perks.rate*=boostedReduction(0.89),()=>perks.rate*=boostedReduction(0.84),()=>perks.rate*=boostedReduction(0.80)]},
+  {n:'LIGHT BOOTS', ds:['+'+boostedPercent(10)+'% move speed','+'+boostedPercent(15)+'% more move speed','+'+boostedPercent(20)+'% more move speed'], fs:[()=>perks.spd*=boostedGain(1.10),()=>perks.spd*=boostedGain(1.15),()=>perks.spd*=boostedGain(1.20)]},
+  {n:'SPEED LOADER', ds:['reload '+boostedPercent(20)+'% faster','reload '+boostedPercent(25)+'% faster again','reload '+boostedPercent(30)+'% faster again'], fs:[()=>perks.reload*=boostedReduction(0.80),()=>perks.reload*=boostedReduction(0.75),()=>perks.reload*=boostedReduction(0.70)]},
+  {n:'EXTENDED MAGS', ds:['+'+boostedPercent(30)+'% magazine size','+'+boostedPercent(40)+'% more magazine size','+'+boostedPercent(50)+'% more magazine size'], fs:[()=>perks.mag*=boostedGain(1.30),()=>perks.mag*=boostedGain(1.40),()=>perks.mag*=boostedGain(1.50)]},
+  {n:'MATCH BARREL', ds:[boostedPercent(25)+'% tighter spread',boostedPercent(35)+'% tighter spread again','removes recoil bloom'], fs:[()=>perks.acc*=boostedReduction(0.75),()=>perks.acc*=boostedReduction(0.65),()=>perks.noBloom=1]},
+  {n:'KEVLAR WEAVE', ds:['take '+boostedPercent(20)+'% less damage','take '+boostedPercent(25)+'% less damage again','take '+boostedPercent(30)+'% less and unlock Second Wind'], fs:[()=>perks.armor*=boostedReduction(0.80),()=>perks.armor*=boostedReduction(0.75),()=>{perks.armor*=boostedReduction(0.70);perks.secondWind=1;}]},
+  {n:'FRAG SHELLS', ds:['enemies explode on death','explosions deal +'+boostedPercent(50)+'% damage','explosions deal +'+boostedPercent(100)+'% damage'], fs:[()=>perks.explode=1,()=>perks.explode=boostedGain(1.5),()=>perks.explode=boostedGain(2)]},
 ];
 const UPGRADES=[];
 for(const c of TIER_CHAINS) for(let tier=1;tier<=3;tier++){
@@ -63,36 +68,14 @@ for(const c of TIER_CHAINS) for(let tier=1;tier<=3;tier++){
   UPGRADES.push({n,base:c.n,tier,d:c.ds[tier-1],f:c.fs[tier-1],once:true,
                  req:tier>1?c.n+' '+ROMAN[tier-1]:null});
 }
-// Once every named path is complete, Endless must still offer a real choice.
-// These repeat forever, but clamp their multipliers so an exceptionally long
-// run cannot overflow a stat or drive a firing interval to zero.
-const LATE_RUN_UPGRADES=Object.freeze([
-  Object.freeze({n:'ENDLESS CALIBRATION',d:'+10% weapon damage',lateRun:true,
-    f:()=>{perks.dmg=Math.min(1000000,Math.max(1,+perks.dmg||1)*1.10);}}),
-  Object.freeze({n:'ENDLESS CYCLING',d:'+6% fire rate',lateRun:true,
-    f:()=>{perks.rate=Math.max(0.08,Math.min(1,+perks.rate||1)*0.94);}}),
-  Object.freeze({n:'ENDLESS MAGAZINES',d:'+10% magazine size',lateRun:true,
-    f:()=>{perks.mag=Math.min(1000,Math.max(1,+perks.mag||1)*1.10);}}),
-  Object.freeze({n:'ENDLESS ARMOR',d:'+15% maximum HP and medkit healing',lateRun:true,
-    f:()=>{
-      const before=Math.max(1,+perks.maxhp||100);
-      perks.maxhp=Math.min(1000000,before*1.15);
-      perks.medkitHeal=Math.min(1000000,Math.max(1,+perks.medkitHeal||25)*1.15);
-      if(typeof player!=='undefined'&&player)player.hp=Math.min(perks.maxhp,Math.max(0,+player.hp||0)+(perks.maxhp-before));
-    }}),
-]);
 function rollUpgrades(){
-  const out=[];
-  if(bossBounty){
-    const mine=[loadout.primary, loadout.secondary, loadout.melee, loadout.utility].filter(Boolean);
-    const mods=availableEquipmentMods(mine);
-    while(out.length<4 && mods.length) out.push(mods.splice((Math.random()*mods.length)|0,1)[0]);
-    if(out.length) return out;          // mod level: ONLY weapon mods, nothing else
-    bossBounty=false;                   // no applicable mods left — fall back to perks
-  }
-  const pool=UPGRADES.filter(u => (!u.req || perkCounts[u.req]) && !(u.once && perkCounts[u.n]));
-  while(out.length<4 && pool.length) out.push(pool.splice((Math.random()*pool.length)|0,1)[0]);
-  return out.length?out:LATE_RUN_UPGRADES.slice();
+  // Wave clears offer only the finite, unique Endless perk chains. Equipment
+  // mods remain exclusive to Mod Chests, and generic repeatable stat choices
+  // never enter this pool.
+  bossBounty=false;
+  const out=[],pool=UPGRADES.filter(u=>(!u.req||perkCounts[u.req])&&!(u.once&&perkCounts[u.n]));
+  while(out.length<4&&pool.length)out.push(pool.splice((Math.random()*pool.length)|0,1)[0]);
+  return out;
 }
 function chooseUpgrade(i){
   const u=upgradeChoices[i]; if(!u) return;

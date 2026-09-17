@@ -1,6 +1,9 @@
 "use strict";
 
 /* ---------------- combat ---------------- */
+const BOSS_MEDKIT_DROP_CHANCE=0.25;
+const ENEMY_AMMO_DROP_CHANCE=0.165*0.75; // 12.375%: 25% below the former 16.5% chance
+
 function switchWeapon(k){
   if(!k || !WEAPONS[k]) return;                       // sparse single-item Practice loadouts have empty hotkeys
   if(k!==loadout.primary && k!==loadout.secondary && k!==loadout.melee) return;
@@ -1040,20 +1043,30 @@ function update(dtms){
     waveSkipPending--;
     if(typeof recordDailyEndlessWaveClear==='function')recordDailyEndlessWaveClear();
     recordWaveCoinReward();
-    bossBounty = wave%10===0;
+    bossBounty=false;
     upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
     cancelFanTheHammer();
     if(typeof resetHeldTouchContacts==='function')resetHeldTouchContacts();
-    state='upgrade'; sfx('wave');
+    if(upgradeChoices.length){ state='upgrade'; sfx('wave'); }
+    else {
+      state='play'; betweenTimer=1200;
+      waveMsg='ALL UNIQUE UPGRADES ACQUIRED'; waveMsgT=now+1800;
+      sfx('pickup');
+    }
   } else if(!practiceMode && !enemies.length){
     if(wave>=1 && !upgradeOffered){
       if(typeof recordDailyEndlessWaveClear==='function')recordDailyEndlessWaveClear();
       recordWaveCoinReward(); // bank each clear; pay the whole bank exactly every fifth wave
-      bossBounty = wave%10===0;   // weapon-mod level every 10 waves
+      bossBounty=false;           // every clear offers only Endless stat upgrades
       upgradeOffered=true; upgradeChoices=rollUpgrades(); ebullets=[];
       cancelFanTheHammer();
       if(typeof resetHeldTouchContacts==='function')resetHeldTouchContacts();
-      state='upgrade'; sfx('wave');
+      if(upgradeChoices.length){ state='upgrade'; sfx('wave'); }
+      else {
+        state='play'; betweenTimer=1200;
+        waveMsg='ALL UNIQUE UPGRADES ACQUIRED'; waveMsgT=now+1800;
+        sfx('pickup');
+      }
     } else {
       betweenTimer-=dtms;
       if(betweenTimer<=0){ nextWave(); betweenTimer=2600; upgradeOffered=false; }
@@ -1121,14 +1134,14 @@ function update(dtms){
           const pa=Math.atan2(player.y-e.y, player.x-e.x);
           for(const off of [-0.14,0,0.14]){
             const a=pa+off+rand(-0.04,0.04);
-            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*6.5,vy:Math.sin(a)*6.5,life:2400});
+            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*6.5,vy:Math.sin(a)*6.5,life:2400,boss:true});
           }
         }
         if(now>=e.ringT){                        // shots in every direction
           e.ringT=now+4000;
           for(let i=0;i<14;i++){
             const a=i/14*TAU + rand(-0.05,0.05);
-            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,life:2600});
+            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,life:2600,boss:true});
           }
           sfx('shoot',{sndF:300,sndD:0.15});
         }
@@ -1165,7 +1178,7 @@ function update(dtms){
         } else if(now>=e.streamT){                  // predictive high-speed shots lead the player's real movement
           e.streamT=now+1500;
           const shotSpeed=18.1125,pa=predictiveAimAngle(e.x,e.y,player,shotSpeed,45);
-          ebullets.push({x:e.x,y:e.y,vx:Math.cos(pa)*shotSpeed,vy:Math.sin(pa)*shotSpeed,life:2200,dmg:27.5,predictive:true});
+          ebullets.push({x:e.x,y:e.y,vx:Math.cos(pa)*shotSpeed,vy:Math.sin(pa)*shotSpeed,life:2200,dmg:27.5,predictive:true,boss:true});
         }
       } else if(e.type==='bossPurple'){          // PURPLE KING: RED's rate of fire, heavier rounds
         if(now>=e.streamT){                      // constant 3-shot fan like RED, double damage
@@ -1173,14 +1186,14 @@ function update(dtms){
           const pa=Math.atan2(player.y-e.y, player.x-e.x);
           for(const off of [-0.14,0,0.14]){
             const a=pa+off+rand(-0.04,0.04);
-            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*6.5,vy:Math.sin(a)*6.5,life:2400,dmg:20.7,king:true});
+            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*6.5,vy:Math.sin(a)*6.5,life:2400,dmg:20.7,king:true,boss:true});
           }
         }
         if(now>=e.ringT){                        // ring in every direction like RED, double damage
           e.ringT=now+4000;
           for(let i=0;i<14;i++){
             const a=i/14*TAU + rand(-0.05,0.05);
-            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,life:2600,dmg:20.7,king:true});
+            ebullets.push({x:e.x,y:e.y,vx:Math.cos(a)*5.5,vy:Math.sin(a)*5.5,life:2600,dmg:20.7,king:true,boss:true});
           }
           sfx('shoot',{sndF:180,sndD:0.2});
         }
@@ -1188,7 +1201,7 @@ function update(dtms){
           e.heavyT=now+3000;
           const shotSpeed=9,pa=predictiveAimAngle(e.x,e.y,player,shotSpeed,35);
           ebullets.push({x:e.x,y:e.y,vx:Math.cos(pa)*shotSpeed,vy:Math.sin(pa)*shotSpeed,life:3000,
-            dmg:purpleHeavyShotDamage(wave),preScaledDamage:true,king:true,flashing:true,dangerRadius:8});
+            dmg:purpleHeavyShotDamage(wave),preScaledDamage:true,king:true,boss:true,flashing:true,dangerRadius:8});
           sfx('shoot',{sndF:120,sndD:0.28});
         }
       }
@@ -1227,7 +1240,7 @@ function update(dtms){
     // contact damage — measure the REAL distance to the player, not the taunt target
     if(!t.ranged){
       const cdx=e.x-player.x, cdy=e.y-player.y;
-      if(cdx*cdx+cdy*cdy < (e.r+player.r+2)*(e.r+player.r+2) && player.hurtCd<=0) hurtPlayer(t.dmg);
+      if(cdx*cdx+cdy*cdy < (e.r+player.r+2)*(e.r+player.r+2) && player.hurtCd<=0) hurtPlayer(t.dmg,{boss:!!t.boss});
     }
   }
   // Enemy count is deliberately capped, so this exact all-pairs pass stays
@@ -1420,7 +1433,7 @@ function update(dtms){
       if(dist2(b.x,b.y,player.x,player.y)<(player.r+shotR)*(player.r+shotR)){
         dead=true;
         if(b.botArena) arenaBotHitPlayer((b.dmg||WEAPONS.ar.dmg)*dmgMul(b));
-        else if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg,{preScaled:!!b.preScaledDamage});
+        else if(player.hurtCd<=0) hurtPlayer(b.dmg||ETYPES.gunner.dmg,{preScaled:!!b.preScaledDamage,boss:!!b.boss});
       }
     }
     if(dead) ebullets.splice(i,1);
@@ -1474,8 +1487,8 @@ function update(dtms){
           } else {
             // All named tier paths are complete: the chest still grants a permanent run upgrade.
             const k=mine[(Math.random()*mine.length)|0];
-            if(UTILITIES[k]){ um(k).cd*=.95; modName=UTILITIES[k].name+' FIELD TUNING'; }
-            else { wm(k).dmg*=1.10; modName=WEAPONS[k].name+' FIELD TUNING'; }
+            if(UTILITIES[k]){ um(k).cd*=.9425; modName=UTILITIES[k].name+' FIELD TUNING'; }
+            else { wm(k).dmg*=1.115; modName=WEAPONS[k].name+' FIELD TUNING'; }
             modTxt=modName+'  \u00b7  ';
           }
           const trickle=startCoinTrickle(coinDrop,'MOD CHEST');
@@ -1504,7 +1517,8 @@ function hurtPlayer(dmg,options={}){
   if(now<invincUntil) return;                       // invincibility powerup: no damage
   cancelMedHeal();                                  // a real hit interrupts both quick and long Medkit heals
   const enemyScale=options.preScaled?DIFFS[diffMode].dmg:endlessEnemyDamageMultiplier(wave,diffMode);
-  let incoming=dmg*enemyScale*perks.armor;
+  const warlordScale=options.boss?0.80:1;
+  let incoming=dmg*enemyScale*perks.armor*warlordScale;
   if(playerFrozenUntil>now){
     clearPlayerFreezerFreeze();incoming*=0.5;
     burst(player.x,player.y,'#bfefff',10,4);waveMsg='THAWED \u00b7 HIT REDUCED';waveMsgT=now+900;
@@ -1625,17 +1639,20 @@ function killEnemy(j){
     if(!practiceMode && !testMode){ killCoinAcc++; if(killCoinAcc>=20){ killCoinAcc-=20; addCoins(3); } }   // 20 eliminations -> 3 coins (halved; off in test mode)
     if(score>hiScore){ hiScore=score; saveMeta(); }
     if(perks.surge) surgeT=now+3000;
+    let cadenceMedkitDropped=false;
     medDropKillAcc++;
     if(medDropKillAcc>=medDropKillsRequired()){
       medDropKillAcc=0;
-      // A boss already guarantees a medkit below; that single pack also
-      // satisfies a cadence threshold instead of creating two on one kill.
-      if(!t.boss) collectDroppedMedkit(e.x,e.y);
+      // The every-20-kills reward remains guaranteed even when the twentieth
+      // enemy is a boss. It replaces that boss's random medkit roll so one
+      // kill cannot add two packs to the stash.
+      cadenceMedkitDropped=collectDroppedMedkit(e.x,e.y);
     }
-    if(Math.random()<0.165) pickups.push({x:e.x+rand(-10,10),y:e.y+rand(-10,10),type:'ammo'});
+    if(Math.random()<ENEMY_AMMO_DROP_CHANCE) pickups.push({x:e.x+rand(-10,10),y:e.y+rand(-10,10),type:'ammo'});
     taskProgress('endless_kill',1);
     if(t.boss){
-      collectDroppedMedkit(e.x-32,e.y);
+      if(!cadenceMedkitDropped&&Math.random()<BOSS_MEDKIT_DROP_CHANCE)
+        collectDroppedMedkit(e.x-32,e.y);
       pickups.push({x:e.x+32,y:e.y,type:'ammo'},{x:e.x,y:e.y+32,type:'ammo'});
       // weapon-mod CHESTS: purple 100%, yellow 33.3%, blue 10%, red 5%
       const CHEST={boss:[0.05,60], bossBlue:[0.10,120], bossYellow:[0.333,250], bossPurple:[1.0,600]}[e.type];

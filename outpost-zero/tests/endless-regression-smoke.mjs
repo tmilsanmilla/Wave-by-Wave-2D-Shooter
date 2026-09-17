@@ -9,12 +9,13 @@ const read=file=>fs.readFileSync(path.join(root,file),'utf8');
 const upgrades=read('js/upgrades.js');
 const gameplay=read('js/gameplay.js');
 const combat=read('js/combat.js');
+const enemies=read('js/enemies.js');
 const rendering=read('js/rendering.js');
 const ui=read('js/ui.js');
 
 const approx=(actual,expected,message)=>assert.ok(Math.abs(actual-expected)<1e-9,`${message}: expected ${expected}, got ${actual}`);
 
-function runUpgradeFallbackTest(){
+function runUniqueUpgradePoolTest(){
   const context=vm.createContext({
     WEAPONS:{smg:{name:'SMG',mag:30,melee:false}},
     UTILITIES:{},
@@ -23,34 +24,62 @@ function runUpgradeFallbackTest(){
   });
   vm.runInContext(upgrades,context,{filename:'upgrades.js'});
   const result=vm.runInContext(`
-    perkCounts=Object.fromEntries(UPGRADES.map(upgrade=>[upgrade.n,1]));
+    perkCounts={};
     bossBounty=false;
-    const lateChoices=rollUpgrades();
-    const snapshot={length:lateChoices.length,late:lateChoices.every(choice=>choice.lateRun===true),names:lateChoices.map(choice=>choice.n)};
-    lateChoices.forEach(choice=>choice.f());
-    snapshot.finite=[perks.dmg,perks.rate,perks.mag,perks.maxhp,player.hp].every(Number.isFinite);
-    snapshot.values={dmg:perks.dmg,rate:perks.rate,mag:perks.mag,maxhp:perks.maxhp,hp:player.hp,medkitHeal:perks.medkitHeal};
-    snapshot.descriptions=lateChoices.map(choice=>choice.d);
-    snapshot.medStashMax=MED_STASH_MAX;
-    perkCounts=Object.fromEntries([...UPGRADES,...WEAPON_MODS].map(upgrade=>[upgrade.n,1]));
+    const waveChoices=rollUpgrades();
+    const snapshot={
+      length:waveChoices.length,
+      uniqueOnly:waveChoices.every(choice=>UPGRADES.includes(choice)&&choice.once===true&&!choice.lateRun),
+      distinct:new Set(waveChoices.map(choice=>choice.n)).size,
+      medStashMax:MED_STASH_MAX,
+    };
     bossBounty=true;
-    const exhaustedBossChoices=rollUpgrades();
-    snapshot.bossFallback=exhaustedBossChoices.length===4&&exhaustedBossChoices.every(choice=>choice.lateRun===true);
+    const formerModWaveChoices=rollUpgrades();
+    snapshot.formerModWaveUniqueOnly=formerModWaveChoices.every(choice=>UPGRADES.includes(choice));
+    snapshot.bossBountyCleared=bossBounty===false;
+    perkCounts=Object.fromEntries(UPGRADES.map(upgrade=>[upgrade.n,1]));
+    snapshot.exhaustedLength=rollUpgrades().length;
+
+    const apply=name=>UPGRADES.find(upgrade=>upgrade.n===name).f();
+    perks={dmg:1,rate:1,reload:1,mag:1,range:1,spd:1,maxhp:100,pierce:0,acc:1,velo:1,dash:0,autoAll:0,surge:0,secondWind:0,crit:0,noBloom:0,explode:0,medkitHeal:25,armor:1};
+    apply('HOLLOW POINTS I');
+    apply('TRIGGER JOB I');
+    apply('LIGHT BOOTS I');
+    apply('SPEED LOADER I');
+    apply('EXTENDED MAGS I');
+    apply('MATCH BARREL I');
+    apply('KEVLAR WEAVE I');
+    apply('FRAG SHELLS II');
+    snapshot.values={dmg:perks.dmg,rate:perks.rate,spd:perks.spd,reload:perks.reload,mag:perks.mag,acc:perks.acc,armor:perks.armor,explode:perks.explode};
+    apply('MATCH BARREL III');
+    apply('KEVLAR WEAVE III');
+    snapshot.unlocks={noBloom:perks.noBloom,secondWind:perks.secondWind};
+
+    wmods={};
+    WEAPON_MODS.find(mod=>mod.n==='SMG WEAPON TUNING I').f();
+    snapshot.weaponMod={...wm('smg')};
     snapshot;
   `,context);
-  assert.equal(result.length,4,'an exhausted upgrade pool must still return four choices');
-  assert.equal(result.late,true,'every exhausted-pool choice must be a late-run fallback');
-  assert.equal(new Set(result.names).size,4,'fallback choices must remain distinct');
-  assert.equal(result.finite,true,'fallback upgrades must keep all changed stats finite');
-  assert.equal(result.bossFallback,true,'an exhausted boss-mod pool must also reach the late-run fallback');
-  approx(result.values.dmg,1.10,'late damage must double from 5% to 10%');
-  approx(result.values.rate,0.94,'late cycling must double from 3% to 6%');
-  approx(result.values.mag,1.10,'late magazine size must double from 5% to 10%');
-  approx(result.values.maxhp,115,'late armor must add 15% maximum HP');
-  approx(result.values.hp,115,'late armor must heal the newly added maximum HP');
-  approx(result.values.medkitHeal,28.75,'late armor must add 15% medkit healing');
+  assert.equal(result.length,4,'an ordinary wave must offer up to four unique upgrades');
+  assert.equal(result.uniqueOnly,true,'wave choices must come only from the finite unique-upgrade pool');
+  assert.equal(result.distinct,4,'a wave must not repeat the same upgrade choice');
+  assert.equal(result.formerModWaveUniqueOnly,true,'former mod waves must also use only unique upgrades');
+  assert.equal(result.bossBountyCleared,true,'rolling upgrades must clear the obsolete mod-wave flag');
+  assert.equal(result.exhaustedLength,0,'no generic filler upgrade may appear after every unique is owned');
+  approx(result.values.dmg,1.1725,'Hollow Points I must be 15% stronger');
+  approx(result.values.rate,0.8735,'Trigger Job I must be 15% stronger');
+  approx(result.values.spd,1.115,'Light Boots I must be 15% stronger');
+  approx(result.values.reload,0.77,'Speed Loader I must be 15% stronger');
+  approx(result.values.mag,1.345,'Extended Mags I must be 15% stronger');
+  approx(result.values.acc,0.7125,'Match Barrel I must be 15% stronger');
+  approx(result.values.armor,0.77,'Kevlar Weave I must be 15% stronger');
+  approx(result.values.explode,1.575,'Frag Shells II must be 15% stronger');
+  assert.equal(result.unlocks.noBloom,1,'the recoil-bloom removal unlock must remain intact');
+  assert.equal(result.unlocks.secondWind,1,'the Second Wind unlock must remain intact');
+  approx(result.weaponMod.dmg,1.138,'weapon-mod damage must be 15% stronger');
+  approx(result.weaponMod.mag,1.092,'weapon-mod magazine size must be 15% stronger');
+  approx(result.weaponMod.range,1.069,'weapon-mod range must be 15% stronger');
   assert.equal(result.medStashMax,15,'the Endless medkit stash must hold exactly 15');
-  assert.deepEqual([...result.descriptions],['+10% weapon damage','+6% fire rate','+10% magazine size','+15% maximum HP and medkit healing']);
 }
 
 function runWaveScalingTest(){
@@ -94,10 +123,15 @@ function runImmediateMedkitTest(){
   assert.equal(result.used,true,'a stashed medkit must remain usable');
   assert.equal(result.afterUse.stash,14,'using a medkit consumes exactly one');
   approx(result.afterUse.hp,78.75,'the upgraded medkit heal must be applied');
-  assert.match(combat,/if\(!t\.boss\) collectDroppedMedkit\(e\.x,e\.y\)/,
-    'cadence medkits must auto-award instead of waiting on the ground');
-  assert.match(combat,/if\(t\.boss\)\{[\s\S]{0,100}collectDroppedMedkit\(e\.x-32,e\.y\)/,
-    'boss medkits must auto-award even when the kill ends the wave');
+  assert.match(combat,/cadenceMedkitDropped=collectDroppedMedkit\(e\.x,e\.y\)/,
+    'cadence medkits must remain guaranteed, including on a boss kill');
+  assert.match(combat,/if\(!cadenceMedkitDropped&&Math\.random\(\)<BOSS_MEDKIT_DROP_CHANCE\)/,
+    'bosses must use the bounded medkit chance without duplicating a cadence reward');
+  const lootContext=vm.createContext({});
+  vm.runInContext(combat,lootContext,{filename:'combat-loot.js'});
+  const lootChances=vm.runInContext(`({boss:BOSS_MEDKIT_DROP_CHANCE,ammo:ENEMY_AMMO_DROP_CHANCE})`,lootContext);
+  approx(lootChances.boss,0.25,'boss medkits must have a 25% drop chance');
+  approx(lootChances.ammo,0.12375,'ammo drops must be 25% rarer than the former 16.5% chance');
   assert.match(rendering,/for\(let i=medkitFlyFx\.length-1[\s\S]{0,700}player\.x-fx\.fromX/,
     'the accepted medkit must visibly fly from its origin to the player');
   assert.doesNotMatch(ui,/stash holds up to five|stash \(max 5\)/i,'tutorial text must not advertise the old cap');
@@ -127,8 +161,14 @@ function runWarlordTest(){
     'Blue missiles must be slightly faster and deal exactly 25% more base damage');
   assert.match(combat,/shotSpeed=18\.1125,pa=predictiveAimAngle[\s\S]{0,180}dmg:27\.5,predictive:true/,
     'Yellow rounds must use predictive aim, +15% speed, and +25% damage');
-  assert.match(combat,/dmg:purpleHeavyShotDamage\(wave\),preScaledDamage:true,king:true,flashing:true/,
-    'Purple must fire one flashing heavy projectile through the safe pre-scaled path');
+  assert.match(combat,/dmg:purpleHeavyShotDamage\(wave\),preScaledDamage:true,king:true,boss:true,flashing:true/,
+    'Purple must mark its flashing heavy projectile for safe scaling and the Warlord reduction');
+  assert.match(combat,/dmg:27\.5,predictive:true,boss:true/,
+    'Yellow projectiles must carry the Warlord damage marker');
+  assert.match(combat,/dmg:20\.7,king:true,boss:true/,
+    'Purple stream and ring projectiles must carry the Warlord damage marker');
+  assert.match(enemies,/boss:!!\(ETYPES\[e\.type\]&&ETYPES\[e\.type\]\.boss\)/,
+    'Blue homing missiles must inherit the Warlord damage marker');
   assert.match(combat,/Math\.random\(\)<0\.20[\s\S]{0,110}purpleDeflectReadyAt=now\+650/,
     'Purple must have a bounded occasional deflect rather than a permanent shield');
   assert.match(rendering,/projectile\.flashing[\s\S]{0,100}#fff4ff[\s\S]{0,80}#ff275f/,
@@ -147,11 +187,14 @@ function runWarlordTest(){
     damagePlayerHp(amount){hurtContext.player.hp-=amount;hurtContext.lastDamage=amount;},addShake(){},sfx(){},
   });
   vm.runInContext(combat,hurtContext,{filename:'combat-hurt.js'});
-  vm.runInContext(`hurtPlayer(150,{preScaled:true})`,hurtContext);
-  approx(hurtContext.lastDamage,150,'Purple wave-30 heavy damage must not be multiplied to 456+');
+  vm.runInContext(`hurtPlayer(150,{preScaled:true,boss:true})`,hurtContext);
+  approx(hurtContext.lastDamage,120,'Purple wave-30 heavy damage must receive the 20% Warlord reduction');
   hurtContext.player.hurtCd=0;
   vm.runInContext(`hurtPlayer(10)`,hurtContext);
   approx(hurtContext.lastDamage,30.444,'ordinary enemy damage must retain the full wave-30 scaling');
+  hurtContext.player.hurtCd=0;
+  vm.runInContext(`hurtPlayer(10,{boss:true})`,hurtContext);
+  approx(hurtContext.lastDamage,24.3552,'Warlord contact and ordinary projectiles must deal 20% less damage');
 }
 
 function runEndlessExitTest(){
@@ -184,13 +227,17 @@ function runEndlessExitTest(){
   }
 }
 
-runUpgradeFallbackTest();
+runUniqueUpgradePoolTest();
 runWaveScalingTest();
 runImmediateMedkitTest();
 runWarlordTest();
 runEndlessExitTest();
 assert.equal((combat.match(/upgradeChoices=rollUpgrades\(\)/g)||[]).length,2,
-  'normal clears and Wave Skipper must both use the non-empty upgrade roller');
+  'normal clears and Wave Skipper must both use the unique-upgrade roller');
+assert.equal((combat.match(/if\(upgradeChoices\.length\)\{ state='upgrade'; sfx\('wave'\); \}/g)||[]).length,2,
+  'normal clears and Wave Skipper must open a choice screen only when unique upgrades remain');
+assert.equal((combat.match(/ALL UNIQUE UPGRADES ACQUIRED/g)||[]).length,2,
+  'an exhausted unique pool must auto-continue instead of softlocking the run');
 assert.match(upgrades,/persistNormalEndlessScoreOnExit\(\);\s*\n\s*const returnPage=/,
   'the normal menu exit must finalize Endless before clearing its routing state');
 console.log('SUMMARY PASS Endless scaling, upgrades, and medkit stash');

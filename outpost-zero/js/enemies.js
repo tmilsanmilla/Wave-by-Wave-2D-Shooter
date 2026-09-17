@@ -15,7 +15,8 @@ const ETYPES = {
   dummy : { r:26, hp:1e9, spd:0, dmg:0, col:'#8d949c', score:0, ranged:false },
 };
 function fireHoming(e, a, spd, turn, life, dmg){
-  ebullets.push({x:e.x, y:e.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, spd, h:turn, life, dmg, hp:18, r:9});
+  ebullets.push({x:e.x, y:e.y, vx:Math.cos(a)*spd, vy:Math.sin(a)*spd, spd, h:turn, life, dmg, hp:18, r:9,
+    boss:!!(ETYPES[e.type]&&ETYPES[e.type].boss)});
 }
 // destroy any incoming homing missiles within radius r of (x,y) — used by explosions and melee swings
 function destroyMissilesInRadius(x, y, r){
