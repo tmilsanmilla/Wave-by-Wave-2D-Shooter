@@ -18,7 +18,7 @@ const LEGACY_SUPABASE_ANON_KEY='sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
 const PUBLIC_BOARD_LIMIT=5;
 let sb = null, legacySupabase = null, authUser = null, board = [], arenaBoard = [], boardT = 0, boardRequestT = 0, recovering = false;
-let neonAuthEventEpoch=0,neonRecoveryToken='';
+let neonAuthEventEpoch=0,neonRecoveryToken='',pendingNeonMigrationProof='';
 let leaderboardFetchVersion=0;
 const leaderboardAppliedVersion={endless:0,arena:0};
 const leaderboardFailedVersion={endless:0,arena:0};
@@ -66,10 +66,19 @@ function neonAuthApi(){
 async function neonGameUser(session){
   const user=session&&session.user;if(!user)return null;
   const authId=String(user.id||'');if(!authId)throw new Error('Neon Auth returned a user without an id.');
-  const result=await sb.rpc('bootstrap_outpost_zero_account');
+  const args={
+    p_migration_proof:pendingNeonMigrationProof||null
+  };
+  let result=await sb.rpc('bootstrap_outpost_zero_account_with_proof',args);
+  if(result&&result.error&&String(result.error.code||'')==='28000'&&
+     /AUTHENTICATION_REQUIRED/.test(String(result.error.message||''))){
+    await sb.auth.getSession();
+    result=await sb.rpc('bootstrap_outpost_zero_account_with_proof',args);
+  }
   if(result&&result.error)throw result.error;
   const row=Array.isArray(result&&result.data)?result.data[0]:result&&result.data;
   const gameId=String(row&&row.user_id||'');if(!gameId)throw new Error('Could not link this Neon login to an Outpost Zero account.');
+  pendingNeonMigrationProof='';
   return Object.assign({},user,{id:gameId,neon_auth_id:authId});
 }
 function neonRecoveryTokenFromLocation(){
@@ -210,6 +219,7 @@ async function initAuth(){
       void refreshBotLadder(true);
       sb.auth.onAuthStateChange(async(_e, sess)=>{
         const eventEpoch=++neonAuthEventEpoch;
+        if(!sess)pendingNeonMigrationProof='';
         // A login/logout/recovery event supersedes every in-flight form
         // request. In particular, a late username resolver may never install
         // a session after the account has changed in another tab.
@@ -947,22 +957,24 @@ function authSignInFailure(error,edge=false){
 }
 async function authDirectEmailSignIn(identifier,password,epoch=authActionEpoch){
   try{
+    const migration=await authMigrateLegacyEmailAccount(identifier,password,epoch);
+    if(!authActionCurrent(epoch)||migration.stale)return {ok:false,stale:true,reason:'stale'};
+    if(migration.ok||migration.reason==='rate')return migration;
     const result=await sb.auth.signInWithPassword({email:identifier,password});
     if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
-    if(!result||!result.error)return {ok:true};
-    const failure=authSignInFailure(result.error);
-    if(failure.reason!=='credentials')return failure;
-    return authMigrateLegacyEmailAccount(identifier,password,epoch);
+    return result&&result.error?authSignInFailure(result.error):{ok:true};
   }catch(error){return authSignInFailure(error);}
 }
-async function authFinishLegacyMigration(email,password,epoch=authActionEpoch){
+async function authFinishLegacyMigration(email,password,proof,epoch=authActionEpoch){
   if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+  pendingNeonMigrationProof=String(proof||'');
   const signedIn=await sb.auth.signInWithPassword({email,password});
   if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
   if(signedIn&&!signedIn.error)return {ok:true,migrated:true};
   const created=await sb.auth.signUp({email,password,options:{data:{name:'operator'},emailRedirectTo:location.origin+location.pathname}});
   if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
   if(created&&created.error){
+    pendingNeonMigrationProof='';
     const detail=String(created.error.message||created.error.code||'').toLowerCase();
     if(/already|exist|registered|duplicate/.test(detail))return {ok:false,reason:'credentials',
       message:'This account is already on Neon. Sign in with its current Neon password or use Forgot password.'};
@@ -971,20 +983,22 @@ async function authFinishLegacyMigration(email,password,epoch=authActionEpoch){
   return {ok:true,migrated:true};
 }
 async function authMigrateLegacyEmailAccount(email,password,epoch=authActionEpoch){
-  const detached=authDetachedClient('legacy-email',epoch);
-  if(!detached)return {ok:false,message:AUTH_INVALID_CREDENTIALS,reason:'credentials'};
+  if(!legacySupabase||!legacySupabase.functions||typeof legacySupabase.functions.invoke!=='function')
+    return {ok:false,message:'Legacy account migration is temporarily unavailable.',reason:'setup'};
   try{
-    const legacy=await detached.auth.signInWithPassword({email,password});
+    const legacy=await legacySupabase.functions.invoke(AUTH_IDENTIFIER_FUNCTION,{
+      body:{identifier:email,password,account_kind:'email'}
+    });
     if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
-    if(legacy&&legacy.error)return authSignInFailure(legacy.error);
-    const verifiedEmail=cleanAccountEmail(legacy&&legacy.data&&legacy.data.user&&legacy.data.user.email);
-    if(!verifiedEmail)return {ok:false,message:'Could not safely migrate that account. Use its exact account email.',reason:'unavailable'};
-    return authFinishLegacyMigration(verifiedEmail,password,epoch);
-  }catch(error){return authSignInFailure(error);}
+    if(legacy&&legacy.error)return authSignInFailure(legacy.error,true);
+    return authMigrateLegacyTokenSession(legacy&&legacy.data,password,epoch);
+  }catch(error){return authSignInFailure(error,true);}
 }
 async function authMigrateLegacyTokenSession(session,password,epoch=authActionEpoch){
   const accessToken=String(session&&session.access_token||''),refreshToken=String(session&&session.refresh_token||'');
-  if(!accessToken||!refreshToken)return {ok:false,message:'Sign-in is temporarily unavailable. Try again.',reason:'unavailable'};
+  const proof=String(session&&session.migration_proof||'');
+  if(!accessToken||!refreshToken||!/^v1\.[0-9a-f-]{36}\.[0-9]{10}\.[0-9a-f]{32}\.[A-Za-z0-9_-]{43}$/i.test(proof))
+    return {ok:false,message:'Secure account migration is temporarily unavailable. Try again.',reason:'unavailable'};
   const detached=authDetachedClient('legacy-username',epoch);
   if(!detached)return {ok:false,message:'Username migration is temporarily unavailable. Use your account email.',reason:'unavailable'};
   const installed=await detached.auth.setSession({access_token:accessToken,refresh_token:refreshToken});
@@ -992,7 +1006,7 @@ async function authMigrateLegacyTokenSession(session,password,epoch=authActionEp
   if(installed&&installed.error)return authSignInFailure(installed.error);
   const email=cleanAccountEmail(installed&&installed.data&&installed.data.user&&installed.data.user.email);
   if(!email)return {ok:false,message:'Could not safely migrate that username. Use the account email once.',reason:'unavailable'};
-  return authFinishLegacyMigration(email,password,epoch);
+  return authFinishLegacyMigration(email,password,proof,epoch);
 }
 async function authSignInWithIdentifier(rawIdentifier,password,epoch=authActionEpoch,accountKind=''){
   const kind=authIdentifierKind(rawIdentifier),identifier=String(rawIdentifier||'').trim(),choice=String(accountKind||'');

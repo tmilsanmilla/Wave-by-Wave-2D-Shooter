@@ -16,7 +16,7 @@ const corsHeaders = {
   Vary: 'Origin',
 }
 
-function json(status: number, body: Record<string, string>, headers: HeadersInit = {}) {
+function json(status: number, body: Record<string, unknown>, headers: HeadersInit = {}) {
   const responseHeaders = new Headers(corsHeaders)
   new Headers(headers).forEach((value, key) => responseHeaders.set(key, value))
   return new Response(JSON.stringify(body), { status, headers: responseHeaders })
@@ -176,11 +176,38 @@ function sessionIdentity(session: Record<string, unknown>): string {
     : ''
 }
 
-function sessionResponse(session: Record<string, unknown>) {
+function base64Url(bytes: Uint8Array): string {
+  let binary = ''
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')
+}
+
+async function migrationProof(userId: string): Promise<string> {
+  const secret = Deno.env.get('NEON_MIGRATION_PROOF_SECRET') || ''
+  if (!/^[A-Za-z0-9_-]{43,128}$/.test(secret) || !/^[0-9a-f-]{36}$/i.test(userId)) return ''
+  const expiresAt = Math.floor(Date.now() / 1000) + 300
+  const nonce = crypto.randomUUID().replaceAll('-', '')
+  const payload = `v1.${userId.toLowerCase()}.${expiresAt}.${nonce}`
+  const signingKey = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  )
+  const signature = new Uint8Array(
+    await crypto.subtle.sign('HMAC', signingKey, new TextEncoder().encode(payload)),
+  )
+  return `${payload}.${base64Url(signature)}`
+}
+
+async function sessionResponse(session: Record<string, unknown>) {
   const accessToken = typeof session?.access_token === 'string' ? session.access_token : ''
   const refreshToken = typeof session?.refresh_token === 'string' ? session.refresh_token : ''
-  return accessToken && refreshToken
-    ? json(200, { access_token: accessToken, refresh_token: refreshToken })
+  const userId = sessionIdentity(session)
+  const proof = userId ? await migrationProof(userId) : ''
+  return accessToken && refreshToken && proof
+    ? json(200, { access_token: accessToken, refresh_token: refreshToken, migration_proof: proof })
     : json(503, { code: 'SIGN_IN_UNAVAILABLE', message: UNAVAILABLE_MESSAGE })
 }
 

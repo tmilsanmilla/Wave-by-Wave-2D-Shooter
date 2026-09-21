@@ -14,12 +14,17 @@ cannot submit an email or target UUID to the linker.
 
 Supabase and Neon use incompatible password hashes, so existing passwords are
 not copied. During the transition, the game verifies an existing Supabase
-credential once, creates the matching Neon Managed Better Auth login, and then
-uses Neon for later sessions. New accounts are created directly in Neon.
+credential once. The verifier returns a five-minute, one-use HMAC proof that is
+bound to the preserved game UUID. Neon accepts that proof only when the current
+Managed Better Auth email matches the imported account; an ordinary unverified
+signup cannot claim legacy data. The game then uses Neon for later sessions.
+New accounts are created directly in Neon.
 
 Apply `migrations/001-managed-better-auth-cutover.sql` after importing the base
 schema and data. Run it with the database owner role; it is transactional and
-keeps normal constraints and triggers enabled.
+keeps normal constraints and triggers enabled. Provision the same randomly
+generated `NEON_MIGRATION_PROOF_SECRET` in the legacy credential-verifier
+function and `oz_identity.migration_config`; never commit that secret.
 
 ## Rollback
 

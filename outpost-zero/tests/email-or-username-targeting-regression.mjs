@@ -96,14 +96,24 @@ assert.match(signIn,/kind==='email'&&!choice[\s\S]*authDirectEmailSignIn/,
   'new or already migrated Neon accounts fall back to direct managed-auth email sign-in');
 assert.match(directEmail,/sb\.auth\.signInWithPassword/);
 assert.match(directEmail,/authMigrateLegacyEmailAccount/,
-  'a failed Neon email sign-in verifies the legacy password before migrating');
-assert.match(migrateEmail,/detached\.auth\.signInWithPassword/);
+  'email sign-in can verify a legacy password before using managed auth');
+assert.match(migrateEmail,/legacySupabase\.functions\.invoke\(AUTH_IDENTIFIER_FUNCTION/);
+assert.match(migrateEmail,/account_kind:'email'/,
+  'legacy email migration uses the credential verifier without exposing another identity');
 assert.match(migrateToken,/detached\.auth\.setSession/);
+assert.match(migrateToken,/migration_proof/,
+  'the credential-verified server proof is required before linking legacy data');
 assert.match(migrateToken,/authFinishLegacyMigration/);
 assert.match(finishMigration,/sb\.auth\.signUp/,
   'a credential-verified legacy account is recreated in Neon Managed Better Auth');
+assert.match(finishMigration,/pendingNeonMigrationProof/,
+  'the short-lived migration proof is available to the Neon account linker');
 assert.doesNotMatch(networking,/sb\.auth\.setSession/,
   'Supabase access tokens must never be installed into Neon Managed Better Auth');
+
+assert.match(edge,/NEON_MIGRATION_PROOF_SECRET/);
+assert.match(edge,/crypto\.subtle\.sign\('HMAC'/);
+assert.match(edge,/migration_proof: proof/);
 
 const playerLookupFunctions=['lookupPlayer','playerLookupFailureMessage']
   .map(name=>functionSource(administration,name)).join('\n');
