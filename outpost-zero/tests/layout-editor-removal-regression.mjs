@@ -18,7 +18,7 @@ assert.doesNotMatch(adminUi,/LAYOUT EDITOR|actionBtn\('layout'|id==='layout'/,
   'Admin Tools must not offer the removed editor');
 assert.doesNotMatch(ui+adminUi,/\boff[XYCol]+\(|withBlockColour\(|layoutBlock\(/,
   'normal Home rendering must not depend on editor offsets or color overrides');
-for(const [script,version] of [['networking','20260902-ai-cleanup-v1'],['loop','20260831-bots-volt-layout-v1'],['bootstrap','20260902-ai-cleanup-v1']])
+for(const [script,version] of [['networking','20260921-managed-auth-v1'],['loop','20260831-bots-volt-layout-v1'],['bootstrap','20260902-ai-cleanup-v1']])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),
     `${script}.js must not be served from a cache that still expects Layout Editor globals`);
 assert.match(index,/outpost-zero\/js\/administration\.js\?v=20260902-ai-cleanup-v1/,

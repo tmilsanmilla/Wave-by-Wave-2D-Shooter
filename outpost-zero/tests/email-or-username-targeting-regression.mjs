@@ -81,62 +81,29 @@ assert.match(edge,/requestedKind === 'email'[\s\S]*requestedKind === 'username'/
 assert.doesNotMatch(edge,/console\.(?:log|warn|error)|JSON\.stringify\(\{[^}]*userId/,
   'the Edge Function does not log or return private resolver identities');
 
-const authFunctions=['authIdentifierKind','authActionCurrent','authFunctionStatus','authSignInFailure',
-  'authDirectEmailSignIn','authSignInWithIdentifier','authDetachedClient'].map(name=>functionSource(networking,name)).join('\n');
-
-function authHarness(response){
-  const calls=[];
-  const context={console,Promise,Object,Array,String,Date,
-    edgeResponse:response,
-    edgeInvoke:async(name,options)=>{calls.push(['edge',name,options]);return context.edgeResponse;},
-    setSession:async tokens=>{calls.push(['setSession',tokens]);return {error:null};},
-    detachedSignIn:async payload=>{calls.push(['detached',payload]);return {data:{session:{access_token:'fallback-a',refresh_token:'fallback-r'}},error:null};}
-  };
-  context.window={supabase:{createClient:()=>({auth:{signInWithPassword:context.detachedSignIn}})}};
-  vm.createContext(context);
-  vm.runInContext(`
-    const SUPABASE_URL='https://example.supabase.co',SUPABASE_ANON_KEY='publishable';
-    const AUTH_IDENTIFIER_FUNCTION='outpost-zero-sign-in';
-    const AUTH_INVALID_CREDENTIALS='invalid',AUTH_TRY_LATER='later',AUTH_SIGNIN_SETUP='setup';
-    const AUTH_AMBIGUOUS_IDENTIFIER='AMBIGUOUS_IDENTIFIER';
-    let authActionBusy=true,authActionEpoch=7;
-    let sb={functions:{invoke:(name,options)=>edgeInvoke(name,options)},auth:{setSession:tokens=>setSession(tokens)}};
-    ${authFunctions}
-    this.api={signIn:authSignInWithIdentifier};
-  `,context,{filename:'email-or-username-auth.vm.js'});
-  return {api:context.api,calls,setResponse:value=>{context.edgeResponse=value;}};
-}
-
-{
-  const h=authHarness({data:{access_token:'email-a',refresh_token:'email-r'},error:null});
-  const result=await h.api.signIn('Owner@Example.com','password',7);
-  assert.equal(result.ok,true);
-  assert.equal(JSON.stringify(h.calls[0]),JSON.stringify(["edge",'outpost-zero-sign-in',{body:{identifier:'Owner@Example.com',password:'password'}}]),
-    'email sign-in uses the collision-aware Edge Function');
-  assert.equal(h.calls.at(-1)[0],'setSession');
-}
-
-{
-  const h=authHarness({data:{code:'AMBIGUOUS_IDENTIFIER',message:'Choose an account.',email_choice:'EMAIL ACCOUNT',username_choice:'USERNAME ACCOUNT'},error:null});
-  const first=await h.api.signIn('legacy@example.com','password',7);
-  assert.equal(first.ambiguous,true);
-  assert.equal(h.calls.some(call=>call[0]==='setSession'),false,
-    'ambiguous response cannot install either account session automatically');
-  h.setResponse({data:{access_token:'chosen-a',refresh_token:'chosen-r'},error:null});
-  const chosen=await h.api.signIn('legacy@example.com','password',7,'username');
-  assert.equal(chosen.ok,true);
-  assert.equal(h.calls.findLast(call=>call[0]==='edge')[2].body.account_kind,'username',
-    'the explicit username-account choice is sent back to the Edge Function');
-}
-
-{
-  const setupError={name:'FunctionsFetchError',context:{status:404}};
-  const h=authHarness({data:null,error:setupError});
-  const result=await h.api.signIn('owner@example.com','password',7);
-  assert.equal(result.ok,true);
-  assert.equal(h.calls.some(call=>call[0]==='detached'),true,
-    'email sign-in retains an isolated direct fallback while an Edge deployment is unavailable');
-}
+const signIn=functionSource(networking,'authSignInWithIdentifier');
+const directEmail=functionSource(networking,'authDirectEmailSignIn');
+const migrateEmail=functionSource(networking,'authMigrateLegacyEmailAccount');
+const migrateToken=functionSource(networking,'authMigrateLegacyTokenSession');
+const finishMigration=functionSource(networking,'authFinishLegacyMigration');
+assert.match(signIn,/legacySupabase\.functions\.invoke\(AUTH_IDENTIFIER_FUNCTION/,
+  'legacy email-shaped username collisions remain credential-checked by the Edge Function');
+assert.match(signIn,/session&&session\.code===AUTH_AMBIGUOUS_IDENTIFIER/,
+  'an ambiguous verified identifier still requires an explicit account choice');
+assert.match(signIn,/body\.account_kind=choice/,
+  'the explicit email/username account choice is sent to the credential verifier');
+assert.match(signIn,/kind==='email'&&!choice[\s\S]*authDirectEmailSignIn/,
+  'new or already migrated Neon accounts fall back to direct managed-auth email sign-in');
+assert.match(directEmail,/sb\.auth\.signInWithPassword/);
+assert.match(directEmail,/authMigrateLegacyEmailAccount/,
+  'a failed Neon email sign-in verifies the legacy password before migrating');
+assert.match(migrateEmail,/detached\.auth\.signInWithPassword/);
+assert.match(migrateToken,/detached\.auth\.setSession/);
+assert.match(migrateToken,/authFinishLegacyMigration/);
+assert.match(finishMigration,/sb\.auth\.signUp/,
+  'a credential-verified legacy account is recreated in Neon Managed Better Auth');
+assert.doesNotMatch(networking,/sb\.auth\.setSession/,
+  'Supabase access tokens must never be installed into Neon Managed Better Auth');
 
 const playerLookupFunctions=['lookupPlayer','playerLookupFailureMessage']
   .map(name=>functionSource(administration,name)).join('\n');

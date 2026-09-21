@@ -7,15 +7,18 @@
    ============================================================ */
 
 /* ============================================================
-   AUTH + LEADERBOARD (Supabase)
-   Paste your project URL and anon key below. Leave blank to
-   run guest-only. The anon key is safe to expose client-side.
+   AUTH + DATA (Neon Managed Better Auth + Neon Data API)
+   Supabase remains a temporary transport for legacy account
+   verification and public broadcast/presence only.
    ============================================================ */
-const SUPABASE_URL = 'https://edvurrilylypgfyvjyas.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
+const NEON_AUTH_URL='https://ep-fragrant-salad-a577vui2.neonauth.us-east-2.aws.neon.tech/neondb/auth';
+const NEON_DATA_API_URL='https://ep-fragrant-salad-a577vui2.apirest.us-east-2.aws.neon.tech/neondb/rest/v1';
+const LEGACY_SUPABASE_URL='https://edvurrilylypgfyvjyas.supabase.co';
+const LEGACY_SUPABASE_ANON_KEY='sb_publishable_zbDDclXDMzEh92-WCDdpsQ_AYZB9x8I';
 
 const PUBLIC_BOARD_LIMIT=5;
-let sb = null, authUser = null, board = [], arenaBoard = [], boardT = 0, boardRequestT = 0, recovering = false;
+let sb = null, legacySupabase = null, authUser = null, board = [], arenaBoard = [], boardT = 0, boardRequestT = 0, recovering = false;
+let neonAuthEventEpoch=0,neonRecoveryToken='';
 let leaderboardFetchVersion=0;
 const leaderboardAppliedVersion={endless:0,arena:0};
 const leaderboardFailedVersion={endless:0,arena:0};
@@ -41,6 +44,43 @@ let authActionBusy=false,authActionEpoch=0,authAccountChoiceOpen=false;
 let accountSettingsOpen=false, accountSettingsRequiredUsername=false, accountSettingsBusy=false, accountSettingsUserId='', accountSettingsSection='menu', accountSettingsReturnFocus=null, accountSettingsEpoch=0;
 let accountMenuOpen=false, accountMenuConfirming=false, accountMenuBusy=false, accountMenuUserId='', accountMenuReturnView='';
 const $ = id => document.getElementById(id);
+
+function neonClientWithLegacyTransport(neonClient,legacyClient){
+  if(!neonClient)return null;
+  return new Proxy(neonClient,{get(target,property){
+    if(property==='channel')return legacyClient&&typeof legacyClient.channel==='function'
+      ?legacyClient.channel.bind(legacyClient):undefined;
+    if(property==='removeChannel')return legacyClient&&typeof legacyClient.removeChannel==='function'
+      ?legacyClient.removeChannel.bind(legacyClient):undefined;
+    if(property==='getChannels')return legacyClient&&typeof legacyClient.getChannels==='function'
+      ?legacyClient.getChannels.bind(legacyClient):()=>[];
+    if(property==='functions')return legacyClient&&legacyClient.functions;
+    const value=Reflect.get(target,property,target);
+    return typeof value==='function'?value.bind(target):value;
+  }});
+}
+function neonAuthApi(){
+  if(!sb||!sb.auth)return null;
+  return typeof sb.auth.getBetterAuthInstance==='function'?sb.auth.getBetterAuthInstance():null;
+}
+async function neonGameUser(session){
+  const user=session&&session.user;if(!user)return null;
+  const authId=String(user.id||'');if(!authId)throw new Error('Neon Auth returned a user without an id.');
+  const result=await sb.rpc('bootstrap_outpost_zero_account');
+  if(result&&result.error)throw result.error;
+  const row=Array.isArray(result&&result.data)?result.data[0]:result&&result.data;
+  const gameId=String(row&&row.user_id||'');if(!gameId)throw new Error('Could not link this Neon login to an Outpost Zero account.');
+  return Object.assign({},user,{id:gameId,neon_auth_id:authId});
+}
+function neonRecoveryTokenFromLocation(){
+  if(typeof location==='undefined')return '';
+  try{return String(new URL(location.href).searchParams.get('token')||'').trim();}catch(error){return '';}
+}
+function clearNeonRecoveryLocation(){
+  neonRecoveryToken='';
+  if(typeof history==='undefined'||typeof location==='undefined')return;
+  try{const url=new URL(location.href);url.searchParams.delete('token');url.searchParams.delete('error');history.replaceState({},'',url.toString());}catch(error){}
+}
 
 function cleanUsername(value){
   return String(value||'').trim().replace(/^@/,'').replace(/[^A-Za-z0-9_]/g,'').slice(0,32);
@@ -135,15 +175,20 @@ function resumeAfterUsernameClaim(){
   return continueAfterUsernameGate(id);
 }
 async function initAuth(){
-  if(SUPABASE_URL && SUPABASE_ANON_KEY && window.supabase){
+  if(NEON_AUTH_URL&&NEON_DATA_API_URL&&window.outpostZeroNeon){
     try{
-      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      legacySupabase=window.supabase&&typeof window.supabase.createClient==='function'
+        ?window.supabase.createClient(LEGACY_SUPABASE_URL,LEGACY_SUPABASE_ANON_KEY,{auth:{persistSession:false,
+          autoRefreshToken:false,detectSessionInUrl:false,storageKey:'oz-legacy-transport'}}):null;
+      const neonClient=window.outpostZeroNeon.createClient({authUrl:NEON_AUTH_URL,dataApiUrl:NEON_DATA_API_URL});
+      sb=neonClientWithLegacyTransport(neonClient,legacySupabase);
+      neonRecoveryToken=neonRecoveryTokenFromLocation();
       // Do not expose a cached signed-in account while getSession is pending.
       // A cache explicitly marked owner:'' is legitimate guest progress and is
       // preserved; an account-owned or legacy-unmarked cache fails closed.
       if(typeof prepareAccountProgressForAuth==='function')prepareAccountProgressForAuth('');
       const { data } = await sb.auth.getSession();
-      const initialUser=data.session?data.session.user:null,initialPreviousUserId=authUser?String(authUser.id||''):'',
+      const initialUser=data.session?await neonGameUser(data.session):null,initialPreviousUserId=authUser?String(authUser.id||''):'',
         initialNextUserId=initialUser?String(initialUser.id||''):'';
       if(initialPreviousUserId!==initialNextUserId){
         arenaOwnWinTotal=null;
@@ -163,7 +208,8 @@ async function initAuth(){
       prepareLastLoadoutForAccount(initialProfileUserId);
       prepareBotLadderForAccount(authUser?String(authUser.id):'');
       void refreshBotLadder(true);
-      sb.auth.onAuthStateChange((_e, sess)=>{
+      sb.auth.onAuthStateChange(async(_e, sess)=>{
+        const eventEpoch=++neonAuthEventEpoch;
         // A login/logout/recovery event supersedes every in-flight form
         // request. In particular, a late username resolver may never install
         // a session after the account has changed in another tab.
@@ -172,7 +218,14 @@ async function initAuth(){
           recovering=true;
           if(typeof closeAccountMenu==='function')closeAccountMenu(true);
         }
-        const previousAuthUserId=authUser?String(authUser.id||''):'',nextAuthUser=sess?sess.user:null,
+        let nextAuthUser=null;
+        if(sess)try{nextAuthUser=await neonGameUser(sess);}catch(error){
+          console.warn('Neon account link failed',error);
+          if(eventEpoch===neonAuthEventEpoch){$('authwrap').style.display='flex';$('authmsg').textContent='ACCOUNT DATA COULD NOT LOAD. RECONNECT AND TRY AGAIN.';}
+          return;
+        }
+        if(eventEpoch!==neonAuthEventEpoch)return;
+        const previousAuthUserId=authUser?String(authUser.id||''):'',
           nextAuthUserId=nextAuthUser?String(nextAuthUser.id||''):'';
         if(previousAuthUserId!==nextAuthUserId){
           arenaOwnWinTotal=null;
@@ -262,7 +315,11 @@ async function initAuth(){
       fetchWeaponDefs();                             // shared stat/price/publish overrides
       setupRealtime();
       if(authUser) fetchSocial(true);
-    }catch(err){ console.warn('supabase init failed', err); sb=null; }
+      if(neonRecoveryToken){
+        recovering=true;$('authwrap').style.display='flex';$('resetbox').style.display='block';
+        $('authmsg').textContent='Recovery link accepted — choose a new password below.';
+      }
+    }catch(err){ console.warn('Neon init failed', err); sb=null; }
   }
   paintUserbar();
 }
@@ -653,6 +710,7 @@ async function cancelPasswordRecoverySession(){
   $('resetbox').style.display='none';
   $('rsave').style.display='block';$('rdone').style.display='none';
   $('rpass1').value='';$('rpass2').value='';
+  clearNeonRecoveryLocation();
   $('authmsg').textContent='Password reset cancelled. That link is no longer valid \u2014 request a new one if you still need it.';
   return true;
 }
@@ -889,21 +947,52 @@ function authSignInFailure(error,edge=false){
 }
 async function authDirectEmailSignIn(identifier,password,epoch=authActionEpoch){
   try{
-    // Availability fallback for a deployment where the Edge Function is not
-    // installed yet. A current deployment routes email through the function
-    // first so its credential-verified legacy-collision guard can run.
-    const detached=authDetachedClient('signin',epoch);
-    if(!detached)return {ok:false,message:'Email sign-in is temporarily unavailable. Reload and try again.',reason:'unavailable'};
-    const result=await detached.auth.signInWithPassword({email:identifier,password});
+    const result=await sb.auth.signInWithPassword({email:identifier,password});
     if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
-    if(result&&result.error)return authSignInFailure(result.error);
-    const session=result&&result.data&&result.data.session,
-      accessToken=String(session&&session.access_token||''),refreshToken=String(session&&session.refresh_token||'');
-    if(!accessToken||!refreshToken)return {ok:false,message:'Email sign-in is temporarily unavailable. Try again.',reason:'unavailable'};
-    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
-    const installed=await sb.auth.setSession({access_token:accessToken,refresh_token:refreshToken});
-    return installed&&installed.error?authSignInFailure(installed.error):{ok:true};
+    if(!result||!result.error)return {ok:true};
+    const failure=authSignInFailure(result.error);
+    if(failure.reason!=='credentials')return failure;
+    return authMigrateLegacyEmailAccount(identifier,password,epoch);
   }catch(error){return authSignInFailure(error);}
+}
+async function authFinishLegacyMigration(email,password,epoch=authActionEpoch){
+  if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+  const signedIn=await sb.auth.signInWithPassword({email,password});
+  if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+  if(signedIn&&!signedIn.error)return {ok:true,migrated:true};
+  const created=await sb.auth.signUp({email,password,options:{data:{name:'operator'},emailRedirectTo:location.origin+location.pathname}});
+  if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+  if(created&&created.error){
+    const detail=String(created.error.message||created.error.code||'').toLowerCase();
+    if(/already|exist|registered|duplicate/.test(detail))return {ok:false,reason:'credentials',
+      message:'This account is already on Neon. Sign in with its current Neon password or use Forgot password.'};
+    return authSignInFailure(created.error);
+  }
+  return {ok:true,migrated:true};
+}
+async function authMigrateLegacyEmailAccount(email,password,epoch=authActionEpoch){
+  const detached=authDetachedClient('legacy-email',epoch);
+  if(!detached)return {ok:false,message:AUTH_INVALID_CREDENTIALS,reason:'credentials'};
+  try{
+    const legacy=await detached.auth.signInWithPassword({email,password});
+    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+    if(legacy&&legacy.error)return authSignInFailure(legacy.error);
+    const verifiedEmail=cleanAccountEmail(legacy&&legacy.data&&legacy.data.user&&legacy.data.user.email);
+    if(!verifiedEmail)return {ok:false,message:'Could not safely migrate that account. Use its exact account email.',reason:'unavailable'};
+    return authFinishLegacyMigration(verifiedEmail,password,epoch);
+  }catch(error){return authSignInFailure(error);}
+}
+async function authMigrateLegacyTokenSession(session,password,epoch=authActionEpoch){
+  const accessToken=String(session&&session.access_token||''),refreshToken=String(session&&session.refresh_token||'');
+  if(!accessToken||!refreshToken)return {ok:false,message:'Sign-in is temporarily unavailable. Try again.',reason:'unavailable'};
+  const detached=authDetachedClient('legacy-username',epoch);
+  if(!detached)return {ok:false,message:'Username migration is temporarily unavailable. Use your account email.',reason:'unavailable'};
+  const installed=await detached.auth.setSession({access_token:accessToken,refresh_token:refreshToken});
+  if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+  if(installed&&installed.error)return authSignInFailure(installed.error);
+  const email=cleanAccountEmail(installed&&installed.data&&installed.data.user&&installed.data.user.email);
+  if(!email)return {ok:false,message:'Could not safely migrate that username. Use the account email once.',reason:'unavailable'};
+  return authFinishLegacyMigration(email,password,epoch);
 }
 async function authSignInWithIdentifier(rawIdentifier,password,epoch=authActionEpoch,accountKind=''){
   const kind=authIdentifierKind(rawIdentifier),identifier=String(rawIdentifier||'').trim(),choice=String(accountKind||'');
@@ -913,30 +1002,25 @@ async function authSignInWithIdentifier(rawIdentifier,password,epoch=authActionE
   if(!sb)return {ok:false,message:'Sign-in unavailable here \u2014 works once deployed.',reason:'unavailable'};
   const normalized=kind==='username'?identifier.replace(/^@/,''):identifier;
   try{
-    if(!sb.functions||typeof sb.functions.invoke!=='function')
+    if(kind==='email'&&choice==='email')return authDirectEmailSignIn(identifier,password,epoch);
+    if(!legacySupabase||!legacySupabase.functions||typeof legacySupabase.functions.invoke!=='function')
       return kind==='email'&&!choice?authDirectEmailSignIn(identifier,password,epoch):
-        {ok:false,message:AUTH_SIGNIN_SETUP,reason:'setup'};
+        {ok:false,message:'Username migration is temporarily unavailable. Sign in once with your account email.',reason:'setup'};
     // Both identity types go through the server so an email-shaped malformed
     // legacy username can be detected without exposing either account. The
     // shared client receives tokens only after the form epoch is still active.
     const body={identifier:normalized,password};if(choice)body.account_kind=choice;
-    const result=await sb.functions.invoke(AUTH_IDENTIFIER_FUNCTION,{body});
+    const result=await legacySupabase.functions.invoke(AUTH_IDENTIFIER_FUNCTION,{body});
     if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
     if(result&&result.error){
       const failure=authSignInFailure(result.error,true);
-      return kind==='email'&&!choice&&failure.reason==='setup'
+      return kind==='email'&&!choice&&['credentials','setup'].includes(failure.reason)
         ?authDirectEmailSignIn(identifier,password,epoch):failure;
     }
-    const session=result&&result.data,keys=session&&typeof session==='object'?Object.keys(session).sort():[];
+    const session=result&&result.data;
     if(!choice&&session&&session.code===AUTH_AMBIGUOUS_IDENTIFIER)
       return {ok:false,ambiguous:true,message:String(session.message||'Choose which account you want to sign in to.'),reason:'ambiguous'};
-    if(keys.length!==2||keys[0]!=='access_token'||keys[1]!=='refresh_token'||
-       typeof session.access_token!=='string'||!session.access_token||
-       typeof session.refresh_token!=='string'||!session.refresh_token)
-      return {ok:false,message:'Sign-in is temporarily unavailable. Try again.',reason:'unavailable'};
-    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
-    const installed=await sb.auth.setSession({access_token:session.access_token,refresh_token:session.refresh_token});
-    return installed&&installed.error?authSignInFailure(installed.error):{ok:true};
+    return authMigrateLegacyTokenSession(session,password,epoch);
   }catch(error){return authSignInFailure(error,true);}
 }
 async function authSubmitSignIn(accountKind=''){
@@ -960,7 +1044,7 @@ async function authSubmitSignIn(accountKind=''){
 function authDetachedClient(purpose,epoch){
   const factory=typeof window!=='undefined'&&window.supabase;
   if(!factory||typeof factory.createClient!=='function')return null;
-  return factory.createClient(SUPABASE_URL,SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false,
+  return factory.createClient(LEGACY_SUPABASE_URL,LEGACY_SUPABASE_ANON_KEY,{auth:{persistSession:false,autoRefreshToken:false,
     detectSessionInUrl:false,storageKey:'oz-detached-'+String(purpose||'auth')+'-'+String(epoch||Date.now())}});
 }
 async function authCreateAccount(rawIdentifier,password,epoch=authActionEpoch){
@@ -973,9 +1057,7 @@ async function authCreateAccount(rawIdentifier,password,epoch=authActionEpoch){
     // Deliberately omit username metadata. Social creates a temporary private-
     // email-free handle, then the existing post-auth gate requires the player
     // to make one durable public choice from Settings.
-    const detached=authDetachedClient('signup',epoch);
-    if(!detached)return {ok:false,message:'Account creation is temporarily unavailable. Reload and try again.'};
-    const result=await detached.auth.signUp({email:identifier,password});
+    const result=await sb.auth.signUp({email:identifier,password,options:{data:{name:'operator'},emailRedirectTo:location.origin+location.pathname}});
     if(!authActionCurrent(epoch))return {ok:false,stale:true};
     if(result&&result.error){
       const status=authFunctionStatus(result.error),code=String(result.error.code||'').toLowerCase();
@@ -983,16 +1065,8 @@ async function authCreateAccount(rawIdentifier,password,epoch=authActionEpoch){
       if(code.includes('weak_password'))return {ok:false,message:'Use a stronger password with at least 6 characters.'};
       return {ok:false,message:'Could not create that account. Try signing in, resetting your password, or using a different email.'};
     }
-    const session=result&&result.data&&result.data.session;
-    if(session){
-      const accessToken=String(session.access_token||''),refreshToken=String(session.refresh_token||'');
-      if(!accessToken||!refreshToken)return {ok:false,message:'Account created, but automatic sign-in failed. Sign in again here.'};
-      if(!authActionCurrent(epoch))return {ok:false,stale:true};
-      const installed=await sb.auth.setSession({access_token:accessToken,refresh_token:refreshToken});
-      if(installed&&installed.error)return {ok:false,message:'Account created, but automatic sign-in failed. Sign in again here.'};
-    }
     return {ok:true,authenticated:!!(result&&result.data&&result.data.session),
-      message:'Account created. Check your email to verify it, then sign in here. You will choose your username after sign-in.'};
+      message:'Account created with Neon. You will choose your username after sign-in.'};
   }catch(error){return {ok:false,message:'Could not create the account. Check your connection and try again.'};}
 }
 async function authRequestPasswordReset(rawIdentifier){
@@ -1019,7 +1093,7 @@ function accountSettingsElements(){
     usernamePanel:$('settingsusernamepanel'),passwordPanel:$('settingspasswordpanel'),
     username:$('settingsusername'),usernameHint:$('settingsusernamehint'),
     usernameSave:$('settingsusernamesave'),usernameStatus:$('settingsusernamestatus'),usernameBack:$('settingsusernameback'),
-    pass1:$('settingspass1'),pass2:$('settingspass2'),passwordSave:$('settingspasswordsave'),
+    currentPass:$('settingscurrentpass'),pass1:$('settingspass1'),pass2:$('settingspass2'),passwordSave:$('settingspasswordsave'),
     passwordStatus:$('settingspasswordstatus'),passwordBack:$('settingspasswordback'),
     signout:$('settingssignout'),close:$('settingsclose')
   };
@@ -1055,7 +1129,7 @@ function accountSettingsFocusable(){
   const choices=accountSettingsSection==='username'
     ?[el.username,el.usernameSave,accountSettingsRequiredUsername?null:el.usernameBack,el.signout,accountSettingsRequiredUsername?null:el.close]
     :accountSettingsSection==='password'
-      ?[el.pass1,el.pass2,el.passwordSave,el.passwordBack,el.signout,el.close]
+      ?[el.currentPass,el.pass1,el.pass2,el.passwordSave,el.passwordBack,el.signout,el.close]
       :[el.usernameOpen,el.passwordOpen,el.signout,el.close];
   return choices.filter(node=>node&&!node.disabled&&typeof node.focus==='function');
 }
@@ -1075,6 +1149,7 @@ function accountSettingsSetSection(section='menu',focus=false){
   const previous=accountSettingsSection;
   accountSettingsSection=next;
   if(previous==='password'&&next!=='password'){
+    if(el.currentPass) el.currentPass.value='';
     if(el.pass1) el.pass1.value='';
     if(el.pass2) el.pass2.value='';
     accountSettingsSetStatus('password','');
@@ -1088,7 +1163,7 @@ function accountSettingsSetSection(section='menu',focus=false){
   if(focus){
     const target=next==='username'
       ?(!el.username||el.username.disabled?(accountSettingsRequiredUsername?el.signout:el.usernameBack):el.username)
-      :next==='password'?el.pass1:el.usernameOpen;
+      :next==='password'?el.currentPass:el.usernameOpen;
     try{setTimeout(()=>target&&target.focus(),0);}catch(error){}
   }
   return next;
@@ -1134,6 +1209,7 @@ function accountSettingsSync(resetInput=false){
   }
   if(el.username) el.username.disabled=accountSettingsBusy||!profileReady||locked;
   if(el.passwordSave) el.passwordSave.disabled=accountSettingsBusy||!signedIn||!sb;
+  if(el.currentPass) el.currentPass.disabled=accountSettingsBusy||!signedIn;
   if(el.pass1) el.pass1.disabled=accountSettingsBusy||!signedIn;
   if(el.pass2) el.pass2.disabled=accountSettingsBusy||!signedIn;
   if(el.signout) el.signout.disabled=accountSettingsBusy||!signedIn;
@@ -1187,7 +1263,7 @@ function closeAccountSettings(force=false){
   accountSettingsEpoch++;
   accountSettingsOpen=false; accountSettingsRequiredUsername=false; accountSettingsBusy=false; accountSettingsUserId=''; accountSettingsSection='menu';
   if(el.wrap){ el.wrap.style.display='none'; el.wrap.classList.remove('required'); }
-  if(el.pass1) el.pass1.value=''; if(el.pass2) el.pass2.value='';
+  if(el.currentPass) el.currentPass.value=''; if(el.pass1) el.pass1.value=''; if(el.pass2) el.pass2.value='';
   if(!force&&typeof usernameClaimRequired==='function'&&usernameClaimRequired()&&typeof openUsernameClaim==='function')
     openUsernameClaim('required','Open Settings to choose your public username.');
   if(hadFocus)accountSettingsRestoreFocus();else accountSettingsReturnFocus=null;
@@ -1222,19 +1298,22 @@ async function saveAccountSettingsUsername(){
   return ok;
 }
 async function saveAccountSettingsPassword(){
-  const el=accountSettingsElements(), first=String(el.pass1&&el.pass1.value||''), second=String(el.pass2&&el.pass2.value||'');
+  const el=accountSettingsElements(),current=String(el.currentPass&&el.currentPass.value||''),
+    first=String(el.pass1&&el.pass1.value||''),second=String(el.pass2&&el.pass2.value||'');
   if(accountSettingsBusy) return false;
   if(!sb||!authUser){ accountSettingsSetStatus('password','Sign in and reconnect first.',true); return false; }
+  if(!current){ accountSettingsSetStatus('password','Enter your current password first.',true); return false; }
   if(first.length<6){ accountSettingsSetStatus('password','Password must be at least 6 characters.',true); return false; }
   if(first!==second){ accountSettingsSetStatus('password','Passwords do not match.',true); return false; }
   const userId=String(authUser.id||''),settingsEpoch=typeof accountSettingsEpoch==='number'?accountSettingsEpoch:0;
   accountSettingsBusy=true; accountSettingsSetStatus('password','Changing password…'); accountSettingsSync();
   try{
-    const result=await sb.auth.updateUser({password:first});
+    const api=neonAuthApi();if(!api||typeof api.changePassword!=='function')throw new Error('Neon password settings are unavailable.');
+    const result=await api.changePassword({currentPassword:current,newPassword:first,revokeOtherSessions:false});
     if(result&&result.error) throw result.error;
     if(!accountSettingsOpen||accountSettingsUserId!==userId||!authUser||String(authUser.id||'')!==userId||
        (typeof accountSettingsEpoch==='number'&&accountSettingsEpoch!==settingsEpoch)) return false;
-    if(el.pass1) el.pass1.value=''; if(el.pass2) el.pass2.value='';
+    if(el.currentPass) el.currentPass.value=''; if(el.pass1) el.pass1.value=''; if(el.pass2) el.pass2.value='';
     accountSettingsSetStatus('password','Password changed successfully. Use it the next time you sign in.');
     return true;
   }catch(error){
@@ -1311,7 +1390,7 @@ function bindDomEvents(){
       ? socialUsernameValidationMessage(el.username&&el.username.value,authUser&&authUser.id):'';
     accountSettingsSetStatus('username',problem,!!problem);
   });
-  if(typeof saveAccountSettingsPassword==='function') for(const id of ['settingspass1','settingspass2'])
+  if(typeof saveAccountSettingsPassword==='function') for(const id of ['settingscurrentpass','settingspass1','settingspass2'])
     $(id).addEventListener('keydown',event=>{ if(event.key==='Enter'){ event.preventDefault(); saveAccountSettingsPassword(); } });
   const refreshTemporaryGifts=()=>{
     if(authUser&&profileLoaded&&typeof fetchTemporaryWeaponGrants==='function')
@@ -1370,9 +1449,12 @@ function bindDomEvents(){
   const a=$('rpass1').value, b=$('rpass2').value;
   if(a.length<6){ $('authmsg').textContent='Password must be at least 6 characters.'; return; }
   if(a!==b){ $('authmsg').textContent='Passwords do not match.'; return; }
-  const { error } = await sb.auth.updateUser({ password: a });
-  if(error){ $('authmsg').textContent=error.message; return; }
-  $('authmsg').textContent='Password saved. Continue to your account.';
+  const api=neonAuthApi();
+  if(!api||typeof api.resetPassword!=='function'||!neonRecoveryToken){$('authmsg').textContent='This reset link is missing or expired. Request a new one.';return;}
+  const result=await api.resetPassword({newPassword:a,token:neonRecoveryToken});
+  if(result&&result.error){ $('authmsg').textContent=String(result.error.message||'Could not reset the password. Request a new link.'); return; }
+  clearNeonRecoveryLocation();
+  $('authmsg').textContent='Password saved. Sign in with your new Neon password.';
   recovering=false;
   $('rpass1').value=''; $('rpass2').value='';
   $('rsave').style.display='none';

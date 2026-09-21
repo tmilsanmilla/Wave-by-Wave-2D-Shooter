@@ -115,7 +115,9 @@
     </section>
     <section id="settingspasswordpanel" class="settings-section" aria-labelledby="settingspasswordtitle" hidden>
       <h3 id="settingspasswordtitle">CHANGE PASSWORD</h3>
-      <p>Use at least 6 characters. This changes the password for your current signed-in account.</p>
+      <p>Confirm your current password, then choose a new password with at least 6 characters.</p>
+      <label class="sr-only" for="settingscurrentpass">Current password</label>
+      <input id="settingscurrentpass" type="password" placeholder="current password" autocomplete="current-password">
       <label class="sr-only" for="settingspass1">New password</label>
       <input id="settingspass1" type="password" placeholder="new password (min 6)" autocomplete="new-password">
       <label class="sr-only" for="settingspass2">Confirm new password</label>
@@ -229,7 +231,8 @@
   </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./outpost-zero/js/networking.js?v=20260902-ai-cleanup-v1"></script>
+<script src="./outpost-zero/vendor/neon-client.js?v=20260921-managed-auth-v1"></script>
+<script src="./outpost-zero/js/networking.js?v=20260921-managed-auth-v1"></script>
 <script src="./outpost-zero/js/core.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/audio.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/weapons.js?v=20260831-frag-range-v1"></script>

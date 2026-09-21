@@ -295,7 +295,7 @@ assert.match(gameplay,/changed&&typeof sb!=='undefined'&&sb&&authUser.+saveProfi
 assert.match(ui,/arena\.dailyTaskResult\|\|\(typeof dailyDuelTaskProgressText/,'Arena results must visibly explain daily-task progress or rewards');
 assert.match(ui,/CHEST \+'\+r\.gems\+\(r\.taskReward\?' \\u00b7 DAILY TASK \+'/,'the chest modal must distinguish its random gems from task gems');
 assert.match(combat,/chestRewardOpen=\{coins:coinDrop,gems:awardedGems,taskReward/,'the chest modal must receive the task reward amount');
-for(const [script,version] of [['networking','20260902-ai-cleanup-v1'],['administration','20260902-ai-cleanup-v1'],
+for(const [script,version] of [['networking','20260921-managed-auth-v1'],['administration','20260902-ai-cleanup-v1'],
   ['persistence','20260902-ai-cleanup-v1'],['state','20260831-duel-stability-v1'],['online','20260902-ai-cleanup-v1'],
   ['ui','20260902-ai-cleanup-v1'],['loop','20260831-bots-volt-layout-v1']])
   assert.match(index,new RegExp(`js/${script}\\.js\\?v=${version}`),`${script}.js needs its current cache-buster`);

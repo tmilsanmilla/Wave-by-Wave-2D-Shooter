@@ -94,7 +94,7 @@ assert.ok(Number(gearSize[1])>=48,'the top-right Settings gear must be at least 
 
 assert.match(index,/outpost-zero\/styles\.css\?v=20260831-hub-tools-settings-v1/,
   'the reorganized Settings CSS needs the current cache tag');
-for(const [script,version] of [['networking','20260902-ai-cleanup-v1'],['upgrades','20260831-hub-tools-settings-v1']])
+for(const [script,version] of [['networking','20260921-managed-auth-v1'],['upgrades','20260831-hub-tools-settings-v1']])
   assert.match(index,new RegExp(`outpost-zero/js/${script}\\.js\\?v=${version}`),
     `${script}.js needs the current hub/tools/settings cache tag`);
 for(const [script,version] of [['cpu-state','20260831-shop-weapon-picker-v1'],['input','20260902-ai-cleanup-v1'],['ui','20260902-ai-cleanup-v1']])
