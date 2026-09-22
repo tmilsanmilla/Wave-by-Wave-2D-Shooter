@@ -117,7 +117,7 @@ const VAULT_WEAPONS = {
               moveMod:0.9, range:1400, fall:1, sndF:1500, sndD:0.09, shotSfx:'railgun', tracer:'rgba(150,220,255,0.95)', phaseWalls:1,
               gimmick:{id:'arc_rail_pierce',copy:'A hyper-velocity slug phases through one wall and punches through eight targets.'},
               blurb:'Hyper-velocity slug. Phases through one wall and punches through eight targets.' },
-  /* ---- FALL UPDATE set (dormant: flip VAULT_ACTIVE when the season starts) ---- */
+  /* ---- FALL UPDATE set ---- */
   warpwave: { name:'WARPWAVE', dmg:11, mag:100, reload:0, fireRate:110, auto:true, pellets:1, pierce:1,
               spread:0.03, aimSpread:0.01, speed:11, len:18, kick:1.2, zoom:1.15, scoped:false,
               wave:true, energy:true, cell:true, cellRegen:9, cellDelay:700,
@@ -142,8 +142,7 @@ const VAULT_UTILITIES = {
   turret : { name:'AUTO TURRET', cd:30000,
              gimmick:{id:'auto_turret_sentry',copy:'Deploys a stationary sentry that automatically fires at nearby enemies.'},
              blurb:'Drops a stationary gun that fires on nearby enemies.' },
-  // PORTAL — shelved (swapped out for the Freezer). Flip VAULT_ACTIVE.portal to true to bring it back.
-  // PORTAL — now part of the FALL UPDATE set (dormant)
+  // PORTAL — part of the FALL UPDATE set
   portal : { name:'PORTAL',       cd:25000,
              gimmick:{id:'portal_ender_pearl',copy:'Throws an Ender Pearl and teleports you wherever it lands.'},
              blurb:'E: hurl an ENDER PEARL \u2014 you warp to wherever it lands. Max range = firework launcher.' },
@@ -170,15 +169,14 @@ const VAULT_SLOTS = {
 const VAULT_ACTIVE = {
   railgun:  false,     // sold in the gem shop
   turret:   false,     // sold in the gem shop
-  warpwave:   false,   // FALL UPDATE
-  timeturner: false,   // FALL UPDATE
-  terafists:  false,   // FALL UPDATE
-  portal:     false,   // FALL UPDATE
+  warpwave:   true,    // FALL UPDATE · LIVE
+  timeturner: true,    // FALL UPDATE · LIVE
+  terafists:  true,    // FALL UPDATE · LIVE
+  portal:     true,    // FALL UPDATE · LIVE
   timecapsule:false,   // shelved dormant
 };
-// Unreleased next-season equipment is never part of the public roster. Admins
-// can inspect it in the editor and can equip it only while Test Mode is active.
 const FALL_KEYS=['warpwave','timeturner','terafists','portal'];
+const FALL_UPDATE_LIVE=true;
 /* utilities: G/RMB to quick-use; equip the Medkit and LMB for its long heal */
 const UTILITIES = {
   medkit : { name:'FIELD MEDKIT', cd:75000, rechargeKills:10,
@@ -204,7 +202,7 @@ const TEMP_UTIL_KEYS = ['beachball'];
 (function activateVault(){
   const rosters = { primary:PRIMARIES, secondary:SECONDARIES, melee:MELEES };
   for(const key in VAULT_ACTIVE){
-    if(FALL_KEYS.includes(key)) continue;            // next season stays admin-preview only
+    if(FALL_KEYS.includes(key)&&!FALL_UPDATE_LIVE) continue;
     if(!VAULT_ACTIVE[key]) continue;
     const slot = VAULT_SLOTS[key];
     if(slot==='utility'){

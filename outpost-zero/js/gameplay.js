@@ -294,9 +294,10 @@ function startGame(options){
   player.x=WORLD.w/2; player.y=WORLD.h/2; player.hp=perks.maxhp;
   player.cur=loadout.primary;
   player.mags={};
-  // early access to next season's set is for trying it out, not for setting records
-  unrankedRun = [loadout.primary, loadout.secondary, loadout.melee, loadout.utility]
-                  .some(k => k && FALL_KEYS.includes(k));
+  // Unreleased preview equipment cannot submit records. Once the seasonal set
+  // is live, it follows the same ranked rules as every other public weapon.
+  unrankedRun = !FALL_UPDATE_LIVE&&[loadout.primary,loadout.secondary,loadout.melee,loadout.utility]
+                  .some(k=>k&&FALL_KEYS.includes(k));
   // WAR HAMMER in the loadout buffs the entire kit
   if(loadout.melee==='hammer' && WEAPONS.hammer && WEAPONS.hammer.kitBuff){
     perks.reload*=0.70; perks.dmg*=1.05; perks.range*=1.05;

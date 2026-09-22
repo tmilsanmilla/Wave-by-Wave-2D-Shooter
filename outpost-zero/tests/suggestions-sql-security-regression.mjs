@@ -25,10 +25,10 @@ check('Weapon save has a call-time setup error, not an install-time table depend
   /to_regclass\('public\.weapon_defs'\) is null/.test(admin02)&&
   /RUN_PLAYER_02_BEFORE_SAVING_WEAPONS/.test(admin02)&&
   /execute \$sql\$[\s\S]+insert into public\.weapon_defs/.test(admin02));
-check('Weapon key, fields, values, price, and next-season publication are strict',
+check('Weapon key, fields, values, and price remain strict while released Fall gear can publish',
   /VALID_WEAPON_KEY_REQUIRED/.test(admin02)&&/UNKNOWN_WEAPON_STAT/.test(admin02)&&
   /WEAPON_STATS_MUST_BE_INTEGERS/.test(admin02)&&/WEAPON_STAT_OUT_OF_RANGE/.test(admin02)&&
-  /WEAPON_PRICE_MUST_BE_0_TO_9999/.test(admin02)&&/NEXT_SEASON_WEAPONS_CANNOT_BE_PUBLISHED/.test(admin02));
+  /WEAPON_PRICE_MUST_BE_0_TO_9999/.test(admin02)&&!/NEXT_SEASON_WEAPONS_CANNOT_BE_PUBLISHED/.test(admin02));
 check('Definition and legacy unscaled price save atomically with server attribution',
   /insert into public\.weapon_defs/.test(admin02)&&/insert into public\.weapon_prices/.test(admin02)&&
   /select p\.handle into v_actor_label/.test(admin02)&&

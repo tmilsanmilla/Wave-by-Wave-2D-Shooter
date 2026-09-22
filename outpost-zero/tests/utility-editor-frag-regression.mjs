@@ -44,7 +44,7 @@ function sourceRange(source,startText,endText){
 const weaponContext=vm.createContext({console,Math,Number,Object,Array,Set,Map,Infinity});
 vm.runInContext(`${weaponsSource}\nglobalThis.__equipment={
   WEAPONS,VAULT_WEAPONS,UTILITIES,VAULT_UTILITIES,PRIMARIES,SECONDARIES,MELEES,UTILKEYS,
-  TEMP_PRIMARY,TEMP_SECONDARY,TEMP_MELEE,TEMP_UTILITY,VAULT_SLOTS,VAULT_ACTIVE,FALL_KEYS,WKEYS
+  TEMP_PRIMARY,TEMP_SECONDARY,TEMP_MELEE,TEMP_UTILITY,VAULT_SLOTS,VAULT_ACTIVE,FALL_KEYS,FALL_UPDATE_LIVE,WKEYS
 };`,weaponContext,{filename:'weapons.js'});
 const equipment=JSON.parse(vm.runInContext('JSON.stringify(__equipment)',weaponContext));
 

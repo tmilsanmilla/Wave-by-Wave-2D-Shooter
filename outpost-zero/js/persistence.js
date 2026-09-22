@@ -542,7 +542,7 @@ function syncOwnedWeapons(purge=true){                 // owned, published shop 
 function isWeaponPublished(k){
   if(typeof sb!=='undefined'&&sb&&typeof weaponDefsLoaded==='boolean'&&!weaponDefsLoaded)return false;
   if(typeof savedWeaponPublished==='function') return !!savedWeaponPublished(k);
-  if(typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)) return false;
+  if(typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)) return !!(typeof FALL_UPDATE_LIVE!=='undefined'&&FALL_UPDATE_LIVE);
   if(typeof VAULT_ACTIVE!=='undefined' && Object.prototype.hasOwnProperty.call(VAULT_ACTIVE,k)) return !!VAULT_ACTIVE[k];
   return !!((typeof WEAPONS!=='undefined'&&WEAPONS[k])||(typeof UTILITIES!=='undefined'&&UTILITIES[k]));
 }
@@ -625,10 +625,10 @@ function gemUnlock(it){
   if(!r.includes(it.key)) r.push(it.key);
   if(!WKEYS.includes(it.key)) WKEYS.push(it.key);
 }
-/* ---- NEXT-SEASON PREVIEW: admins may play this set only in TEST MODE ---- */
+/* ---- FALL UPDATE access ---- */
 let fallInjected=false;
 function fallEligible(){
-  return !!(isAdmin() && testMode);
+  return !!FALL_UPDATE_LIVE||!!(isAdmin()&&testMode);
 }
 function syncFallAccess(){
   const rosters={warpwave:PRIMARIES, timeturner:SECONDARIES, terafists:MELEES};
@@ -657,7 +657,7 @@ function syncFallAccess(){
     }
     if(!UTILITIES.portal) UTILITIES.portal=VAULT_UTILITIES.portal;
     if(!UTILKEYS.includes('portal')) UTILKEYS.push('portal');
-    fallInjected=true;
+    fallInjected=!FALL_UPDATE_LIVE;
   } else if(!fallEligible()){
     for(const k of ['warpwave','timeturner','terafists']){
       const r=rosters[k], i=r.indexOf(k); if(i>=0) r.splice(i,1);
@@ -814,9 +814,9 @@ function recordDailyDuelOutcome(eliminated,completed,won){
 function recordDailyDuelElimination(){ return recordDailyDuelOutcome(true,false,false); }
 function recordDailyDuelMatch(won){ return recordDailyDuelOutcome(false,true,won); }
 const LOCKED_KEYS = ['fireworks','solarrifle','bdaggers','beachball'];   // seasonal = sign-in only
-const TEMP_KEYS = ['flamethrower','fireworks','bdaggers','beachball'];  // Summer Flaming Update
+const TEMP_KEYS = ['flamethrower','fireworks','bdaggers','beachball'];  // limited-time seasonal set
 function isLocked(k){
-  if(FALL_KEYS.includes(k)) return !fallEligible();  // unreleased: admins in Test Mode only
+  if(FALL_KEYS.includes(k)) return !fallEligible();
   if(typeof isWeaponPublished==='function'&&!isWeaponPublished(k)) return true; // publication outranks ownership, offline preview, and Test Mode
   // A weapon card can lend exactly one published item inside solo Practice.
   // This changes runtime access only; it never writes gemOwned or a loadout.

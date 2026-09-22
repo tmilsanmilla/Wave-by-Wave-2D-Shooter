@@ -505,12 +505,12 @@ for(const k in VAULT_SLOTS)if(!WEAPON_EDITOR_ROSTERS[k]){
 }
 const WEAPON_PUBLISHED_DEFAULTS={};
 for(const k in WEAPON_EDITOR_SLOTS){
-  WEAPON_PUBLISHED_DEFAULTS[k]=FALL_KEYS.includes(k)?false:
+  WEAPON_PUBLISHED_DEFAULTS[k]=FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE?false:
     (Object.prototype.hasOwnProperty.call(VAULT_ACTIVE,k)?!!VAULT_ACTIVE[k]:true);
 }
 function savedWeaponPublished(k){
   if(!Object.prototype.hasOwnProperty.call(WEAPON_EDITOR_SLOTS,k)) return false;
-  if(FALL_KEYS.includes(k)) return false;            // next season cannot be made public from saved data
+  if(FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE) return false;
   if(weaponDefs[k] && typeof weaponDefs[k].published==='boolean') return weaponDefs[k].published;
   if(typeof WEAPON_PUBLISHED_DEFAULTS==='object'&&Object.prototype.hasOwnProperty.call(WEAPON_PUBLISHED_DEFAULTS,k))
     return !!WEAPON_PUBLISHED_DEFAULTS[k];           // immutable source default; deleted cloud rows cannot leave stale access
@@ -565,7 +565,7 @@ function applyWeaponDefRealtime(payload){
 }
 function reconcileWeaponPublication(){
   for(const k in WEAPON_EDITOR_SLOTS){
-    if(FALL_KEYS.includes(k)){
+    if(FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE){
       if(fallEligible())publishVaultKey(k);else unpublishVaultKey(k);
     }else if(savedWeaponPublished(k))publishVaultKey(k);
     else unpublishVaultKey(k);
@@ -580,14 +580,14 @@ function applyWeaponDef(r){
     const staleSniperDefault=staleSniperPair&&(f.k==='dmg'||f.k==='fireRate');
     if(!staleSniperDefault)def[f.k]=r.stats[f.k];
   }
-  if(FALL_KEYS.includes(r.key)){
+  if(FALL_KEYS.includes(r.key)&&!FALL_UPDATE_LIVE){
     if(fallEligible())publishVaultKey(r.key);else unpublishVaultKey(r.key);
     return;
   }
   if(r.published) publishVaultKey(r.key); else unpublishVaultKey(r.key);
 }
 function publishVaultKey(k){
-  if(FALL_KEYS.includes(k) && !fallEligible()){ unpublishVaultKey(k); return; }
+  if(FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE&&!fallEligible()){ unpublishVaultKey(k); return; }
   const slot=WEAPON_EDITOR_SLOTS[k];
   if(VAULT_WEAPONS[k] && !WEAPONS[k]) WEAPONS[k]=VAULT_WEAPONS[k];
   if(VAULT_UTILITIES[k] && !UTILITIES[k]) UTILITIES[k]=VAULT_UTILITIES[k];
@@ -618,12 +618,12 @@ function openWeaponEdit(k){
   weaponEditDraft={};
   for(const f of weaponEditorFields(k)) if(typeof def[f.k]==='number') weaponEditDraft[f.k]=def[f.k];
   const pr=weaponPrice(k); if(pr!==null) weaponEditDraft.price=pr;
-  weaponEditDraft.published = FALL_KEYS.includes(k) ? false : savedWeaponPublished(k);
+  weaponEditDraft.published = FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE ? false : savedWeaponPublished(k);
   showWeaponForm();
 }
 function showWeaponForm(){
   const k=weaponEditKey, def=weaponDefOf(k)||{}, d=weaponEditDraft;
-  const nextSeason=FALL_KEYS.includes(k);
+  const nextSeason=FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE;
   if(nextSeason) d.published=false;
   const fields=[];
   for(const f of weaponEditorFields(k)) if(typeof d[f.k]==='number')
@@ -656,7 +656,7 @@ function showWeaponForm(){
 }
 async function saveWeaponEdit(){
   if(!isMainAdmin() || !weaponEditKey){ formError('main-admin access required'); return; }
-  const k=weaponEditKey, d=weaponEditDraft, nextSeason=FALL_KEYS.includes(weaponEditKey);
+  const k=weaponEditKey, d=weaponEditDraft, nextSeason=FALL_KEYS.includes(weaponEditKey)&&!FALL_UPDATE_LIVE;
   if(nextSeason) d.published=false;
   const stats={};
   for(const f of weaponEditorFields(k)) if(typeof d[f.k]==='number') stats[f.k]=d[f.k];
@@ -701,7 +701,7 @@ function drawWeaponEdit(){
   ctx.fillStyle='#d8c8ff'; ctx.font='700 16px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine('\u2699 '+(def.name||weaponEditKey), pw-24), W/2, py+26);
   ctx.fillStyle='#8a9268'; ctx.font='9px ui-monospace,Consolas,monospace';
-  ctx.fillText(FALL_KEYS.includes(weaponEditKey)?'NEXT SEASON \u00b7 ADMIN PREVIEW ONLY'
+  ctx.fillText(FALL_KEYS.includes(weaponEditKey)&&!FALL_UPDATE_LIVE?'NEXT SEASON \u00b7 ADMIN PREVIEW ONLY'
                :(weaponEditDraft.published?'PUBLISHED \u00b7 players can use it':'IN STORAGE \u00b7 not live yet'), W/2, py+42);
   weaponEditRects=[];
   const x0=px+16, rw=pw-32; let y=py+54;
@@ -728,9 +728,9 @@ function drawWeaponEdit(){
   }
   if(typeof weaponEditDraft.price==='number') row('f:price','GEM PRICE', weaponEditDraft.price, ' \uD83D\uDC8E');
 
-  // Next-season entries stay private; every other item keeps the publish toggle.
+  // Unreleased previews stay private; live items keep the normal publish toggle.
   const th=30;
-  const nextSeason=FALL_KEYS.includes(weaponEditKey);
+  const nextSeason=FALL_KEYS.includes(weaponEditKey)&&!FALL_UPDATE_LIVE;
   if(!nextSeason) weaponEditRects.push({x:x0,y,w:rw,h:th,id:'pub'});
   const phv=mouse.x>=x0&&mouse.x<=x0+rw&&mouse.y>=y&&mouse.y<=y+th;
   const on=!nextSeason && !!weaponEditDraft.published;
@@ -768,7 +768,7 @@ function weaponEditClick(){
       if(id==='cancel'){ weaponEditOpen=false; storageOpen=true; sfx('swap'); return; }
       if(id==='save'){ saveWeaponEdit(); return; }
       if(id==='pub'){
-        if(FALL_KEYS.includes(weaponEditKey)){ weaponEditDraft.published=false; sfx('dry'); return; }
+        if(FALL_KEYS.includes(weaponEditKey)&&!FALL_UPDATE_LIVE){ weaponEditDraft.published=false; sfx('dry'); return; }
         weaponEditDraft.published=!weaponEditDraft.published; sfx('swap'); return;
       }
       if(id.indexOf('f:')===0){

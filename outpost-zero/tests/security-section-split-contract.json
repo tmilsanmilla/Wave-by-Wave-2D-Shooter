@@ -26,7 +26,7 @@
   "administration/Admin-02-admins.sql": {
     "originalSha256": "74500ed8b664acd0ea8149dd9dffefbf9273e0e32cecb35ae21c1a92ae0475f8",
     "securitySha256": "b68953525816c35d18c02d02401b1f2973ed95c30d8724373369b52ddb4b297c",
-    "featureSha256": "ef16d785cf7e650c2a26a158881a378b9eeee95ccad2f223d2a7438ba3607c5a",
+    "featureSha256": "394482a7051a6f0ddfc4b48dae393ff4872ebd00dbe1fa699b8137a134df0355",
     "statements": 85
   },
   "administration/Admin-03-inbox.sql": {

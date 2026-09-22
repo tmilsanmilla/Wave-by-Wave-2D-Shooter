@@ -90,11 +90,11 @@ function weaponDetails(k){
   if(isLocked(k)){
     const shop=GEM_SHOP.find(it=>it.key===k);
     const shopPublished=shop&&(typeof isWeaponPublished!=='function'||isWeaponPublished(k));
-    rows.push(['ACCESS',FALL_KEYS.includes(k)?'\u{1F512} ADMIN TEST MODE ONLY':shop
+    rows.push(['ACCESS',FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE?'\u{1F512} ADMIN TEST MODE ONLY':shop
       ? shopPublished?'BUY IN SHOP \u00b7 \uD83D\uDC8E '+shop.cost:'\u{1F512} NOT CURRENTLY LIVE'
       : '\u{1F512} SIGN IN TO UNLOCK']);
   }
-  if(FALL_KEYS.includes(k)) rows.push(['\uD83C\uDF42 NEXT SEASON','admins \u00b7 Test Mode/editor only']);
+  if(FALL_KEYS.includes(k)) rows.push(['\uD83C\uDF42 FALL UPDATE',FALL_UPDATE_LIVE?'live for everyone':'admins \u00b7 Test Mode/editor only']);
   const slot=typeof storedLoadoutSlot==='function'?storedLoadoutSlot(k):(VAULT_SLOTS[k]||null);
   if(slot==='utility'||UTILKEYS.includes(k)||TEMP_UTILITY.includes(k)){
     const u=UTILITIES[k]||VAULT_UTILITIES[k];
@@ -110,7 +110,7 @@ function weaponDetails(k){
         ['BLAST RADIUS',''+radius],['FALLOFF','50% halfway · 0 at edge'],['FUSE','0.95s'],['THROW SPEED','14']);
     }
     if(k==='portal') rows.push(['EFFECT','teleport to crosshair'],['I-FRAMES','0.35s']);
-    if(k==='timecapsule') rows.push(['\uD83C\uDF42 FALL','coming update'],['EFFECT','enemies & their shots at 25% speed'],
+    if(k==='timecapsule') rows.push(['VAULT','not released'],['EFFECT','enemies & their shots at 25% speed'],
       ['ON CAST','clears every enemy projectile'],['DURATION','15s, ends if you move'],['RECHARGE',''+u.cd/1000+'s']);
     if(k==='freezer') rows.push(['EFFECT','throw a moving ice charge'],['BLAST RADIUS',''+u.radius],
       ['FUSE',''+Math.round(u.fuseMs/10)/100+'s'],['THROW SPEED',''+u.speed],['FREEZE TIME',''+Math.round(u.freezeMs/100)/10+'s'],
@@ -118,7 +118,7 @@ function weaponDetails(k){
       ['WHILE FROZEN','take half damage, can\u0027t move'],['ON HIT','first hit thaws'],['RECHARGE',''+u.cd/1000+'s']);
     if(k==='redball') rows.push(['LIFETIME','3s'],['TAUNT RADIUS','750'],
       ['CONTACT DMG','8 per 0.28s'],['LURES','all enemies incl. shooters'],['BOSSES','immune to taunt']);
-    if(k==='beachball') rows.push(['\uD83D\uDD25 SUMMER','temporary'],['EFFECT','enemies FLEE it'],
+    if(k==='beachball') rows.push(['\uD83D\uDD25 SEASONAL','temporary'],['EFFECT','enemies FLEE it'],
       ['CONTACT DMG','8 base + burn'],['BURN','ignites on touch'],['LIFETIME','3s'],
       ['SPLITS','every 1s into 2, 3 generations'],['CHILD DMG','halves each split']);
     return rows;
@@ -134,7 +134,7 @@ function weaponDetails(k){
     return rows;
   }
   if(w.wave){
-    rows.push(['\uD83C\uDF42 FALL','coming update'],['TYPE','sine-wave bolts \u00b7 wave breathes'],
+    rows.push(['\uD83C\uDF42 FALL UPDATE','live'],['TYPE','sine-wave bolts \u00b7 wave breathes'],
       ['BATTERY',w.mag+' cells \u00b7 +'+w.cellRegen+'/s after '+(w.cellDelay/1000)+'s idle'],
       ['DAMAGE',''+w.dmg+' \u00b7 pierce '+w.pierce],['FIRE','full-auto \u00b7 no reload \u00b7 \u221E ammo'],
       ['E: WARP STUN','stuns radius 160 for 2s \u00b7 full dmg \u00b7 18s cd'],
@@ -142,7 +142,7 @@ function weaponDetails(k){
     return rows;
   }
   if(w.chrono){
-    rows.push(['\uD83C\uDF42 FALL','coming update'],['TYPE','time-drag rounds'],
+    rows.push(['\uD83C\uDF42 FALL UPDATE','live'],['TYPE','time-drag rounds'],
       ['ON HIT','-20% speed per hit \u00b7 stacks (max 8) \u00b7 1.8s window'],['DAMAGE',''+w.dmg],
       ['E: TIME DRAG','+4 slow stacks to all in radius 160 \u00b7 3s \u00b7 12s cd'],
       ['MOVE SPEED',Math.round(w.moveMod*100)+'%'],
@@ -150,7 +150,7 @@ function weaponDetails(k){
     return rows;
   }
   if(w.firework){
-    rows.push(['\uD83D\uDD25 SUMMER','temporary'],['TYPE','explosive + burn'],
+    rows.push(['\uD83D\uDD25 SEASONAL','temporary'],['TYPE','explosive + burn'],
       ['BLAST DMG','up to 180 (110 boss)'],['BURN','ignites on blast'],
       ['CHAMBER',''+w.mag+' firecrackers'],['RELOAD',(w.reload/1000).toFixed(1)+'s'],['RANGE',''+w.range]);
     return rows;
@@ -162,7 +162,7 @@ function weaponDetails(k){
       ['RANGE',''+w.range],
       ['ARC',Math.round(w.arc*57.3)+'\u00b0'],
       ['MOVE SPEED',Math.round(w.moveMod*100)+'%']);
-    if(w.fire) rows.push(['\uD83D\uDD25 SUMMER','temporary'],['ON HIT','ignites (burn DoT)']);
+    if(w.fire) rows.push(['\uD83D\uDD25 SEASONAL','temporary'],['ON HIT','ignites (burn DoT)']);
     if(w.saw) rows.push(['FUEL DRAIN','5% per tick (~2.6s/tank)'],
       ['RECHARGE','7%/s idle \u00b7 lockout when empty']);
     const ab={chainsaw:['E / F / MELEE RMB: RIP','0.4s shred \u00b7 NO LUNGE \u00b7 42/90ms \u00b7 i-frames \u00b7 16s'],
@@ -2794,7 +2794,7 @@ function weaponBrowserKeys(cat){
     const adminTest=typeof fallEligible==='function'&&fallEligible();
     const published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
     if(vaulted&&!adminTest&&!published) return;              // no storage-only/public leaks
-    if(FALL_KEYS.includes(k)&&!adminTest) return;
+    if(FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE&&!adminTest) return;
     keys.push(k);
   };
   entry[2]().forEach(add);                                 // current released roster
@@ -2807,7 +2807,9 @@ function weaponBrowserAccess(k){
   const shop=GEM_SHOP.find(it=>it.key===k),locked=typeof isLocked==='function'&&isLocked(k),
     published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
   const adminTest=typeof fallEligible==='function'&&fallEligible();
-  if(FALL_KEYS.includes(k)) return {text:'ADMIN TEST \u00b7 NEXT SEASON',col:'#d0763e',locked:false};
+  if(FALL_KEYS.includes(k)) return FALL_UPDATE_LIVE
+    ? {text:'FALL UPDATE \u00b7 LIVE',col:'#d0763e',locked:false}
+    : {text:'ADMIN TEST \u00b7 NEXT SEASON',col:'#d0763e',locked:false};
   if(Object.prototype.hasOwnProperty.call(VAULT_SLOTS,k)&&!shop&&adminTest)
     return {text:'ADMIN TEST \u00b7 DORMANT',col:'#d0763e',locked:false};
   if(limited) return locked
@@ -3094,7 +3096,7 @@ function drawHub(){
     if(compactStatus) adminRowShift+=26;              // room for the one-line status strip                       // banner, board, and side panels all drop below the row
   }
 
-  // SUMMER FLAMING UPDATE banner
+  // FALL UPDATE banner
   const bnW=Math.min(560,W-60), bnX=W/2-bnW/2, bnY=H*0.035+44+adminRowShift, bnH=34;
   if(compactStatus){
     const sy=bnY-24;
@@ -3109,13 +3111,13 @@ function drawHub(){
     ctx.textBaseline='top'; ctx.textAlign='center';   // drawHub draws centred; put it back
   }
   const g=ctx.createLinearGradient(bnX,0,bnX+bnW,0);
-  g.addColorStop(0,'#7a1e00'); g.addColorStop(0.5,'#ff6a1a'); g.addColorStop(1,'#7a1e00');
+  g.addColorStop(0,'#5b2a10'); g.addColorStop(0.5,'#d0763e'); g.addColorStop(1,'#59652d');
   ctx.fillStyle=g; ctx.fillRect(bnX,bnY,bnW,bnH);
-  ctx.strokeStyle='#ffb84d'; ctx.lineWidth=1.5; ctx.strokeRect(bnX+0.5,bnY+0.5,bnW,bnH);
+  ctx.strokeStyle='#e8b658'; ctx.lineWidth=1.5; ctx.strokeRect(bnX+0.5,bnY+0.5,bnW,bnH);
   leftColTop = Math.max(104, H*0.035+44+adminRowShift);
   ctx.fillStyle='#fff2cc'; ctx.font='700 15px ui-monospace,Consolas,monospace';
   ctx.textBaseline='middle';
-  ctx.fillText(fitLine('\uD83D\uDD25 SUMMER FLAMING UPDATE \uD83D\uDD25', bnW-16), W/2, bnY+bnH/2);
+  ctx.fillText(fitLine('\uD83C\uDF42 OUTPOST ZERO FALL UPDATE \uD83C\uDF42', bnW-16), W/2, bnY+bnH/2);
   ctx.textBaseline='top';
 
   // Home destinations: Play, Practice, browse-only Weapons, and Social.
@@ -3212,7 +3214,7 @@ function drawHub(){
     ctx.fillStyle='#ffd24d'; ctx.font='700 10px ui-monospace,Consolas,monospace';
     ctx.fillText('\uD83E\uDDEA ADMIN TEST', ex+ew/2, ey+13);
     ctx.fillStyle='#d0763e'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-    ctx.fillText('\uD83C\uDF42 NEXT SEASON ON', ex+ew/2, ey+30);
+    ctx.fillText('\uD83C\uDF42 UNRELEASED PREVIEW ON', ex+ew/2, ey+30);
     ctx.textBaseline='alphabetic';
   }
   // ---- DAILY STREAK, then the tasks, stacked under the button row ----
@@ -3387,7 +3389,7 @@ function drawCategory(cat){
     grad.addColorStop(0,'#7a1e00'); grad.addColorStop(0.5,'#d9531a'); grad.addColorStop(1,'#7a1e00');
     ctx.fillStyle=grad; ctx.fillRect(bx,y,bw,24);
     ctx.fillStyle='#ffe0a0'; ctx.font='700 12px ui-monospace,Consolas,monospace';
-    ctx.textAlign='center'; ctx.fillText('\uD83D\uDD25 SUMMER FLAMING UPDATE \u2014 LIMITED TIME \uD83D\uDD25', W/2, y+6);
+    ctx.textAlign='center'; ctx.fillText('\uD83D\uDD25 SEASONAL WEAPONS \u2014 LIMITED TIME \uD83D\uDD25', W/2, y+6);
     y+=bannerH;
     for(let i=0;i<nTemp;i++){
       const cx=gx+(i%cols)*(cw+gap), cy=y+Math.floor(i/cols)*(ch+gap);

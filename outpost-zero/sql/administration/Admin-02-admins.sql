@@ -772,8 +772,6 @@ begin
     'medkit','grenade','freezer','redball','beachball','turret','portal','timecapsule'
   ) then raise exception using errcode='22023',message='VALID_WEAPON_KEY_REQUIRED';end if;
   if p_published is null then raise exception using errcode='22023',message='PUBLISHED_STATE_REQUIRED';end if;
-  if p_published and v_key in ('warpwave','timeturner','terafists','portal') then
-    raise exception using errcode='22023',message='NEXT_SEASON_WEAPONS_CANNOT_BE_PUBLISHED';end if;
   if p_price is not null and p_price not between 0 and 9999 then
     raise exception using errcode='22023',message='WEAPON_PRICE_MUST_BE_0_TO_9999';end if;
   if p_stats is null or jsonb_typeof(p_stats)<>'object' or pg_column_size(p_stats)>2048 then
