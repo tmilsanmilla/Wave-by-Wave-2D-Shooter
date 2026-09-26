@@ -10,6 +10,13 @@ is not an identity provider: it is retained only as a one-time fallback for an
 unmigrated legacy username/account. Supabase broadcast/presence remains a
 temporary multiplayer transport and never owns the live game session.
 
+The 10 preserved legacy accounts were provisioned in Managed Better Auth and
+linked to their original game UUIDs on 2026-09-25. Supabase password hashes are
+not copied into Managed Better Auth. Imported users without a Better Auth
+password activate their login with one password reset; their existing profile,
+scores, inventory, username, social data, and admin relationship stay linked to
+the original UUID.
+
 ## Account migration
 
 The imported Supabase account UUID remains the permanent game user ID. On an

@@ -30,6 +30,7 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   #authsignin{margin:14px 0 12px;padding:16px;border:1px solid #4a4634;background:rgba(0,0,0,.18);text-align:left}
   #authsignin h3{color:#e8b658;font-size:16px;margin:0 0 5px;text-align:center}
   #authsignin .auth-provider-note{color:#7fd8ff;font-size:9px;letter-spacing:.12em;margin:0 0 8px;text-align:center}
+  #authsignin .auth-migration-note{color:#d7c47d;font-size:9px;line-height:1.35;margin:0 0 8px;text-align:center}
   #authsignin .auth-private-note{text-align:center;margin-bottom:15px}
   #authsignin .auth-account-note{color:#aab38a;font-size:10px;margin:2px 0 0;text-align:center}
   .auth-label{display:block;color:#c4d48d;font:700 10px ui-monospace,Consolas,monospace;

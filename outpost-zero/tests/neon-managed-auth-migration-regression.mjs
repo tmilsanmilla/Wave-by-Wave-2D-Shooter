@@ -22,6 +22,8 @@ assert.match(networking, /api\.signIn\.email\(\{email,password\}\)/);
 assert.match(networking, /api\.signUp\.email\(\{email,password,name:'operator'/);
 assert.match(networking, /api\.requestPasswordReset\(\{email,redirectTo\}\)/);
 assert.match(networking, /async function neonBetterAuthSignOut/);
+assert.match(networking, /Your account and game data are restored/);
+assert.match(networking, /reason:'reset-sent'/);
 assert.doesNotMatch(networking, /sb\.auth\.(?:signInWithPassword|signUp|resetPasswordForEmail|signOut)\(/,
   'account actions must call Managed Better Auth directly rather than the compatibility surface');
 assert.match(networking, /api\.changePassword\(\{currentPassword:current,newPassword:first/);
@@ -31,7 +33,8 @@ assert.doesNotMatch(networking, /sb\s*=\s*window\.supabase\.createClient/);
 assert.ok(statSync(bundle).size > 100_000, 'the official Neon browser SDK bundle must be present');
 assert.ok(index.indexOf('outpost-zero/vendor/neon-client.js') < index.indexOf('outpost-zero/js/networking.js'));
 assert.match(index, /SECURED BY NEON MANAGED BETTER AUTH/);
-assert.match(index, /networking\.js\?[^"']*release=20260925-better-auth-primary-v1/);
+assert.match(index, /YOUR DATA IS SAFE/);
+assert.match(index, /networking\.js\?[^"']*release=20260925-better-auth-restore-v2/);
 assert.match(index, /id="settingscurrentpass"/);
 
 assert.match(migration, /from neon_auth\."user" u/);

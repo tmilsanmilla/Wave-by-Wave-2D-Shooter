@@ -1014,8 +1014,17 @@ async function authFinishLegacyMigration(email,password,proof,epoch=authActionEp
   if(created&&created.error){
     pendingNeonMigrationProof='';
     const detail=String(created.error.message||created.error.code||'').toLowerCase();
-    if(/already|exist|registered|duplicate/.test(detail))return {ok:false,reason:'credentials',
-      message:'This account is already on Neon. Sign in with its current Neon password or use Forgot password.'};
+    if(/already|exist|registered|duplicate/.test(detail)){
+      // The bulk Better Auth restoration creates identities without copying
+      // Supabase password hashes. A successful legacy credential check proves
+      // ownership, so immediately send the one-time Better Auth reset link.
+      const reset=await neonBetterAuthPasswordReset(email,location.href);
+      if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+      if(!reset||!reset.error)return {ok:false,reason:'reset-sent',
+        message:'Your account and game data are restored. Check your email for the one-time Better Auth password reset, then sign in.'};
+      return {ok:false,reason:'credentials',
+        message:'Your account and game data are restored. Click Forgot password to activate your Better Auth login.'};
+    }
     return authSignInFailure(created.error);
   }
   return {ok:true,migrated:true};
