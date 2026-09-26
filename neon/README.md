@@ -4,6 +4,12 @@ Outpost Zero uses Neon Managed Better Auth and the Neon Data API. The browser
 SDK is bundled locally at `outpost-zero/vendor/neon-client.js` so production
 does not depend on a third-party CDN for authentication.
 
+Email sign-in, account creation, password reset, password changes, and sign-out
+call the Managed Better Auth client directly. The Supabase credential verifier
+is not an identity provider: it is retained only as a one-time fallback for an
+unmigrated legacy username/account. Supabase broadcast/presence remains a
+temporary multiplayer transport and never owns the live game session.
+
 ## Account migration
 
 The imported Supabase account UUID remains the permanent game user ID. On an

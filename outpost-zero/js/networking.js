@@ -63,6 +63,39 @@ function neonAuthApi(){
   if(!sb||!sb.auth)return null;
   return typeof sb.auth.getBetterAuthInstance==='function'?sb.auth.getBetterAuthInstance():null;
 }
+function neonBetterAuthUnavailable(){
+  const error=new Error('Neon Managed Better Auth is unavailable.');
+  error.code='neon_better_auth_unavailable';return error;
+}
+async function neonBetterAuthEmailSignIn(email,password){
+  const api=neonAuthApi();
+  if(!api||!api.signIn||typeof api.signIn.email!=='function')return {data:null,error:neonBetterAuthUnavailable()};
+  const result=await api.signIn.email({email,password});
+  if(result&&result.error)return {data:null,error:result.error};
+  const session=await sb.auth.getSession({forceFetch:true});
+  return {data:session&&session.data||null,error:session&&session.error||null};
+}
+async function neonBetterAuthEmailSignUp(email,password){
+  const api=neonAuthApi();
+  if(!api||!api.signUp||typeof api.signUp.email!=='function')return {data:null,error:neonBetterAuthUnavailable()};
+  const result=await api.signUp.email({email,password,name:'operator',callbackURL:location.origin+location.pathname});
+  if(result&&result.error)return {data:null,error:result.error};
+  const session=await sb.auth.getSession({forceFetch:true});
+  const liveSession=session&&session.data&&session.data.session||null;
+  return {data:{user:liveSession&&liveSession.user||result&&result.data&&result.data.user||null,session:liveSession},
+    error:session&&session.error||null};
+}
+async function neonBetterAuthPasswordReset(email,redirectTo){
+  const api=neonAuthApi();
+  if(!api||typeof api.requestPasswordReset!=='function')return {data:null,error:neonBetterAuthUnavailable()};
+  const result=await api.requestPasswordReset({email,redirectTo});
+  return {data:result&&result.data||{},error:result&&result.error||null};
+}
+async function neonBetterAuthSignOut(){
+  const api=neonAuthApi();
+  if(!api||typeof api.signOut!=='function')return {error:neonBetterAuthUnavailable()};
+  const result=await api.signOut();return {error:result&&result.error||null};
+}
 async function neonGameUser(session){
   const user=session&&session.user;if(!user)return null;
   const authId=String(user.id||'');if(!authId)throw new Error('Neon Auth returned a user without an id.');
@@ -708,7 +741,7 @@ async function cancelPasswordRecoverySession(){
   if(!recovering||!sb)return false;
   // Abandoning recovery must clear locally even when the cloud sign-out
   // request fails, otherwise the recovery account remains usable as a guest.
-  try{const result=await sb.auth.signOut();if(result&&result.error)console.warn('recovery sign-out failed; clearing this screen locally',result.error);}
+  try{const result=await neonBetterAuthSignOut();if(result&&result.error)console.warn('recovery sign-out failed; clearing this screen locally',result.error);}
   catch(error){console.warn('recovery sign-out failed; clearing this screen locally',error);}
   if(authUser&&typeof scrubPrivilegedUiForAccountChange==='function')scrubPrivilegedUiForAccountChange();
   if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange('');
@@ -878,7 +911,7 @@ async function toggleAuth(options){
       if(!profileSaved)return false;
     }
     let signOutError=null;
-    if(sb)try{const result=await sb.auth.signOut();signOutError=result&&result.error||null;}
+    if(sb)try{const result=await neonBetterAuthSignOut();signOutError=result&&result.error||null;}
     catch(error){signOutError=error;}
     if(signOutError)console.warn('cloud sign-out failed; clearing this screen locally',signOutError);
     if(authUser&&String(authUser.id||'')!==liveUserId){closeAccountMenu(true);return true;}
@@ -957,21 +990,26 @@ function authSignInFailure(error,edge=false){
 }
 async function authDirectEmailSignIn(identifier,password,epoch=authActionEpoch){
   try{
+    // Managed Better Auth is the primary identity provider. The old Supabase
+    // verifier is contacted only when Better Auth does not yet know a legacy
+    // account, so already-migrated players never authenticate against it.
+    const result=await neonBetterAuthEmailSignIn(identifier,password);
+    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
+    if(!result||!result.error)return {ok:true};
+    const directFailure=authSignInFailure(result.error);
+    if(directFailure.reason!=='credentials')return directFailure;
     const migration=await authMigrateLegacyEmailAccount(identifier,password,epoch);
     if(!authActionCurrent(epoch)||migration.stale)return {ok:false,stale:true,reason:'stale'};
-    if(migration.ok||migration.reason==='rate')return migration;
-    const result=await sb.auth.signInWithPassword({email:identifier,password});
-    if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
-    return result&&result.error?authSignInFailure(result.error):{ok:true};
+    return migration;
   }catch(error){return authSignInFailure(error);}
 }
 async function authFinishLegacyMigration(email,password,proof,epoch=authActionEpoch){
   if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
   pendingNeonMigrationProof=String(proof||'');
-  const signedIn=await sb.auth.signInWithPassword({email,password});
+  const signedIn=await neonBetterAuthEmailSignIn(email,password);
   if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
   if(signedIn&&!signedIn.error)return {ok:true,migrated:true};
-  const created=await sb.auth.signUp({email,password,options:{data:{name:'operator'},emailRedirectTo:location.origin+location.pathname}});
+  const created=await neonBetterAuthEmailSignUp(email,password);
   if(!authActionCurrent(epoch))return {ok:false,stale:true,reason:'stale'};
   if(created&&created.error){
     pendingNeonMigrationProof='';
@@ -1016,7 +1054,7 @@ async function authSignInWithIdentifier(rawIdentifier,password,epoch=authActionE
   if(!sb)return {ok:false,message:'Sign-in unavailable here \u2014 works once deployed.',reason:'unavailable'};
   const normalized=kind==='username'?identifier.replace(/^@/,''):identifier;
   try{
-    if(kind==='email'&&choice==='email')return authDirectEmailSignIn(identifier,password,epoch);
+    if(kind==='email'&&choice!=='username')return authDirectEmailSignIn(identifier,password,epoch);
     if(!legacySupabase||!legacySupabase.functions||typeof legacySupabase.functions.invoke!=='function')
       return kind==='email'&&!choice?authDirectEmailSignIn(identifier,password,epoch):
         {ok:false,message:'Username migration is temporarily unavailable. Sign in once with your account email.',reason:'setup'};
@@ -1071,7 +1109,7 @@ async function authCreateAccount(rawIdentifier,password,epoch=authActionEpoch){
     // Deliberately omit username metadata. Social creates a temporary private-
     // email-free handle, then the existing post-auth gate requires the player
     // to make one durable public choice from Settings.
-    const result=await sb.auth.signUp({email:identifier,password,options:{data:{name:'operator'},emailRedirectTo:location.origin+location.pathname}});
+    const result=await neonBetterAuthEmailSignUp(identifier,password);
     if(!authActionCurrent(epoch))return {ok:false,stale:true};
     if(result&&result.error){
       const status=authFunctionStatus(result.error),code=String(result.error.code||'').toLowerCase();
@@ -1089,7 +1127,7 @@ async function authRequestPasswordReset(rawIdentifier){
     return {ok:false,message:'Enter your private email above for password recovery. Usernames never reveal account emails.'};
   if(!sb)return {ok:false,message:'Password reset works once deployed.'};
   try{
-    const result=await sb.auth.resetPasswordForEmail(email,{redirectTo:location.href});
+    const result=await neonBetterAuthPasswordReset(email,location.href);
     if(result&&result.error){
       const status=authFunctionStatus(result.error),code=String(result.error.code||'').toLowerCase();
       if(status===429||code.includes('rate_limit'))return {ok:false,message:AUTH_TRY_LATER};

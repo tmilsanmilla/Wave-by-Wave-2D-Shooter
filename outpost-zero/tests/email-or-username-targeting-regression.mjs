@@ -92,11 +92,13 @@ assert.match(signIn,/session&&session\.code===AUTH_AMBIGUOUS_IDENTIFIER/,
   'an ambiguous verified identifier still requires an explicit account choice');
 assert.match(signIn,/body\.account_kind=choice/,
   'the explicit email/username account choice is sent to the credential verifier');
-assert.match(signIn,/kind==='email'&&!choice[\s\S]*authDirectEmailSignIn/,
-  'new or already migrated Neon accounts fall back to direct managed-auth email sign-in');
-assert.match(directEmail,/sb\.auth\.signInWithPassword/);
+assert.match(signIn,/kind==='email'&&choice!=='username'[\s\S]*authDirectEmailSignIn/,
+  'email accounts use direct Managed Better Auth unless an explicit legacy username collision was chosen');
+assert.match(directEmail,/neonBetterAuthEmailSignIn/);
 assert.match(directEmail,/authMigrateLegacyEmailAccount/,
-  'email sign-in can verify a legacy password before using managed auth');
+  'email sign-in can fall back to verifying an unmigrated legacy password');
+assert.ok(directEmail.indexOf('neonBetterAuthEmailSignIn')<directEmail.indexOf('authMigrateLegacyEmailAccount'),
+  'Managed Better Auth must run before the one-time legacy migration fallback');
 assert.match(migrateEmail,/legacySupabase\.functions\.invoke\(AUTH_IDENTIFIER_FUNCTION/);
 assert.match(migrateEmail,/account_kind:'email'/,
   'legacy email migration uses the credential verifier without exposing another identity');
@@ -104,7 +106,7 @@ assert.match(migrateToken,/detached\.auth\.setSession/);
 assert.match(migrateToken,/migration_proof/,
   'the credential-verified server proof is required before linking legacy data');
 assert.match(migrateToken,/authFinishLegacyMigration/);
-assert.match(finishMigration,/sb\.auth\.signUp/,
+assert.match(finishMigration,/neonBetterAuthEmailSignUp/,
   'a credential-verified legacy account is recreated in Neon Managed Better Auth');
 assert.match(finishMigration,/pendingNeonMigrationProof/,
   'the short-lived migration proof is available to the Neon account linker');
