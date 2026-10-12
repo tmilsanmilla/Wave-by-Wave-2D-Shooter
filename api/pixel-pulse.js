@@ -1,6 +1,6 @@
 import * as oidc from 'openid-client';
 import { PIXEL_ISSUER,GAME_ORIGIN,CALLBACK,COOKIE,ATTEMPT_COOKIE,hash,random,cookie,cookieValue,
-  config,signingKey,databaseReady,nativeOwnership,centralProfile,bindAccount,session,sessionJwt,sessionLifetime,failure } from '../lib/pixel-pulse.js';
+  config,signingKey,trustedDatabaseKeys,databaseReady,nativeOwnership,centralProfile,bindAccount,session,sessionJwt,sessionLifetime,failure } from '../lib/pixel-pulse.js';
 
 const json=(res,status,data)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));};
 const redirect=(res,to)=>{res.statusCode=303;res.setHeader('Location',to);res.end();};
@@ -18,6 +18,7 @@ export default async function handler(req,res){
   const action=actionOf(req);
   try{
     if(action==='jwks'&&req.method==='GET')return json(res,200,{keys:[(await signingKey()).publicKey]});
+    if(action==='database-keys'&&req.method==='GET')return json(res,200,await trustedDatabaseKeys());
     if(action==='status'&&req.method==='GET'){
       const enabled=process.env.PIXEL_PULSE_GAME_ENABLED==='true';
       if(enabled){await databaseReady();await config();}

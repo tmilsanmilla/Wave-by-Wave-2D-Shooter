@@ -57,7 +57,7 @@ function installPixelPulseTransport(client){
       let claims;
       try{claims=JSON.parse(atob(value.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));}catch(error){throw fail('Pixel Pulse did not issue a database token.');}
       if(value.split('.').length!==3||claims.sub!==live.user.id||claims.iss!=='https://wave-by-wave-2-d-shooter.vercel.app/api/pixel-pulse'||
-         claims.aud!=='outpost-zero-pixel-pulse'||claims.role!=='authenticated'||!Number.isFinite(+claims.exp)||+claims.exp*1000<=Date.now())
+         claims.aud!=='https://ep-fragrant-salad-a577vui2.neonauth.us-east-2.aws.neon.tech'||claims.role!=='authenticated'||!Number.isFinite(+claims.exp)||+claims.exp*1000<=Date.now())
         throw fail('Pixel Pulse did not issue a valid database token.');
       if(generation!==epoch)throw fail('The account changed. Try again.');
       token={value,subject:live.user.id,until:Math.min(+claims.exp*1000-30000,Date.now()+60000)};return value;

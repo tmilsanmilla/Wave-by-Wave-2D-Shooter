@@ -55,7 +55,7 @@ const source=fs.readFileSync(new URL('../js/pixel-pulse-auth.js',import.meta.url
 let active={provider:'pixel-pulse',expires_at:Math.floor(Date.now()/1000)+300,user:{id:'pixelpulse:'+subject,game_user_id:gameId,pixel_pulse:true}},
  tokenRequests=0,nativeRequests=0,handler,resolveToken;
 const fixtureJwt=()=>[Buffer.from(JSON.stringify({alg:'RS256'})).toString('base64url'),Buffer.from(JSON.stringify({
- sub:active.user.id,role:'authenticated',iss:'https://wave-by-wave-2-d-shooter.vercel.app/api/pixel-pulse',aud:'outpost-zero-pixel-pulse',exp:Math.floor(Date.now()/1000)+120})).toString('base64url'),'fixture'].join('.');
+ sub:active.user.id,role:'authenticated',iss:'https://wave-by-wave-2-d-shooter.vercel.app/api/pixel-pulse',aud:'https://ep-fragrant-salad-a577vui2.neonauth.us-east-2.aws.neon.tech',exp:Math.floor(Date.now()/1000)+120})).toString('base64url'),'fixture'].join('.');
 const context=vm.createContext({Date,Promise,Number,String,Object,JSON,Error,atob,fetch:async(url,options)=>{
  const action=url.split('/').pop();
  if(action==='session')return Response.json({session:active});
