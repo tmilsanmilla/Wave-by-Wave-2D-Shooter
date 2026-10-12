@@ -73,6 +73,7 @@ function neonAccountAccessError(error){
   failure.status=Number(error&&error.status||0);failure.outpostAuthPhase='database';return failure;
 }
 function neonAccountAccessMessage(error){
+  if(String(error&&error.code||'')==='PIXEL_SESSION_FAILED')return String(error.message||'Pixel Pulse could not verify this login. Try again.');
   if(String(error&&error.code||'')==='NEON_SESSION_COOKIE_FAILED')
     return 'Your password was accepted, but the browser did not keep the login session. Allow sign-in cookies and try again.';
   return String(error&&error.code||'')==='42501'
@@ -82,10 +83,22 @@ function neonAccountAccessMessage(error){
 async function neonBetterAuthEmailSignIn(email,password){
   const api=neonAuthApi();
   if(!api||!api.signIn||typeof api.signIn.email!=='function')return {data:null,error:neonBetterAuthUnavailable()};
-  const result=await api.signIn.email({email,password});
+  let result;
+  try{if(sb.pixelPulse)await sb.pixelPulse.waitForNativeRetirement();result=await api.signIn.email({email,password});}
+  catch(error){return {data:null,error};}
   if(result&&result.error)return {data:null,error:result.error};
   let session;
-  try{session=await sb.auth.getSession({forceFetch:true});}
+  try{
+    const owned=await api.getSession({fetchOptions:{headers:{'X-Force-Fetch':'true'}}});
+    const nativeUser=owned&&owned.data&&owned.data.user;
+    if(owned.error||!nativeUser||String(nativeUser.email||'').trim().toLowerCase()!==String(email).trim().toLowerCase())
+      return {data:null,error:neonAccountAccessError({code:'NEON_SESSION_COOKIE_FAILED'})};
+    // Explicit, successful legacy login selects that native account, not an
+    // older Pixel cookie. Wrong passwords leave the Pixel session untouched.
+    if(sb.pixelPulse)await sb.pixelPulse.signOut();
+    session=await sb.auth.getSession({forceFetch:true});
+    if(session?.data?.session?.user?.id!==nativeUser.id)return {data:null,error:neonAccountAccessError({code:'NEON_SESSION_COOKIE_FAILED'})};
+  }
   catch(error){return {data:null,error:neonAccountAccessError(error)};}
   if(session&&session.error)return {data:null,error:neonAccountAccessError(session.error)};
   const liveSession=session&&session.data&&session.data.session;
@@ -96,8 +109,15 @@ async function neonBetterAuthEmailSignIn(email,password){
 async function neonBetterAuthEmailSignUp(email,password){
   const api=neonAuthApi();
   if(!api||!api.signUp||typeof api.signUp.email!=='function')return {data:null,error:neonBetterAuthUnavailable()};
-  const result=await api.signUp.email({email,password,name:'operator',callbackURL:location.origin+location.pathname});
+  let result;
+  try{if(sb.pixelPulse)await sb.pixelPulse.waitForNativeRetirement();result=await api.signUp.email({email,password,name:'operator',callbackURL:location.origin+location.pathname});}
+  catch(error){return {data:null,error};}
   if(result&&result.error)return {data:null,error:result.error};
+  const owned=await api.getSession({fetchOptions:{headers:{'X-Force-Fetch':'true'}}}),nativeUser=owned&&owned.data&&owned.data.user;
+  if(owned.error)return {data:null,error:neonAccountAccessError(owned.error)};
+  if(!nativeUser||String(nativeUser.email||'').trim().toLowerCase()!==String(email).trim().toLowerCase())
+    return {data:{user:result&&result.data&&result.data.user||null,session:null},error:null};
+  if(sb.pixelPulse)await sb.pixelPulse.signOut();
   const session=await sb.auth.getSession({forceFetch:true});
   const liveSession=session&&session.data&&session.data.session||null;
   if(liveSession&&liveSession.user&&!session.error)await sb.syncAuthState('SIGNED_IN',liveSession);
@@ -109,6 +129,24 @@ async function neonBetterAuthPasswordReset(email,redirectTo){
   if(!api||typeof api.requestPasswordReset!=='function')return {data:null,error:neonBetterAuthUnavailable()};
   const result=await api.requestPasswordReset({email,redirectTo});
   return {data:result&&result.data||{},error:result&&result.error||null};
+}
+async function neonBetterAuthConfirmUsername(username,user=authUser){
+  const gameId=String(user&&user.id||'');
+  if(!sb||!gameId)
+    return {data:null,error:neonBetterAuthUnavailable()};
+  // The username RPC atomically updates the mapped native directory label.
+  // Confirm through the same signed Data API, not an extra Auth update or a
+  // cached native session. The server derives ownership from the signed token.
+  try{
+    const result=await sb.rpc('get_my_outpost_zero_username');
+    if(result&&result.error)return {data:null,error:result.error};
+    const row=Array.isArray(result&&result.data)?result.data[0]:result&&result.data;
+    if(!row&&!username)return {data:null,error:null}; // first choice still required
+    const saved=String(row&&row.username||'');
+    if(!row||String(row.user_id||'')!==gameId||!saved||(username&&saved!==username))
+      return {data:null,error:neonAccountAccessError({code:'NEON_USERNAME_NOT_CONFIRMED'})};
+    return {data:{user:{...user,user_metadata:{...(user.user_metadata||{}),username:saved,displayName:saved}}},error:null};
+  }catch(error){return {data:null,error:neonAccountAccessError(error)};}
 }
 async function neonBetterAuthSignOut(){
   const api=neonAuthApi();
@@ -140,7 +178,10 @@ async function neonGameUser(session){
   const gameId=String(row&&row.user_id||'');if(!gameId)throw new Error('Could not link this Neon login to an Outpost Zero account.');
   pendingNeonMigrationProof='';
   const linkedUser=Object.assign({},user,{id:gameId,neon_auth_id:authId});
-  return typeof pixelPulseSyncNativeIdentity==='function'?pixelPulseSyncNativeIdentity(linkedUser):linkedUser;
+  const confirmed=await neonBetterAuthConfirmUsername('',linkedUser);
+  if(confirmed.error)throw neonAccountAccessError(confirmed.error);
+  const current=confirmed.data&&confirmed.data.user||linkedUser;
+  return typeof pixelPulseSyncNativeIdentity==='function'?pixelPulseSyncNativeIdentity(current):current;
 }
 function neonRecoveryTokenFromLocation(){
   if(typeof location==='undefined')return '';
@@ -396,7 +437,10 @@ async function initAuth(){
         recovering=true;$('authwrap').style.display='flex';$('resetbox').style.display='block';
         $('authmsg').textContent='Recovery link accepted — choose a new password below.';
       }
-    }catch(err){ console.warn('Neon init failed', err); sb=null; }
+    }catch(err){
+      console.warn('Neon init failed',String(err.code||err.name));
+      $('authwrap').style.display='flex';$('authmsg').textContent=neonAccountAccessMessage(err);sb=null;
+    }
   }
   paintUserbar();
 }
@@ -1271,7 +1315,7 @@ function accountSettingsUsernameReadyAt(){
   const explicit=Date.parse(socialProfile.next_username_change_at||socialProfile.username_change_available_at||'');
   if(Number.isFinite(explicit)) return explicit;
   const changed=Date.parse(socialProfile.username_changed_at||'');
-  return Number.isFinite(changed)?changed+21*24*60*60*1000:0;
+  return Number.isFinite(changed)?changed+30*24*60*60*1000:0;
 }
 function accountSettingsDate(value){
   try{return new Date(value).toLocaleString(undefined,{year:'numeric',month:'short',day:'numeric'});}catch(error){return new Date(value).toISOString().slice(0,10);}
@@ -1296,7 +1340,7 @@ function accountSettingsSync(resetInput=false){
       ? 'Choose the public username shown throughout the game. Until then, creator/main staff may see your email as the fallback account label.'
       : locked
         ? 'Your username is @'+current+'. It can be changed again on '+accountSettingsDate(readyAt)+'.'
-        : 'Your username is @'+current+'. After saving a different one, you must wait 21 days before changing it again.';
+        : 'Your username is @'+current+'. After saving a different one, you must wait 30 days before changing it again.';
   if(el.usernameSummary) el.usernameSummary.textContent=!chosen
     ? 'Choose your public username'
     : locked?('@'+current+' · locked until '+accountSettingsDate(readyAt)):('@'+current+' · change available');

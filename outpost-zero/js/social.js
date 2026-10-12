@@ -78,7 +78,8 @@ function usernameIsChosenForUser(value,userId){
 }
 function usernameClaimMarker(user=authUser){
   if(!user) return '';
-  const value=String(user.user_metadata&&user.user_metadata.username||'').trim().replace(/^@/,'');
+  const metadata=user.user_metadata||{};
+  const value=String(metadata.username||(user.neon_auth_id&&metadata.displayName)||'').trim().replace(/^@/,'');
   return usernameIsChosenForUser(value,user.id)?value:'';
 }
 function usernameNeedsClaim(profile=socialProfile,user=authUser){
@@ -1462,7 +1463,7 @@ async function socialUpdateHandle(value,requiredClaim=false){
   const validationMessage=socialUsernameValidationMessage(value,authUser&&authUser.id);
   if(validationMessage){showError(validationMessage);return false;}
   if(!sb||!authUser){ showError('Sign in and reconnect first.'); return false; }
-  if(socialAccountSettingsSqlReady===false){ showError('Install Player 03 Social Menu in Supabase before choosing or changing a username.'); return false; }
+  if(socialAccountSettingsSqlReady===false){ showError('Username settings need the current Player 03 Social Menu setup in Neon. Your account has not been changed.'); return false; }
   if(requiredClaim&&(!settingsOpen||settingsContextCurrent())) usernameClaimBusy(true,'Saving your unique username...');
   let markerFailure=false;
   try{
@@ -1470,12 +1471,12 @@ async function socialUpdateHandle(value,requiredClaim=false){
     if(result&&result.error) throw result.error;
     if(!authUser||String(authUser.id||'')!==userId) return false;
     const row=Array.isArray(result&&result.data)?result.data[0]:result&&result.data;
-    const saved=String(row&&row.username||username).trim();
-    // Auth metadata is the durable proof that this account explicitly chose
-    // its username. It distinguishes older imported profile labels from a
-    // completed claim after verification or a future login.
+    const saved=String(row&&row.username||'').trim();
+    if(!saved)throw new Error('USERNAME_SAVE_NOT_CONFIRMED');
+    // The same RPC commits the native directory label through its trusted
+    // identity binding. Confirm its actual read-back, preserving game UUID.
     markerFailure=true;
-    const markerResult=await sb.auth.updateUser({data:{username:saved}});
+    const markerResult=await neonBetterAuthConfirmUsername(saved,authUser);
     if(markerResult&&markerResult.error) throw markerResult.error;
     markerFailure=false;
     if(!authUser||String(authUser.id||'')!==userId) return false;
@@ -1504,9 +1505,12 @@ async function socialUpdateHandle(value,requiredClaim=false){
     const cooldown=code==='P0001'&&message.includes('USERNAME_CHANGE_COOLDOWN');
     const retryAt=cooldown&&Date.parse(error&&error.details||'');
     showError(markerFailure
-      ? 'The username was saved, but account confirmation failed. Retry the same username to finish.'
+      ? socialSetupMissing(error)
+        ? 'Your username is saved, but sign-in confirmation needs the current game update. Choosing a different name will not fix this.'
+        : 'Your username is saved, but confirmation could not load. Reconnect and try again; your progress is kept.'
       : cooldown
-        ? 'Username changes are limited to once every 21 days.'+(Number.isFinite(retryAt)&&typeof accountSettingsDate==='function'?' Try again on '+accountSettingsDate(retryAt)+'.':'')
+        ? 'Username changes are limited to once every 30 days.'+(Number.isFinite(retryAt)&&typeof accountSettingsDate==='function'?' Try again on '+accountSettingsDate(retryAt)+'.':'')
+        : message.includes('USERNAME_MANAGED_BY_PIXEL_PULSE')?'Manage your shared username in Pixel Pulse Account. Local username changes are disabled.'
         : code==='23505'?'That username is already taken. Try another one.'
         : code==='22023'||message.includes('USERNAME_INVALID')
           ? (socialUsernameValidationMessage(value,userId)||'That username is not allowed. Choose a different one.')

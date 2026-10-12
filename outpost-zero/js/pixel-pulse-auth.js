@@ -3,53 +3,80 @@
 function installPixelPulseTransport(client){
   const auth=client.auth,nativeSession=auth.getSession.bind(auth),nativeToken=auth.getJWTToken.bind(auth),
     subscribe=auth.onAuthStateChange.bind(auth);
-  let cachedSession=null,checkedAt=0,pendingSession=null,token=null,pendingToken=null,epoch=0,retiredNative=false;
+  let cachedSession=null,checkedAt=0,pendingSession=null,token=null,pendingToken=null,epoch=0,
+    retiredNative=false,retirement=null,pixelOwned=false,signingOut=null;
   const fail=message=>Object.assign(new Error(message),{code:'PIXEL_SESSION_FAILED',outpostAuthPhase:'database'});
+  const identity=live=>live?String(live.user.id)+'/'+String(live.user.game_user_id):'';
+  function notify(event,live){
+    if(typeof client.syncAuthState==='function')void Promise.resolve().then(()=>client.syncAuthState(event,live)).catch(()=>{});
+  }
   async function request(action,method='GET',body){
     if(typeof location!=='undefined'&&location.protocol==='file:')return null;
     const response=await fetch('/api/pixel-pulse/'+action,{method,credentials:'same-origin',cache:'no-store',
-      ...(method==='POST'?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}:{})});
+      ...(typeof AbortSignal!=='undefined'&&typeof AbortSignal.timeout==='function'?{signal:AbortSignal.timeout(10000)}:{}),
+      ...(method==='POST'?{headers:{'Content-Type':'application/json'},body:JSON.stringify(body||{})}:{})})
+      .catch(()=>{throw fail('Pixel Pulse could not be reached. Check your connection and try again.');});
     // Local HTML/GitHub Pages has no server route; keep existing Neon login.
     if(response.status===404)return null;
-    const result=await response.json();
-    if(!response.ok)throw fail(result.error||'Pixel Pulse could not confirm your game session. Try again.');
+    const result=await response.json().catch(()=>null);
+    if(!response.ok)throw Object.assign(fail(result&&result.error||'Pixel Pulse could not confirm your game session. Try again.'),{status:response.status});
+    if(!result||typeof result!=='object'||Array.isArray(result))throw fail('Pixel Pulse returned an incomplete response. Try again.');
     return result;
   }
   async function current(force=false){
+    if(signingOut)await signingOut;
     if(!force&&checkedAt&&Date.now()-checkedAt<5000)return cachedSession;
     if(pendingSession)return pendingSession;
     const generation=epoch;
     const task=request('session').then(result=>{
       if(generation!==epoch)throw fail('The account changed. Try again.');
-      const previous=cachedSession;
-      cachedSession=result&&result.session||null;checkedAt=Date.now();
+      const previous=cachedSession,known=!!checkedAt,next=result&&result.session||null;
+      if(next&&(!next.user||!next.user.pixel_pulse||!next.user.id||!next.user.game_user_id))throw fail('Pixel Pulse returned an incomplete account. Try again.');
+      const changed=known&&identity(previous)!==identity(next);
+      cachedSession=next;checkedAt=Date.now();
+      if(next)pixelOwned=true;
+      if(changed){epoch++;token=null;pendingToken=null;notify(next?'SIGNED_IN':'SIGNED_OUT',next);}
       if(previous&&!cachedSession){
-        epoch++;token=null;
-        void client.syncAuthState('SIGNED_OUT',null);
         throw fail('Your Pixel Pulse game session expired. Sign in again.');
       }
       return cachedSession;
     }).finally(()=>{if(pendingSession===task)pendingSession=null;});
     pendingSession=task;return task;
   }
-  auth.getSession=async options=>{
-    const live=await current(!!options&&options.forceFetch===true);
-    // Retire a previous local login only AFTER the central session is proved.
-    // An expired Pixel session must not silently reopen another account.
-    if(live&&!retiredNative){
-      const api=typeof auth.getBetterAuthInstance==='function'?auth.getBetterAuthInstance():null;
+  async function retireNative(){
+    if(retiredNative)return;
+    if(retirement)return retirement;
+    const generation=epoch,api=typeof auth.getBetterAuthInstance==='function'?auth.getBetterAuthInstance():null;
+    const task=(async()=>{
       if(api&&typeof api.signOut==='function'){
         const result=await api.signOut();
         if(result&&result.error)throw fail('Could not finish switching accounts. Try again.');
       }
+      if(generation!==epoch)throw fail('The account changed. Try again.');
       retiredNative=true;
-    }
-    return live?{data:{session:live},error:null}:nativeSession(options);
+    })().finally(()=>{if(retirement===task)retirement=null;});
+    retirement=task;return task;
+  }
+  auth.getSession=async options=>{
+    const live=await current(!!options&&options.forceFetch===true);
+    // Retire a previous local login only AFTER the central session is proved.
+    // An expired Pixel session must not silently reopen another account.
+    const generation=epoch;
+    if(live)await retireNative();
+    if(generation!==epoch)throw fail('The account changed. Try again.');
+    if(live||pixelOwned)return {data:{session:live},error:null};
+    const native=await nativeSession(options);
+    if(generation!==epoch)throw fail('The account changed. Try again.');
+    return native;
   };
   auth.getJWTToken=async allowAnonymous=>{
-    const generation=epoch,live=await current();
-    if(generation!==epoch)throw fail('The account changed. Try again.');
-    if(!live)return nativeToken(allowAnonymous);
+    const live=await current(),generation=epoch;
+    if(!live){
+      if(pixelOwned)throw fail('Your Pixel Pulse game session expired. Sign in again.');
+      const native=await nativeToken(allowAnonymous);
+      if(generation!==epoch)throw fail('The account changed. Try again.');
+      return native;
+    }
     if(token&&token.subject===live.user.id&&token.until>Date.now())return token.value;
     if(pendingToken)return pendingToken;
     const task=(async()=>{
@@ -69,10 +96,15 @@ function installPixelPulseTransport(client){
     // Managed Neon emits INITIAL_SESSION even when a Pixel session owns this
     // page. Select that cookie-backed account before the game's state changes.
     const pixel=event==='INITIAL_SESSION'?await current():cachedSession;
-    return callback(pixel?'SIGNED_IN':event,pixel||live);
+    return callback(pixel?'SIGNED_IN':pixelOwned?'SIGNED_OUT':event,pixel||(pixelOwned?null:live));
   });
-  client.pixelPulse={current,request,async signOut(){
-    await request('signout','POST');epoch++;cachedSession=null;checkedAt=Date.now();token=null;pendingSession=null;pendingToken=null;
+  client.pixelPulse={current,request,async waitForNativeRetirement(){if(retirement)await retirement;},async signOut(){
+    if(signingOut)return signingOut;
+    epoch++;token=null;pendingToken=null;
+    const task=request('signout','POST').then(()=>{
+      cachedSession=null;checkedAt=Date.now();pendingSession=null;retiredNative=false;pixelOwned=false;
+    }).finally(()=>{if(signingOut===task)signingOut=null;});
+    signingOut=task;return task;
   }};
   return client;
 }
