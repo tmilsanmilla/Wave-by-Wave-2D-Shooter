@@ -15,17 +15,18 @@ function between(source,start,end){
 }
 const hub=between(ui,'function drawHub(){','function drawCategory(');
 const dailyAt=hub.lastIndexOf('DAILY TASKS'),settingsAt=hub.indexOf('settingsBtnRect=',dailyAt);
-const shopAt=hub.indexOf('shopBtnRect=',settingsAt),toolsAt=hub.indexOf('toolsBtnRect=',settingsAt);
+const tutorialAt=hub.indexOf('tutBtnRect=',settingsAt),shopAt=hub.indexOf('shopBtnRect=',settingsAt),toolsAt=hub.indexOf('toolsBtnRect=',settingsAt);
 assert.ok(dailyAt>=0&&settingsAt>dailyAt,
   'the full-width Settings control must be rendered below the Daily Tasks panel');
-assert.ok(shopAt>settingsAt&&toolsAt>settingsAt,
-  'Shop and Tools must be rendered beneath Settings');
+assert.ok(tutorialAt>settingsAt&&shopAt>tutorialAt&&toolsAt>tutorialAt,
+  'Tutorial must be below Settings, with Shop and Tools below Tutorial');
 assert.match(hub,/settingsBtnRect\s*=\s*hubBtn\(/,'the hub needs one Settings action');
 assert.match(hub,/shopBtnRect\s*=\s*hubBtn\(/,'the hub needs one Shop action');
 assert.match(hub,/toolsBtnRect\s*=\s*hubBtn\(/,'the hub needs one Tools action');
-assert.equal((hub.match(/(?:settings|shop|tools)BtnRect\s*=\s*hubBtn\(/g)||[]).length,3,
-  'the organized hub control area must contain exactly Settings, Shop, and Tools');
-for(const oldAssignment of ['tutBtnRect','promoBtnRect','shareBtnRect','wheelBtnRect','lookupBtnRect'])
+assert.match(hub,/tutBtnRect\s*=\s*hubBtn\(/,'the hub needs a separate Tutorial action');
+assert.equal((hub.match(/(?:settings|tut|shop|tools)BtnRect\s*=\s*hubBtn\(/g)||[]).length,4,
+  'the organized hub controls must contain exactly Settings, Tutorial, Shop, and Tools');
+for(const oldAssignment of ['promoBtnRect','shareBtnRect','wheelBtnRect','lookupBtnRect'])
   assert.doesNotMatch(hub,new RegExp(`${oldAssignment}\\s*=\\s*hubBtn\\(`),
     `${oldAssignment} must live inside Tools instead of the hub control area`);
 
@@ -40,8 +41,11 @@ const layout=JSON.parse(JSON.stringify(utilityContext.layout(task,700,buttonH,ga
 assert.deepEqual(layout.settings,{x:80,y:368,w:390,h:48},
   'Settings must be full-width and immediately below Daily Tasks');
 assert.equal(layout.shop.y,layout.tools.y,'Shop and Tools must share one row');
-assert.equal(layout.shop.y,layout.settings.y+layout.settings.h+gap,
-  'Shop and Tools must sit beneath Settings');
+assert.equal(layout.tutorial.y,layout.settings.y+layout.settings.h+gap,
+  'Tutorial must sit immediately beneath Settings');
+assert.equal(layout.tutorial.w,layout.settings.w,'Tutorial must share the full Settings width');
+assert.equal(layout.shop.y,layout.tutorial.y+layout.tutorial.h+gap,
+  'Shop and Tools must sit beneath Tutorial');
 assert.equal(layout.shop.w,layout.tools.w,'Shop and Tools must have equal lengths');
 assert.equal(layout.shop.w*2+gap,layout.settings.w,
   'the Shop/Tools pair must exactly fill the Settings width');
@@ -54,13 +58,16 @@ const toolsStart=`function ${toolsRoute[1]}(`,toolsFrom=ui.indexOf(toolsStart);
 assert.ok(toolsFrom>=0,'the routed Tools renderer must exist');
 const toolsEnd=ui.indexOf('\nfunction ',toolsFrom+toolsStart.length);
 const toolsPage=ui.slice(toolsFrom,toolsEnd<0?ui.length:toolsEnd);
-for(const label of ['HOW TO PLAY','REDEEM CODE','SHARE INVITE','SPIN','PLAYER LOOKUP','BACK'])
+assert.doesNotMatch(toolsPage,/HOW TO PLAY|id:'howto'/,'Tutorial must no longer be inside Tools');
+for(const label of ['REDEEM CODE','SHARE INVITE','SPIN','PLAYER LOOKUP','BACK'])
   assert.match(toolsPage,new RegExp(label.replaceAll(' ','\\s+')),
     `Tools must visibly contain ${label}`);
 assert.match(input,/inR\(toolsBtnRect\)[\s\S]{0,180}selPage='tools'/,
   'the hub Tools control must open the dedicated Tools page');
 assert.match(input,/selPage==='tools'/,
   'Tools page actions must have their own click-routing boundary');
+assert.match(input,/inR\(tutBtnRect\)[\s\S]{0,100}selPage='howto'/,
+  'the hub Tutorial control must open the tutorial chooser');
 
 for(const id of ['settingssoundtrackopen','settingssoundtracksummary','settingssoundtrackpanel',
   'settingssoundtrackstatus','settingssoundtrackback','settingstrackcalm','settingstrackenergetic','settingstrackpiano'])

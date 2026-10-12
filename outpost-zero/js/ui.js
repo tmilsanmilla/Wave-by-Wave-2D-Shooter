@@ -365,7 +365,7 @@ let tutorialOn=false, tutStep=0, tutDone=false, tutStartPos=null, tutFired=0, tu
     tutScopeSeen=false, tutScopeHeldMs=0, tutScopeLastT=0, tutUtilityEquipCount=0, tutUtilityUseCount=0,
     tutAmmoCollected=0, tutMedCollected=0, tutMedUsed=0, tutMoveDistance=0,
     tutLastPos=null, tutAimTargets=new Set(), tutRects=[], tutStepT=0, tutStepBase={},
-    tutorialLoadoutBackup=null;
+    tutorialLoadoutBackup=null, tutorialStarting=false;
 const TUT_STEPS=[
   {id:'move', title:'KEEP MOVING',
    how:'WASD  \u00b7  touch: drag the left movement stick',
@@ -436,6 +436,12 @@ function tutorialRecordUtilityUsed(){ if(tutorialOn) tutUtilityUseCount++; }
 function tutorialRecordAmmoCollected(){ if(tutorialOn) tutAmmoCollected++; }
 function tutorialRecordMedkitCollected(){ if(tutorialOn) tutMedCollected++; }
 function tutorialRecordMedkitUsed(){ if(tutorialOn) tutMedUsed++; }
+// The grenade lesson lends one published item only while this tutorial is
+// starting or running. It never writes ownership or authorizes a real match.
+function tutorialLoanAllows(key){
+  return !!(key==='grenade'&&tutorialOn&&tutorialLoadoutBackup&&loadout.utility===key&&
+    (tutorialStarting||(state==='play'&&practiceMode==='range')));
+}
 function tutorialRestoreLoadout(){
   if(!tutorialLoadoutBackup) return;
   loadout={primary:tutorialLoadoutBackup.primary,secondary:tutorialLoadoutBackup.secondary,
@@ -502,8 +508,15 @@ function startTutorial(){
   const trainingMelee=typeof WEAPONS!=='undefined'&&WEAPONS.knife?'knife':loadout.melee;
   const trainingUtility=typeof UTILITIES!=='undefined'&&UTILITIES.grenade?'grenade':loadout.utility;
   loadout={primary:trainingPrimary,secondary:trainingSecondary,melee:trainingMelee,utility:trainingUtility};
-  startPractice('range');
-  tutorialOn=true; tutStep=0; tutDone=false; tutStepT=now;
+  tutorialOn=true; tutorialStarting=true;
+  let started=false;
+  try{ started=startPractice('range')!==false; }
+  finally{
+    tutorialStarting=false;
+    if(!started){ tutorialOn=false; tutorialRestoreLoadout(); }
+  }
+  if(!started) return false;
+  tutStep=0; tutDone=false; tutStepT=now;
   tutFired=0; tutKilled=0; tutReloaded=false; tutReloadCount=0; tutSwapped=false; tutSwapCount=0;
   tutMeleeUsed=false; tutMeleeUseCount=0; tutMeleeSwingCount=0; tutAmmoCollected=0;
   tutScopeSeen=false;tutScopeHeldMs=0;tutScopeLastT=now;tutUtilityEquipCount=0;tutUtilityUseCount=0;
@@ -520,10 +533,11 @@ function startTutorial(){
   if(typeof medkitFlyFx!=='undefined') medkitFlyFx=[];
   if(typeof tutorialBeginStep==='function') tutorialBeginStep();
   waveMsg=''; waveMsgT=0;
+  return true;
 }
-function tutorialTeardown(){ tutorialOn=false; tutDone=false; tutorialRestoreLoadout(); }
+function tutorialTeardown(){ tutorialOn=false; tutorialStarting=false; tutDone=false; tutorialRestoreLoadout(); }
 function endTutorial(){
-  tutorialOn=false; tutDone=false;
+  tutorialOn=false; tutorialStarting=false; tutDone=false;
   practiceMode=null; practiceSpawns=[]; enemies=[]; soloPractice=false;
   tutorialRestoreLoadout();
   restoreTryLoadout();
@@ -710,10 +724,9 @@ function drawTools(){
   ctx.fillStyle='#bfa8ff'; ctx.font='700 '+(compact?22:30)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('\uD83E\uDDF0 TOOLS',W/2,compact?10:H*0.055);
   ctx.fillStyle='#8a9268';ctx.font=(compact?'9':'11')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('guides, rewards, sharing, and player lookup',W-margin*2),W/2,compact?38:H*0.055+39);
+  ctx.fillText(fitLine('rewards, sharing, and player lookup',W-margin*2),W/2,compact?38:H*0.055+39);
 
   const items=[
-    {id:'howto',title:'\u2753 HOW TO PLAY',sub:'interactive tutorial and full control guide',col:'#8a9268'},
     {id:'code',title:'\uD83C\uDF81 REDEEM CODE',sub:'enter an active Outpost Zero promo code',col:'#a7c15e'},
     {id:'share',title:'\uD83D\uDD17 SHARE INVITE',sub:'send your referral link to a new player',col:'#bfa8ff'},
     {id:'spin',title:'\uD83C\uDFA1 SPIN '+(wheelReady>0?'('+wheelReady+' READY)':wheelCountdown()),sub:'daily reward wheel',col:wheelReady>0?'#e8b658':'#6b6450'},
@@ -790,7 +803,7 @@ function howToClick(){
     if(mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h){
       if(r.id==='back'){ selPage='hub'; sfx('swap'); return; }
       if(r.id==='text'){ selPage='tutorial'; sfx('swap'); return; }
-      if(r.id==='interactive'){ startTutorial(); sfx('wave'); return; }
+      if(r.id==='interactive'){ if(startTutorial())sfx('wave'); return; }
       return;
     }
   }
@@ -3021,9 +3034,11 @@ function drawHomeLeaderboards(x,y,w,h){
   ctx.textAlign='center'; ctx.textBaseline='top';
 }
 function hubUtilityLayout(taskRect,limitTop,buttonH,gap){
-  const y=Math.min(limitTop,taskRect.y+taskRect.h+6),half=(taskRect.w-gap)/2,rowY=y+buttonH+gap;
+  const y=Math.min(limitTop,taskRect.y+taskRect.h+6),half=(taskRect.w-gap)/2,
+    tutorialY=y+buttonH+gap,rowY=tutorialY+buttonH+gap;
   return {
     settings:{x:taskRect.x,y,w:taskRect.w,h:buttonH},
+    tutorial:{x:taskRect.x,y:tutorialY,w:taskRect.w,h:buttonH},
     shop:{x:taskRect.x,y:rowY,w:half,h:buttonH},
     tools:{x:taskRect.x+half+gap,y:rowY,w:half,h:buttonH}
   };
@@ -3133,7 +3148,7 @@ function drawHub(){
     {id:'weapons',title:'WEAPONS',sub:'STATS \u00b7 OWNERSHIP \u00b7 PRACTICE',col:'#8fb3c9',enabled:true}
   ];
   const hbH=H<600?30:40,hbGap=W<520?5:8,
-    controlsW=Math.min(390,W-24),controlsBlockH=hbH*2+hbGap,
+    controlsW=Math.min(390,W-24),controlsBlockH=hbH*3+hbGap*2,
     controlsLimitTop=H-controlsBlockH-8;
   // PLAY, PRACTICE, and SOCIAL form one destination row. WEAPONS is a
   // deliberately separate full-width armory section directly underneath.
@@ -3327,8 +3342,8 @@ function drawHub(){
     ctx.textAlign='center';
   }
 
-  // Account settings stays immediately under Daily Tasks. SHOP and TOOLS
-  // form the only second row, replacing the old seven-button footer.
+  // SETTINGS and TUTORIAL each get a full-width row below Daily Tasks;
+  // SHOP and TOOLS share the final row.
   const utilityLayout=hubUtilityLayout({x:tpX,y:tpY,w:tpW,h:tpH},controlsLimitTop,hbH,hbGap);
   const hubBtn=(r,label,base,textCol)=>{
     const hot=mouse.x>=r.x&&mouse.x<=r.x+r.w&&mouse.y>=r.y&&mouse.y<=r.y+r.h;
@@ -3339,6 +3354,7 @@ function drawHub(){
     ctx.textBaseline='top';return r;
   };
   settingsBtnRect=hubBtn(utilityLayout.settings,'\u2699 SETTINGS','#e8b658','#e8d9a8');
+  tutBtnRect=hubBtn(utilityLayout.tutorial,'\u2753 TUTORIAL','#a7c15e','#cfe0a8');
   shopBtnRect=hubBtn(utilityLayout.shop,'\uD83D\uDC8E SHOP \u00b7 '+gems,'#7fd8ff','#bfe8ff');
   toolsBtnRect=hubBtn(utilityLayout.tools,'\uD83E\uDDF0 TOOLS','#bfa8ff','#d8c8ff');
   if(now<utilLockMsgT){

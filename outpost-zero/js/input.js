@@ -623,6 +623,7 @@ function clickSelect(){
       return;
     }
     if(inR(settingsBtnRect)){ openAccountSettings(); sfx('swap'); return; }
+    if(inR(tutBtnRect)){ selPage='howto'; sfx('swap'); return; }
     if(inR(shopBtnRect)){ selPage='shop'; shopWeaponPickerOpen=false; sfx('swap'); return; }
     if(inR(toolsBtnRect)){ selPage='tools'; sfx('swap'); return; }
     return;
@@ -630,7 +631,6 @@ function clickSelect(){
   if(selPage==='tools'){
     for(const r of toolsRects)if(inR(r)){
       if(r.id==='back'){navigateSelectBack();return;}
-      if(r.id==='howto'){selPage='howto';sfx('swap');return;}
       if(r.id==='code'){openPromo();sfx('swap');return;}
       if(r.id==='share'){shareReferral();return;}
       if(r.id==='spin'){openWheel();sfx('swap');return;}

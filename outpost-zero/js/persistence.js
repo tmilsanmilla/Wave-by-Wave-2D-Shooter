@@ -818,6 +818,7 @@ const TEMP_KEYS = ['flamethrower','fireworks','bdaggers','beachball'];  // limit
 function isLocked(k){
   if(FALL_KEYS.includes(k)) return !fallEligible();
   if(typeof isWeaponPublished==='function'&&!isWeaponPublished(k)) return true; // publication outranks ownership, offline preview, and Test Mode
+  if(typeof tutorialLoanAllows==='function'&&tutorialLoanAllows(k)) return false;
   // A weapon card can lend exactly one published item inside solo Practice.
   // This changes runtime access only; it never writes gemOwned or a loadout.
   if(typeof soloPracticeLoanAllows==='function'&&soloPracticeLoanAllows(k)) return false;
