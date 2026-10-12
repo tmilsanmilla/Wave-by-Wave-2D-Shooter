@@ -80,7 +80,7 @@ function installPixelPulseTransport(client){
 let pixelPulseEnabled=false,pixelPulseLinkPending=false,pixelPulseStarting=false,pixelPulseLaunchEpoch=0;
 function pixelPulseLinkUi(){
   const note=$('apixelintent'),create=$('aup'),gate=$('usernameclaimpixel'),hint=$('usernameclaimpixelhint');
-  if(note){note.hidden=!pixelPulseLinkPending;note.textContent='LINK EXISTING ACCOUNT · HIGHLY RECOMMENDED. Sign in to your game account below once. Then Pixel Pulse will connect the same email and shared username, keeping your progress.';}
+  if(note){note.hidden=!pixelPulseLinkPending;note.textContent='LINK EXISTING ACCOUNT · HIGHLY RECOMMENDED. Sign in below once, using the same email as Pixel Pulse. Your progress is kept.';}
   if(create)create.hidden=pixelPulseLinkPending;
   const suggest=!!(pixelPulseEnabled&&authUser&&!pixelPulseIsLinked());
   if(gate)gate.hidden=!suggest;if(hint)hint.hidden=!suggest;
