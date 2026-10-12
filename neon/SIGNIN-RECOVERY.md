@@ -20,8 +20,12 @@ collision rollback, timer spoof protection, native/Pixel session switching,
 and preserved credentials/progress are covered by regressions. The live Neon
 SQL test used exact synthetic fixtures and unconditional rollback.
 
-This focused checkout leaves `api/pixel-pulse.js` and `lib/pixel-pulse.js`
-unchanged from the current remote base. It does not deploy the pending automatic
-legacy adoption, central fresh-password link proof, account management,
-expanded shared names, direct-email provider or Auth-user provisioning. Those
-remain separate work and must not be advertised as implemented by this fix.
+The current remote base contains unpublished cookie/link-intent work compared
+with LIVE `132bc10683701c866c88b4b29fc0c3f843cacde1`. This release explicitly
+server-gates all NEW native-account links, including callbacks begun before
+release, until signed flow-bound central current-password proof exists. Existing
+linked subjects and their returning sessions are not removed. Cookie reuse is
+not advertised as satisfying new-link confirmation. A verified email match
+alone still cannot adopt another game account. No automatic legacy adoption,
+account management, expanded shared names, direct-email provider or Auth-user
+provisioning is implemented here. Those remain separately held.

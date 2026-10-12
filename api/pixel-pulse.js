@@ -15,7 +15,7 @@ function bodyOf(req){
 }
 export default async function handler(req,res){
   res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
-  res.setHeader('X-Outpost-Auth-Version','20261012-cookie-link-v3');
+  res.setHeader('X-Outpost-Auth-Version','20261012-signin-recovery-v1');
   const action=actionOf(req);
   try{
     if(action==='jwks'&&req.method==='GET')return json(res,200,{keys:[(await signingKey()).publicKey]});
@@ -47,6 +47,10 @@ export default async function handler(req,res){
       const intent=String(body.intent||'');
       if(!['','continue','link','create'].includes(intent))throw failure('INTENT','Choose Continue, Link, or Create from the game.',400);
       const linkAccountId=await nativeOwnership(String(body.link_token||''),database);
+      // Native login recovery ships first. Existing links keep working, but a
+      // NEW link waits for the central signed current-password proof contract.
+      if(linkAccountId&&!(await database.query('select 1 from oz_identity.pixel_profiles where account_id=$1',[linkAccountId])).rowCount)
+        throw failure('LINK_CONFIRMATION_PENDING','Game sign-in is available. New Pixel Pulse linking is waiting for its password-confirmation update.',503);
       if(intent==='link'&&!linkAccountId&&!await session(req,database))
         throw failure('LINK_PROOF','Sign in to your existing game account before linking Pixel Pulse.',401);
       const state=oidc.randomState(),nonce=oidc.randomNonce(),verifier=oidc.randomPKCECodeVerifier(),browser=random();
