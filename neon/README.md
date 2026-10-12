@@ -4,6 +4,14 @@ Outpost Zero uses Neon Managed Better Auth and the Neon Data API. The browser
 SDK is bundled locally at `outpost-zero/vendor/neon-client.js` so production
 does not depend on a third-party CDN for authentication.
 
+`outpost-zero/js/neon-token-bridge.js` requests Data API JWTs from Better Auth's
+`/token` endpoint with the SDK session cache explicitly skipped. Opaque session
+tokens are never used as database credentials. The short in-memory JWT cache
+is retired on login changes; signed-in token failures never fall back to guest
+access. Neon still enforces token signatures, RLS, account links, and bans.
+The game explicitly synchronizes its login state after successful Managed
+Better Auth actions because the compatibility adapter omits same-client events.
+
 Email sign-in, account creation, password reset, password changes, and sign-out
 call the Managed Better Auth client directly. The Supabase credential verifier
 is not an identity provider: it is retained only as a one-time fallback for an

@@ -67,12 +67,30 @@ function neonBetterAuthUnavailable(){
   const error=new Error('Neon Managed Better Auth is unavailable.');
   error.code='neon_better_auth_unavailable';return error;
 }
+function neonAccountAccessError(error){
+  const failure=new Error(String(error&&error.message||'Neon account access failed.'));
+  failure.code=String(error&&error.code||'NEON_ACCOUNT_ACCESS_FAILED');
+  failure.status=Number(error&&error.status||0);failure.outpostAuthPhase='database';return failure;
+}
+function neonAccountAccessMessage(error){
+  if(String(error&&error.code||'')==='NEON_SESSION_COOKIE_FAILED')
+    return 'Your password was accepted, but the browser did not keep the login session. Allow sign-in cookies and try again.';
+  return String(error&&error.code||'')==='42501'
+    ?'SIGNED IN, BUT ACCOUNT ACCESS IS MISCONFIGURED. This is not a password error. Please report it.'
+    :'SIGNED IN, BUT ACCOUNT DATA COULD NOT LOAD. Your password was accepted. Reconnect and try again.';
+}
 async function neonBetterAuthEmailSignIn(email,password){
   const api=neonAuthApi();
   if(!api||!api.signIn||typeof api.signIn.email!=='function')return {data:null,error:neonBetterAuthUnavailable()};
   const result=await api.signIn.email({email,password});
   if(result&&result.error)return {data:null,error:result.error};
-  const session=await sb.auth.getSession({forceFetch:true});
+  let session;
+  try{session=await sb.auth.getSession({forceFetch:true});}
+  catch(error){return {data:null,error:neonAccountAccessError(error)};}
+  if(session&&session.error)return {data:null,error:neonAccountAccessError(session.error)};
+  const liveSession=session&&session.data&&session.data.session;
+  if(!liveSession||!liveSession.user)return {data:null,error:neonAccountAccessError({code:'NEON_SESSION_COOKIE_FAILED'})};
+  await sb.syncAuthState('SIGNED_IN',liveSession);
   return {data:session&&session.data||null,error:session&&session.error||null};
 }
 async function neonBetterAuthEmailSignUp(email,password){
@@ -82,6 +100,7 @@ async function neonBetterAuthEmailSignUp(email,password){
   if(result&&result.error)return {data:null,error:result.error};
   const session=await sb.auth.getSession({forceFetch:true});
   const liveSession=session&&session.data&&session.data.session||null;
+  if(liveSession&&liveSession.user&&!session.error)await sb.syncAuthState('SIGNED_IN',liveSession);
   return {data:{user:liveSession&&liveSession.user||result&&result.data&&result.data.user||null,session:liveSession},
     error:session&&session.error||null};
 }
@@ -94,7 +113,9 @@ async function neonBetterAuthPasswordReset(email,redirectTo){
 async function neonBetterAuthSignOut(){
   const api=neonAuthApi();
   if(!api||typeof api.signOut!=='function')return {error:neonBetterAuthUnavailable()};
-  const result=await api.signOut();return {error:result&&result.error||null};
+  const result=await api.signOut();
+  if(!(result&&result.error))await sb.syncAuthState('SIGNED_OUT',null);
+  return {error:result&&result.error||null};
 }
 async function neonGameUser(session){
   const user=session&&session.user;if(!user)return null;
@@ -102,13 +123,16 @@ async function neonGameUser(session){
   const args={
     p_migration_proof:pendingNeonMigrationProof||null
   };
-  let result=await sb.rpc('bootstrap_outpost_zero_account_with_proof',args);
+  let result;
+  try{result=await sb.rpc('bootstrap_outpost_zero_account_with_proof',args);}
+  catch(error){throw neonAccountAccessError(error);}
   if(result&&result.error&&String(result.error.code||'')==='28000'&&
      /AUTHENTICATION_REQUIRED/.test(String(result.error.message||''))){
     await sb.auth.getSession();
-    result=await sb.rpc('bootstrap_outpost_zero_account_with_proof',args);
+    try{result=await sb.rpc('bootstrap_outpost_zero_account_with_proof',args);}
+    catch(error){throw neonAccountAccessError(error);}
   }
-  if(result&&result.error)throw result.error;
+  if(result&&result.error)throw neonAccountAccessError(result.error);
   const row=Array.isArray(result&&result.data)?result.data[0]:result&&result.data;
   const gameId=String(row&&row.user_id||'');if(!gameId)throw new Error('Could not link this Neon login to an Outpost Zero account.');
   pendingNeonMigrationProof='';
@@ -222,7 +246,7 @@ async function initAuth(){
       legacySupabase=window.supabase&&typeof window.supabase.createClient==='function'
         ?window.supabase.createClient(LEGACY_SUPABASE_URL,LEGACY_SUPABASE_ANON_KEY,{auth:{persistSession:false,
           autoRefreshToken:false,detectSessionInUrl:false,storageKey:'oz-legacy-transport'}}):null;
-      const neonClient=window.outpostZeroNeon.createClient({authUrl:NEON_AUTH_URL,dataApiUrl:NEON_DATA_API_URL});
+      const neonClient=installNeonSignedTokenTransport(window.outpostZeroNeon.createClient({authUrl:NEON_AUTH_URL,dataApiUrl:NEON_DATA_API_URL}));
       sb=neonClientWithLegacyTransport(neonClient,legacySupabase);
       neonRecoveryToken=neonRecoveryTokenFromLocation();
       // Do not expose a cached signed-in account while getSession is pending.
@@ -230,8 +254,12 @@ async function initAuth(){
       // preserved; an account-owned or legacy-unmarked cache fails closed.
       if(typeof prepareAccountProgressForAuth==='function')prepareAccountProgressForAuth('');
       const { data } = await sb.auth.getSession();
-      const initialUser=data.session?await neonGameUser(data.session):null,initialPreviousUserId=authUser?String(authUser.id||''):'',
-        initialNextUserId=initialUser?String(initialUser.id||''):'';
+      let initialUser=null;
+      if(data.session)try{initialUser=await neonGameUser(data.session);}catch(error){
+        console.warn('Neon account access failed',error);
+        $('authwrap').style.display='flex';$('authmsg').textContent=neonAccountAccessMessage(error);
+      }
+      const initialPreviousUserId=authUser?String(authUser.id||''):'',initialNextUserId=initialUser?String(initialUser.id||''):'';
       if(initialPreviousUserId!==initialNextUserId){
         arenaOwnWinTotal=null;
         if(typeof prepareBotLadderForAuthChange==='function')prepareBotLadderForAuthChange(initialNextUserId);
@@ -264,7 +292,7 @@ async function initAuth(){
         let nextAuthUser=null;
         if(sess)try{nextAuthUser=await neonGameUser(sess);}catch(error){
           console.warn('Neon account link failed',error);
-          if(eventEpoch===neonAuthEventEpoch){$('authwrap').style.display='flex';$('authmsg').textContent='ACCOUNT DATA COULD NOT LOAD. RECONNECT AND TRY AGAIN.';}
+          if(eventEpoch===neonAuthEventEpoch){$('authwrap').style.display='flex';$('authmsg').textContent=neonAccountAccessMessage(error);}
           return;
         }
         if(eventEpoch!==neonAuthEventEpoch)return;
@@ -981,6 +1009,8 @@ function authFunctionStatus(error){
 }
 function authSignInFailure(error,edge=false){
   const status=authFunctionStatus(error),code=String(error&&error.code||'').toLowerCase(),name=String(error&&error.name||'');
+  if((error&&error.outpostAuthPhase==='database')||code==='42501'||code.startsWith('neon_data_token')||code==='neon_invalid_data_token')
+    return {ok:false,message:neonAccountAccessMessage(error),reason:'data-access'};
   if(status===429||code.includes('rate_limit'))return {ok:false,message:AUTH_TRY_LATER,reason:'rate'};
   if(edge&&(status===404||/FunctionsFetchError|FunctionsRelayError/.test(name)))
     return {ok:false,message:AUTH_SIGNIN_SETUP,reason:'setup'};
