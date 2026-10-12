@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import {generateKeyPair,SignJWT,exportJWK} from 'jose';
 import * as oidc from 'openid-client';
-import {centralProfile,cookieValue,cookie,COOKIE,hash,PIXEL_ISSUER} from '../../lib/pixel-pulse.js';
+import {centralProfile,cookieValue,cookie,COOKIE,hash,PIXEL_ISSUER,providerConfiguration} from '../../lib/pixel-pulse.js';
 
 const subject='10000000-0000-4000-8000-000000000001',gameId='20000000-0000-4000-8000-000000000001';
 const claims={sub:subject,preferred_username:'shared_player',email:'player@example.invalid',email_verified:true};
@@ -18,15 +18,14 @@ assert.match(cookie(COOKIE,raw,100),/Path=\/; HttpOnly; Secure; SameSite=Lax/);
 assert.equal(hash(raw).length,64);
 
 // Real maintained OIDC library, real signatures; every endpoint is mocked.
-const {privateKey,publicKey}=await generateKeyPair('RS256');
-const publicJwk={...await exportJWK(publicKey),kid:'test-only',alg:'RS256',use:'sig'};
+const algorithm='EdDSA';
+const {privateKey,publicKey}=await generateKeyPair(algorithm);
+const publicJwk={...await exportJWK(publicKey),kid:'test-only',alg:algorithm,use:'sig'};
 let variant='',tokenCalls=0;
 const state=oidc.randomState(),nonce=oidc.randomNonce(),verifier=oidc.randomPKCECodeVerifier();
-const configuration=new oidc.Configuration({issuer:PIXEL_ISSUER,authorization_endpoint:PIXEL_ISSUER+'/oauth2/authorize',
+const configuration=providerConfiguration({issuer:PIXEL_ISSUER,authorization_endpoint:PIXEL_ISSUER+'/oauth2/authorize',
  token_endpoint:PIXEL_ISSUER+'/oauth2/token',userinfo_endpoint:PIXEL_ISSUER+'/oauth2/userinfo',jwks_uri:PIXEL_ISSUER+'/jwks',
- authorization_response_iss_parameter_supported:true,id_token_signing_alg_values_supported:['RS256']},'outpost-zero',
- {token_endpoint_auth_method:'none'},oidc.None());
-oidc.enableNonRepudiationChecks(configuration);
+ authorization_response_iss_parameter_supported:true,id_token_signing_alg_values_supported:[algorithm]});
 configuration[oidc.customFetch]=async(url,options)=>{
  const path=new URL(url).pathname;
  if(path.endsWith('/jwks'))return Response.json({keys:[publicJwk]});
@@ -34,8 +33,8 @@ configuration[oidc.customFetch]=async(url,options)=>{
   tokenCalls++;const params=new URLSearchParams(options.body);
   assert.equal(params.get('client_id'),'outpost-zero');assert.equal(params.get('code_verifier'),verifier);
   assert.equal(params.get('redirect_uri'),'https://wave-by-wave-2-d-shooter.vercel.app/api/pixel-pulse/callback');
-  const key=variant==='signature'?(await generateKeyPair('RS256')).privateKey:privateKey;
-  const token=await new SignJWT({...claims,nonce:variant==='nonce'?'wrong':nonce}).setProtectedHeader({alg:'RS256',kid:'test-only'})
+  const key=variant==='signature'?(await generateKeyPair(algorithm)).privateKey:privateKey;
+  const token=await new SignJWT({...claims,nonce:variant==='nonce'?'wrong':nonce}).setProtectedHeader({alg:algorithm,kid:'test-only'})
    .setIssuer(PIXEL_ISSUER).setAudience(variant==='audience'?'other-site':'outpost-zero').setIssuedAt().setExpirationTime(variant==='expired'?0:'5m').sign(key);
   return Response.json({id_token:token,access_token:'test-only-access',token_type:'Bearer',expires_in:300});
  }
