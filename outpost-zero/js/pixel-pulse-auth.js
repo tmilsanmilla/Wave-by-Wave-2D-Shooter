@@ -103,7 +103,7 @@ async function pixelPulseSyncNativeIdentity(user){
 async function setupPixelPulseUi(){
   const button=$('apixel'),connect=$('settingspixel'),manage=$('settingspixelmanage');
   if(button)button.onclick=pixelPulseStart;if(connect)connect.onclick=pixelPulseStart;
-  if(manage)manage.onclick=()=>window.open('https://pixel-pulse-websites.vercel.app/','_blank','noopener,noreferrer');
+  if(manage)manage.onclick=()=>window.open('https://pixel-pulse-websites.vercel.app/?account=1','_blank','noopener,noreferrer');
   if(sb&&sb.pixelPulse)try{
     const status=await sb.pixelPulse.request('status');
     if(button)button.hidden=!(status&&status.enabled);if(connect)connect.hidden=!(status&&status.enabled);

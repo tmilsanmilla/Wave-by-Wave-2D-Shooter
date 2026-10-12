@@ -15,6 +15,7 @@ function bodyOf(req){
 }
 export default async function handler(req,res){
   res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
+  res.setHeader('X-Outpost-Auth-Version','20261012-jwks-v2');
   const action=actionOf(req);
   try{
     if(action==='jwks'&&req.method==='GET')return json(res,200,{keys:[(await signingKey()).publicKey]});
