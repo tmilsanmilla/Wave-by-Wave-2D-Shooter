@@ -15,7 +15,7 @@ function bodyOf(req){
 }
 export default async function handler(req,res){
   res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
-  res.setHeader('X-Outpost-Auth-Version','20261012-jwks-v2');
+  res.setHeader('X-Outpost-Auth-Version','20261012-cookie-link-v3');
   const action=actionOf(req);
   try{
     if(action==='jwks'&&req.method==='GET')return json(res,200,{keys:[(await signingKey()).publicKey]});
@@ -44,14 +44,19 @@ export default async function handler(req,res){
     const database=await databaseReady();
     if(action==='start'){
       const body=bodyOf(req);
+      const intent=String(body.intent||'');
+      if(!['','continue','link','create'].includes(intent))throw failure('INTENT','Choose Continue, Link, or Create from the game.',400);
       const linkAccountId=await nativeOwnership(String(body.link_token||''),database);
+      if(intent==='link'&&!linkAccountId&&!await session(req,database))
+        throw failure('LINK_PROOF','Sign in to your existing game account before linking Pixel Pulse.',401);
       const state=oidc.randomState(),nonce=oidc.randomNonce(),verifier=oidc.randomPKCECodeVerifier(),browser=random();
       await database.query('delete from oz_identity.pixel_login_attempts where expires_at<now()');
       await database.query(`insert into oz_identity.pixel_login_attempts(state_hash,browser_hash,verifier,nonce,link_account_id,expires_at)
         values($1,$2,$3,$4,$5,now()+interval '5 minutes')`,[hash(state),hash(browser),verifier,nonce,linkAccountId]);
       const url=oidc.buildAuthorizationUrl(configuration,{redirect_uri:CALLBACK,scope:'openid profile email',state,nonce,
-        code_challenge:await oidc.calculatePKCECodeChallenge(verifier),code_challenge_method:'S256',prompt:'login'});
-      // The central page always verifies its managed session before continuing.
+        code_challenge:await oidc.calculatePKCECodeChallenge(verifier),code_challenge_method:'S256'});
+      // Reuse the central managed cookie. Pixel still checks that session and
+      // requires sign-in/username setup when it is absent, expired or incomplete.
       res.setHeader('Set-Cookie',cookie(ATTEMPT_COOKIE,browser,300));
       return json(res,200,{url:url.href});
     }
@@ -78,7 +83,7 @@ export default async function handler(req,res){
     const message=error.status?error.message:'Pixel Pulse sign-in could not complete. Your existing game account was not changed. Try again.';
     if(action==='callback'){
       res.setHeader('Set-Cookie',cookie(ATTEMPT_COOKIE,'',0));
-      return redirect(res,GAME_ORIGIN+'/?pixel_error='+encodeURIComponent(message));
+      return redirect(res,GAME_ORIGIN+'/?pixel_error='+encodeURIComponent(message)+(error.code==='LINK_REQUIRED'?'&pixel=link':''));
     }
     return json(res,error.status||503,{error:message});
   }

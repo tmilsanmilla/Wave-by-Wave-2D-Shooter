@@ -312,6 +312,7 @@ async function initAuth(){
           if(typeof clearMyBanForAuthChange==='function')clearMyBanForAuthChange(nextAuthUserId);
         }
         authUser = nextAuthUser;
+        if(typeof pixelPulseAuthChanged==='function')pixelPulseAuthChanged();
         if(typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen){
           const liveSettingsUser=authUser?String(authUser.id||''):'';
           if((!liveSettingsUser||liveSettingsUser!==accountSettingsUserId)&&typeof closeAccountSettings==='function') closeAccountSettings(true);
@@ -980,7 +981,7 @@ function authIdentifierKind(raw){
 function authActionSync(){
   const el=authElements(),busy=!!authActionBusy;
   if(el.section&&el.section.classList)el.section.classList.toggle('busy',busy);
-  for(const control of [el.identifier,el.password,el.signIn,el.signUp,el.chooseEmail,el.chooseUsername,$('apixel')])if(control)control.disabled=busy;
+  for(const control of [el.identifier,el.password,el.signIn,el.signUp,el.chooseEmail,el.chooseUsername,$('apixel'),$('apixellink')])if(control)control.disabled=busy;
   if(el.forgot){el.forgot.setAttribute('aria-disabled',busy?'true':'false');el.forgot.tabIndex=busy?-1:0;}
   return busy;
 }
@@ -1319,7 +1320,7 @@ function accountSettingsSync(resetInput=false){
     for(const control of [el.username,el.usernameSave,el.currentPass,el.pass1,el.pass2,el.passwordSave])if(control)control.disabled=true;
   }
   const pixelManage=$('settingspixelmanage');if(pixelManage)pixelManage.hidden=!(typeof pixelPulseIsLinked==='function'&&pixelPulseIsLinked());
-  const pixelConnect=$('settingspixel');if(pixelConnect&&pixelConnect.hidden===false)pixelConnect.textContent=pixelPulseIsLinked()?'SIGN IN WITH PIXEL PULSE':'CONNECT PIXEL PULSE · KEEP GAME DATA';
+  const pixelConnect=$('settingspixel');if(pixelConnect&&pixelConnect.hidden===false)pixelConnect.textContent=pixelPulseIsLinked()?'CONTINUE WITH PIXEL PULSE':'LINK PIXEL PULSE · HIGHLY RECOMMENDED';
   accountSettingsRequiredUsername=!!(signedIn&&accountSettingsRequiredUsername&&!chosen);
   el.wrap.classList.toggle('required',accountSettingsRequiredUsername);
   accountSettingsSetSection(accountSettingsSection);
@@ -1513,10 +1514,11 @@ function bindDomEvents(){
   addEventListener('focus',refreshTemporaryGifts);
   if(typeof document!=='undefined')document.addEventListener('visibilitychange',()=>{if(!document.hidden)refreshTemporaryGifts();});
   $('aguest').onclick = ()=>{
-    if(!recovering&&!arenaAuthPending){authActionCancel(true);$('authmsg').textContent='';$('authwrap').style.display='none';}
+    if(!recovering&&!arenaAuthPending){authActionCancel(true);if(typeof pixelPulseCancelLink==='function')pixelPulseCancelLink();$('authmsg').textContent='';$('authwrap').style.display='none';}
   };
   $('acancel').onclick = async ()=>{
   authActionCancel(true);
+  if(typeof pixelPulseCancelLink==='function')pixelPulseCancelLink();
   if(await cancelPasswordRecoverySession())return;   // keep the panel open so they see the recovery message
   recovering=false;
   arenaAuthPending=false; $('aguest').style.display='block';

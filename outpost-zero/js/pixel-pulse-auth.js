@@ -77,21 +77,63 @@ function installPixelPulseTransport(client){
   return client;
 }
 
-async function pixelPulseStart(){
+let pixelPulseEnabled=false,pixelPulseLinkPending=false,pixelPulseStarting=false,pixelPulseLaunchEpoch=0;
+function pixelPulseLinkUi(){
+  const note=$('apixelintent'),create=$('aup'),gate=$('usernameclaimpixel'),hint=$('usernameclaimpixelhint');
+  if(note){note.hidden=!pixelPulseLinkPending;note.textContent='LINK EXISTING ACCOUNT · HIGHLY RECOMMENDED. Sign in to your game account below once. Then Pixel Pulse will connect the same email and shared username, keeping your progress.';}
+  if(create)create.hidden=pixelPulseLinkPending;
+  const suggest=!!(pixelPulseEnabled&&authUser&&!pixelPulseIsLinked());
+  if(gate)gate.hidden=!suggest;if(hint)hint.hidden=!suggest;
+}
+function pixelPulseCancelLink(){
+  pixelPulseLaunchEpoch++;pixelPulseStarting=false;pixelPulseLinkPending=false;pixelPulseLinkUi();
+  for(const id of ['apixel','apixellink','settingspixel'])if($(id))$(id).disabled=false;
+}
+async function pixelPulseBeginLink(){
+  if(authUser)return pixelPulseStart('link');
+  pixelPulseLinkPending=true;pixelPulseLinkUi();
+  $('authwrap').style.display='flex';$('authmsg').textContent='Sign in to the game account you want to keep. Use the same email as Pixel Pulse.';
+  try{$('aidentifier').focus();}catch(error){}
+  return false;
+}
+function pixelPulseAuthChanged(){
+  pixelPulseLinkUi();
+  if(pixelPulseEnabled&&pixelPulseLinkPending&&authUser&&!recovering){
+    pixelPulseLinkPending=false;pixelPulseLinkUi();
+    // Run after the native event finishes; do not block its token/session work.
+    void Promise.resolve().then(()=>pixelPulseStart('link'));
+  }
+}
+async function pixelPulseStart(intent='continue'){
   if(!sb||!sb.pixelPulse)return false;
-  const button=$('apixel'),connect=$('settingspixel'),message=authUser?$('settingspixelstatus'):$('authmsg');
+  if(!['continue','link','create'].includes(intent))intent='continue';
+  if((intent==='link'||pixelPulseLinkPending)&&!authUser)return pixelPulseBeginLink();
+  if(pixelPulseStarting)return false;pixelPulseStarting=true;
+  const generation=++pixelPulseLaunchEpoch;
+  const button=$('apixel'),connect=$('settingspixel'),link=$('apixellink'),
+    message=typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen?$('usernameclaimstatus'):
+      typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen?$('settingspixelstatus'):$('authmsg'),
+    owner=authUser&&String(authUser.id||'');
   if(button)button.disabled=true;if(connect)connect.disabled=true;
+  if(link)link.disabled=true;
   if(message)message.textContent='Connecting to Pixel Pulse…';
   try{
     const linking=!!(authUser&&!authUser.pixel_pulse),linkToken=linking?await sb.auth.getJWTToken(false):'';
+    if(generation!==pixelPulseLaunchEpoch)return false;
     if(linking&&!linkToken)throw new Error('Sign in to your existing game account first.');
-    const result=await sb.pixelPulse.request('start','POST',{link_token:linkToken||''});
+    if((authUser&&String(authUser.id||''))!==owner)throw new Error('The game account changed. Start again.');
+    const result=await sb.pixelPulse.request('start','POST',{link_token:linkToken||'',intent:linking?'link':intent});
+    if(generation!==pixelPulseLaunchEpoch)return false;
+    if((authUser&&String(authUser.id||''))!==owner)throw new Error('The game account changed. Start again.');
     const url=new URL(result&&result.url||'');
     if(url.origin!=='https://pixel-pulse-websites.vercel.app'||url.pathname!=='/api/sso/oauth2/authorize')throw new Error('Pixel Pulse connection is not ready.');
     location.assign(url.href);return true;
   }catch(error){
+    if(generation!==pixelPulseLaunchEpoch)return false;
     if(message)message.textContent=error.message||'Could not start shared sign-in.';
-    if(button)button.disabled=false;if(connect)connect.disabled=false;return false;
+    if(message===$('authmsg'))$('authwrap').style.display='flex';
+    if(button)button.disabled=false;if(connect)connect.disabled=false;if(link)link.disabled=false;
+    pixelPulseStarting=false;return false;
   }
 }
 function pixelPulseIsLinked(){return !!(authUser&&(authUser.pixel_pulse||authUser.pixel_pulse_linked));}
@@ -102,16 +144,21 @@ async function pixelPulseSyncNativeIdentity(user){
   return user;
 }
 async function setupPixelPulseUi(){
-  const button=$('apixel'),connect=$('settingspixel'),manage=$('settingspixelmanage');
-  if(button)button.onclick=pixelPulseStart;if(connect)connect.onclick=pixelPulseStart;
+  const button=$('apixel'),link=$('apixellink'),gate=$('usernameclaimpixel'),connect=$('settingspixel'),manage=$('settingspixelmanage');
+  if(button)button.onclick=()=>pixelPulseStart('continue');if(connect)connect.onclick=()=>pixelPulseStart('link');
+  if(link)link.onclick=pixelPulseBeginLink;if(gate)gate.onclick=pixelPulseBeginLink;
   if(manage)manage.onclick=()=>window.open('https://pixel-pulse-websites.vercel.app/?account=1','_blank','noopener,noreferrer');
   if(sb&&sb.pixelPulse)try{
     const status=await sb.pixelPulse.request('status');
-    if(button)button.hidden=!(status&&status.enabled);if(connect)connect.hidden=!(status&&status.enabled);
+    pixelPulseEnabled=!!(status&&status.enabled);
+    if(button)button.hidden=!pixelPulseEnabled;if(link)link.hidden=!pixelPulseEnabled;if(connect)connect.hidden=!pixelPulseEnabled;
   }catch(error){} // Ordinary Neon login remains available while provider deploys.
-  const url=new URL(location.href),error=url.searchParams.get('pixel_error');
+  const url=new URL(location.href),error=url.searchParams.get('pixel_error'),intent=url.searchParams.get('pixel');
   if(error){$('authwrap').style.display='flex';$('authmsg').textContent=error.slice(0,700);}
-  if(error||url.searchParams.has('pixel_connected')){
-    url.searchParams.delete('pixel_error');url.searchParams.delete('pixel_connected');history.replaceState({},'',url.href);
+  if(error||url.searchParams.has('pixel_connected')||intent){
+    url.searchParams.delete('pixel_error');url.searchParams.delete('pixel_connected');url.searchParams.delete('pixel');history.replaceState({},'',url.href);
   }
+  pixelPulseAuthChanged();
+  if(pixelPulseEnabled&&intent==='link')await pixelPulseBeginLink();
+  else if(pixelPulseEnabled&&intent==='create'){pixelPulseCancelLink();await pixelPulseStart('create');}
 }

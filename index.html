@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>OUTPOST ZERO — Tactical 2D Shooter</title>
-<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260831-hub-tools-settings-v1&release=20261012-pixel-sso-v1">
+<link rel="stylesheet" href="./outpost-zero/styles.css?v=20260831-hub-tools-settings-v1&release=20261012-pixel-cookie-v3">
 </head>
 <body>
 <canvas id="c" tabindex="-1"></canvas>
@@ -19,8 +19,10 @@
     <h2>OUTPOST ZERO</h2>
     <section id="authsignin" aria-labelledby="authsignintitle">
       <h3 id="authsignintitle">SIGN IN</h3>
-      <button id="apixel" class="btn" type="button" hidden>SIGN IN WITH PIXEL PULSE</button>
-      <p class="auth-private-note">Pixel Pulse uses your shared username and email. Enter its password only on Pixel Pulse. Existing player? Sign in below first, then connect in Account Settings to keep your game data.</p>
+      <button id="apixel" class="btn" type="button" hidden>CONTINUE WITH PIXEL PULSE</button>
+      <button id="apixellink" class="btn" type="button" hidden>LINK EXISTING ACCOUNT · HIGHLY RECOMMENDED</button>
+      <p class="auth-private-note">Already signed into Pixel Pulse? Continue without typing its password again. New player? Continue creates your game account with the same email and one shared username.</p>
+      <p id="apixelintent" class="auth-private-note" hidden></p>
       <p class="auth-provider-note">SECURED BY NEON MANAGED BETTER AUTH</p>
       <p class="auth-migration-note">EXISTING PLAYER? YOUR DATA IS SAFE. USE FORGOT PASSWORD ONCE IF YOUR OLD PASSWORD IS REJECTED.</p>
       <p class="auth-private-note">Use the private email on your account or your public username.</p>
@@ -36,7 +38,7 @@
         <button id="achooseusername" class="btn" type="button">USERNAME ACCOUNT</button>
       </div>
       <button id="aup" class="btn" type="button">CREATE ACCOUNT</button>
-      <p class="auth-account-note">New accounts use an email and password first. You choose your unique public username after your first sign-in.</p>
+      <p class="auth-account-note">Already use this email on Pixel Pulse? Linking is highly recommended. Keep your game progress and use the one Pixel Pulse username and password across connected sites.</p>
       <div class="auth-help">
         <a id="aforgot" href="#">Forgot password?</a>
       </div>
@@ -57,6 +59,8 @@
   <div id="usernameclaimbox">
     <h2 id="usernameclaimtitle">CHOOSE YOUR USERNAME</h2>
     <p id="usernameclaimhint">Every signed-in operator needs one unique public username. Until you choose it, creator/main staff may use your email as the account label.</p>
+    <button id="usernameclaimpixel" class="btn" type="button" hidden>LINK PIXEL PULSE · HIGHLY RECOMMENDED</button>
+    <p id="usernameclaimpixelhint" class="auth-private-note" hidden>Use the same email and one Pixel Pulse username across connected sites, or choose a game-only username below.</p>
     <input id="usernameclaiminput" type="text" placeholder="operator_7" autocomplete="off"
       minlength="3" autocapitalize="none" spellcheck="false" aria-label="Choose username"
       aria-describedby="usernameclaimstatus" aria-invalid="false">
@@ -240,8 +244,8 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="./outpost-zero/vendor/neon-client.js?v=20260921-managed-auth-v1"></script>
 <script src="./outpost-zero/js/neon-token-bridge.js?v=20261012-neon-token-v1"></script>
-<script src="./outpost-zero/js/pixel-pulse-auth.js?v=20261012-pixel-sso-v2"></script>
-<script src="./outpost-zero/js/networking.js?v=20260921-managed-auth-v1&release=20260925-better-auth-restore-v2&fix=20261012-neon-token-v1&sso=20261012-pixel-v1"></script>
+<script src="./outpost-zero/js/pixel-pulse-auth.js?v=20261012-pixel-cookie-v3"></script>
+<script src="./outpost-zero/js/networking.js?v=20260921-managed-auth-v1&release=20260925-better-auth-restore-v2&fix=20261012-neon-token-v1&sso=20261012-pixel-cookie-v3"></script>
 <script src="./outpost-zero/js/core.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/audio.js?v=20260830-map-vote-ui"></script>
 <script src="./outpost-zero/js/weapons.js?v=20260831-frag-range-v1&release=20260921-fall-release-v1"></script>
