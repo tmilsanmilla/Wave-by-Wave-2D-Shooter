@@ -1,0 +1,8 @@
+{
+  "rewrites": [{ "source": "/api/pixel-pulse/:action", "destination": "/api/pixel-pulse?action=:action" }],
+  "headers": [{ "source": "/api/pixel-pulse/:path*", "headers": [
+    { "key": "Cache-Control", "value": "no-store" },
+    { "key": "Referrer-Policy", "value": "no-referrer" },
+    { "key": "X-Content-Type-Options", "value": "nosniff" }
+  ] }]
+}

@@ -39,6 +39,10 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
     color:#cdd6b0;font:12px ui-monospace,Consolas,monospace;padding:9px;margin-bottom:10px}
   #authbox input:focus{outline:2px solid rgba(232,182,88,.22);outline-offset:1px;border-color:#e8b658}
   #authbox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
+  #apixel[hidden],#settingspixel[hidden],#settingspixelmanage[hidden]{display:none!important}
+  #apixel{border-color:#7fd8ff;color:#bfeaff;background:rgba(127,216,255,.12)}
+  #settingspixel,#settingspixelmanage{display:block;width:100%;min-height:44px;margin:0 0 10px}
+  #settingspixelstatus{color:#e8b658;font-size:11px;line-height:1.5}
   #authsignin .btn{min-height:42px}
   #authsignin.busy input,#authsignin.busy .btn{opacity:.55;cursor:wait}
   #authaccountchoice{border:1px solid #d05548;background:rgba(208,85,72,.08);padding:10px;margin:0 0 10px}

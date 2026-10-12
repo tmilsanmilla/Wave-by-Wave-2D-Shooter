@@ -113,12 +113,15 @@ async function neonBetterAuthPasswordReset(email,redirectTo){
 async function neonBetterAuthSignOut(){
   const api=neonAuthApi();
   if(!api||typeof api.signOut!=='function')return {error:neonBetterAuthUnavailable()};
+  if(sb.pixelPulse)await sb.pixelPulse.signOut();
   const result=await api.signOut();
   if(!(result&&result.error))await sb.syncAuthState('SIGNED_OUT',null);
   return {error:result&&result.error||null};
 }
 async function neonGameUser(session){
   const user=session&&session.user;if(!user)return null;
+  if(session.provider==='pixel-pulse'&&user.pixel_pulse&&user.game_user_id)
+    return Object.assign({},user,{id:user.game_user_id,pixel_pulse_subject:user.id});
   const authId=String(user.id||'');if(!authId)throw new Error('Neon Auth returned a user without an id.');
   const args={
     p_migration_proof:pendingNeonMigrationProof||null
@@ -136,7 +139,8 @@ async function neonGameUser(session){
   const row=Array.isArray(result&&result.data)?result.data[0]:result&&result.data;
   const gameId=String(row&&row.user_id||'');if(!gameId)throw new Error('Could not link this Neon login to an Outpost Zero account.');
   pendingNeonMigrationProof='';
-  return Object.assign({},user,{id:gameId,neon_auth_id:authId});
+  const linkedUser=Object.assign({},user,{id:gameId,neon_auth_id:authId});
+  return typeof pixelPulseSyncNativeIdentity==='function'?pixelPulseSyncNativeIdentity(linkedUser):linkedUser;
 }
 function neonRecoveryTokenFromLocation(){
   if(typeof location==='undefined')return '';
@@ -247,6 +251,7 @@ async function initAuth(){
         ?window.supabase.createClient(LEGACY_SUPABASE_URL,LEGACY_SUPABASE_ANON_KEY,{auth:{persistSession:false,
           autoRefreshToken:false,detectSessionInUrl:false,storageKey:'oz-legacy-transport'}}):null;
       const neonClient=installNeonSignedTokenTransport(window.outpostZeroNeon.createClient({authUrl:NEON_AUTH_URL,dataApiUrl:NEON_DATA_API_URL}));
+      installPixelPulseTransport(neonClient);
       sb=neonClientWithLegacyTransport(neonClient,legacySupabase);
       neonRecoveryToken=neonRecoveryTokenFromLocation();
       // Do not expose a cached signed-in account while getSession is pending.
@@ -975,7 +980,7 @@ function authIdentifierKind(raw){
 function authActionSync(){
   const el=authElements(),busy=!!authActionBusy;
   if(el.section&&el.section.classList)el.section.classList.toggle('busy',busy);
-  for(const control of [el.identifier,el.password,el.signIn,el.signUp,el.chooseEmail,el.chooseUsername])if(control)control.disabled=busy;
+  for(const control of [el.identifier,el.password,el.signIn,el.signUp,el.chooseEmail,el.chooseUsername,$('apixel')])if(control)control.disabled=busy;
   if(el.forgot){el.forgot.setAttribute('aria-disabled',busy?'true':'false');el.forgot.tabIndex=busy?-1:0;}
   return busy;
 }
@@ -1222,7 +1227,8 @@ function accountSettingsFocusable(){
     :accountSettingsSection==='password'
       ?[el.currentPass,el.pass1,el.pass2,el.passwordSave,el.passwordBack,el.signout,el.close]
       :[el.usernameOpen,el.passwordOpen,el.signout,el.close];
-  return choices.filter(node=>node&&!node.disabled&&typeof node.focus==='function');
+  const pixelButtons=[$('settingspixel'),$('settingspixelmanage')].filter(node=>node&&!node.hidden);
+  return pixelButtons.concat(choices).filter(node=>node&&!node.disabled&&typeof node.focus==='function');
 }
 function accountSettingsTrapTab(event){
   const controls=accountSettingsFocusable();
@@ -1306,6 +1312,14 @@ function accountSettingsSync(resetInput=false){
   if(el.signout) el.signout.disabled=accountSettingsBusy||!signedIn;
   for(const control of [el.usernameOpen,el.passwordOpen,el.usernameBack,el.passwordBack,el.close])
     if(control)control.disabled=accountSettingsBusy;
+  if(typeof pixelPulseIsLinked==='function'&&pixelPulseIsLinked()){
+    if(el.usernameHint)el.usernameHint.textContent='Your shared username is managed by Pixel Pulse and stays the same on connected websites.';
+    if(el.usernameSummary)el.usernameSummary.textContent='@'+(authUser.user_metadata&&authUser.user_metadata.username||current)+' · Pixel Pulse account';
+    if(el.passwordSummary)el.passwordSummary.textContent='Manage your shared password on Pixel Pulse';
+    for(const control of [el.username,el.usernameSave,el.currentPass,el.pass1,el.pass2,el.passwordSave])if(control)control.disabled=true;
+  }
+  const pixelManage=$('settingspixelmanage');if(pixelManage)pixelManage.hidden=!(typeof pixelPulseIsLinked==='function'&&pixelPulseIsLinked());
+  const pixelConnect=$('settingspixel');if(pixelConnect&&pixelConnect.hidden===false)pixelConnect.textContent=pixelPulseIsLinked()?'SIGN IN WITH PIXEL PULSE':'CONNECT PIXEL PULSE · KEEP GAME DATA';
   accountSettingsRequiredUsername=!!(signedIn&&accountSettingsRequiredUsername&&!chosen);
   el.wrap.classList.toggle('required',accountSettingsRequiredUsername);
   accountSettingsSetSection(accountSettingsSection);
@@ -1361,6 +1375,9 @@ function closeAccountSettings(force=false){
   return true;
 }
 async function saveAccountSettingsUsername(){
+  if(typeof pixelPulseIsLinked==='function'&&pixelPulseIsLinked()){
+    accountSettingsSetStatus('username','Your shared username is managed on Pixel Pulse.',true);return false;
+  }
   const el=accountSettingsElements(), value=String(el.username&&el.username.value||'').trim();
   if(accountSettingsBusy) return false;
   if(typeof socialUsernameValidationMessage==='function'){
@@ -1389,6 +1406,9 @@ async function saveAccountSettingsUsername(){
   return ok;
 }
 async function saveAccountSettingsPassword(){
+  if(typeof pixelPulseIsLinked==='function'&&pixelPulseIsLinked()){
+    accountSettingsSetStatus('password','Manage your shared password on Pixel Pulse.',true);return false;
+  }
   const el=accountSettingsElements(),current=String(el.currentPass&&el.currentPass.value||''),
     first=String(el.pass1&&el.pass1.value||''),second=String(el.pass2&&el.pass2.value||'');
   if(accountSettingsBusy) return false;

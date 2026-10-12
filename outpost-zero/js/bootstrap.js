@@ -12,6 +12,7 @@ bindSocialDomControls();
 if(typeof bindBotLadderSyncEvents==='function')bindBotLadderSyncEvents();
 
 initAuth().finally(()=>{
+  if(typeof setupPixelPulseUi==='function')void setupPixelPulseUi();
   if(!sb){
     if(typeof purgeUnpublishedWeaponState==='function'&&purgeUnpublishedWeaponState()&&typeof saveMetaLocal==='function')saveMetaLocal();
   }

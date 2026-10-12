@@ -1,0 +1,7 @@
+{
+  "name": "outpost-zero",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "dependencies": { "jose": "6.2.12", "openid-client": "6.8.8", "pg": "8.23.1" }
+}
