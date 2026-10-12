@@ -4,6 +4,7 @@ import vm from 'node:vm';
 import {generateKeyPair,SignJWT,exportJWK} from 'jose';
 import * as oidc from 'openid-client';
 import {centralProfile,cookieValue,cookie,COOKIE,hash,PIXEL_ISSUER,providerConfiguration} from '../../lib/pixel-pulse.js';
+import apiHandler from '../../api/pixel-pulse.js';
 
 const subject='10000000-0000-4000-8000-000000000001',gameId='20000000-0000-4000-8000-000000000001';
 const claims={sub:subject,preferred_username:'shared_player',email:'player@example.invalid',email_verified:true};
@@ -16,6 +17,19 @@ assert.equal(cookieValue({headers:{cookie:`${COOKIE}=${raw}`}},COOKIE),raw);
 assert.equal(cookieValue({headers:{cookie:`${COOKIE}=${raw}; ${COOKIE}=${raw}`}},COOKIE),null);
 assert.match(cookie(COOKIE,raw,100),/Path=\/; HttpOnly; Secure; SameSite=Lax/);
 assert.equal(hash(raw).length,64);
+assert.equal('role' in centralProfile({...claims,role:'creator'},{...claims,role:'creator'}),false,'central administrator roles are not imported');
+async function endpoint(action,method='GET',headers={}){
+ const result={headers:{},statusCode:0,body:''};
+ await apiHandler({url:'/api/pixel-pulse/'+action,method,headers,body:{}},{
+  setHeader(name,value){result.headers[name]=value;},set statusCode(value){result.statusCode=value;},end(value=''){result.body=value;}
+ });return result;
+}
+assert.equal((await endpoint('start','POST',{origin:'https://other-site.invalid'})).statusCode,403);
+assert.equal((await endpoint('token','GET')).statusCode,403);
+assert.equal((await endpoint('token','POST',{origin:'https://wave-by-wave-2-d-shooter.vercel.app'})).statusCode,401);
+assert.equal((await endpoint('session')).body,JSON.stringify({session:null}));
+assert.equal((await endpoint('callback','POST')).statusCode,405);
+assert.equal((await endpoint('unknown')).statusCode,404);
 
 // Real maintained OIDC library, real signatures; every endpoint is mocked.
 const algorithm='EdDSA';
@@ -55,7 +69,7 @@ const source=fs.readFileSync(new URL('../js/pixel-pulse-auth.js',import.meta.url
 let active={provider:'pixel-pulse',expires_at:Math.floor(Date.now()/1000)+300,user:{id:'pixelpulse:'+subject,game_user_id:gameId,pixel_pulse:true}},
  tokenRequests=0,nativeRequests=0,handler,resolveToken;
 const fixtureJwt=()=>[Buffer.from(JSON.stringify({alg:'RS256'})).toString('base64url'),Buffer.from(JSON.stringify({
- sub:active.user.id,role:'authenticated',iss:'https://wave-by-wave-2-d-shooter.vercel.app/api/pixel-pulse',aud:'https://ep-fragrant-salad-a577vui2.neonauth.us-east-2.aws.neon.tech',exp:Math.floor(Date.now()/1000)+120})).toString('base64url'),'fixture'].join('.');
+ sub:active.user.id,role:'authenticated',iss:'https://wave-by-wave-2-d-shooter.vercel.app/api/pixel-pulse',aud:['https://ep-fragrant-salad-a577vui2.neonauth.us-east-2.aws.neon.tech','outpost-zero-pixel-pulse'],exp:Math.floor(Date.now()/1000)+120})).toString('base64url'),'fixture'].join('.');
 const context=vm.createContext({Date,Promise,Number,String,Object,JSON,Error,atob,fetch:async(url,options)=>{
  const action=url.split('/').pop();
  if(action==='session')return Response.json({session:active});
