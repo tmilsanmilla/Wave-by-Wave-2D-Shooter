@@ -9,6 +9,21 @@ await assert.rejects(bindAccount(db,profile,game),{code:'LINK_CONFIRMATION_PENDI
 assert.ok(calls.every(c=>!/^\s*(?:insert|update|delete)/i.test(c.sql)),'a legacy pending callback cannot mutate/create a new link without central password proof');
 const owned={async query(sql){if(sql.startsWith('select * from oz_identity.pixel_profiles'))return {rows:[{account_id:game}],rowCount:1};return {rows:[],rowCount:0};}};
 await assert.rejects(bindAccount(owned,profile,'30000000-0000-4000-8000-000000000001'),{code:'ALREADY_LINKED'},'an existing link may never be switched to another game UUID');
+const returning={async query(sql){
+ if(sql.startsWith('select * from oz_identity.pixel_profiles'))return {rows:[{account_id:game}],rowCount:1};
+ if(sql.startsWith('select * from oz_identity.accounts'))return {rows:[{id:game,email:profile.email,deleted_at:null}],rowCount:1};
+ if(sql.startsWith('select subject from oz_identity.pixel_profiles'))return {rows:[{subject:profile.subject}],rowCount:1};
+ if(sql.startsWith('select user_id from public.social_profiles'))return {rows:[{user_id:game}],rowCount:1};
+ return {rows:[],rowCount:0};
+}};
+assert.equal(await bindAccount(returning,profile,null),game,'a returning already-linked subject retains the exact original account');
+const legacy={async query(sql){
+ if(sql.startsWith('select * from oz_identity.pixel_profiles'))return {rows:[],rowCount:0};
+ if(sql.startsWith('select 1 from oz_identity.accounts'))return {rows:[{}],rowCount:1};
+ if(/^\s*(?:insert|update|delete)/i.test(sql))throw new Error('Implicit legacy adoption attempted');
+ return {rows:[],rowCount:0};
+}};
+await assert.rejects(bindAccount(legacy,profile,null),{code:'LINK_REQUIRED'},'a remembered central email cannot implicitly adopt an existing game account');
 const api=fs.readFileSync(new URL('../../api/pixel-pulse.js',import.meta.url),'utf8');
 assert.match(api,/if\(linkAccountId&&![\s\S]{0,150}pixel_profiles where account_id=\$1/,'new start attempts must check the already-proved native account binding');
 assert.ok(api.indexOf("throw failure('LINK_CONFIRMATION_PENDING'")<api.indexOf('insert into oz_identity.pixel_login_attempts'),'blocked new links cannot create login attempts');
