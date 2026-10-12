@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import {bindAccount} from '../../lib/pixel-pulse.js';
+import {assertNativeLinkTarget} from '../../api/pixel-pulse.js';
 const profile={subject:'10000000-0000-4000-8000-000000000001',username:'fixture_name',email:'fixture@example.invalid'};
 const game='20000000-0000-4000-8000-000000000001';
+assert.throws(()=>assertNativeLinkTarget('link',null,{cookie:'already-signed-in-pixel'}),{code:'LINK_PROOF'},'a Pixel cookie without a proved native target can never turn explicit Link into Create');
+assert.doesNotThrow(()=>assertNativeLinkTarget('continue',null),'ordinary returning bound Continue needs no new native link');
+assert.doesNotThrow(()=>assertNativeLinkTarget('link',game),'proved native ownership proceeds to the separate new-link hold');
 const calls=[];
 const db={async query(sql,args){calls.push({sql,args});return {rows:[],rowCount:0};}};
 await assert.rejects(bindAccount(db,profile,game),{code:'LINK_CONFIRMATION_PENDING'});
@@ -27,5 +31,6 @@ await assert.rejects(bindAccount(legacy,profile,null),{code:'LINK_REQUIRED'},'a 
 const api=fs.readFileSync(new URL('../../api/pixel-pulse.js',import.meta.url),'utf8');
 assert.match(api,/if\(linkAccountId&&![\s\S]{0,150}pixel_profiles where account_id=\$1/,'new start attempts must check the already-proved native account binding');
 assert.ok(api.indexOf("throw failure('LINK_CONFIRMATION_PENDING'")<api.indexOf('insert into oz_identity.pixel_login_attempts'),'blocked new links cannot create login attempts');
-assert.ok(api.includes("intent==='link'&&!linkAccountId&&!await session"),'link intent without ownership must never fall back to account creation');
+assert.ok(api.includes('assertNativeLinkTarget(intent,linkAccountId)'),'link intent without ownership must never fall back to account creation');
+assert.ok(api.indexOf('assertNativeLinkTarget(intent,linkAccountId)')<api.indexOf('insert into oz_identity.pixel_login_attempts'),'cookie-only Link must fail before creating any attempt');
 console.log('PASS new-link server hold at start/callback, no mutation, preserved existing-link ownership and no cookie-only confirmation claim');

@@ -26,6 +26,9 @@ server-gates all NEW native-account links, including callbacks begun before
 release, until signed flow-bound central current-password proof exists. Existing
 linked subjects and their returning sessions are not removed. Cookie reuse is
 not advertised as satisfying new-link confirmation. A verified email match
-alone still cannot adopt another game account. No automatic legacy adoption,
+alone still cannot adopt another game account. Explicit Link without a proved
+native target fails before creating an attempt, even with a Pixel cookie; it
+never falls back to Create. Ordinary bound Continue remains supported.
+No automatic legacy adoption,
 account management, expanded shared names, direct-email provider or Auth-user
 provisioning is implemented here. Those remain separately held.

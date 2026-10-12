@@ -4,7 +4,7 @@ import vm from 'node:vm';
 const source=fs.readFileSync(new URL('../js/pixel-pulse-auth.js',import.meta.url),'utf8');
 const server=fs.readFileSync(new URL('../../api/pixel-pulse.js',import.meta.url),'utf8');
 assert.ok(!/prompt\s*:\s*['"]login['"]/.test(server),'returning central cookies must not force password re-entry');
-assert.match(server,/intent==='link'&&!linkAccountId&&!await session/,'Link cannot silently become Create without ownership');
+assert.match(server,/assertNativeLinkTarget\(intent,linkAccountId\)/,'Link cannot silently become Create without native target ownership');
 assert.match(server,/error\.code==='LINK_REQUIRED'\?'&pixel=link'/);
 const authorize='https://pixel-pulse-websites.vercel.app/api/sso/oauth2/authorize?state=fixture';
 function fixture(intent=''){

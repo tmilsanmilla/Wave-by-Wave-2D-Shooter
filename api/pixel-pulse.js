@@ -13,6 +13,10 @@ function bodyOf(req){
   if(typeof req.body==='string'){if(req.body.length>16384)throw failure('BODY','Request too large.',413);return JSON.parse(req.body);}
   return req.body||{};
 }
+export function assertNativeLinkTarget(intent,linkAccountId){
+  if(intent==='link'&&!linkAccountId)
+    throw failure('LINK_PROOF','Sign in to your existing game account before linking Pixel Pulse.',401);
+}
 export default async function handler(req,res){
   res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
   res.setHeader('X-Outpost-Auth-Version','20261012-signin-recovery-v1');
@@ -47,12 +51,12 @@ export default async function handler(req,res){
       const intent=String(body.intent||'');
       if(!['','continue','link','create'].includes(intent))throw failure('INTENT','Choose Continue, Link, or Create from the game.',400);
       const linkAccountId=await nativeOwnership(String(body.link_token||''),database);
+      // Explicit Link never becomes Create merely because a Pixel cookie exists.
+      assertNativeLinkTarget(intent,linkAccountId);
       // Native login recovery ships first. Existing links keep working, but a
       // NEW link waits for the central signed current-password proof contract.
       if(linkAccountId&&!(await database.query('select 1 from oz_identity.pixel_profiles where account_id=$1',[linkAccountId])).rowCount)
         throw failure('LINK_CONFIRMATION_PENDING','Game sign-in is available. New Pixel Pulse linking is waiting for its password-confirmation update.',503);
-      if(intent==='link'&&!linkAccountId&&!await session(req,database))
-        throw failure('LINK_PROOF','Sign in to your existing game account before linking Pixel Pulse.',401);
       const state=oidc.randomState(),nonce=oidc.randomNonce(),verifier=oidc.randomPKCECodeVerifier(),browser=random();
       await database.query('delete from oz_identity.pixel_login_attempts where expires_at<now()');
       await database.query(`insert into oz_identity.pixel_login_attempts(state_hash,browser_hash,verifier,nonce,link_account_id,expires_at)
