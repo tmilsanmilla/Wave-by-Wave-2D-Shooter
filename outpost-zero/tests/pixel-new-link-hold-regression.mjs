@@ -27,10 +27,15 @@ const legacy={async query(sql){
  if(/^\s*(?:insert|update|delete)/i.test(sql))throw new Error('Implicit legacy adoption attempted');
  return {rows:[],rowCount:0};
 }};
-await assert.rejects(bindAccount(legacy,profile,null),{code:'LINK_REQUIRED'},'a remembered central email cannot implicitly adopt an existing game account');
+await assert.rejects(bindAccount(legacy,profile,null),{code:'LINK_CONFIRMATION_PENDING'},'a remembered central email cannot implicitly adopt an existing game account');
+const freshCalls=[];
+const fresh={async query(sql){freshCalls.push(sql);return {rows:[],rowCount:0};}};
+await assert.rejects(bindAccount(fresh,profile,null),{code:'LINK_CONFIRMATION_PENDING'},'a unique email cannot create a first Pixel account or binding through Continue/Create');
+assert.ok(freshCalls.every(sql=>!/^\s*(?:insert|update|delete)/i.test(sql)),'first binding is rejected before any identity/profile/session writes');
+assert.ok(!freshCalls.some(sql=>sql.includes('oz_identity.accounts')),'an unbound subject cannot probe native accounts by email');
 const api=fs.readFileSync(new URL('../../api/pixel-pulse.js',import.meta.url),'utf8');
 assert.match(api,/if\(linkAccountId&&![\s\S]{0,150}pixel_profiles where account_id=\$1/,'new start attempts must check the already-proved native account binding');
 assert.ok(api.indexOf("throw failure('LINK_CONFIRMATION_PENDING'")<api.indexOf('insert into oz_identity.pixel_login_attempts'),'blocked new links cannot create login attempts');
 assert.ok(api.includes('assertNativeLinkTarget(intent,linkAccountId)'),'link intent without ownership must never fall back to account creation');
 assert.ok(api.indexOf('assertNativeLinkTarget(intent,linkAccountId)')<api.indexOf('insert into oz_identity.pixel_login_attempts'),'cookie-only Link must fail before creating any attempt');
-console.log('PASS new-link server hold at start/callback, no mutation, preserved existing-link ownership and no cookie-only confirmation claim');
+console.log('PASS all first-binding holds, no mutation/email probing, preserved existing links and no cookie-only confirmation claim');

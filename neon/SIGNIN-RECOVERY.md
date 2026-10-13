@@ -22,13 +22,24 @@ SQL test used exact synthetic fixtures and unconditional rollback.
 
 The current remote base contains unpublished cookie/link-intent work compared
 with LIVE `132bc10683701c866c88b4b29fc0c3f843cacde1`. This release explicitly
-server-gates all NEW native-account links, including callbacks begun before
-release, until signed flow-bound central current-password proof exists. Existing
+server-gates EVERY first Pixel binding, including unique-email new accounts,
+cookie-only Continue/Create and callbacks begun before release, until signed
+flow-bound central current-password proof exists. The binder rejects unbound
+subjects before identity, profile or session writes or native-email lookup.
+Existing
 linked subjects and their returning sessions are not removed. Cookie reuse is
 not advertised as satisfying new-link confirmation. A verified email match
 alone still cannot adopt another game account. Explicit Link without a proved
 native target fails before creating an attempt, even with a Pixel cookie; it
 never falls back to Create. Ordinary bound Continue remains supported.
+Native account signup/sign-in and its first username remain available.
 No automatic legacy adoption,
 account management, expanded shared names, direct-email provider or Auth-user
 provisioning is implemented here. Those remain separately held.
+
+The first-binding correction has callback-route regressions for remembered
+cookies, browser confirmation flags and legacy pending attempts. Rejected
+callbacks consume only the one-time login attempt, then roll back without
+identity/profile/session mutations. Already-bound returning Continue retains
+the original game ID, credentials, roles and progress. Release marker:
+`20261013-signin-recovery-v2`. No additional migration is needed.
