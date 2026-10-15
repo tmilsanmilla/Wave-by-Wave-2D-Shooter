@@ -35,7 +35,7 @@ try{
     create table public.saved_progress(user_id uuid primary key references oz_identity.accounts(id),data jsonb);
     create table neon_auth."user"(id uuid primary key,email text,"emailVerified" boolean);
     create table neon_auth.session(id text primary key,token text,"userId" uuid references neon_auth."user"(id),"expiresAt" timestamptz);
-    create table neon_auth.account(id uuid primary key,"userId" uuid references neon_auth."user"(id),"providerId" text,"updatedAt" timestamptz);
+    create table neon_auth.account(id uuid primary key,"userId" uuid constraint offline_account_user_fk references neon_auth."user"(id),"providerId" text,"updatedAt" timestamptz);
     create function auth.session() returns jsonb language sql stable as $$select nullif(current_setting('test.validated_claims',true),'')::jsonb$$;
     create function auth.user_id() returns text language sql stable as $$select auth.session()->>'sub'$$;
     create function oz_identity.request_subject() returns text language sql stable as $$select auth.user_id()$$;
@@ -46,6 +46,12 @@ try{
   // private test cluster. Production schemas and provider rows are untouched.
   await pool.query(fs.readFileSync(new URL('../../neon/migrations/002-pixel-pulse-sign-in.sql',import.meta.url),'utf8'));
   await pool.query(fs.readFileSync(new URL('../../neon/migrations/005-pixel-pulse-admission-v2.sql',import.meta.url),'utf8'));
+  await readyV2(pool);
+  await pool.query(`alter table neon_auth.account drop constraint offline_account_user_fk;
+    alter table neon_auth.session add constraint offline_duplicate_session_fk foreign key("userId") references neon_auth."user"(id)`);
+  await assert.rejects(readyV2(pool),{code:'PIXEL_NATIVE_LOCK_CONTRACT'},'two session FKs must not mask a missing credential-account FK');
+  await pool.query(`alter table neon_auth.account add constraint offline_account_user_fk foreign key("userId") references neon_auth."user"(id);
+    alter table neon_auth.session drop constraint offline_duplicate_session_fk`);
   await readyV2(pool);
   const roleFlags=(await pool.query(`select relname,relrowsecurity,relforcerowsecurity from pg_class where relnamespace='oz_identity'::regnamespace and relkind in ('r','p') and relname like 'pixel_%'`)).rows;
   assert.ok(roleFlags.every(r=>r.relrowsecurity&&r.relforcerowsecurity));

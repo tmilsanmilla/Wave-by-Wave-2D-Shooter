@@ -7,7 +7,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {generateKeyPair,SignJWT} from 'jose';
 import {PIXEL_ISSUER,CALLBACK,NEON_ISSUER,providerConfiguration} from '../../lib/pixel-pulse.js';
 import {confirmationFlow,verifyFirstBindingProof,assertFirstBindingProof,redeemFirstBindingProof} from '../../lib/pixel-pulse-link-proof.js';
-import {versionedIdentity,observedIdentity,validatedProfile,captureNativeProof,recheckNativeProof,startV2,callbackState,observeCredentialEpoch} from '../../lib/pixel-pulse-v2.js';
+import {versionedIdentity,observedIdentity,validatedProfile,captureNativeProof,recheckNativeProof,startV2,callbackState,observeCredentialEpoch,firstBinding} from '../../lib/pixel-pulse-v2.js';
 
 const subject='10000000-0000-4000-8000-000000000001',account='20000000-0000-4000-8000-000000000001';
 const profile={subject,username:'offline_player',email:'offline@example.invalid',emailVerified:true,credentialVersion:0,profileVersion:2};
@@ -129,4 +129,17 @@ test('pending SQL reads validated claims and binds native retirement to real map
   assert.match(sql,/s\.credential_version=r\.credential_version/);assert.match(sql,/r\.checked_until>statement_timestamp\(\)/);
   assert.match(sql,/create trigger pixel_native_mapping_guard before insert or update/);
   assert.doesNotMatch(sql,/alter (table|function|schema) (neon_auth|auth)\./i);
+});
+test('binding timeouts are installed before the very first advisory lock wait',async()=>{
+  const beforeProtocol=process.env.PIXEL_PULSE_GAME_PROTOCOL,beforeFresh=process.env.PIXEL_PULSE_FRESH_LINK_ENABLED;
+  process.env.PIXEL_PULSE_GAME_PROTOCOL='v2';process.env.PIXEL_PULSE_FRESH_LINK_ENABLED='true';
+  const proof=await verifyFirstBindingProof(await sign(),attempt,profile,code,resolve),calls=[],stop=new Error('offline stop at lock');
+  try{
+    await assert.rejects(firstBinding({async query(sql){calls.push(sql);if(sql.includes('pg_advisory_xact_lock'))throw stop;return {rows:[]};}},attempt,profile,proof),error=>error===stop);
+    assert.deepEqual(calls.slice(0,2),["set local lock_timeout='2s'","set local statement_timeout='5s'"]);
+    assert.match(calls[2],/pg_advisory_xact_lock/);
+  }finally{
+    if(beforeProtocol===undefined)delete process.env.PIXEL_PULSE_GAME_PROTOCOL;else process.env.PIXEL_PULSE_GAME_PROTOCOL=beforeProtocol;
+    if(beforeFresh===undefined)delete process.env.PIXEL_PULSE_FRESH_LINK_ENABLED;else process.env.PIXEL_PULSE_FRESH_LINK_ENABLED=beforeFresh;
+  }
 });
