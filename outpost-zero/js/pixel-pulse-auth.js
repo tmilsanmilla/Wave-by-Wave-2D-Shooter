@@ -88,7 +88,7 @@ function installPixelPulseTransport(client){
          !claims.aud.includes('outpost-zero-pixel-pulse')||claims.role!=='authenticated'||!Number.isFinite(+claims.exp)||+claims.exp*1000<=Date.now())
         throw fail('Pixel Pulse did not issue a valid database token.');
       if(generation!==epoch)throw fail('The account changed. Try again.');
-      token={value,subject:live.user.id,until:Math.min(+claims.exp*1000-30000,Date.now()+60000)};return value;
+      token={value,subject:live.user.id,until:Math.min(+claims.exp*1000-(claims.outpost_session?3000:30000),Date.now()+60000)};return value;
     })().finally(()=>{if(pendingToken===task)pendingToken=null;});
     pendingToken=task;return task;
   };
@@ -109,7 +109,7 @@ function installPixelPulseTransport(client){
   return client;
 }
 
-let pixelPulseEnabled=false,pixelPulseLinkPending=false,pixelPulseStarting=false,pixelPulseLaunchEpoch=0;
+let pixelPulseEnabled=false,pixelPulseProtocol=1,pixelPulseLinkPending=false,pixelPulseStarting=false,pixelPulseLaunchEpoch=0;
 function pixelPulseLinkUi(){
   const note=$('apixelintent'),create=$('aup'),gate=$('usernameclaimpixel'),hint=$('usernameclaimpixelhint');
   if(note){note.hidden=!pixelPulseLinkPending;note.textContent='LINK EXISTING ACCOUNT · HIGHLY RECOMMENDED. Sign in below once, using the same email as Pixel Pulse. Your progress is kept.';}
@@ -154,7 +154,17 @@ async function pixelPulseStart(intent='continue'){
     if(generation!==pixelPulseLaunchEpoch)return false;
     if(linking&&!linkToken)throw new Error('Sign in to your existing game account first.');
     if((authUser&&String(authUser.id||''))!==owner)throw new Error('The game account changed. Start again.');
-    const result=await sb.pixelPulse.request('start','POST',{link_token:linkToken||'',intent:linking?'link':intent});
+    let nativeSessionToken='';
+    if(linking&&pixelPulseProtocol===2){
+      const managed=sb.auth.getBetterAuthInstance&&sb.auth.getBetterAuthInstance();
+      const result=managed&&await managed.getSession({query:{disableCookieCache:true}});
+      if(result?.error||result?.data?.user?.id!==owner||typeof result?.data?.session?.token!=='string')
+        throw new Error('Sign in to the existing game account again before linking.');
+      nativeSessionToken=result.data.session.token;
+    }
+    if(generation!==pixelPulseLaunchEpoch||(authUser&&String(authUser.id||''))!==owner)return false;
+    const result=await sb.pixelPulse.request('start','POST',{link_token:linkToken||'',intent:linking?'link':intent,
+      ...(nativeSessionToken?{native_session_token:nativeSessionToken}:{})});
     if(generation!==pixelPulseLaunchEpoch)return false;
     if((authUser&&String(authUser.id||''))!==owner)throw new Error('The game account changed. Start again.');
     const url=new URL(result&&result.url||'');
@@ -176,14 +186,17 @@ async function pixelPulseSyncNativeIdentity(user){
   return user;
 }
 async function setupPixelPulseUi(){
-  const button=$('apixel'),link=$('apixellink'),gate=$('usernameclaimpixel'),connect=$('settingspixel'),manage=$('settingspixelmanage');
+  const button=$('apixel'),link=$('apixellink'),create=$('apixelcreate'),gate=$('usernameclaimpixel'),connect=$('settingspixel'),manage=$('settingspixelmanage');
   if(button)button.onclick=()=>pixelPulseStart('continue');if(connect)connect.onclick=()=>pixelPulseStart('link');
   if(link)link.onclick=pixelPulseBeginLink;if(gate)gate.onclick=pixelPulseBeginLink;
+  if(create)create.onclick=()=>pixelPulseStart('create');
   if(manage)manage.onclick=()=>window.open('https://pixel-pulse-websites.vercel.app/?account=1','_blank','noopener,noreferrer');
   if(sb&&sb.pixelPulse)try{
     const status=await sb.pixelPulse.request('status');
     pixelPulseEnabled=!!(status&&status.enabled);
+    pixelPulseProtocol=status&&status.protocol===2?2:1;
     if(button)button.hidden=!pixelPulseEnabled;if(link)link.hidden=!pixelPulseEnabled;if(connect)connect.hidden=!pixelPulseEnabled;
+    if(create)create.hidden=!(pixelPulseEnabled&&pixelPulseProtocol===2&&status.firstBindings===true);
   }catch(error){} // Ordinary Neon login remains available while provider deploys.
   const url=new URL(location.href),error=url.searchParams.get('pixel_error'),intent=url.searchParams.get('pixel');
   if(error){$('authwrap').style.display='flex';$('authmsg').textContent=error.slice(0,700);}

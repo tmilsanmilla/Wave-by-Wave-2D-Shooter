@@ -59,6 +59,8 @@ async function callback({intent='continue',bound=false,sameEmail=false,target=nu
  await module.link(specifier=>{
   if(specifier==='openid-client')return synthetic(oidc);
   if(specifier==='../lib/pixel-pulse.js')return synthetic(lib);
+  if(specifier==='../lib/pixel-pulse-v2.js')return synthetic({protocolV2:()=>false,firstBindingsEnabled:()=>false,
+    ...Object.fromEntries(['readyV2','startV2','finishV2','sessionV2','sessionJwtV2'].map(name=>[name,()=>{throw Error('Dormant v2 path must not execute');}]))});
   throw new Error('Unexpected import');
  });
  await module.evaluate();

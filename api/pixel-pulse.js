@@ -1,6 +1,7 @@
 import * as oidc from 'openid-client';
 import { PIXEL_ISSUER,GAME_ORIGIN,CALLBACK,COOKIE,ATTEMPT_COOKIE,hash,random,cookie,cookieValue,
   config,signingKey,trustedDatabaseKeys,databaseReady,nativeOwnership,centralProfile,bindAccount,session,sessionJwt,sessionLifetime,failure } from '../lib/pixel-pulse.js';
+import {protocolV2,firstBindingsEnabled,readyV2,startV2,finishV2,sessionV2,sessionJwtV2} from '../lib/pixel-pulse-v2.js';
 
 const json=(res,status,data)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));};
 const redirect=(res,to)=>{res.statusCode=303;res.setHeader('Location',to);res.end();};
@@ -19,20 +20,21 @@ export function assertNativeLinkTarget(intent,linkAccountId){
 }
 export default async function handler(req,res){
   res.setHeader('Cache-Control','no-store');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Content-Type-Options','nosniff');
-  res.setHeader('X-Outpost-Auth-Version','20261013-signin-recovery-v2');
+  res.setHeader('X-Outpost-Auth-Version',protocolV2()?'20261015-pixel-link-v2-held':'20261013-signin-recovery-v2');
   const action=actionOf(req);
   try{
     if(action==='jwks'&&req.method==='GET')return json(res,200,{keys:[(await signingKey()).publicKey]});
     if(action==='database-keys'&&req.method==='GET')return json(res,200,await trustedDatabaseKeys());
     if(action==='status'&&req.method==='GET'){
       const enabled=process.env.PIXEL_PULSE_GAME_ENABLED==='true';
-      if(enabled){await databaseReady();await config();}
-      return json(res,200,{enabled});
+      if(enabled){const database=await databaseReady();if(protocolV2())await readyV2(database);await config();}
+      return json(res,200,{enabled,protocol:protocolV2()?2:1,firstBindings:enabled&&firstBindingsEnabled()});
     }
     if(!['start','callback','session','token','signout'].includes(action))return json(res,404,{error:'Not found'});
     if(['start','signout','token'].includes(action)&&(req.method!=='POST'||!sameOrigin(req)))return json(res,403,{error:'Continue from this game’s account menu.'});
     if(['callback','session'].includes(action)&&req.method!=='GET')return json(res,405,{error:'Method not allowed'});
-    if(action==='session')return json(res,200,{session:await session(req)});
+    const currentSession=async()=>protocolV2()&&cookieValue(req,COOKIE)?sessionV2(req,await databaseReady(),await config()):session(req);
+    if(action==='session')return json(res,200,{session:await currentSession()});
     if(action==='signout'){
       const raw=cookieValue(req,COOKIE);
       if(raw)await (await databaseReady()).query('delete from oz_identity.pixel_sessions where token_hash=$1',[hash(raw)]);
@@ -40,12 +42,22 @@ export default async function handler(req,res){
       return json(res,200,{ok:true});
     }
     if(action==='token'){
-      const live=await session(req);if(!live)return json(res,401,{error:'Your Pixel Pulse game session expired. Sign in again.'});
-      return json(res,200,{token:await sessionJwt(live)});
+      const live=await currentSession();if(!live)return json(res,401,{error:'Your Pixel Pulse game session expired. Sign in again.'});
+      return json(res,200,{token:protocolV2()?await sessionJwtV2(live):await sessionJwt(live)});
     }
     if(process.env.PIXEL_PULSE_GAME_ENABLED!=='true')throw failure('PROVIDER','Pixel Pulse shared sign-in is still being connected. Use the existing game sign-in for now.',503);
     const configuration=await config();
     const database=await databaseReady();
+    if(protocolV2()){
+      await readyV2(database);
+      if(action==='start'){
+        const result=await startV2(bodyOf(req),database,configuration);
+        res.setHeader('Set-Cookie',result.cookie);return json(res,200,{url:result.url});
+      }
+      const callback=new URL(req.url,GAME_ORIGIN);callback.pathname=new URL(CALLBACK).pathname;callback.searchParams.delete('action');
+      const result=await finishV2(callback,req,database,configuration);
+      res.setHeader('Set-Cookie',result.cookies||result.cookie);return redirect(res,result.url);
+    }
     if(action==='start'){
       const body=bodyOf(req);
       const intent=String(body.intent||'');
