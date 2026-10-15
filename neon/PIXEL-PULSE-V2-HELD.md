@@ -14,7 +14,13 @@ turn these on just because source or the dormant Root producer is published.
   and its live opaque Managed session. The private flow stores a session hash,
   original account UUID, subject, expiry and credential-update clock; it
   rechecks the session/mapping/clock at both callbacks and inside the binding
-  transaction. It never stores the native password or copies password hashes.
+  transaction. Final native user/session/credential/mapping rows stay locked
+  through binding commit; bounded lock/statement timeouts fail closed on a race.
+  A final wall-clock/session recheck precedes commit. The existing Managed FK /
+  SELECT-and-UPDATE locking contract must pass a read-only preflight; the code
+  never adds provider grants or modifies Managed helpers. The browser compares
+  the Managed subject with `neon_auth_id`, not the preserved game UUID, while
+  keeping both account-switch checks. No native passwords/hashes are copied.
 - Read-only OIDC discovery seals the expected Pixel subject, credential/profile
   epochs and explicit native-Link/Create target. Confirmation is a NEW one-use
   state/nonce/PKCE transaction using Root's frozen v1 `pixel_intent=link`.
@@ -52,8 +58,10 @@ Plan and verify that transition before applying anything live.
 
 1. Verify the actual Managed session contract and database columns/permissions
    used by `captureNativeProof`/`recheckNativeProof`, including the uncached SDK
-   response's session token. Local schema fixtures are NOT proof of live schema
-   compatibility. No managed helper may be overwritten to manufacture a pass.
+   response's session token, user FK and existing row-lock privileges. The local
+   concurrent-writer test proves SQL ordering only in its explicitly synthetic
+   schema. It is NOT proof of the live Managed contract. No missing provider
+   grant/helper may be added or overwritten to manufacture a pass.
 2. Verify the real Data API's validated claim context and all application RLS /
    privileged identity paths against the pending guard, including direct native
    tokens, bootstrap and known-bound access. Local SQL uses an explicitly

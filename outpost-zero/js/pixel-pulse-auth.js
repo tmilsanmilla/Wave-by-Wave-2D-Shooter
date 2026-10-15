@@ -145,7 +145,7 @@ async function pixelPulseStart(intent='continue'){
   const button=$('apixel'),connect=$('settingspixel'),link=$('apixellink'),
     message=typeof usernameClaimOpen!=='undefined'&&usernameClaimOpen?$('usernameclaimstatus'):
       typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen?$('settingspixelstatus'):$('authmsg'),
-    owner=authUser&&String(authUser.id||'');
+    owner=authUser&&String(authUser.id||''),nativeOwner=authUser&&String(authUser.neon_auth_id||authUser.id||'');
   if(button)button.disabled=true;if(connect)connect.disabled=true;
   if(link)link.disabled=true;
   if(message)message.textContent='Connecting to Pixel Pulse…';
@@ -158,16 +158,19 @@ async function pixelPulseStart(intent='continue'){
     if(linking&&pixelPulseProtocol===2){
       const managed=sb.auth.getBetterAuthInstance&&sb.auth.getBetterAuthInstance();
       const result=managed&&await managed.getSession({query:{disableCookieCache:true}});
-      if(result?.error||result?.data?.user?.id!==owner||typeof result?.data?.session?.token!=='string')
+      if(result?.error||result?.data?.user?.id!==nativeOwner||typeof result?.data?.session?.token!=='string')
         throw new Error('Sign in to the existing game account again before linking.');
       nativeSessionToken=result.data.session.token;
     }
-    if(generation!==pixelPulseLaunchEpoch||(authUser&&String(authUser.id||''))!==owner)return false;
+    if(generation!==pixelPulseLaunchEpoch)return false;
+    if((authUser&&String(authUser.id||''))!==owner||
+      (authUser&&String(authUser.neon_auth_id||authUser.id||''))!==nativeOwner)throw new Error('The game or login account changed. Start again.');
     const result=await sb.pixelPulse.request('start','POST',{link_token:linkToken||'',intent:linking?'link':intent,
       ...(nativeSessionToken?{native_session_token:nativeSessionToken}:{})});
     if(generation!==pixelPulseLaunchEpoch)return false;
     if((authUser&&String(authUser.id||''))!==owner)throw new Error('The game account changed. Start again.');
     const url=new URL(result&&result.url||'');
+    if((authUser&&String(authUser.neon_auth_id||authUser.id||''))!==nativeOwner)throw new Error('The login account changed. Start again.');
     if(url.origin!=='https://pixel-pulse-websites.vercel.app'||url.pathname!=='/api/sso/oauth2/authorize')throw new Error('Pixel Pulse connection is not ready.');
     location.assign(url.href);return true;
   }catch(error){

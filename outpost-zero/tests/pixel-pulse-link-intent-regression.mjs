@@ -73,3 +73,31 @@ const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
   f.resolveToken();await task;assert.equal(f.posts.length,1,'rapid repeated clicks create one attempt');
 }
 console.log('PASS cookie reuse, hub Link/Create intents, recommendation, native proof gating, cancel, account-change rejection and duplicate-click guard');
+{
+  const f=fixture();f.run('pixelPulseProtocol=2');
+  f.context.authUser={id:'preserved-original-game-uuid',neon_auth_id:'actual-managed-native-uuid'};
+  f.context.sb.auth.getBetterAuthInstance=()=>({getSession:async options=>{
+    assert.equal(options.query.disableCookieCache,true);
+    return {data:{user:{id:'actual-managed-native-uuid'},session:{token:'offline-opaque-native-session'}}};
+  }});
+  assert.equal(await f.context.pixelPulseStart('link'),true);
+  assert.equal(f.posts.length,1);assert.equal(f.posts[0].native_session_token,'offline-opaque-native-session');
+  assert.equal(f.posts[0].intent,'link');assert.equal(f.redirects.length,1);
+}
+{
+  const f=fixture();f.run('pixelPulseProtocol=2');f.context.authUser={id:'preserved-game',neon_auth_id:'managed-native'};
+  f.context.sb.auth.getBetterAuthInstance=()=>({getSession:async()=>({data:{user:{id:'preserved-game'},session:{token:'wrong-actor'}}})});
+  assert.equal(await f.context.pixelPulseStart('link'),false);assert.equal(f.posts.length,0);
+  assert.match(f.$('authmsg').textContent,/Sign in/);
+}
+{
+  const f=fixture();f.run('pixelPulseProtocol=2');f.context.authUser={id:'same-game',neon_auth_id:'old-native'};
+  let session;
+  f.context.sb.auth.getBetterAuthInstance=()=>({getSession:()=>new Promise(resolve=>{session=resolve;})});
+  const task=f.context.pixelPulseStart('link');await flush();
+  f.context.authUser={id:'same-game',neon_auth_id:'different-native'};
+  session({data:{user:{id:'old-native'},session:{token:'offline-opaque-native-session'}}});
+  assert.equal(await task,false);assert.equal(f.posts.length,0);assert.equal(f.redirects.length,0);
+  assert.equal(f.$('apixel').disabled,false);assert.match(f.$('authmsg').textContent,/account changed/);
+}
+console.log('PASS v2 migrated original-game/native UUID mapping, current uncached native proof and account-switch race');

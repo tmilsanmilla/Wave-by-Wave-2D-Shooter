@@ -34,8 +34,8 @@ try{
     create table public.social_profiles(user_id uuid primary key references oz_identity.accounts(id),handle text,handle_key text unique,display_name text);
     create table public.saved_progress(user_id uuid primary key references oz_identity.accounts(id),data jsonb);
     create table neon_auth."user"(id uuid primary key,email text,"emailVerified" boolean);
-    create table neon_auth.session(id text primary key,token text,"userId" uuid,"expiresAt" timestamptz);
-    create table neon_auth.account(id uuid primary key,"userId" uuid,"providerId" text,"updatedAt" timestamptz);
+    create table neon_auth.session(id text primary key,token text,"userId" uuid references neon_auth."user"(id),"expiresAt" timestamptz);
+    create table neon_auth.account(id uuid primary key,"userId" uuid references neon_auth."user"(id),"providerId" text,"updatedAt" timestamptz);
     create function auth.session() returns jsonb language sql stable as $$select nullif(current_setting('test.validated_claims',true),'')::jsonb$$;
     create function auth.user_id() returns text language sql stable as $$select auth.session()->>'sub'$$;
     create function oz_identity.request_subject() returns text language sql stable as $$select auth.user_id()$$;
@@ -67,6 +67,21 @@ try{
   const nativeProof={accountId:A,subject:N,sessionId:'offline-session',sessionHash:hash(nativeToken),credentialClock:clock,until:Date.now()+120000};
   await recheckNativeProof(nativeProof,pool);
   await assert.rejects(recheckNativeProof({...nativeProof,sessionHash:'0'.repeat(64)},pool));
+  const locked=await pool.connect(),writer=await pool.connect();
+  try{
+    await locked.query('begin');await recheckNativeProof(nativeProof,locked,{lock:true});
+    for(const mutation of [
+      'delete from neon_auth.session where "userId"=$1',
+      'update neon_auth.session set "expiresAt"=now() where "userId"=$1',
+      'update neon_auth.account set "updatedAt"=now() where "userId"=$1',
+      'update neon_auth."user" set "emailVerified"=false where id=$1'
+    ]){
+      await writer.query('begin');await writer.query("set local lock_timeout='75ms'");
+      await assert.rejects(writer.query(mutation,[N]),{code:'55P03'},'managed revocation/credential writers must serialize with final binding locks');
+      await writer.query('rollback');
+    }
+    await locked.query('rollback');
+  }finally{await locked.query('rollback');await writer.query('rollback');locked.release();writer.release();}
   const pair=await generateKeyPair('EdDSA');
   async function prove(subject,mode,nativeProof,name,email,jti=randomUUID()){
     const attempt={phase:'confirm',mode,nativeProof,expectedSubject:subject,expectedEpoch:0,expectedProfile:0,state:'s'.repeat(43),nonce:'n'.repeat(43),verifier:'v'.repeat(43)};
