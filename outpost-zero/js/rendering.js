@@ -242,6 +242,7 @@ function drawPartyCpuActors(){
   for(const e of actors){
     if(e.hp<=0)continue;
     const ally=e.team==='A',a=e.angle||0,r=e.r||15,wk=WEAPONS[e.cur]||WEAPONS.ar,len=Math.min(38,wk.len||24);
+    if(typeof drawRemoteDriveTrail==='function')drawRemoteDriveTrail(e,!ally);
     const swingDur=Math.max(1,+e.swingDur||130),swingProgress=e.swingT&&(clock-e.swingT)>=0&&(clock-e.swingT)<swingDur?(clock-e.swingT)/swingDur:null;
     let weaponAngle=a;
     if(swingProgress!==null){
@@ -291,6 +292,7 @@ function drawArenaOpponentWorld(){
   if(typeof isCpuTeamArena==='function'&&isCpuTeamArena()){drawPartyCpuActors();return;}
   if(!arena.opponent) return;
   const e=arena.opponent, a=e.angle||0, r=e.r||15;
+  if(typeof drawRemoteDriveTrail==='function')drawRemoteDriveTrail(e,true);
   const remoteParryActive=now<(e.parryUntil||0)&&e.loadout&&e.loadout.melee==='twinsai';
   const remoteDaggersThrown=e.cur==='bdaggers'&&e.meleeFxKey==='bdaggers'&&now<(e.meleeFxUntil||0);
   // Exact opponent health is result information, never live combat intel.
@@ -391,7 +393,7 @@ function drawScopedHostileProjectileCues(){
   ctx.restore();return drawn;
 }
 function drawWorld(){
-  ctx.fillStyle='#101208';
+  ctx.fillStyle='#08131c';
   ctx.fillRect(0,0,W,H);
 
   const duelView=isArenaMapBattlefield(),playBounds=activeArenaBounds(),mapId=activeArenaMapId();
@@ -408,7 +410,7 @@ function drawWorld(){
     ctx.beginPath();
     ctx.rect(playBounds.left,playBounds.top,playBounds.right-playBounds.left,playBounds.bottom-playBounds.top);
     ctx.clip();
-    ctx.fillStyle=mapId==='dimension'?'#100d1d':mapId==='construction'?'#17150f':'#101208';
+    ctx.fillStyle=mapId==='dimension'?'#100d1d':mapId==='construction'?'#17150f':'#08131c';
     ctx.fillRect(playBounds.left,playBounds.top,playBounds.right-playBounds.left,playBounds.bottom-playBounds.top);
   }
 
@@ -418,11 +420,12 @@ function drawWorld(){
   const worldRight=duelView?playBounds.right:WORLD.w, worldBottom=duelView?playBounds.bottom:WORLD.h;
   const x0=Math.max(worldLeft,cam.x-hw), x1=Math.min(worldRight,cam.x+hw);
   const y0=Math.max(worldTop,cam.y-hh), y1=Math.min(worldBottom,cam.y+hh);
-  ctx.strokeStyle=mapId==='dimension'?'rgba(166,105,255,0.10)':mapId==='construction'?'rgba(205,172,95,0.09)':'rgba(140,160,90,0.07)'; ctx.lineWidth=1/zoom;
+  ctx.strokeStyle=mapId==='dimension'?'rgba(166,105,255,0.10)':mapId==='construction'?'rgba(205,172,95,0.09)':'rgba(99,230,223,0.065)'; ctx.lineWidth=1/zoom;
   ctx.beginPath();
   for(let x=Math.floor(x0/80)*80;x<=x1;x+=80){ ctx.moveTo(x,y0); ctx.lineTo(x,y1); }
   for(let y=Math.floor(y0/80)*80;y<=y1;y+=80){ ctx.moveTo(x0,y); ctx.lineTo(x1,y); }
   ctx.stroke();
+  if(typeof drawDriveCircuit==='function')drawDriveCircuit();
 
   // world border
   ctx.strokeStyle='#e8b658'; ctx.lineWidth=3/zoom;
@@ -695,6 +698,7 @@ function drawWorld(){
   drawArenaOpponentWorld();
 
   // player
+  if(typeof drawDriveTrail==='function')drawDriveTrail(player);
   const w=WEAPONS[player.cur], ang=aimAngle(),localParryActive=now<parryUntil&&now>=parryUntil-TWIN_SAI_PARRY_MS&&loadout.melee==='twinsai';
   if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){
     ctx.strokeStyle='rgba(191,239,255,0.92)';ctx.lineWidth=4/zoom;ctx.beginPath();
@@ -769,10 +773,10 @@ function drawWorld(){
     }
   }
   ctx.restore();                                 // end of the weapon-only transform
-  ctx.fillStyle='#a7c15e';                       // body
+  ctx.fillStyle=player.drive&&player.drive.mode==='slide'?'#ffb65d':'#63e6df'; // kinetic armor shell
   ctx.beginPath(); ctx.arc(0,0,player.r,0,TAU); ctx.fill();
-  ctx.strokeStyle='#39421f'; ctx.lineWidth=3/zoom; ctx.stroke();
-  ctx.fillStyle='#39421f';                       // helmet stripe
+  ctx.strokeStyle='#153945'; ctx.lineWidth=3/zoom; ctx.stroke();
+  ctx.fillStyle='#153945';                       // helmet stripe
   ctx.beginPath(); ctx.arc(0,0,player.r*0.55,-0.9,0.9); ctx.lineTo(0,0); ctx.closePath(); ctx.fill();
   ctx.restore();
 
@@ -938,10 +942,10 @@ function drawHUD(){
     }
   } else {
     ctx.fillStyle='#e8b658'; ctx.font='700 22px ui-monospace,Consolas,monospace';
-    ctx.fillText('SCORE '+score, pad, pad);
+    ctx.fillText(practiceMode==='flow'?'MOVEMENT LAB':'SCORE '+score, pad, pad);
     ctx.fillStyle='#8a9268'; ctx.font='13px ui-monospace,Consolas,monospace';
   if(practiceMode){
-    ctx.fillText({range:'\uD83C\uDFAF SHOOTING RANGE', dps:'\uD83C\uDFAF DPS DUMMY', tracking:'\uD83C\uDFAF TRACKING DUMMY', boss:'\uD83C\uDFAF WARLORD PRACTICE'}[practiceMode]+' \u2014 ESC for menu', pad, pad+28);
+    ctx.fillText({flow:'OVERDRIVE CIRCUIT',range:'\uD83C\uDFAF SHOOTING RANGE', dps:'\uD83C\uDFAF DPS DUMMY', tracking:'\uD83C\uDFAF TRACKING DUMMY', boss:'\uD83C\uDFAF WARLORD PRACTICE'}[practiceMode]+' \u2014 ESC for menu', pad, pad+28);
     if(practiceMode==='dps'){
       const elapsed = dpsStart ? Math.max(0.5,(now-dpsStart)/1000) : 0;
       const avg = dpsStart ? dpsTotal/elapsed : 0;
@@ -1106,23 +1110,15 @@ function drawHUD(){
     }
     cdX += CDW;
   }
-  // dash indicator
-  if(perks.dash && cdFits()){
-    const cdFrac = clamp(1-(dashReadyT-now)/2200, 0, 1);
-    ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace'; ctx.textAlign='left';
-    ctx.fillText('DASH', cdX, H-124);
-    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(cdX, H-112, 70, 6);
-    ctx.fillStyle = cdFrac>=1 ? '#a7c15e' : '#6b7455';
-    ctx.fillRect(cdX, H-112, 70*cdFrac, 6);
-    cdX += CDW;
-  }
+  if(typeof drawDriveHUD==='function')drawDriveHUD();
+  if(typeof drawDriveCircuitHUD==='function')drawDriveCircuitHUD();
   // hint
   ctx.textAlign='right';
   ctx.fillStyle='rgba(138,146,104,0.8)'; ctx.font='11px ui-monospace,Consolas,monospace';
   if(W>=900){
     const help=practiceMode==='arena'
-      ? 'WASD move · LMB fire · R reload · 1-3 / Q swap · E/F melee ability · melee RMB ability · ESC menu'
-      : 'WASD move · LMB fire · '+(utilityOut&&loadout.utility==='medkit'?'RMB quick med':'E scope / melee ability')+' · R reload · 1-4 / Q swap · G/RMB utility'+(perks.dash?' · SPACE dash':'')+' · F quick melee ability · ESC menu';
+      ? 'WASD move · SPACE burst · SHIFT slide · LMB fire · R reload · Q swap · E/F ability · ESC menu'
+      : 'WASD move · SPACE burst · SHIFT slide · LMB fire · '+(utilityOut&&loadout.utility==='medkit'?'RMB quick med':'E scope / melee ability')+' · R reload · Q swap · G utility · ESC menu';
     ctx.fillText(fitLine(help,W-pad-300),W-pad,H-26);
   }
   ctx.textAlign='left';
@@ -1151,8 +1147,8 @@ function drawHUD(){
     };
 
     // --- bottom-right: big AIM (crosshair) + RELOAD (cycle) ---
-    const R=40, bx=W-72;
-    iconBtn('e', bx, H-118, R, (cx,cy)=>{
+    const driveButtons=typeof driveTouchLayout==='function'?driveTouchLayout(W,H):{radius:40,x:W-72,aimY:H-118,reloadY:H-210},R=driveButtons.radius,bx=driveButtons.x;
+    iconBtn('e', bx, driveButtons.aimY, R, (cx,cy)=>{
       ctx.beginPath(); ctx.arc(cx,cy,13,0,TAU); ctx.stroke();
       ctx.beginPath();
       ctx.moveTo(cx-19,cy); ctx.lineTo(cx-5,cy); ctx.moveTo(cx+5,cy); ctx.lineTo(cx+19,cy);
@@ -1160,18 +1156,21 @@ function drawHUD(){
       ctx.stroke();
       ctx.beginPath(); ctx.arc(cx,cy,2,0,TAU); ctx.fill();
     }, aiming);
-    iconBtn('rld', bx, H-210, R, (cx,cy)=>{
+    iconBtn('rld', bx, driveButtons.reloadY, R, (cx,cy)=>{
       ctx.beginPath(); ctx.arc(cx,cy,13,0.5,Math.PI*1.4); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(cx+9,cy-10); ctx.lineTo(cx+13,cy-4); ctx.lineTo(cx+6,cy-5); ctx.stroke();
       ctx.beginPath(); ctx.arc(cx,cy,13,Math.PI+0.5,Math.PI*2.4); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(cx-9,cy+10); ctx.lineTo(cx-13,cy+4); ctx.lineTo(cx-6,cy+5); ctx.stroke();
     }, player.reloadEnd>now);
-    if(perks.dash){
-      iconBtn('dsh', bx, H-302, R, (cx,cy)=>{
+    if(driveButtons.burst){
+      iconBtn('dsh', driveButtons.burst.x, driveButtons.burst.y, driveButtons.burst.r, (cx,cy)=>{
         ctx.beginPath(); ctx.moveTo(cx-12,cy); ctx.lineTo(cx+5,cy); ctx.lineTo(cx-1,cy-6);
         ctx.moveTo(cx+5,cy); ctx.lineTo(cx-1,cy+6); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(cx+7,cy-7); ctx.lineTo(cx+13,cy); ctx.lineTo(cx+7,cy+7); ctx.stroke();
-      }, now<(dashReadyT||0));
+      }, player.drive&&player.drive.mode==='burst');
+      iconBtn('sld',driveButtons.slide.x,driveButtons.slide.y,driveButtons.slide.r,(cx,cy)=>{
+        ctx.beginPath();ctx.moveTo(cx-12,cy+5);ctx.lineTo(cx+11,cy+5);ctx.moveTo(cx-7,cy);ctx.lineTo(cx+9,cy-5);ctx.stroke();
+      },player.drive&&player.drive.mode==='slide');
     }
 
     // --- top-right icon row: utility and carried medkit. Quick Melee lives

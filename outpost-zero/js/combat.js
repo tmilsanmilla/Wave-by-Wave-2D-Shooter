@@ -673,11 +673,16 @@ function update(dtms){
   if(sticks.move.id!==null){ mx=sticks.move.dx/STICK_R; my=sticks.move.dy/STICK_R; }
   const playerIsFrozen=playerFrozenUntil>now||(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen());
   if(now < player.dashUntil&&!playerIsFrozen){
+    if(typeof resetDriveMotion==='function')resetDriveMotion(player);
     const dx=player.ddx*(player.dashSpd||14)*dt,dy=player.ddy*(player.dashSpd||14)*dt;
     let moved=true;
     if(typeof moveActorSwept==='function') moved=moveActorSwept(player,dx,dy);
     else { player.x+=dx;player.y+=dy; }
     if(!moved) player.dashUntil=now;                 // Scythe and other dashes stop at the first wall
+  } else if(typeof updateDriveMovement==='function'){
+    const m=Math.max(1,Math.hypot(mx,my)),surgeMul=now<surgeT?1.3:1,healMul=(medChan||medChanHeal)?.9:1,
+      aimMove=Number.isFinite(+w.aimMoveMul)?+w.aimMoveMul:.45;
+    updateDriveMovement(mx/m,my/m,player.spd*perks.spd*surgeMul*healMul*w.moveMod*(aiming?aimMove:1),dtms,playerIsFrozen);
   } else if((mx||my)&&!playerIsFrozen){
     const m=Math.max(1,Math.hypot(mx,my));
     const surgeMul = now<surgeT ? 1.3 : 1;
@@ -692,6 +697,7 @@ function update(dtms){
   if(isArenaMapBattlefield()) arenaPortalStep(player,now);
   player.motionVx=dt>0?(player.x-motionStartX)/dt:0;
   player.motionVy=dt>0?(player.y-motionStartY)/dt:0;
+  if(practiceMode==='flow'&&typeof driveCircuitTick==='function')driveCircuitTick(driveCircuit,player,now);
 
   // The Offline 1v1 opponent lives in the same fixed 60 Hz simulation as the
   // player, so low or very high render FPS never changes its speed or fire rate.

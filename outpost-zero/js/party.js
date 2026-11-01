@@ -1001,8 +1001,14 @@ function partyToggleLock(){
    Party 2v2 stays on the existing Party channel and requires exactly two
    humans on Team A. Offline 2v2 has one local human plus an ally CPU. Both
    modes face two authority-simulated Team B CPUs through the neutral core. */
-function partyCpuKit(raw,requireLocalAccess=false){
+function partyCpuKit(raw,requireLocalAccess=false,primaryOnly=false){
   const primary=String(raw&&raw.primary||''), secondary=String(raw&&raw.secondary||''), melee=String(raw&&raw.melee||'');
+  if(primaryOnly){
+    if(!WEAPONS[primary]||(typeof storedLoadoutSlot==='function'&&storedLoadoutSlot(primary)!=='primary')||
+       (typeof isWeaponPublished==='function'&&!isWeaponPublished(primary))||
+       (requireLocalAccess&&typeof isLocked==='function'&&isLocked(primary)))return null;
+    return {primary,secondary:null,melee:null,utility:null};
+  }
   const keys=[primary,secondary,melee];
   if(keys.some(key=>typeof isWeaponPublished==='function'&&!isWeaponPublished(key)))return null;
   const publicShopPrimary=typeof GEM_SHOP!=='undefined'&&GEM_SHOP.some(it=>it.key===primary&&it.slot==='primary')&&!!WEAPONS[primary];
@@ -1133,7 +1139,7 @@ function cpuTeamBeginRound(options){
   const selectedMap=typeof arenaMapValid==='function'&&arenaMapValid(options.mapId)?String(options.mapId):'arena';
   const localId=cpuTeamLocalId(); if(!localId) return false;
   const kits={};
-  for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(options.kits&&options.kits[id],id===localId); if(!kit)return false;kits[id]=kit; }
+  for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(options.kits&&options.kits[id],id===localId,options.mode==='ai2v2'); if(!kit)return false;kits[id]=kit; }
   const mine=kits[localId]; if(!mine)return false;
   resetRoundTransitionInput(continuingRound);
   resetWeaponGimmickState();
@@ -1159,6 +1165,7 @@ function cpuTeamBeginRound(options){
   parryUntil=0;parrySeq=0;teraHitCharge=15;fistFlurryUntil=0;sawChargeUntil=0;
   player.cur=mine.primary;player.reloadEnd=0;player.equipEnd=now+600;player.bloom=0;player.lastShot=0;
   for(const k of [mine.primary,mine.secondary,mine.melee]){
+    if(!k||!WEAPONS[k])continue;
     player.mags[k]=magSize(k);player.reserve[k]=(WEAPONS[k].melee||WEAPONS[k].energy||WEAPONS[k].infinite)?Infinity:magSize(k)*5;
   }
   if(typeof arenaResetMapRuntime==='function')arenaResetMapRuntime();
@@ -1225,7 +1232,7 @@ function startOfflineCpu2v2(options={}){
     if(arena)arena.status=botLadderQueueStorageReady===false?'CPU ladder needs device storage before it can safely start.':'Resolve the pending CPU ladder result before starting.';
     sfx('dry');return false;
   }
-  const mine=partyCpuKit(loadout,true);if(!mine){pracNeedMsgT=now+1600;sfx('dry');return false;}
+  const mine=partyCpuKit(loadout,true,true);if(!mine){pracNeedMsgT=now+1600;sfx('dry');return false;}
   if(partyCpuSessionOpen()){
     arena.status='Finish or leave the current CPU team match first.';sfx('dry');return false;
   }

@@ -30,6 +30,14 @@ function drawGunIcon(x,y,key,col,sc){
   else if(key==='ar'){ ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.moveTo(-4,0); ctx.lineTo(-6,12); ctx.moveTo(-14,0); ctx.lineTo(-16,8); ctx.moveTo(10,0); ctx.lineTo(10,-5); }
   else if(key==='smg'){ ctx.moveTo(-20,0); ctx.lineTo(18,0); ctx.moveTo(-6,0); ctx.lineTo(-6,12); ctx.moveTo(-16,0); ctx.lineTo(-18,9); }
   else if(key==='shotgun'){ ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.moveTo(-24,4); ctx.lineTo(2,4); ctx.moveTo(-16,4); ctx.lineTo(-19,13); }
+  else if(key==='shorty'){ctx.moveTo(-14,-3);ctx.lineTo(14,-3);ctx.moveTo(-14,3);ctx.lineTo(14,3);ctx.moveTo(-9,4);ctx.lineTo(-13,12);}
+  else if(key==='handcannon'){ctx.rect(-11,-4,18,7);ctx.moveTo(7,0);ctx.lineTo(21,0);ctx.moveTo(-6,3);ctx.lineTo(-10,14);}
+  else if(key==='crossbow'){ctx.moveTo(-22,0);ctx.lineTo(22,0);ctx.moveTo(7,-18);ctx.quadraticCurveTo(23,0,7,18);ctx.lineTo(-2,0);ctx.closePath();ctx.moveTo(-9,0);ctx.lineTo(-13,10);}
+  else if(key==='lmg'){ctx.moveTo(-27,0);ctx.lineTo(28,0);ctx.rect(-20,-5,29,8);ctx.moveTo(5,10);ctx.arc(-2,10,7,0,TAU);ctx.moveTo(19,2);ctx.lineTo(15,12);ctx.moveTo(19,2);ctx.lineTo(24,12);}
+  else if(key==='carbine'){ctx.moveTo(-23,0);ctx.lineTo(23,0);ctx.rect(-16,-4,25,7);ctx.moveTo(-5,3);ctx.lineTo(-2,13);ctx.moveTo(7,0);ctx.lineTo(7,-7);}
+  else if(key==='dmr'){ctx.moveTo(-27,0);ctx.lineTo(29,0);ctx.moveTo(-8,0);ctx.lineTo(-10,12);ctx.rect(-7,-8,15,4);ctx.moveTo(-23,0);ctx.lineTo(-27,6);}
+  else if(key==='autoshotgun'){ctx.moveTo(-24,0);ctx.lineTo(23,0);ctx.rect(-15,-4,27,7);ctx.moveTo(-7,3);ctx.lineTo(-11,12);ctx.moveTo(0,3);ctx.lineTo(2,15);}
+  else if(key==='pulserifle'){ctx.moveTo(-24,0);ctx.lineTo(25,0);ctx.rect(-16,-5,28,10);ctx.moveTo(-5,5);ctx.lineTo(-8,13);for(let i=0;i<3;i++){ctx.moveTo(i*6-6,-4);ctx.lineTo(i*6-6,4);}}
   else if(key==='solarrifle'){
     // long barrel
     ctx.moveTo(-16,1); ctx.lineTo(14,1);
@@ -248,6 +256,7 @@ function selBg(){
   for(let x=0;x<W;x+=80){ ctx.moveTo(x,0); ctx.lineTo(x,H); }
   for(let y=0;y<H;y+=80){ ctx.moveTo(0,y); ctx.lineTo(W,y); }
   ctx.stroke();
+  if(typeof drawOverdriveMenuBackground==='function')drawOverdriveMenuBackground();
   ctx.textAlign='left';
   if(W>=460){                                   // on wide enough screens only (avoids crowding the title on phones)
     ctx.fillStyle='#8a9268'; ctx.font='700 13px ui-monospace,Consolas,monospace';
@@ -333,6 +342,7 @@ function drawBanNotice(){
   ctx.textAlign='left'; ctx.textBaseline='alphabetic';
 }
 function drawSelect(){
+  onlinePlayRects=[];
   cardRects=[]; detailBtns=[]; catBtns=[]; modeRects=[]; homePlayRects=[]; weaponBrowserRects=[]; socialRects=[]; partyRects=[]; partyModeRects=[]; toolsRects=[]; rankedRects=[]; leaderboardRowRects=[]; modeBoardActionRects=[]; offlineCpuRects=[]; backRect=null;
   adLeftRect=null; adRightRect=null; boardPanelRect=null;
   adminHubBtnRect=null; suggestionsHubBtnRect=null; updatesHubBtnRect=null; adminsHubBtnRect=null; msgsHubBtnRect=null; archHubBtnRect=null; lookupBtnRect=null; playersHubBtnRect=null; streakBtnRect=null; wheelBtnRect=null; promoBtnRect=null; shareBtnRect=null;
@@ -347,8 +357,13 @@ function drawSelect(){
   if(dailyGateOpen){ drawDailyGate(); return; }      // collect before anything else
   if(firstAccountWelcomeOpen){ drawFirstAccountWelcome(); return; }
   if(signUpPromptOpen){ drawSignUpPrompt(); return; }
-  if(selPage==='hub') drawHub(); else if(selPage==='weapons') drawWeaponsHome(); else if(selPage==='weaponbrowse') drawWeaponBrowser(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='offlinecpu') drawOfflineCpuModes(); else if(selPage==='multidevice') drawMultideviceMenu(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='social') drawSocial(); else if(selPage==='party') drawParty(); else if(selPage==='partymodes') drawPartyModes(); else if(selPage==='tools') drawTools(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
+  if(selPage==='onlineplay'||selPage==='offlineplay')drawPlayLanding(selPage==='offlineplay');
+  else if(selPage==='hub') drawHub(); else if(selPage==='weapons') drawWeaponsHome(); else if(selPage==='weaponbrowse') drawWeaponBrowser(); else if(selPage==='modes') drawModes(); else if(selPage==='modeboard') drawModeLeaderboard(); else if(selPage==='offlinecpu') drawOfflineCpuModes(); else if(selPage==='multidevice') drawMultideviceMenu(); else if(selPage==='ranked') drawRanked(); else if(selPage==='loadout') drawLoadout(); else if(selPage==='social') drawSocial(); else if(selPage==='party') drawParty(); else if(selPage==='partymodes') drawPartyModes(); else if(selPage==='tools') drawTools(); else if(selPage==='howto') drawHowTo(); else if(selPage==='tutorial') drawTutorial(); else if(selPage==='shop') drawShop(); else if(selPage==='practice') drawPractice(); else if(selPage==='arena') drawArena(); else drawCategory(selPage);
   drawDetail();
+  if(typeof onlineLoadoutEditing==='function'&&onlineLoadoutEditing()&&selPage!=='loadout'){
+    const left=onlineLoadoutRemaining();ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#e8b658';ctx.font='700 12px ui-monospace,Consolas,monospace';
+    ctx.fillText(left===null?'STILL QUEUING · CHANGES AUTO-SAVE':'LOADOUT LOCKS IN '+left+'s',W/2,H-14);
+  }
   ctx.fillStyle='#e8d9a8'; ctx.beginPath(); ctx.arc(mouse.x,mouse.y,3,0,TAU); ctx.fill();
   ctx.textAlign='left';
 }
@@ -368,8 +383,8 @@ let tutorialOn=false, tutStep=0, tutDone=false, tutStartPos=null, tutFired=0, tu
     tutorialLoadoutBackup=null, tutorialStarting=false;
 const TUT_STEPS=[
   {id:'move', title:'KEEP MOVING',
-   how:'WASD  \u00b7  touch: drag the left movement stick',
-   why:'Move for a full drill. Standing still makes you an easy target.',
+   how:'WASD · SPACE burst · SHIFT slide · touch: left stick + movement buttons',
+   why:'Build momentum, then burst or slide. Both spend Drive; neither makes you invincible.',
    watch:'movement: {n}/90 steps'},
   {id:'aim', title:'TRACK THREE TARGETS',
    how:'point the crosshair at three different outlined targets',
@@ -1353,6 +1368,7 @@ function drawPractice(){
   ctx.fillText(fitLine(practiceInfiniteAmmo?'INFINITE AMMO: ON  \u00b7  \u221E MAGAZINE  \u00b7  NO RELOAD':'INFINITE AMMO: OFF  \u00b7  TAP TO ENABLE',toggleW-18),W/2,toggleY+toggleH/2);
   ctx.textBaseline='alphabetic';
   const OPTS=[
+    {mode:'flow',name:'OVERDRIVE CIRCUIT',d:'six gates · timed laps · learn SPACE burst and SHIFT slide'},
     {mode:'range', name:'SHOOTING RANGE', d:'one of every enemy type \u00b7 they stand still \u00b7 respawn 3s after a kill'},
     {mode:'dps',   name:'DPS DUMMY',      d:'an unbreakable target \u00b7 live damage-per-second readout'},
     {mode:'tracking', name:'TRACKING DUMMY', d:'open arena \u00b7 0.5\u00d7 speed steps to 5\u00d7 \u00b7 eight 45\u00b0 directions', controls:true},
@@ -1468,9 +1484,9 @@ function drawArena(){
   ctx.strokeStyle='#4a4634'; ctx.strokeRect(px+0.5,ly+0.5,pw,lh);
   ctx.textAlign='left'; ctx.fillStyle=cpuTeamMode?'#bfa8ff':botMode?'#7fd8ff':authUser?'#a7c15e':'#d05548'; ctx.font='700 '+(tiny?9:10)+'px ui-monospace,Consolas,monospace';
   ctx.fillText(localMode?'\u25CF LOCAL PLAYER \u00b7 ONE DEVICE ONLY':authUser?('\u25CF '+displayName(authUser)):'\u25CF SIGN IN REQUIRED',px+10,ly+(tiny?12:18));
-  const names=arenaLoadoutReady()?[loadout.primary,loadout.secondary,loadout.melee,loadout.utility]
-    .filter(Boolean).map(k=>(WEAPONS[k]||UTILITIES[k]).name).join('  \u00b7  '):'Choose PRIMARY + SIDEARM + MELEE on the loadout screen';
-  ctx.fillStyle=arenaLoadoutReady()?'#cdd6b0':'#d0a548'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
+  const kitReady=arenaLoadoutReady(localMode),names=kitReady?[loadout.primary,loadout.secondary,loadout.melee,loadout.utility]
+    .filter(Boolean).map(k=>(WEAPONS[k]||UTILITIES[k]).name).join('  \u00b7  '):localMode?'Choose a PRIMARY on the loadout screen':'Choose PRIMARY + SIDEARM + MELEE on the loadout screen';
+  ctx.fillStyle=kitReady?'#cdd6b0':'#d0a548'; ctx.font=(tiny?'8':'10')+'px ui-monospace,Consolas,monospace';
   ctx.fillText(fitLine(names,pw-20),px+10,ly+(tiny?29:43)); ctx.textAlign='center';
 
   if(mapVoting||mapReveal){
@@ -1572,6 +1588,12 @@ function drawArena(){
     ctx.fillStyle='#8a9268'; ctx.font=(tiny?'9':'11')+'px ui-monospace,Consolas,monospace'; ctx.fillText(fitLine(arena.status,pw-20),W/2,bodyY+(tiny?35:55));
     const spin=performance.now()/260, sy=bodyY+(tiny?66:105), sr=tiny?14:22; ctx.strokeStyle='#e8b658'; ctx.lineWidth=3; ctx.beginPath(); ctx.arc(W/2,sy,sr,spin,spin+4.5); ctx.stroke();
     button('cancel','CANCEL SEARCH',bodyY+(tiny?91:154),'#d05548');
+    button('loadout','CHANGE LOADOUT',bodyY+(tiny?128:212),'#7fd8ff');
+  } else if(arena.phase==='loadout'){
+    ctx.fillStyle='#e8b658';ctx.font='700 '+(tiny?18:28)+'px ui-monospace,Consolas,monospace';
+    ctx.fillText('LOADOUT · '+onlineLoadoutRemaining()+'s',W/2,bodyY+16);
+    button('loadout','CHANGE LOADOUT',bodyY+(tiny?50:90),'#7fd8ff');
+    button('cancel','LEAVE MATCH',bodyY+(tiny?90:150),'#d05548');
   } else if(arena.phase==='room'||arena.phase==='lobby'){
     const showInviteCode=typeof arenaInviteCodeVisible==='function'&&arenaInviteCodeVisible(),
       roomTitle=arena.mode==='queue'?'CASUAL QUICK MATCH':showInviteCode?'PRIVATE ROOM · INVITE A FRIEND':'PRIVATE 1v1';
@@ -1656,7 +1678,7 @@ function cpuResultRematch(mode,temporaryGiftVerified=false,ladderReady=false,uiI
     cpuResultRouteToLoadout(mode,message);sfx('dry');return false;
   };
   if(typeof temporaryWeaponLoadoutReady==='function'&&!temporaryWeaponLoadoutReady())return expired();
-  if(!loadout||!loadout.primary||!loadout.secondary||!loadout.melee)
+  if(!loadout||!loadout.primary)
     return expired('A TEMPORARY WEAPON EXPIRED OR YOUR LOADOUT IS INCOMPLETE · PICK ANOTHER');
   if(!temporaryGiftVerified&&typeof verifyTemporaryWeaponLoadoutForLaunch==='function'){
     const verified=verifyTemporaryWeaponLoadoutForLaunch(
@@ -1672,7 +1694,7 @@ function cpuResultRematch(mode,temporaryGiftVerified=false,ladderReady=false,uiI
   if(!stillCurrent())return false;
   if(team){
     const localId=typeof cpuTeamLocalId==='function'?String(cpuTeamLocalId()||''):'',
-      kit=typeof partyCpuKit==='function'?partyCpuKit(loadout):null;
+      kit=typeof partyCpuKit==='function'?partyCpuKit(loadout,true,true):null;
     if(!localId||!kit)return expired('YOUR CPU 2v2 LOADOUT CHANGED · PICK YOUR WEAPONS AGAIN');
     partyCpuMatch.loadouts[localId]=kit;partyCpuMatch.localLoadout=kit;
   }
@@ -1702,6 +1724,7 @@ function arenaClick(){
     else if(r.id==='signin'){
       arenaAuthPending=true; $('aguest').style.display='none'; $('authmsg').textContent='Sign in is required for Online multiplayer on different devices.'; $('authwrap').style.display='flex';
     } else if(r.id==='quick') arenaQuickMatch();
+    else if(r.id==='loadout')openOnlineLoadoutEditor();
     else if(r.id==='copy') arenaCopyCode();
     else if(r.id==='ready') arenaSetReady(true);
     else if(r.id==='cancel') leaveArena('Left matchmaking.',false);
@@ -1759,10 +1782,12 @@ function chooseGameMode(mode,returnPage='modeboard'){
   selPage='loadout'; sfx('swap'); return true;
 }
 function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=''){
+  if(typeof onlineLoadoutEditing==='function'&&onlineLoadoutEditing())return onlineLoadoutSave();
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()){
     modeBoardNotice='CHOOSE YOUR USERNAME TO PLAY'; modeBoardNoticeT=performance.now()+2800; sfx('dry'); return false;
   }
   const launchMode=String(expectedMode||pendingGameMode||''),cpuLaunch=typeof cpuLaunchMode==='function'&&cpuLaunchMode(launchMode);
+  if(typeof primaryOnlyMode==='function'&&primaryOnlyMode(launchMode))loadout=primaryOnlyKit(loadout);
   if(sb&&authUser&&(!profileLoaded||profileOwnerUserId!==String(authUser.id||''))){
     modeBoardNotice='LOADING YOUR ACCOUNT PROGRESS\u2026';modeBoardNoticeT=performance.now()+2200;sfx('dry');return false;
   }
@@ -1783,7 +1808,7 @@ function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=
     if(!ready){modeBoardNotice='VERIFYING TEMPORARY GIFT WITH THE SERVER…';modeBoardNoticeT=performance.now()+3200;return false;}
   }
   if(!cpuStillCurrent())return false;
-  if(!(loadout.primary&&loadout.secondary&&loadout.melee)){
+  if(!(loadout.primary&&(primaryOnlyMode(launchMode)||loadout.secondary&&loadout.melee))){
     pracNeedMsgT=now+1600; sfx('dry'); return false;
   }
   if(pendingGameMode==='partycpu2v2') return partyCpuSubmitLoadout();
@@ -1811,6 +1836,8 @@ function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=
   pendingGameMode=null; pendingPractice=null; modeBoardMode=null; startGame(); return true;
 }
 function navigateSelectBack(){
+  if(typeof onlineLoadoutEditing==='function'&&onlineLoadoutEditing()&&selPage==='loadout'){onlineLoadoutSave();sfx('swap');return;}
+  if(selPage==='onlineplay'||selPage==='offlineplay'){selPage='hub';sfx('swap');return;}
   if(selPage==='multidevice'){void duelServiceCancel();return;}
   if(detailKey){ detailKey=null; sfx('swap'); return; }
   if(selPage==='shop'&&shopWeaponPickerOpen){ shopWeaponPickerOpen=false; sfx('swap'); return; }
@@ -2739,16 +2766,18 @@ function drawParty(){
 }
 function drawLoadout(){
   selBg(); catBtns=[];
+  const editing=typeof onlineLoadoutEditing==='function'&&onlineLoadoutEditing(),primaryOnly=primaryOnlyMode(pendingGameMode),
+    remaining=editing?onlineLoadoutRemaining():null;
   const multiMode=['arena2v2','ranked1v1','ranked2v2'].includes(pendingGameMode)||String(pendingGameMode||'').startsWith('partyduel_'),
     multiLabel=String(pendingGameMode||'').startsWith('partyduel_')?'PARTY '+pendingGameMode.slice(10):pendingGameMode==='arena2v2'?'CASUAL 2v2':pendingGameMode==='ranked1v1'?'RANKED 1v1':'RANKED 2v2';
   const arenaMode=pendingGameMode==='arena', ai1v1Mode=pendingGameMode==='ai1v1', ai2v2Mode=pendingGameMode==='ai2v2', aiMode=ai1v1Mode||ai2v2Mode,
     partyCpuMode=pendingGameMode==='partycpu2v2', practiceSetup=pendingGameMode==='practice',
-    practiceLabel={range:'SHOOTING RANGE',dps:'DPS DUMMY',tracking:'TRACKING DUMMY',boss:'WARLORD PRACTICE'}[pendingPractice]||'PRACTICE';
+    practiceLabel={flow:'OVERDRIVE CIRCUIT',range:'SHOOTING RANGE',dps:'DPS DUMMY',tracking:'TRACKING DUMMY',boss:'WARLORD PRACTICE'}[pendingPractice]||'PRACTICE';
   const queueNoticeActive=modeBoardNotice&&now<modeBoardNoticeT;
   const modeCol=arenaMode?'#d05548':partyCpuMode?'#bfa8ff':aiMode?'#7fd8ff':practiceSetup?'#a7c15e':'#e8b658';
   ctx.textAlign='center'; ctx.textBaseline='top';
   ctx.fillStyle=modeCol; ctx.font='700 '+(H<600?24:32)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText('YOUR LOADOUT',W/2,H*0.035);
+  ctx.fillText(remaining!==null?'CHOOSE LOADOUT · '+remaining+'s':primaryOnly?'CHOOSE YOUR PRIMARY':'YOUR LOADOUT',W/2,H*0.035);
   const betaLoadout=arenaMode||partyCpuMode||ai2v2Mode;
   ctx.fillStyle=queueNoticeActive?'#ff6b5d':betaLoadout?'#e8b658':'#8a9268'; ctx.font=(W<430?(betaLoadout?'8':'9'):'11')+'px ui-monospace,Consolas,monospace';
   const loadoutSub=multiMode?'BETA · '+multiLabel+' · MULTI-DEVICE · NO UTILITIES':arenaMode?(W<430?'NEW/BETA \u00b7 SAVED \u00b7 1v1 \u00b7 ONLINE':'NEW \u00b7 BETA \u00b7 TESTING \u00b7 AUTO-SAVED \u00b7 CASUAL 1v1 \u00b7 ONLINE'):
@@ -2756,9 +2785,9 @@ function drawLoadout(){
                    ai2v2Mode?(W<430?'NEW/BETA \u00b7 SAVED \u00b7 CPU 2v2 \u00b7 LOCAL \u00b7 NO REWARDS':'NEW \u00b7 BETA \u00b7 TESTING \u00b7 AUTO-SAVED \u00b7 CPU 2v2 \u00b7 LOCAL \u00b7 NO REWARDS'):
                    ai1v1Mode?'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 1v1 VS AI \u00b7 NO UPGRADES':
                    practiceSetup?'OFFLINE \u00b7 PRACTICE \u00b7 '+practiceLabel+' \u00b7 NO SCORE OR REWARDS':
-                          'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 ENDLESS \u00b7 UTILITY OPTIONAL';
-  ctx.fillText(fitLine(queueNoticeActive?modeBoardNotice:betaLoadout?loadoutSub:('AUTO-SAVED FOR EVERY MODE \u00b7 '+loadoutSub),W-24),W/2,H*0.035+40);
-  const rows=(aiMode||partyCpuMode||multiMode)?CATS.slice(0,3):CATS;
+                          'OFFLINE \u00b7 ONE DEVICE ONLY \u00b7 ENDLESS \u00b7 PRIMARY ONLY';
+  ctx.fillText(fitLine(editing?(remaining!==null?'AUTO-LOCKS AT ZERO · COMBAT HAS NOT STARTED':'STILL SEARCHING · CHANGES AUTO-SAVE'):primaryOnly?'OFFLINE · PRIMARY ONLY · PICK IT AND PLAY':queueNoticeActive?modeBoardNotice:betaLoadout?loadoutSub:('AUTO-SAVED FOR EVERY MODE \u00b7 '+loadoutSub),W-24),W/2,H*0.035+40);
+  const rows=primaryOnly?CATS.slice(0,1):(aiMode||partyCpuMode||multiMode)?CATS.slice(0,3):CATS;
   const bw=Math.min(540,W-40), x0=W/2-bw/2, gap=H<600?9:14;
   const top=H*0.035+68, footer=112;
   const rowH=clamp(Math.floor((H-top-footer-gap*(rows.length-1))/rows.length),H<420?32:H<500?40:48,78);
@@ -2776,19 +2805,19 @@ function drawLoadout(){
     ctx.fillStyle=hot?'#e8b658':'#8a9268'; ctx.font='700 22px ui-monospace,Consolas,monospace'; ctx.fillText('\u203A',x0+bw-18,y+rowH/2);
     ctx.textAlign='center'; ctx.textBaseline='top'; y+=rowH+gap;
   }
-  const ready=!!(loadout.primary&&loadout.secondary&&loadout.melee), dh=48, dw=Math.min(360,W-34), dx=W/2-dw/2;
+  const ready=!!(loadout.primary&&(primaryOnly||loadout.secondary&&loadout.melee)), dh=48, dw=Math.min(360,W-34), dx=W/2-dw/2;
   const dy=Math.min(H-dh-58,y+5); deployRect={x:dx,y:dy,w:dw,h:dh};
   const hot=ready&&mouse.x>=dx&&mouse.x<=dx+dw&&mouse.y>=dy&&mouse.y<=dy+dh;
   ctx.fillStyle=hot?modeCol:ready?(partyCpuMode?'rgba(191,168,255,0.16)':aiMode?'rgba(127,216,255,0.16)':arenaMode?'rgba(208,85,72,0.18)':'rgba(232,182,88,0.16)'):'rgba(0,0,0,0.35)'; ctx.fillRect(dx,dy,dw,dh);
   ctx.strokeStyle=ready?modeCol:'#4a4634'; ctx.lineWidth=1.5; ctx.strokeRect(dx+0.5,dy+0.5,dw,dh);
   ctx.fillStyle=hot?'#101208':ready?'#e8d9a8':'#6b7455'; ctx.font='700 16px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
-  ctx.fillText(ready?(multiMode?'READY FOR '+multiLabel:partyCpuMode?'READY FOR PARTY 2v2':arenaMode?'START QUEUING FOR 1v1':ai2v2Mode?'START 2v2 VS CPUs':ai1v1Mode?'START 1v1 VS AI':practiceSetup?'START '+practiceLabel:'START ENDLESS'):'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
+  ctx.fillText(ready?(editing?'DONE · KEEP THIS LOADOUT':multiMode?'READY FOR '+multiLabel:partyCpuMode?'READY FOR PARTY 2v2':arenaMode?'START QUEUING FOR 1v1':ai2v2Mode?'START 2v2 VS CPUs':ai1v1Mode?'START 1v1 VS AI':practiceSetup?'START '+practiceLabel:'START ENDLESS'):primaryOnly?'CHOOSE A PRIMARY':'CHOOSE ALL 3 WEAPONS',W/2,dy+dh/2);
   const bbW=120, bbH=30, bbX=16, bbY=H-bbH-14; backRect={x:bbX,y:bbY,w:bbW,h:bbH};
   const backHot=mouse.x>=bbX&&mouse.x<=bbX+bbW&&mouse.y>=bbY&&mouse.y<=bbY+bbH;
   ctx.fillStyle=backHot?'#8a9268':'rgba(138,146,104,0.12)'; ctx.fillRect(bbX,bbY,bbW,bbH); ctx.strokeStyle='#8a9268'; ctx.strokeRect(bbX+0.5,bbY+0.5,bbW,bbH);
-  const backLabel=pendingGameMode==='practice'?'\u2039 PRACTICE':partyCpuMode?'\u2039 PARTY':loadoutBackPage==='offlinecpu'?'\u2039 OFFLINE VS CPU':(loadoutBackPage==='modeboard'?'\u2039 PLAY MENU':'\u2039 HOME');
+  const backLabel=editing?'\u2039 BACK TO MATCH':pendingGameMode==='practice'?'\u2039 PRACTICE':partyCpuMode?'\u2039 PARTY':loadoutBackPage==='offlinecpu'?'\u2039 OFFLINE VS CPU':(loadoutBackPage==='modeboard'?'\u2039 PLAY MENU':'\u2039 HOME');
   ctx.fillStyle=backHot?'#101208':'#cdd6b0'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(backLabel,bbX+bbW/2,bbY+bbH/2);
-  if(now<pracNeedMsgT){ ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText('PRIMARY + SIDEARM + MELEE ARE REQUIRED',W/2,dy-18); }
+  if(now<pracNeedMsgT){ ctx.fillStyle='#d05548'; ctx.font='700 11px ui-monospace,Consolas,monospace'; ctx.fillText(primaryOnly?'CHOOSE A PRIMARY':'PRIMARY + SIDEARM + MELEE ARE REQUIRED',W/2,dy-18); }
   ctx.textBaseline='alphabetic';
 }
 
@@ -2959,14 +2988,24 @@ function drawWeaponBrowser(){
 
   const backH=tiny?26:32, backW=Math.min(190,W-margin*2), backX=W/2-backW/2, backY=H-margin-backH;
   const gridTop=tabY+tabH+(tiny?7:12), gridBottom=backY-(tiny?7:12), availableH=Math.max(80,gridBottom-gridTop);
-  const keys=weaponBrowserKeys(weaponBrowserCat), cols=W>=720?4:W>=520?3:2, gap=tiny?6:9, rows=Math.max(1,Math.ceil(keys.length/cols));
+  const allKeys=weaponBrowserKeys(weaponBrowserCat),cols=W>=720?4:W>=520?3:2,gap=tiny?6:9,
+    pageKey='browse:'+weaponBrowserCat,pageSize=cols*Math.max(1,Math.min(3,Math.floor((availableH-32+gap)/(100+gap)))),
+    pages=Math.max(1,Math.ceil(allKeys.length/pageSize)),page=clamp(categoryPages[pageKey]||0,0,pages-1),
+    keys=allKeys.slice(page*pageSize,(page+1)*pageSize),rows=Math.max(1,Math.ceil(keys.length/cols));
+  categoryPages[pageKey]=page;
   const gridW=Math.min(920,W-margin*2), cardW=(gridW-gap*(cols-1))/cols;
-  const cardH=Math.min(190,(availableH-gap*(rows-1))/rows), usedH=cardH*rows+gap*(rows-1);
-  const gridX=W/2-gridW/2, gridY=gridTop+Math.max(0,(availableH-usedH)/2);
+  const cardSpace=availableH-(pages>1?34:0),cardH=Math.min(190,(cardSpace-gap*(rows-1))/rows),usedH=cardH*rows+gap*(rows-1);
+  const gridX=W/2-gridW/2, gridY=gridTop+Math.max(0,(cardSpace-usedH)/2);
   for(let i=0;i<keys.length;i++){
     const row=Math.floor(i/cols), col=i%cols, inRow=Math.min(cols,keys.length-row*cols);
     const rowW=inRow*cardW+(inRow-1)*gap, rowX=W/2-rowW/2;
     drawWeaponBrowserCard(keys[i],weaponBrowserCat,rowX+col*(cardW+gap),gridY+row*(cardH+gap),cardW,cardH);
+  }
+  if(pages>1){
+    const navY=gridBottom-28,navW=Math.min(140,(gridW-70)/2);
+    duelUiButton(weaponBrowserRects,'prev','‹ PREVIOUS',gridX,navY,navW,28,page>0,{kind:'page',pageKey,page:page-1});
+    duelUiButton(weaponBrowserRects,'next','NEXT ›',gridX+gridW-navW,navY,navW,28,page<pages-1,{kind:'page',pageKey,page:page+1});
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#cdd6b0';ctx.font='10px ui-monospace,Consolas,monospace';ctx.fillText((page+1)+' / '+pages,W/2,navY+14);
   }
   backRect={x:backX,y:backY,w:backW,h:backH};
   const hot=mouse.x>=backX&&mouse.x<=backX+backW&&mouse.y>=backY&&mouse.y<=backY+backH;
@@ -3057,7 +3096,7 @@ function drawHub(){
     titleFs=Math.min(titleFs,Math.max(16,Math.floor(room/(titleChars*.62))));
     titleX=accountRight+room/2;
   }
-  ctx.fillStyle='#e8b658'; ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
+  ctx.fillStyle='#d0ffef'; ctx.font='700 '+titleFs+'px ui-monospace,Consolas,monospace';
   ctx.fillText('OUTPOST ZERO', titleX, H*0.035);
   const titleBottom=H*0.035+titleFs;                 // the title uses a TOP baseline
 
@@ -3126,13 +3165,13 @@ function drawHub(){
     ctx.textBaseline='top'; ctx.textAlign='center';   // drawHub draws centred; put it back
   }
   const g=ctx.createLinearGradient(bnX,0,bnX+bnW,0);
-  g.addColorStop(0,'#5b2a10'); g.addColorStop(0.5,'#d0763e'); g.addColorStop(1,'#59652d');
+  g.addColorStop(0,'#103341'); g.addColorStop(0.5,'#145b63'); g.addColorStop(1,'#92512e');
   ctx.fillStyle=g; ctx.fillRect(bnX,bnY,bnW,bnH);
   ctx.strokeStyle='#e8b658'; ctx.lineWidth=1.5; ctx.strokeRect(bnX+0.5,bnY+0.5,bnW,bnH);
   leftColTop = Math.max(104, H*0.035+44+adminRowShift);
   ctx.fillStyle='#fff2cc'; ctx.font='700 15px ui-monospace,Consolas,monospace';
   ctx.textBaseline='middle';
-  ctx.fillText(fitLine('\uD83C\uDF42 OUTPOST ZERO FALL UPDATE \uD83C\uDF42', bnW-16), W/2, bnY+bnH/2);
+  ctx.fillText(fitLine('OVERDRIVE · BURST / SLIDE / OUTPLAY', bnW-16), W/2, bnY+bnH/2);
   ctx.textBaseline='top';
 
   // Home destinations: Play, Practice, browse-only Weapons, and Social.
@@ -3142,17 +3181,18 @@ function drawHub(){
   homePlayRects=[];
   hubPostsRect=null;
   const actions=[
-    {id:'play',title:'PLAY',sub:'ONLINE \u00b7 RANKED \u00b7 OFFLINE',col:'#e8b658',enabled:true},
-    {id:'practice',title:'PRACTICE',sub:'RANGE \u00b7 TRACKING \u00b7 DPS \u00b7 WARLORDS',col:'#a7c15e',enabled:true},
+    {id:'play',title:'PLAY ONLINE',sub:'OVERDRIVE ARENAS · QUICK PLAY · RANKED',col:'#63e6df',enabled:true},
+    {id:'offline',title:'OFFLINE',sub:'ONE PRIMARY · ENDLESS · CPU',col:'#7fd8ff',enabled:true},
+    {id:'practice',title:'TRAINING',sub:'CIRCUIT · RANGE · TRACKING · DPS',col:'#ffb65d',enabled:true},
     {id:'social',title:'SOCIAL',sub:W<520?'NEW \u00b7 BETA \u00b7 PARTY':party.directCpu?'NEW \u00b7 BETA \u00b7 CPU 2v2':party.accepted?('NEW \u00b7 BETA \u00b7 PARTY '+party.members.length+'/'+PARTY_MAX):'NEW \u00b7 BETA \u00b7 PARTY \u00b7 FRIENDS',col:'#bfa8ff',enabled:true},
     {id:'weapons',title:'WEAPONS',sub:'STATS \u00b7 OWNERSHIP \u00b7 PRACTICE',col:'#8fb3c9',enabled:true}
   ];
   const hbH=H<600?30:40,hbGap=W<520?5:8,
     controlsW=Math.min(390,W-24),controlsBlockH=hbH*3+hbGap*2,
     controlsLimitTop=H-controlsBlockH-8;
-  // PLAY, PRACTICE, and SOCIAL form one destination row. WEAPONS is a
-  // deliberately separate full-width armory section directly underneath.
-  const actionRows=2;
+  // Online is the full-width main action. Offline/Practice/Social share the
+  // next row, with the full-width armory directly underneath.
+  const actionRows=3;
   const actionGap=H<390?4:H<560?7:10, targetActionH=H<390?42:H<560?54:76;
   // Small landscape screens use one-line task rows. At the shortest height,
   // tasks take priority and the streak card waits for a taller/rotated view.
@@ -3167,7 +3207,9 @@ function drawHub(){
   let cardH=targetActionH, homeBoardsH=H<390?72:H<560?88:112;
   const boardActionGap=H<390?3:H<560?5:8,minCardH=H<390?24:compactDaily?32:38,
     minBoardH=H<390?50:60;
-  const available=Math.max(0,actionBottom-contentTop);
+  const postBottom=H>=900?drawHubPosts(contentTop,contentTop+76):contentTop,
+    contentStart=Math.max(contentTop,postBottom+(postBottom>contentTop?8:0));
+  const available=Math.max(0,actionBottom-contentStart);
   let actionBlockH=cardH*actionRows+actionGap*(actionRows-1);
   let showHomeBoards=available>=minBoardH+boardActionGap+(minCardH*actionRows+actionGap*(actionRows-1));
   let liveBoardGap=showHomeBoards?boardActionGap:0;
@@ -3178,31 +3220,23 @@ function drawHub(){
   const actionRoom=Math.max(0,available-homeBoardsH-liveBoardGap);
   cardH=Math.min(cardH,Math.max(10,Math.floor((actionRoom-actionGap*(actionRows-1))/actionRows)));
   actionBlockH=cardH*actionRows+actionGap*(actionRows-1);
-  let homeBoardsY=contentTop;
-  const homeBoardsW=Math.min(560,W-24), homeBoardsX=W/2-homeBoardsW/2;
+  const actionTop=contentStart,homeBoardsY=actionTop+actionBlockH+liveBoardGap;
+  const homeBoardsW=Math.min(680,W-24), homeBoardsX=W/2-homeBoardsW/2;
   if(showHomeBoards){
-    const maxBoardsY=Math.max(contentTop,actionBottom-actionBlockH-liveBoardGap-homeBoardsH),
-      preferredBoardsY=Math.min(maxBoardsY,Math.max(contentTop,H*0.30)),
-      postsLimit=preferredBoardsY-liveBoardGap,
-      boardBottom=postsLimit-contentTop>=58?drawHubPosts(contentTop,postsLimit):contentTop;
-    // The updates feed draws its post copy left-aligned. Home action labels use
-    // their rectangle centres, so restore centred text before drawing buttons.
     ctx.textAlign='center';ctx.textBaseline='top';
-    homeBoardsY=Math.min(maxBoardsY,Math.max(preferredBoardsY,boardBottom+liveBoardGap));
     boardPanelRect={x:homeBoardsX,y:homeBoardsY,w:homeBoardsW,h:homeBoardsH};
     drawHomeLeaderboards(homeBoardsX,homeBoardsY,homeBoardsW,homeBoardsH);
   }else boardPanelRect=null;
   ctx.textAlign='center';ctx.textBaseline='top';
-  const actionTop=homeBoardsY+homeBoardsH+liveBoardGap;
-  const groupW=Math.min(560,W-24), groupX=W/2-groupW/2;
+  const groupW=Math.min(680,W-24), groupX=W/2-groupW/2;
   const topCols=3, topCardW=(groupW-actionGap*(topCols-1))/topCols;
   for(let i=0;i<actions.length;i++){
-    const a=actions[i], full=a.id==='weapons', x=full?groupX:groupX+i*(topCardW+actionGap),
-      y=full?actionTop+cardH+actionGap:actionTop, cardW=full?groupW:topCardW;
+    const a=actions[i], full=a.id==='weapons'||a.id==='play', x=full?groupX:groupX+(i-1)*(topCardW+actionGap),
+      y=actionTop+(a.id==='play'?0:a.id==='weapons'?2:1)*(cardH+actionGap), cardW=full?groupW:topCardW;
     const r={id:a.id,x,y,w:cardW,h:cardH,enabled:a.enabled}; homePlayRects.push(r);
     const inside=mouse.x>=x&&mouse.x<=x+cardW&&mouse.y>=y&&mouse.y<=y+cardH;
     const hot=inside&&a.enabled;
-    ctx.fillStyle=a.enabled?(hot?a.col:'rgba(0,0,0,0.42)'):'rgba(38,38,38,0.72)'; ctx.fillRect(x,y,cardW,cardH);
+    ctx.fillStyle=a.enabled?(hot?a.col:a.id==='play'?'rgba(22,103,115,.3)':'rgba(0,0,0,0.42)'):'rgba(38,38,38,0.72)'; ctx.fillRect(x,y,cardW,cardH);
     ctx.strokeStyle=a.enabled?a.col:'#4a4a45'; ctx.lineWidth=a.enabled?1.7:1; ctx.strokeRect(x+0.5,y+0.5,cardW,cardH);
     ctx.fillStyle=a.enabled?(hot?'#101208':'#e8d9a8'):'#66665f';
     ctx.font='700 '+(cardW<170?12:(cardH<44?14:20))+'px ui-monospace,Consolas,monospace'; ctx.textBaseline='middle';
@@ -3235,7 +3269,7 @@ function drawHub(){
   // ---- DAILY STREAK, then the tasks, stacked under the button row ----
   streakBtnRect=null;
   const stW=Math.min(340,W-24),stX=W/2-stW/2,
-    stackY=actionTop+cardH*2+actionGap+dailyTopGap,
+    stackY=homeBoardsY+homeBoardsH+dailyTopGap,
     stY=stackY;
   if(showHubStreak&&stY+stH<=controlsLimitTop-6){
     const rewardLoading=!!(sb&&authUser&&!profileLoaded),ready=streakClaimable()&&!signedOut&&!streakClaimBusy;
@@ -3364,8 +3398,10 @@ function drawHub(){
   }
 
 }
+let categoryPages={},categoryPageRects=[];
 function drawCategory(cat){
   selBg();
+  categoryPageRects=[];
   const slot=slotFor(cat), col=ROLECOL[cat];
   const entry=CATS.find(c=>c[0]===cat);
   const casualUtility=cat==='UTILITY'&&pendingGameMode==='arena'&&typeof CASUAL_ARENA_UTILITY_KEYS!=='undefined';
@@ -3379,42 +3415,31 @@ function drawCategory(cat){
   ctx.fillText(cat==='UTILITY'?'tap to equip \u00b7 tap again to clear \u00b7 optional'
                               :'tap to equip \u00b7 \u25B8 for details', W/2, H*0.035+30);
 
-  const cols=2, gap=16;
-  const nBase=list.length, nTemp=temps.length;
-  const rowsBase=Math.ceil(nBase/cols), rowsTemp=Math.ceil(nTemp/cols);
+  const cols=W>1000?3:2, gap=H<500?10:16;
   const topY=H*0.035+52;
-  const btnH=46, btnGap=14, bannerH=nTemp?30:0;
-  const availH=H-topY-20-btnH-btnGap-bannerH;
-  const totalRows=rowsBase+rowsTemp;
+  const btnH=36,btnGap=10,availH=H-topY-104;
+  const all=list.concat(temps),maxRows=Math.max(1,Math.min(3,Math.floor((availH+gap)/(100+gap)))),pageSize=maxRows*cols,
+    pages=Math.max(1,Math.ceil(all.length/pageSize)),page=clamp(categoryPages[cat]||0,0,pages-1);
+  categoryPages[cat]=page;
+  const shown=all.slice(page*pageSize,(page+1)*pageSize),totalRows=Math.max(1,Math.ceil(shown.length/cols));
   const cw=Math.min(210,(W-70-(cols-1)*gap)/cols);
-  const ch=clamp((availH-(totalRows-1)*gap)/totalRows, 84, 210);   // small phones: shrink rather than overflow
+  const ch=Math.max(65,Math.min(210,(availH-(totalRows-1)*gap)/totalRows));
   const sc=Math.min(1.1, ch/200);
   const gridW=cw*cols+gap*(cols-1), gx=W/2-gridW/2;
 
-  let y=topY, gridBottom=topY;
-  for(let i=0;i<nBase;i++){
-    const cx=gx+(i%cols)*(cw+gap), cy=y+Math.floor(i/cols)*(ch+gap);
-    drawCard(list[i], cat, slot, cx, cy, cw, ch, sc);
+  let gridBottom=topY;
+  for(let i=0;i<shown.length;i++){
+    const cx=gx+(i%cols)*(cw+gap), cy=topY+Math.floor(i/cols)*(ch+gap);
+    drawCard(shown[i], cat, slot, cx, cy, cw, ch, sc,temps.includes(shown[i]));
     gridBottom=Math.max(gridBottom, cy+ch);
   }
-  y=gridBottom+gap;
-  if(nTemp){
-    // fiery temp banner
-    const bw=gridW, bx=gx;
-    const grad=ctx.createLinearGradient(bx,0,bx+bw,0);
-    grad.addColorStop(0,'#7a1e00'); grad.addColorStop(0.5,'#d9531a'); grad.addColorStop(1,'#7a1e00');
-    ctx.fillStyle=grad; ctx.fillRect(bx,y,bw,24);
-    ctx.fillStyle='#ffe0a0'; ctx.font='700 12px ui-monospace,Consolas,monospace';
-    ctx.textAlign='center'; ctx.fillText('\uD83D\uDD25 SEASONAL WEAPONS \u2014 LIMITED TIME \uD83D\uDD25', W/2, y+6);
-    y+=bannerH;
-    for(let i=0;i<nTemp;i++){
-      const cx=gx+(i%cols)*(cw+gap), cy=y+Math.floor(i/cols)*(ch+gap);
-      drawCard(temps[i], cat, slot, cx, cy, cw, ch, sc, true);
-      gridBottom=Math.max(gridBottom, cy+ch);
-    }
+  const pageY=Math.min(H-88,gridBottom+btnGap),navW=Math.min(120,(W-110)/2);
+  if(pages>1){
+    duelUiButton(categoryPageRects,'previous','‹ PREVIOUS',gx,pageY,navW,28,page>0,{cat,page:page-1});
+    duelUiButton(categoryPageRects,'next','NEXT ›',gx+gridW-navW,pageY,navW,28,page<pages-1,{cat,page:page+1});
+    ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#e8d9a8';ctx.font='10px ui-monospace,Consolas,monospace';ctx.fillText((page+1)+' / '+pages,W/2,pageY+14);
   }
-
-  const bw=340, dh=btnH, dx=W/2-bw/2, dy=Math.min(H-dh-14, gridBottom+btnGap);
+  const bw=Math.min(340,W-30), dh=btnH, dx=W/2-bw/2, dy=H-dh-17;
   backRect={x:dx,y:dy,w:bw,h:dh};
   const hov=mouse.x>=dx&&mouse.x<=dx+bw&&mouse.y>=dy&&mouse.y<=dy+dh;
   const picked=!!loadout[slot];
@@ -3426,6 +3451,7 @@ function drawCategory(cat){
   ctx.fillText(picked||cat==='UTILITY' ? 'CONTINUE \u203A' : 'CONTINUE (no pick) \u203A', W/2, dy+(dh-16)/2);
 }
 function drawCard(k, cat, slot, x, yb, cw, ch, sc, isTemp){
+  const inMatchEditor=typeof onlineLoadoutEditing==='function'&&onlineLoadoutEditing();
   const isUtil=cat==='UTILITY';
   const w = isUtil ? UTILITIES[k] : WEAPONS[k];
   const sel = loadout[slot]===k;
@@ -3441,7 +3467,7 @@ function drawCard(k, cat, slot, x, yb, cw, ch, sc, isTemp){
   // top-left, opposite the details arrow. On cramped cards it shrinks to the icon alone.
   const tight = ch<150 || cw<150;
   const pbw = tight ? 30 : Math.min(58, cw-46), pbh=tight?18:15, pbx=x+6, pby=yb+16;
-  cardRects.push({x:pbx,y:pby,w:pbw,h:pbh,key:k,cat,tryIt:true});
+  if(!inMatchEditor)cardRects.push({x:pbx,y:pby,w:pbw,h:pbh,key:k,cat,tryIt:true});
   // the chip itself is painted at the very end of the card, on top of any lock dimming,
   // so it looks exactly the same whether or not the weapon is owned
   const practiceChip=()=>{
@@ -3475,7 +3501,7 @@ function drawCard(k, cat, slot, x, yb, cw, ch, sc, isTemp){
   ctx.font='700 '+Math.max(11,Math.round(13*sc))+'px ui-monospace,Consolas,monospace';
   let statBottom=0;
   const nameY = Math.max(yb+Math.round(68*sc), yb+38);   // always clears the top-row buttons
-  ctx.fillText(w.name, x+cw/2, nameY);
+  ctx.fillText(fitLine(w.name,cw-12), x+cw/2, nameY);
   if(!isUtil){
     const bw=(cw-40)/2, bx1=x+15, bx2=x+25+bw;
     const r1=Math.max(yb+Math.round(98*sc), nameY+25), r2=Math.max(yb+Math.round(126*sc), r1+24);   // labels sit 12px above their bar
@@ -3521,14 +3547,14 @@ function drawCard(k, cat, slot, x, yb, cw, ch, sc, isTemp){
     ctx.textAlign='center';
     ctx.fillText('\uD83D\uDC8E '+shopItem.cost+' GEMS', x+cw/2, yb+ch/2-20);
     const bbw=Math.min(cw-24,120), bbh=26, bbx=x+cw/2-bbw/2, bby=yb+ch/2-2;
-    cardRects.push({x:bbx,y:bby,w:bbw,h:bbh,key:k,cat,gotoShop:true});   // click -> shop
+    if(!inMatchEditor)cardRects.push({x:bbx,y:bby,w:bbw,h:bbh,key:k,cat,gotoShop:true});   // click -> shop
     const hv=mouse.x>=bbx&&mouse.x<=bbx+bbw&&mouse.y>=bby&&mouse.y<=bby+bbh;
     ctx.fillStyle=hv?'#7fd8ff':'rgba(127,216,255,0.18)'; ctx.fillRect(bbx,bby,bbw,bbh);
     ctx.strokeStyle='#7fd8ff'; ctx.lineWidth=1; ctx.strokeRect(bbx+0.5,bby+0.5,bbw,bbh);
     ctx.fillStyle=hv?'#101208':'#bfe8ff'; ctx.font='700 10px ui-monospace,Consolas,monospace';
-    ctx.fillText('BUY IN SHOP', x+cw/2, bby+bbh/2+3);
+    ctx.fillText(inMatchEditor?'NOT OWNED':'BUY IN SHOP', x+cw/2, bby+bbh/2+3);
   }
-  practiceChip();                                  // always last, always full brightness
+  if(!inMatchEditor)practiceChip();                  // never leave an active search to launch a practice loan
 }
 function drawUtilIcon(x,y,key,col,sc){
   ctx.save(); ctx.translate(x,y); if(sc&&sc!==1) ctx.scale(sc,sc);

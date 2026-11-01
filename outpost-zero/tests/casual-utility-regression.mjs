@@ -140,11 +140,11 @@ assert.equal(vm.runInContext('arenaUtilityFrozen()',context),false);
 assert.match(persistence,/\['arena2v2','ai1v1','ai2v2','partycpu2v2','ranked','ranked1v1','ranked2v2'\]/,
   'CPU/team/ranked routes must retain their explicit utility denial list');
 assert.doesNotMatch(persistence,/\['arena','arena2v2'/,'Casual arena must not be stripped by loadout restoration');
-const rowSelector=ui.match(/const rows=([^;]+);\s*const rowH=/)||ui.match(/const rows=(\([^;]+\)\?CATS\.slice\(0,3\):CATS);/);
+const rowSelector=ui.match(/const rows=(primaryOnly\?CATS\.slice\(0,1\):\([^;]+\)\?CATS\.slice\(0,3\):CATS);/);
 assert.ok(rowSelector,'loadout must have an explicit category selector');
 for(const flags of [{aiMode:false,partyCpuMode:false,multiMode:false},{aiMode:true,partyCpuMode:false,multiMode:false},
   {aiMode:false,partyCpuMode:true,multiMode:false},{aiMode:false,partyCpuMode:false,multiMode:true}]){
-  const rows=vm.runInNewContext(rowSelector[1],{...flags,CATS:['primary','secondary','melee','utility']});
+  const rows=vm.runInNewContext(rowSelector[1],{...flags,primaryOnly:false,CATS:['primary','secondary','melee','utility']});
   assert.equal(rows.includes('utility'),!flags.aiMode&&!flags.partyCpuMode&&!flags.multiMode,
     'Casual1v1 retains Utility; CPU, team and ranked loadouts keep their three-slot restriction');
 }

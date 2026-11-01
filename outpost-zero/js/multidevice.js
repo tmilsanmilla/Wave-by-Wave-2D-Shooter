@@ -58,6 +58,8 @@ function multideviceRoundBegin(match,p,clock=Date.now(),recovery=false){
   if(!recovery&&(p.round!==match.round+1||match.round>0&&match.phase!=='round_end'||
       match.teams.some(t=>p.scores[t]!==match.scores[t])))return false;
   if(match.teams.some(t=>p.scores[t]>=MULTIDEVICE_TARGET))return false;
+  if(match.movementRequired&&p.movementVersion!==1)return false;
+  if(match.loadoutRequired&&match.round===0&&(typeof multideviceLoadoutSeal!=='function'||!multideviceLoadoutSeal(match,p)))return false;
   match.round=p.round;match.scores=Object.assign({},p.scores);match.phase=p.startInMs>0?'countdown':'fight';
   match.roundStartAt=clock+p.startInMs;match.roundEndAt=clock+p.remainingMs;match.nextRoundAt=0;match.roundResolved=false;
   match.started=true;match.seen=new Set();match.sent=new Map();match.received=new Map();match.hitLedger=new Map();match.timeoutHp=null;
@@ -166,6 +168,8 @@ function multideviceResetLocalRound(){
 function multideviceControlSnapshot(){
   const m=multidevice,clock=Date.now();
   return {controlSeq:++m.controlSeq,phase:m.phase,round:m.round,scores:Object.assign({},m.scores),winner:m.winner||null,
+    movementVersion:1,
+    loadoutWindow:m.loadoutWindow&&m.loadoutWindow.id,loadouts:m.loadoutWindow&&m.loadoutWindow.kits,
     startInMs:Math.max(0,m.roundStartAt-clock),remainingMs:Math.max(0,m.roundEndAt-clock),nextInMs:Math.max(0,m.nextRoundAt-clock),
     actors:Object.values(m.actors).map(a=>({id:a.id,hp:a.hp,x:a.tx,y:a.ty,angle:a.angle,cur:a.cur}))};
 }
@@ -174,9 +178,17 @@ function multidevicePublishControl(){
   const packet=multideviceControlSnapshot();m.lastControl=packet;multideviceSend('control',packet);return true;
 }
 function multideviceHostBegin(){
-  const m=multidevice;if(!m||m.selfId!==m.hostId||m.phase!=='setup'&&m.phase!=='round_end')return false;
+  const m=multidevice;if(!m||m.selfId!==m.hostId||!['setup','loadout','round_end'].includes(m.phase))return false;
   if(m.phase==='setup'&&!m.roster.every(a=>m.ready.has(a.id)))return false;
-  const packet={from:m.hostId,matchId:m.matchId,epoch:m.epoch,round:m.round+1,scores:Object.assign({},m.scores),startInMs:3000,remainingMs:93000};
+  if(m.loadoutRequired&&m.round===0){
+    if(!m.loadoutWindow){
+      const offer={from:m.hostId,matchId:m.matchId,epoch:m.epoch,windowId:'multi:'+m.epoch,remaining:MATCH_LOADOUT_MS};
+      multideviceLoadoutWindowReceive(m,offer);multideviceSend('loadout_window',offer);return true;
+    }
+    if(Date.now()<m.loadoutWindow.deadline||!m.roster.every(a=>m.loadoutWindow.commits[a.id]))return false;
+  }
+  const packet={from:m.hostId,matchId:m.matchId,epoch:m.epoch,round:m.round+1,scores:Object.assign({},m.scores),startInMs:3000,remainingMs:93000,movementVersion:1};
+  if(m.loadoutWindow){packet.loadoutWindow=m.loadoutWindow.id;packet.loadouts=m.loadoutWindow.kits||m.loadoutWindow.commits;}
   if(!multideviceRoundBegin(m,packet)||!multideviceResetLocalRound()){multideviceAbort('Could not prepare the next round. No ranked result was submitted.');return false;}
   m.status='ROUND '+m.round+' · GET READY';multidevicePublishControl();return true;
 }
@@ -253,7 +265,15 @@ function multideviceSyncTick(wall){
 function multideviceReceive(event,p,channel){
   const m=multidevice;if(!m||channel!==m.channel||!multideviceEnvelope(m,p,false,false)||p.from===m.selfId)return false;
   m.actors[p.from].lastSeen=Date.now();m.actors[p.from].missingSince=0;
-  if(event==='ready'&&m.phase==='setup'){m.ready.add(p.from);if(m.selfId===m.hostId)multideviceHostBegin();return true;}
+  if(event==='loadout_window'&&typeof multideviceLoadoutWindowReceive==='function')return multideviceLoadoutWindowReceive(m,p);
+  if(event==='loadout_commit'&&typeof matchLoadoutCommit==='function'){
+    return m.phase==='loadout'&&p.windowId===m.loadoutWindow?.id&&matchLoadoutCommit(m.loadoutWindow,p.from,p.kit,multideviceLoadoutKit);
+  }
+  if(event==='ready'&&m.phase==='setup'){
+    if(m.loadoutRequired&&p.loadoutVersion!==1){m.status='ALL PLAYERS MUST REFRESH TO THE SAME GAME VERSION';return false;}
+    if(m.movementRequired&&p.movementVersion!==1){m.status='OVERDRIVE UPDATE · ALL PLAYERS MUST REFRESH';return false;}
+    m.ready.add(p.from);if(m.selfId===m.hostId)multideviceHostBegin();return true;
+  }
   if(event==='resume'){if(m.selfId===m.hostId)multidevicePublishControl();return true;}
   if(event==='control')return multideviceApplyControl(p);
   if(event==='abort'&&p.from===m.hostId){multideviceAbort(String(p.reason||'Match ended without a result.'),false);return true;}
@@ -416,8 +436,9 @@ function multideviceWallTick(wall){
     now=Math.max(now,m.gameClockAnchor+Math.max(0,clock-m.gameWallAnchor));
   if(m.phase==='setup'){
     if(clock-m.createdAt>MULTIDEVICE_SETUP_MS){multideviceAbort('Not all players connected. Match cancelled without a result.');return;}
-    if(m.connected&&clock>=m.readyAt){m.readyAt=clock+1500;m.ready.add(m.selfId);multideviceSend('ready');if(m.selfId===m.hostId)multideviceHostBegin();}
+    if(m.connected&&clock>=m.readyAt){m.readyAt=clock+1500;m.ready.add(m.selfId);multideviceSend('ready',{loadoutVersion:1,movementVersion:1});if(m.selfId===m.hostId)multideviceHostBegin();}
   }
+  if(typeof multideviceLoadoutTick==='function')multideviceLoadoutTick(m,clock);
   if(m.phase==='countdown'&&clock>=m.roundStartAt){m.phase='fight';waveMsg='FIGHT';waveMsgT=now+800;}
   if(m.phase==='fight'&&clock>=m.roundEndAt){
     m.phase='timeout';m.timeoutHp={at:clock,confirmed:{[m.selfId]:Math.max(0,player.hp)},
@@ -456,15 +477,18 @@ async function multideviceLaunch(config){
   if(!sb||!authUser||!arenaLoadoutReady())return false;
   if(multidevice&&multidevice.matchId===String(config&&config.matchId))return true;
   const next=multideviceCreate(config,String(authUser.id));if(!next)return false;
+  next.loadoutRequired=true;
+  next.movementRequired=true;
   for(const actor of Object.values(next.actors)){const kit=arenaRemoteLoadout(actor.loadout);if(!kit)return false;actor.loadout=kit;}
   if(multidevice)multideviceLeave('',false);
   if(arena&&(arena.active||arena.matchChannel||arena.queueChannel))leaveArena('',false);
   next.savedLoadout=Object.assign({},loadout);multidevice=next;
+  onlineLoadoutEditor=null;detailKey=null;
   arena=freshArena(next.status);arena.mode='multidevice';arena.room=next.matchId;arena.hostId=next.hostId;arena.matchEpoch=1;
   state='select';selPage='multidevice';menuOpen=false;practiceMode=null;
   const channel=sb.channel('oz-duel:'+next.matchId,{config:{private:true,broadcast:{self:false,ack:true},presence:{key:next.selfId}}});
   next.channel=channel;arena.matchChannel=channel;
-  for(const event of ['ready','resume','control','abort','state','result','timeout_hp','hit','hit_result','shot','firework','melee','reflection','utility'])
+  for(const event of ['loadout_window','loadout_commit','ready','resume','control','abort','state','result','timeout_hp','hit','hit_result','shot','firework','melee','reflection','utility'])
     channel.on('broadcast',{event},({payload})=>multideviceReceive(event,payload,channel));
   channel.on('presence',{event:'sync'},()=>{
     if(multidevice!==next)return;

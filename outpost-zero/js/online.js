@@ -5,7 +5,7 @@
    intentionally CASUAL: ranked ratings need a trusted game server, not a
    browser that can be edited by either player. */
 const ARENA_FORFEIT_GRACE_MS=15000;
-const ARENA_PROTOCOL=3;
+const ARENA_PROTOCOL=5;
 const ARENA_PRESENCE_RETRY_DELAYS_MS=Object.freeze([0,3000,7000,15000,31000]);
 let arenaDisconnectHoldSerial=0,arenaPresenceTrackSerial=0;
 const CASUAL_ARENA_UTILITY_KEYS=Object.freeze(['medkit','grenade','freezer','redball','beachball']);
@@ -36,14 +36,14 @@ function arenaOnlineGameNow(){
   if(!arena||!arena.localBackgrounded||!arena.backgroundedAt||!isCasualOnlineArena())return now;
   return Math.max(now,(+arena.backgroundGameNow||now)+Math.max(0,Date.now()-arena.backgroundedAt));
 }
-function arenaLoadoutReady(){
-  const weaponsReady=['primary','secondary','melee'].every(slot=>{
+function arenaLoadoutReady(primaryOnly=false){
+  const weaponsReady=(primaryOnly?['primary']:['primary','secondary','melee']).every(slot=>{
     const key=loadout&&loadout[slot];
     const exactSlot=typeof storedLoadoutSlot!=='function'||storedLoadoutSlot(key)===slot;
     return !!(key&&WEAPONS[key]&&exactSlot&&
       (typeof isLocked!=='function'||!isLocked(key)));
   });
-  return weaponsReady&&casualArenaUtilityKey(loadout&&loadout.utility,true)!==null;
+  return weaponsReady&&(primaryOnly||casualArenaUtilityKey(loadout&&loadout.utility,true)!==null);
 }
 function arenaRemoteLoadout(raw){
   const result={};
@@ -1403,7 +1403,7 @@ function arenaConnectRoom(code,wantsHost,mode,expectedIds){
   // match (and its disconnect/forfeit rules) at a fresh 0-0 score.
   arena.localReady=false; arena.remoteReady=false;
   const ch=sb.channel('oz-arena-v1-'+code,{config:{broadcast:{self:false,ack:false},presence:{key:authUser.id}}});
-  for(const ev of ['state','shot','melee','firework','utility','hit','hit_result','round_timeout_hp','ko','round_start','round_result','ready','background','resume_request','resume_state','rematch','rematch_start','forfeit_result',
+  for(const ev of ['loadout_window','loadout_commit','state','shot','melee','firework','utility','hit','hit_result','round_timeout_hp','ko','round_start','round_result','ready','background','resume_request','resume_state','rematch','rematch_start','forfeit_result',
                     'map_vote_open','map_vote','map_vote_result','map_vote_ack','map_tnt_hit','map_hazard','map_hazard_ack','leave','room_full'])
     ch.on('broadcast',{event:ev},msg=>arenaReceive(ev,msg&&msg.payload,ch));
   ch.on('presence',{event:'sync'},()=>arenaMatchPresenceSync(ch));
@@ -1453,7 +1453,7 @@ function arenaMatchPresenceSync(ch){
   }
   if(!om){arena.status=arena.mode==='queue'?'Waiting for matched player to connect...':
       arena.wantsHost?'Share the invite code with your friend.':'Waiting for the private-room host...';return;}
-  const remoteKit=typeof arenaRemoteLoadout==='function'?arenaRemoteLoadout(om):
+  const remoteKit=arena.loadoutWindow?.sealed&&oldOpp?oldOpp.loadout:typeof arenaRemoteLoadout==='function'?arenaRemoteLoadout(om):
     {primary:om.primary,secondary:om.secondary,melee:om.melee},
     sameOpponent=!!(oldOpp&&String(oldOpp.id)===String(om.id)),
     oldPresenceSeq=Math.max(0,Math.floor(+oldOpp?.presenceSeq||0)),omPresenceSeq=Math.max(0,Math.floor(+om.presenceSeq||0)),
@@ -1479,7 +1479,7 @@ function arenaMatchPresenceSync(ch){
   // A ready Broadcast is authoritative for this one-way ready flow. Do not
   // let an older, static Presence payload change true back to false.
   arena.remoteReady=!!remoteKit&&((sameOpponent&&arena.remoteReady)||!!om.ready);
-  if(!['match_end','map_vote','map_reveal'].includes(arena.phase)) arena.phase=arena.active?arena.phase:'lobby';
+  if(!['match_end','map_vote','map_reveal','loadout'].includes(arena.phase)) arena.phase=arena.active?arena.phase:'lobby';
   if(arena.phase==='match_end'&&arena.forfeitPacket&&String(arena.forfeitPacket.winner)===String(authUser.id))
     arenaSend('forfeit_result',arena.forfeitPacket);
   else if(arena.mapVotePhase==='voting') arena.status='Vote for a map — '+Math.max(1,Math.ceil((arena.mapVoteDeadline-Date.now())/1000))+' seconds.';
@@ -1504,7 +1504,7 @@ function arenaSetReady(ready){
   arenaMaybeStart();
 }
 function arenaMaybeStart(){
-  if(!authUser||!arena.opponent||arena.active||arena.phase==='match_end'||['voting','reveal','locked'].includes(arena.mapVotePhase)) return false;
+  if(!authUser||!arena.opponent||arena.active||['match_end','loadout'].includes(arena.phase)||['voting','reveal','locked'].includes(arena.mapVotePhase)) return false;
   if(authUser.id===arena.hostId && arena.localReady&&arena.remoteReady){
     const held=!!(arena.disconnectAt||arena.disconnectTimer||arena.networkHold);
     // Receiving a ready packet or Realtime callback is not proof that either
@@ -1525,6 +1525,12 @@ function arenaReceive(event,p,sourceChannel=arena&&arena.matchChannel){
   if(p.to&&p.to!==authUser.id) return;
   if(event==='room_full'){ leaveArena('That room already has two players.',false); return; }
   if(!arena.opponent||p.from!==arena.opponent.id) return;
+  if(event==='loadout_window'&&typeof arenaLoadoutWindowReceive==='function'){arenaLoadoutWindowReceive(p);return;}
+  if(event==='loadout_commit'&&typeof matchLoadoutCommit==='function'){
+    if(arena.phase==='loadout'&&p.epoch===arena.matchEpoch&&p.windowId===arena.loadoutWindow?.id)
+      matchLoadoutCommit(arena.loadoutWindow,p.from,p.kit,arenaRemoteLoadout);
+    return;
+  }
   if(event==='background'){arenaApplyRemoteBackground(p);return;}
   if(event==='ready'){
     arenaConfirmRemoteTraffic(Date.now());
@@ -1661,9 +1667,15 @@ function arenaReceive(event,p,sourceChannel=arena&&arena.matchChannel){
 }
 function arenaHostStartRound(){
   if(!authUser||authUser.id!==arena.hostId||!arena.opponent) return;
+  if(arena.round===0&&typeof arenaLoadoutWindowOpen==='function'){
+    if(!arena.loadoutWindow){arenaLoadoutWindowOpen();return;}
+    const window=arena.loadoutWindow;
+    if(Date.now()<window.deadline||!window.members.every(id=>window.commits[id]))return;
+  }
   const p={from:authUser.id,room:arena.room,epoch:arena.matchEpoch,round:arena.round+1,startDelay:3000,startAt:Date.now()+3000,
            scores:Object.assign({},arena.scores),mapId:arenaMapValid(arena.mapId)?arena.mapId:'arena',
            mapVoteId:arena.mapVoteId,mapResultId:arena.mapVoteResult&&arena.mapVoteResult.resultId};
+  if(arena.loadoutWindow){p.loadoutWindow=arena.loadoutWindow.id;p.loadouts=arena.loadoutWindow.kits||arena.loadoutWindow.commits;}
   const channel=arena.matchChannel;
   arenaApplyRoundStart(p); arenaSend('round_start',p);
   // Broadcast control messages are not guaranteed delivery, so repeat the
@@ -1677,6 +1689,7 @@ function arenaApplyRematchStart(p){
   if(!authUser||!arena.opponent||p.from!==arena.hostId||epoch<=arena.matchEpoch) return false;
   if(arena.disconnectAt||arena.disconnectTimer||arena.networkHold)arenaClearDisconnectHold(false);
   arena.matchEpoch=epoch; arena.round=0; arena.scores={[authUser.id]:0,[arena.opponent.id]:0};arena.matchCommitted=false;
+  arena.loadoutWindow=null;
   arena.roundStartAt=0; arena.roundEndAt=0; arena.nextRoundAt=0; arena.roundResolved=false; arena.active=false;
   arena.rematchVotes=new Set(); arena.seenHits=new Set(); arena.receivedHitKinds=new Map();arena.receivedHitDamage=new Map();
   arena.hitSeq=0; arena.sentHitKinds=new Map();arena.sentHitDamage=new Map();arena.pendingHitFeedback=new Map(); arena.pendingUnscopedHits=new Set();
@@ -1705,6 +1718,7 @@ function arenaApplyRoundStart(p){
   const packetMap=arenaMapValid(p.mapId)?String(p.mapId):'arena';
   if(arena.mapVoteResult&&(arena.mapVoteResult.mapId!==packetMap||
      (p.mapResultId&&arena.mapVoteResult.resultId!==p.mapResultId))) return;
+  if(arena.round===0&&typeof arenaLoadoutSeal==='function'&&!arenaLoadoutSeal(p))return false;
   arena.mapId=packetMap; arena.mapVotePhase='locked'; arena.mapVoteStartPending=false;
   resetRoundTransitionInput(continuingRound);
   resetWeaponGimmickState();
@@ -1712,7 +1726,8 @@ function arenaApplyRoundStart(p){
   arena.round=p.round; arena.scores=Object.assign({},p.scores||arena.scores); arena.roundResolved=false;
   arena.lastRoundStartPacket={from:String(arena.hostId),room:String(arena.room),epoch,round:Math.floor(+p.round||0),
     scores:Object.assign({},p.scores||arena.scores),mapId:packetMap,mapVoteId:String(p.mapVoteId||arena.mapVoteId||''),
-    mapResultId:p.mapResultId||arena.mapVoteResult&&arena.mapVoteResult.resultId};
+    mapResultId:p.mapResultId||arena.mapVoteResult&&arena.mapVoteResult.resultId,
+    loadoutWindow:p.loadoutWindow,loadouts:p.loadouts};
   arena.lastRoundResultPacket=null;
   arena.seenHits=new Set();arena.receivedHitKinds=new Map();arena.receivedHitDamage=new Map();arena.hitSeq=0;
   arena.sentHitKinds=new Map();arena.sentHitDamage=new Map();arena.pendingHitFeedback=new Map();
@@ -1778,6 +1793,7 @@ function arenaControlClockCatchUp(clock=Date.now()){
 function arenaWallTick(wall){
   if(typeof isMultideviceArena==='function'&&isMultideviceArena()){multideviceWallTick(wall);return;}
   if(!arena) return;
+  if(typeof arenaLoadoutTick==='function')arenaLoadoutTick(Date.now());
   arenaResumeTick(Date.now());
   arenaControlClockCatchUp(Date.now());
   arenaHazardSyncTick(Date.now());

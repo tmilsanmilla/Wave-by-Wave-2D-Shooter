@@ -1589,10 +1589,11 @@ function cancelBotLadderLaunch(){botLadderLaunchVersion++;botLadderLaunchPending
 function startBotArena(options){
   options=options&&typeof options==='object'?options:{};
   if(typeof requireResolvedUsernameForGameplay==='function'&&!requireResolvedUsernameForGameplay()) return false;
-  if(typeof arenaLoadoutReady==='function'&&!arenaLoadoutReady()){
-    if(arena)arena.status='Pick three published weapons you can use before starting.';
+  if(typeof arenaLoadoutReady==='function'&&!arenaLoadoutReady(true)){
+    if(arena)arena.status='Pick a published primary you can use before starting.';
     if(typeof sfx==='function')sfx('dry');return false;
   }
+  if(typeof primaryOnlyKit==='function')loadout=primaryOnlyKit(loadout);
   if(options.ladderReady!==true&&typeof deferBotLadderMatchStart==='function'&&
      deferBotLadderMatchStart('ai1v1',()=>startBotArena(Object.assign({},options,{ladderReady:true}))))return true;
   if(authUser&&!(typeof testMode!=='undefined'&&!!testMode)&&!botLadderReadyForMatch()){

@@ -99,6 +99,7 @@ function clickUpgrade(){
   }
 }
 function doDash(){
+  if(typeof requestDriveAction==='function')return requestDriveAction('burst');
   if(!perks.dash || state!=='play' || now<dashReadyT) return;
   if(typeof arenaUtilityFrozen==='function'&&arenaUtilityFrozen()){sfx('dry');return;}
   let dx=0,dy=0;

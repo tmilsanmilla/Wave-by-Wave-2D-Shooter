@@ -276,7 +276,7 @@ assert.match(ui,/COMPLETE EITHER SIDE/);
 assert.match(ui,/\.join\('  OR  '\)/);
 assert.doesNotMatch(ui,/dailyPanelReserve=H<540\?0/,'short screens must not suppress the daily task panel');
 assert.match(ui,/ultraCompactDaily=H<430,compactDaily=H<640/,'short screens need compact task geometry');
-assert.match(ui,/stackY=actionTop\+cardH\*2\+actionGap\+dailyTopGap/,'tasks must be anchored beneath WEAPONS, not below the bottom nav');
+assert.match(ui,/stackY=homeBoardsY\+homeBoardsH\+dailyTopGap/,'tasks follow the action block and compact leaderboards, never the bottom nav');
 assert.match(ui,/LOADING YOUR ACCOUNT PROGRESS/,'a signed-in run must not launch over an unfinished profile read');
 assert.match(networking,/reuseLoadedProfile=sameLoadedProfile&&typeof profileWritesPending/,'a known-dirty same-account auth event must not reread stale progress');
 assert.match(networking,/fetchProfile\(profileUserId,profileRequestVersion,profileMutationAtSchedule\)/,'mutations during auth setup must invalidate a later profile read');

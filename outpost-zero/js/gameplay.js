@@ -227,6 +227,7 @@ function cancelFanTheHammer(clearLock=false){
   if(clearLock) fanBurstUntil=0;
 }
 function resetWeaponGimmickState(){
+  if(typeof resetDriveMotion==='function')resetDriveMotion(player,true);
   weaponLastShotAt=Object.create(null);
   playerFrozenUntil=0;
   cancelFanTheHammer(true);
@@ -571,7 +572,9 @@ function startPractice(mode){
   for(const k of WKEYS) player.reserve[k]=Infinity;       // endless ammo on the range
   const cx=WORLD.w/2, cy=WORLD.h/2;
   player.x=cx-380; player.y=cy; cam.x=player.x; cam.y=player.y;
-  if(mode==='range'){
+  if(mode==='flow'&&typeof startDriveCircuit==='function'){
+    startDriveCircuit();
+  } else if(mode==='range'){
     const TYPES=['grunt','runner','brute','gunner','seeker','arty'];
     TYPES.forEach((tp,i)=> practiceSpawns.push({type:tp, x:cx+40+(i%3)*150, y:cy-150+Math.floor(i/3)*300, still:true, alive:false, respawnAt:0}));
     waveMsg='SHOOTING RANGE \u2014 targets respawn in 3s'; waveMsgT=now+3000;

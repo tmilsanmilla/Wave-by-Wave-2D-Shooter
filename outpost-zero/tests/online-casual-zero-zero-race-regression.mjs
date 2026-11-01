@@ -24,7 +24,7 @@ function functionSource(source,name){
 // lead to a new room topic so a lingering old topic cannot replay epoch 1.
 const pairContext={Array,Object,String,Number,Math};vm.createContext(pairContext);
 for(const name of ['arenaPairMembers','arenaPairCode'])vm.runInContext(functionSource(online,name),pairContext);
-const first=[{id:'alpha',joined:1000,protocol:3},{id:'bravo',joined:1001,protocol:3}];
+const first=[{id:'alpha',joined:1000,protocol:5},{id:'bravo',joined:1001,protocol:5}];
 assert.equal(pairContext.arenaPairCode(first),pairContext.arenaPairCode(first.slice().reverse()),
   'both clients must derive the same room regardless of Presence order');
 assert.notEqual(pairContext.arenaPairCode(first),pairContext.arenaPairCode([{id:'alpha',joined:2000},{id:'bravo',joined:2001}]),
@@ -120,7 +120,7 @@ assert.match(hostSource,/if\(!arenaApplyRoundResult\(p\)\) return false/,
 // Protocol 3 isolates the grace/commit rules in the public queue, advertises
 // itself in Presence, and
 // rejects an old private-room peer with an actionable message.
-assert.match(online,/const ARENA_PROTOCOL=3;/);
+assert.match(online,/const ARENA_PROTOCOL=5;/);
 assert.match(online,/oz-arena-queue-v3/,'new clients must not pair with an older public queue protocol');
 assert.doesNotMatch(online,/oz-arena-queue-v[12]/,'retired public queue topics must not remain reachable');
 assert.match(presenceSource,/REFRESH REQUIRED[\s\S]{0,100}Both players must refresh/,

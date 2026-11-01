@@ -23,7 +23,7 @@ assert.match(persistence,/return !!FALL_UPDATE_LIVE\|\|!!\(isAdmin\(\)&&testMode
   'Fall access must be available to every player');
 assert.match(gameplay,/unrankedRun = !FALL_UPDATE_LIVE&&/,
   'released Fall equipment must be allowed in normal ranked and score runs');
-assert.match(ui,/OUTPOST ZERO FALL UPDATE/,'the home banner must announce the Fall Update');
+assert.match(ui,/OVERDRIVE · BURST \/ SLIDE \/ OUTPLAY/,'the latest renovation owns the home banner without unpublishing the Fall weapons');
 assert.match(ui,/FALL UPDATE \\u00b7 LIVE/,'Fall weapon cards must say they are live');
 assert.doesNotMatch(ui,/SUMMER FLAMING UPDATE/,'the old Summer Update name must be removed');
 assert.doesNotMatch(adminSql,/NEXT_SEASON_WEAPONS_CANNOT_BE_PUBLISHED/,
@@ -33,4 +33,4 @@ for(const script of ['weapons','persistence','upgrades','admin-ui','gameplay','u
   assert.match(index,new RegExp(`js/${script}\\.js\\?[^"']*release=20260921-fall-release-v1`),
     `${script}.js must bypass the cached Summer build`);
 
-console.log('PASS Fall banner and all four Fall weapons are released publicly');
+console.log('PASS Overdrive banner retains all four released Fall weapons');

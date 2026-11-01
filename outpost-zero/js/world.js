@@ -185,6 +185,7 @@ function activeArenaTnt(includeDestroyed=false){
   return includeDestroyed?layout.tnt:layout.tnt.filter(t=>!dead.has(t.id));
 }
 function activeObstacles(){
+  if(typeof practiceMode!=='undefined'&&practiceMode==='flow'&&typeof DRIVE_CIRCUIT_WALLS!=='undefined')return DRIVE_CIRCUIT_WALLS;
   if(typeof practiceMode!=='undefined'&&practiceMode==='tracking') return [];
   const layout=typeof activeArenaMap==='function'?activeArenaMap():null;
   return layout?layout.obstacles.concat(activeArenaTnt()):obstacles;

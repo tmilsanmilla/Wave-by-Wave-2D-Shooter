@@ -30,6 +30,30 @@ const WEAPONS = {
              gimmick:{id:'awm_deadeye',copy:'Perfect scoped accuracy, no falloff, pierces five; unscoped eliminations celebrate.'},
              blurb:'160 damage at any range, pierces 5. Faster follow-up; unscoped eliminations celebrate.' },
   /* sidearms */
+  carbine: {name:'TACTICAL CARBINE',dmg:28,mag:30,reload:1500,fireRate:100,auto:true,pellets:1,fg:12,
+    spread:0.065,aimSpread:0.018,speed:19,len:30,kick:1.8,zoom:1.5,scoped:false,moveMod:1,range:550,fall:0.65,shotSfx:'ar',sndF:1150,sndD:0.07,
+    gimmick:{id:'carbine_control',copy:'A light, controllable automatic rifle with a thirty-round magazine.'},blurb:'Light automatic rifle. Trades SCAR-H damage for faster, steadier follow-up shots.'},
+  lmg: {name:'BULWARK LMG',dmg:20,mag:75,reload:2800,fireRate:95,auto:true,pellets:1,fg:12,
+    spread:0.10,aimSpread:0.032,speed:18,len:39,kick:2,zoom:1.4,scoped:false,moveMod:0.85,range:580,fall:0.7,shotSfx:'ar',sndF:750,sndD:0.09,
+    gimmick:{id:'lmg_capacity',copy:'Seventy-five rounds of sustained fire; heavy movement and a long reload.'},blurb:'Keep a lane covered with 75 rounds. Heavy to carry and slow to reload.'},
+  dmr: {name:'SENTINEL DMR',dmg:70,mag:10,reload:1800,fireRate:420,auto:false,pellets:1,fg:8,
+    spread:0.12,aimSpread:0.003,speed:24,len:38,kick:4.5,zoom:1.9,scoped:false,moveMod:0.94,range:750,fall:0.8,shotSfx:'sniper',sndF:600,sndD:0.14,
+    gimmick:{id:'dmr_precision',copy:'Accurate aimed single shots, with less commitment than a bolt-action sniper.'},blurb:'Semi-auto marksman rifle. Aim carefully and pace your shots.'},
+  autoshotgun: {name:'BREACHER AUTO SHOTGUN',dmg:13,mag:8,reload:2200,fireRate:430,auto:true,pellets:7,fg:9,
+    spread:0.22,aimSpread:0.13,speed:14,len:28,kick:5,zoom:1.2,scoped:false,moveMod:0.94,range:150,fall:0.18,shotSfx:'shotgun',sndF:650,sndD:0.14,
+    gimmick:{id:'breacher_auto',copy:'Hold fire for rapid seven-pellet blasts; damage falls sharply outside close range.'},blurb:'Automatic close-range blasts. Less punch per shell than the M870.'},
+  crossbow: {name:'HUNTER CROSSBOW',dmg:118,mag:1,reload:1000,fireRate:1050,auto:false,pellets:1,pierce:1,fg:5,
+    spread:0.06,aimSpread:0.001,speed:21,len:34,kick:2,zoom:1.7,scoped:false,moveMod:1,range:800,fall:0.9,shotSfx:'dart',sndF:850,sndD:0.06,
+    tracer:'rgba(167,193,94,0.95)',gimmick:{id:'crossbow_bolt',copy:'One precise bolt per reload, piercing one extra target.'},blurb:'A single heavy bolt. Make it count, then reload.'},
+  pulserifle: {name:'PRISM PULSE RIFLE',dmg:16,mag:36,reload:1700,fireRate:120,auto:true,pellets:1,fg:10,
+    spread:0.055,aimSpread:0.012,speed:22,len:32,kick:1.4,zoom:1.45,scoped:false,moveMod:1,range:700,fall:0.85,shotSfx:'volt',sndF:1500,sndD:0.06,
+    tracer:'rgba(191,168,255,0.95)',gimmick:{id:'prism_reach',copy:'Fast violet projectiles retain most of their damage at long range.'},blurb:'Low-recoil automatic fire with fast violet tracers and gentle falloff.'},
+  shorty: {name:'SHORTY',dmg:18,mag:2,reload:1700,fireRate:390,auto:false,pellets:6,fg:8,
+    spread:0.25,aimSpread:0.16,speed:14,len:18,kick:5,zoom:1.15,scoped:false,moveMod:1.05,range:115,fall:0.2,shotSfx:'shotgun',sndF:720,sndD:0.12,
+    gimmick:{id:'shorty_backup',copy:'A pocket shotgun: two six-pellet blasts, best at point-blank range.'},blurb:'Two shells of close-range backup. Weak at a distance; reload before pushing.'},
+  handcannon: {name:'IRON HAND CANNON',dmg:62,mag:5,reload:1300,fireRate:450,auto:false,pellets:1,fg:7,
+    spread:0.07,aimSpread:0.008,speed:20,len:24,kick:5,zoom:1.5,scoped:false,moveMod:1,range:310,fall:0.6,shotSfx:'revolver',sndF:700,sndD:0.13,
+    gimmick:{id:'handcannon_heavy',copy:'Five heavy semi-auto shots; accurate when aimed, unforgiving when missed.'},blurb:'Heavy five-shot sidearm. Aim, fire, and reset between shots.'},
   m9     : { name:'M9 SIDEARM',   dmg:38,  mag:12, reload:800,  fireRate:200, auto:false, pellets:1,
              spread:0.055, aimSpread:0.006, speed:17, len:22, kick:3,  zoom:1.45, scoped:false,
              moveMod:1.0,  range:340,  fall:0.55, sndF:1400, sndD:0.09, shotSfx:'m9', quickdrawMs:120,
@@ -96,8 +120,8 @@ const WEAPONS = {
              gimmick:{id:'war_hammer_kit_slam',copy:'Buffs the whole kit; Slam creates a 360° missile-breaking shockwave.'},
              blurb:'Slow, heavy swings. Carrying it: -30% reload, +5% dmg/range on your whole kit.' },
 };
-const PRIMARIES   = ['sniper','smg','shotgun','ar'];
-const SECONDARIES = ['m9','revolver','g18','volt','dart'];
+const PRIMARIES   = ['sniper','smg','shotgun','ar','carbine','lmg','dmr','autoshotgun','crossbow','pulserifle'];
+const SECONDARIES = ['m9','revolver','g18','volt','dart','shorty','handcannon'];
 const TEMP_PRIMARY=['fireworks'], TEMP_SECONDARY=['solarrifle'], TEMP_MELEE=['bdaggers'], TEMP_UTILITY=['beachball'];
 const MELEES      = ['chainsaw','knife','scythe','hammer','twinsai'];
 

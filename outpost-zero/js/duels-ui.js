@@ -61,6 +61,10 @@ function drawMultideviceMenu(){
   });
   if(!roster.length){ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillStyle='#cdd6b0';ctx.fillText(duelService.queue?'SEARCHING FOR PLAYERS…':'NO ACTIVE MATCH',W/2,H*.45);}
   const bh=small?34:44,y=H-bh-18;
+  if(!ended&&(duelService.queue||active&&active.round===0)){
+    const remaining=typeof onlineLoadoutRemaining==='function'?onlineLoadoutRemaining():null;
+    duelUiButton(duelMenuRects,'loadout',remaining===null?'CHANGE LOADOUT · SEARCH CONTINUES':'CHANGE LOADOUT · '+remaining+'s',x,y-bh-9,w,bh,true);
+  }
   duelUiButton(duelMenuRects,'cancel',ended?'RETURN TO MENU':'CANCEL / LEAVE',x,y,w,bh,!duelService.busy);
   ctx.textAlign='left';ctx.textBaseline='alphabetic';
 }
@@ -71,6 +75,7 @@ function drawMultideviceActors(){
     if(e.id===multidevice.selfId||e.hp<=0)continue;
     const ally=mine&&mine.team===e.team,a=e.angle||0,r=e.r||15,w=WEAPONS[e.cur]||WEAPONS.ar,
       parry=now<(e.parryUntil||0)&&e.loadout&&e.loadout.melee==='twinsai';
+    if(typeof drawRemoteDriveTrail==='function')drawRemoteDriveTrail(e,!ally);
     ctx.fillStyle=ally?'#7fd8ff':'#d05548';ctx.beginPath();ctx.arc(e.x,e.y,r,0,TAU);ctx.fill();ctx.strokeStyle=ally?'#cdeeff':'#ff8b80';ctx.lineWidth=2/zoom;ctx.stroke();
     if(parry)drawTwinSaiParryCircle(e.x,e.y,r,e.parryUntil,now,!ally);
     if(parry||w.melee){

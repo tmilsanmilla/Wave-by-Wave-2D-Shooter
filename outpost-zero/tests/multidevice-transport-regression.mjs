@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
 
-const root=path.resolve(import.meta.dirname,'..'),source=fs.readFileSync(path.join(root,'js/multidevice.js'),'utf8');
+const root=path.resolve(import.meta.dirname,'..'),source=fs.readFileSync(path.join(root,'js/multidevice.js'),'utf8'),
+  flow=fs.readFileSync(path.join(root,'js/loadout-flow.js'),'utf8');
 let clock=1000,dropResultsFor='';
 const channels=[],timers=[],settlements=[];
 const flush=async()=>{for(let i=0;i<8;i++)await Promise.resolve();};
@@ -15,7 +16,7 @@ function client(id){
     bullets:[],ebullets:[],enemies:[],particles:[],pickups:[],damageNumbers:[],grenades:[],pearls:[],balls:[],flames:[],freezeFx:[],splitBalls:[],
     utilReadyT:0,medChan:0,medChanHeal:0,medHealPct:0,medKillCharge:0,utilityOut:false,abilityCD:{},quickReadyT:0,sawFuel:100,sawLock:false,
     daggersOut:null,comboStep:0,comboNextT:0,parryUntil:0,parrySeq:0,teraHitCharge:0,fistFlurryUntil:0,sawChargeUntil:0,playerFrozenUntil:0,
-    zoom:1,waveMsg:'',waveMsgT:0,
+    zoom:1,waveMsg:'',waveMsgT:0,detailKey:null,pendingGameMode:null,
     setInterval:callback=>{timers.push(callback);return timers.length;},clearInterval:()=>{},
     arenaLoadoutReady:()=>true,arenaRemoteLoadout:r=>r,freshArena:status=>({status,active:false,matchChannel:null,queueChannel:null}),
     startGame:()=>{c.player.mags={};c.player.reserve={};},resetRoundTransitionInput:()=>{},resetHeldGameplayInput:()=>{},
@@ -39,7 +40,7 @@ function client(id){
       channels.push(channel);return channel;
     },removeChannel:async()=>{}},
   };
-  vm.createContext(c);vm.runInContext(source,c);return c;
+  vm.createContext(c);vm.runInContext(flow,c);vm.runInContext(source,c);return c;
 }
 const config={matchId:'00000000-0000-4000-8000-000000000099',epoch:'server-match-epoch',hostId:'alice',mode:'2v2',source:'queue',ranked:true,
   roster:['alice','bob','charlie','dana'].map((id,i)=>({id,name:id,team:i<2?'A':'B',loadout:{primary:'ar',secondary:'m9',melee:'knife',utility:null},accepted:true}))};
@@ -52,6 +53,10 @@ const tick=async(at)=>{
   await flush();
 };
 await tick(1000);
+for(const c of clients){assert.equal(c.multideviceView().round,0);assert.equal(c.multideviceView().phase,'loadout');}
+await tick(10999);
+for(const c of clients)assert.equal(c.multideviceView().round,0,'combat cannot start before ten seconds');
+await tick(11000);await tick(11400);
 for(const c of clients){
   const m=c.multideviceView();
   assert.equal(m.connected,true);assert.equal(m.round,1);assert.equal(m.phase,'countdown');
@@ -59,28 +64,28 @@ for(const c of clients){
   assert.equal(m.channel.opts.config.private,true);assert.equal(m.channel.topic,'oz-duel:'+config.matchId);
   assert.equal(c.practiceMode,'arena');
 }
-await tick(4001);
+await tick(14401);
 for(const c of clients)assert.equal(c.multideviceView().phase,'fight');
 const host=clients[0],bob=clients[1],charlie=clients[2],dana=clients[3];
 assert.equal(host.multideviceTargets().length,2,'both enemies are visible to the collision pass');
 assert.equal(host.multideviceHit(host.multideviceView().actors.bob,45,'shot'),false,'no team hit is sent');
 assert.equal(bob.player.hp,250);
 host.multideviceHit(host.multideviceView().actors.charlie,250,'shot');await flush();
-assert.equal(charlie.player.hp,0);await tick(4100);
+assert.equal(charlie.player.hp,0);await tick(14500);
 assert.equal(host.multideviceView().phase,'fight','round continues with the other opponent alive');
 // Simulate an actual lost result packet, including the redundant round-end
 // control packet. The next start must still recover Dana directly into round2.
 dropResultsFor='dana';
-host.multideviceHit(host.multideviceView().actors.dana,250,'shot');await flush();await tick(4200);
+host.multideviceHit(host.multideviceView().actors.dana,250,'shot');await flush();await tick(14600);
 assert.equal(host.multideviceView().phase,'round_end');assert.equal(host.multideviceView().scores.A,1);
 assert.equal(dana.multideviceView().phase,'fight','the test genuinely dropped this peer\'s result');
-await tick(6801);
+await tick(17201);
 for(const c of clients){
   assert.equal(c.multideviceView().round,2,'all four devices must enter round2 after the first winner');
   assert.equal(c.multideviceView().scores.A,1);assert.equal(c.player.hp,250);
   assert.equal(c.multideviceView().phase,'countdown');
 }
-dropResultsFor='';await tick(9802);
+dropResultsFor='';await tick(20202);
 const stale={from:'alice',matchId:config.matchId,epoch:config.epoch,round:1,id:'alice:1:hit:999',to:'charlie',dmg:250,kind:'shot'};
 assert.equal(charlie.multideviceReceive('hit',stale,charlie.multideviceView().channel),false);
 assert.equal(charlie.player.hp,250,'old-round damage cannot hurt a freshly respawned player');
@@ -109,7 +114,7 @@ const ffa={...config,matchId:'00000000-0000-4000-8000-000000000100',hostId:'eve'
 const freeClients=ffa.roster.map(r=>client(r.id));
 for(const c of freeClients)await c.multideviceLaunch(ffa);await flush();
 const freeTick=async(delta)=>{clock+=delta;for(const c of freeClients){c.now=clock-1000;c.multideviceWallTick(clock);c.multideviceSyncTick(clock);}await flush();};
-await freeTick(1);await freeTick(3001);
+await freeTick(1);await freeTick(10000);await freeTick(400);await freeTick(3001);
 const eve=freeClients[0];
 eve.multideviceHit(eve.multideviceView().actors.fred,250,'shot');await flush();await freeTick(100);
 assert.equal(eve.multideviceView().phase,'fight','three-way party round continues after the first elimination');

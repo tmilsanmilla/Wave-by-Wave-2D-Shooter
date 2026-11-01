@@ -25,6 +25,7 @@ function retrySniperTriggerBuffer(){
 }
 function resetFireCadence(){ mouseFireCadence=false; touchFireCadence=false; cancelSniperTriggerBuffer(); }
 function toggleMenuFromInput(){
+  if(!menuOpen&&state==='play'&&typeof resetDriveMotion==='function')resetDriveMotion(player);
   // Opening an overlay while a CPU start/rematch is awaiting cloud state is a
   // route-away intent. Cancel first so closing the overlay before the response
   // cannot let an older callback launch behind the player's current screen.
@@ -108,7 +109,7 @@ addEventListener('keydown', e=>{
   if(formOpen){ if(e.key==='Escape') cancelForm(); return; }
   if(adminPanelOpen||updatesOpen||adminsOpen||msgsOpen||auditOpen||archOpen||storageOpen||scoresOpen||playersOpen||wheelOpen||promoAdminOpen||weaponEditOpen||weaponSuggestionsOpen||requestsOpen||readerOpen){ if(e.key==='Escape'){ if((scoresOpen&&peBusy)||wheelSpinning) return; if(readerOpen){ clearReaderState(); sfx('swap'); return; } if(scoresOpen) resetPlayerEditScroll(); if(auditOpen) resetAdminAuditScroll(); if(updatesOpen)resetReportScroll();reportActionMenuOpen=reportAmountMenuOpen=false; wheelOpen=false; promoAdminOpen=false; weaponEditOpen=false; weaponSuggestionsOpen=false;requestsOpen=false;adminPanelOpen=false; updatesOpen=false; adminsOpen=false; msgsOpen=false; auditOpen=false; archOpen=false; storageOpen=false; scoresOpen=false; playersOpen=false; sfx('swap'); } return; }
   const k = e.key.toLowerCase();
-  if(['w','a','s','d',' '].includes(k)) e.preventDefault();
+  if(['w','a','s','d',' ','shift'].includes(k)) e.preventDefault();
   keys[k]=true;
   initAudio();
 
@@ -152,7 +153,8 @@ addEventListener('keydown', e=>{
   }
   if(k==='r') startReload();
   if(k==='h' && !e.repeat) useStashedMedkit();
-  if(k===' ') doDash();
+  if(k===' '&&!e.repeat) doDash();
+  if(k==='shift'&&!e.repeat&&typeof requestDriveAction==='function')requestDriveAction('slide');
   if(k==='f') quickMelee();
   if(k==='g' && !e.repeat) utilQuick();
   if(k==='4') equipUtility();
@@ -279,6 +281,7 @@ function resetHeldTouchContacts(clearGeometry=false){
   if(clearGeometry){touchButtons=[];touchWeaponSelectorBounds=null;}
 }
 function resetHeldGameplayInput(){
+  if(typeof resetDriveMotion==='function')resetDriveMotion(player);
   // A click/touch/Enter used to launch a mode must never become gameplay input.
   // Fullscreen changes can swallow the matching release event, so clear every
   // held source explicitly instead of waiting for mouseup/touchend/keyup.
@@ -349,6 +352,7 @@ function doButton(k){
   else if(k==='g') utilQuick();
   else if(k==='med') useStashedMedkit();
   else if(k==='dsh') doDash();
+  else if(k==='sld'&&typeof requestDriveAction==='function')requestDriveAction('slide');
   else if(k==='f') quickMelee();
 }
 cv.addEventListener('touchstart', e=>{
@@ -531,7 +535,12 @@ function pickWeapon(k){
   }
   const slot = (PRIMARIES.includes(k)||TEMP_PRIMARY.includes(k)) ? 'primary'
              : (SECONDARIES.includes(k)||TEMP_SECONDARY.includes(k)) ? 'secondary' : 'melee';
-  if(loadout[slot]===k){ loadout[slot]=null; rememberLoadoutSlot(slot,null); sfx('swap'); return; }
+  if(loadout[slot]===k){
+    // A queued player always keeps a complete kit. Pick a replacement instead
+    // of clearing a required slot while a match assignment may be arriving.
+    if(typeof onlineLoadoutEditing==='function'&&onlineLoadoutEditing()){sfx('swap');return;}
+    loadout[slot]=null; rememberLoadoutSlot(slot,null); sfx('swap'); return;
+  }
   loadout[slot]=k; rememberLoadoutSlot(slot,k); sfx('swap');
 }
 let utilLockMsgT=0;
@@ -616,7 +625,8 @@ function clickSelect(){
     if(inR(streakBtnRect)){ collectStreak(); return; }
     for(const r of homePlayRects) if(inR(r)){
       if(!r.enabled){ sfx('dry'); return; }
-      if(r.id==='play') openModeLeaderboard();
+      if(r.id==='play'){selPage='onlineplay';sfx('swap');}
+      else if(r.id==='offline'){selPage='offlineplay';sfx('swap');}
       else if(r.id==='practice'){ selPage='practice'; sfx('swap'); }
       else if(r.id==='weapons'){ selPage='weapons'; sfx('swap'); }
       else if(r.id==='social'){ selPage='social'; fetchSocial(true); sfx('swap'); }
@@ -652,6 +662,9 @@ function clickSelect(){
   }
   if(selPage==='weaponbrowse'){
     if(inR(backRect)){ navigateSelectBack(); return; }
+    for(const r of weaponBrowserRects)if(r.kind==='page'&&r.enabled&&inR(r)){
+      categoryPages[r.pageKey]=r.page;sfx('swap');return;
+    }
     for(const r of weaponBrowserRects) if(r.kind==='tab'&&inR(r)){
       weaponBrowserCat=r.cat; sfx('swap'); return;
     }
@@ -865,6 +878,20 @@ function clickSelect(){
     }
     return;
   }
+  if(selPage==='onlineplay'||selPage==='offlineplay'){
+    if(inR(backRect)){navigateSelectBack();return;}
+    for(const r of onlinePlayRects)if(inR(r)){
+      if(['arena','arena2v2'].includes(r.id))quickOnlineMatch(r.id);
+      else if(r.id==='endless')chooseGameMode('endless','offlineplay');
+      else if(r.id==='cpu1'||r.id==='cpu2'){
+        offlineCpuView=r.id==='cpu1'?'1v1':'2v2';offlineCpuInfoKey='';selPage='offlinecpu';
+        if(typeof refreshBotLadder==='function')void refreshBotLadder(true);
+      }else if(r.id==='ranked'){selPage='ranked';void duelServiceRankedRefresh();}
+      else if(r.id==='boards')openModeLeaderboard();
+      else if(r.id==='party'){selPage='party';fetchSocial(true);}
+      sfx('swap');return;
+    }return;
+  }
   if(selPage==='loadout'){
     if(inR(backRect)){ navigateSelectBack(); return; }
     for(const c of catBtns) if(inR(c)){
@@ -879,7 +906,7 @@ function clickSelect(){
     return;
   }
   if(selPage==='multidevice'){
-    for(const r of duelMenuRects)if(inR(r)&&r.enabled){if(r.id==='cancel')void duelServiceCancel();return;}
+    for(const r of duelMenuRects)if(inR(r)&&r.enabled){if(r.id==='cancel')void duelServiceCancel();else if(r.id==='loadout')openOnlineLoadoutEditor();return;}
     return;
   }
   if(selPage==='arena'){ arenaClick(); return; }
@@ -925,6 +952,9 @@ function clickSelect(){
       restoreLastLoadoutForMode('practice');
       pendingPractice=r.mode; pendingGameMode='practice'; selPage='loadout'; sfx('swap'); return;
     } }
+  }
+  if(CATS.some(c=>c[0]===selPage))for(const r of categoryPageRects)if(r.enabled&&inR(r)){
+    categoryPages[r.cat]=r.page;detailKey=null;sfx('swap');return;
   }
   for(const r of cardRects){                      // PRACTICE + BUY IN SHOP take priority over equipping
     if(r.tryIt && inR(r)){ openPracticePick(r.key); sfx('swap'); return; }

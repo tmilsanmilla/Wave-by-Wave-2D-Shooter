@@ -66,8 +66,9 @@ function duelServiceApplyAssignment(response,allowLaunch=true){
     }
     if(response.status==='matched'&&mine.accepted!==false){
       const expected=duelService.queue||(duelService.match&&duelService.match.matchId===match.matchId);
+      const editing=typeof onlineLoadoutEditing==='function'&&onlineLoadoutEditing();
       duelService.invite=null;duelService.match=match;duelService.queue=false;
-      if(allowLaunch&&expected&&state==='select'&&selPage==='multidevice'&&
+      if(allowLaunch&&expected&&state==='select'&&(selPage==='multidevice'||editing)&&
          !(typeof isMultideviceArena==='function'&&isMultideviceArena())){
         duelServiceNotice('MATCH FOUND · CONNECTING');return multideviceLaunch(match);
       }

@@ -262,6 +262,7 @@ function modeAllowsUtility(mode){
 function restoreLastLoadoutForMode(mode=pendingGameMode){
   loadout=playableLastLoadout(lastLoadout);
   if(!modeAllowsUtility(mode)) loadout.utility=null;
+  if(typeof primaryOnlyMode==='function'&&primaryOnlyMode(mode))loadout=primaryOnlyKit(loadout);
   return loadout;
 }
 function prepareLastLoadoutForAccount(accountId=''){
@@ -281,8 +282,9 @@ function rememberLoadoutSlot(slot,value){
 }
 function canRestoreAccountLoadout(){
   const liveArena=typeof arena!=='undefined'&&arena&&(arena.active||arena.queueChannel||arena.matchChannel);
+  const queuedDuel=typeof duelService!=='undefined'&&duelService&&duelService.queue;
   const cpuSession=typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen();
-  return typeof state!=='undefined'&&state==='select'&&!liveArena&&!cpuSession&&
+  return typeof state!=='undefined'&&state==='select'&&!liveArena&&!queuedDuel&&!cpuSession&&
     !(typeof soloPractice!=='undefined'&&soloPractice)&&!(typeof tryLoadoutBackup!=='undefined'&&tryLoadoutBackup);
 }
 function applyProfile(m){
