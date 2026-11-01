@@ -60,8 +60,9 @@ const context={
 vm.createContext(context);
 vm.runInContext(online,context);
 
-const me={id:'me',name:'Me',joined:1,protocol:5,presenceSeq:1,host:true,ready:true,backgrounded:false,away:false,...kit};
-const away={id:'away',name:'Away player',joined:2,protocol:5,presenceSeq:1,host:false,ready:true,backgrounded:false,away:false,...kit};
+const protocol=Number(online.match(/const ARENA_PROTOCOL=(\d+);/)[1]);
+const me={id:'me',name:'Me',joined:1,protocol,presenceSeq:1,host:true,ready:true,backgrounded:false,away:false,...kit};
+const away={id:'away',name:'Away player',joined:2,protocol,presenceSeq:1,host:false,ready:true,backgrounded:false,away:false,...kit};
 
 // The returning tab's gameplay clock must catch up to real online-match time,
 // but the shared round deadline remains the one both players already received.

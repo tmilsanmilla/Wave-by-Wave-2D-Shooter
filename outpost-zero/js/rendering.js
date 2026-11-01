@@ -260,6 +260,8 @@ function drawPartyCpuActors(){
       ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette('twinsai',false,true);ctx.restore();
     }else if(wk.melee){
       if(!partyDaggersThrown){ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,!ally,false);ctx.restore();}
+    }else if(wk.armoryFrame&&typeof drawArmoryHeldGun==='function'){
+      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawArmoryHeldGun(wk,!ally);ctx.restore();
     }else{
       ctx.strokeStyle=weaponColor(e.cur,ally?'#bde7ff':'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
       ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6);ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8));ctx.stroke();
@@ -319,6 +321,8 @@ function drawArenaOpponentWorld(){
     ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawUtilIcon(14,0,remoteUtility,'#ff8bc2',.8);ctx.restore();
   }else if(wk.melee){
     if(!remoteDaggersThrown){ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawMeleeWeaponSilhouette(e.cur,true,false);ctx.restore();}
+  }else if(wk.armoryFrame&&typeof drawArmoryHeldGun==='function'){
+    ctx.save();ctx.translate(e.x,e.y);ctx.rotate(weaponAngle);drawArmoryHeldGun(wk,true);ctx.restore();
   }else{
     ctx.strokeStyle=weaponColor(e.cur,'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
     ctx.beginPath();ctx.moveTo(e.x+Math.cos(weaponAngle)*6,e.y+Math.sin(weaponAngle)*6);ctx.lineTo(e.x+Math.cos(weaponAngle)*(len+8),e.y+Math.sin(weaponAngle)*(len+8));ctx.stroke();
@@ -761,10 +765,13 @@ function drawWorld(){
       ctx.beginPath(); ctx.arc(30,0,5,0,TAU); ctx.fill();
     }
   } else {
+    if(w.armoryFrame&&typeof drawArmoryHeldGun==='function')drawArmoryHeldGun(w);
+    else {
     ctx.fillStyle='#2a2f1c';                     // gun
     ctx.fillRect(4,-3.2,w.len,6.4);
     ctx.fillStyle='#454e2c';
     ctx.fillRect(4,-3.2,w.len*0.45,6.4);
+    }
     if(now<player.flash){                        // muzzle flash
       ctx.fillStyle='rgba(255,220,130,0.9)';
       ctx.beginPath();

@@ -48,7 +48,7 @@ for(const [W,H] of [[390,844],[1280,720],[844,390],[320,568]]){
   });
   test(`weapon picker pages every new primary inside ${W}x${H}`,()=>{
     const h=uiHarness(W,H),seen=new Set();
-    for(let page=0;page<12;page++){
+    for(let page=0;page<40;page++){
       h.run(`categoryPages.PRIMARY=${page}`);h.c.cardRects=[];h.c.detailBtns=[];h.c.drawCategory('PRIMARY');
       for(const r of h.c.cardRects.filter(r=>!r.tryIt&&!r.gotoShop)){
         assert.ok(r.x>=0&&r.x+r.w<=W);assert.ok(r.y>=0&&r.y+r.h<=h.c.backRect.y-28);seen.add(r.key);
@@ -71,7 +71,7 @@ for(const [W,H] of [[390,844],[1280,720],[844,390],[320,568]]){
     };
     h.run("weaponBrowserKeys=cat=>{const row=CATS.find(c=>c[0]===cat);return row[2]().concat(row[3]());}");
     vm.runInContext(fn(ui,'drawWeaponBrowser'),h.c);
-    for(let page=0;page<12;page++){h.run(`categoryPages['browse:PRIMARY']=${page}`);h.c.drawWeaponBrowser();}
+    for(let page=0;page<40;page++){h.run(`categoryPages['browse:PRIMARY']=${page}`);h.c.drawWeaponBrowser();}
     for(const key of h.run('PRIMARIES.concat(TEMP_PRIMARY)'))assert.ok(seen.has(key),key);
   });
 }

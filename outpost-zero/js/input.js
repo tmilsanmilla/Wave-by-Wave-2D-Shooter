@@ -919,6 +919,7 @@ function clickSelect(){
   for(const r of shopWeaponPickerRects){ if(inR(r)){
     if(r.kind==='open') openShopWeaponPicker(r.target);
     else if(r.kind==='category') shopWeaponPickerCat=r.cat;
+    else if(r.kind==='page'&&r.enabled!==false)categoryPages[r.pageKey]=r.page;
     else if(r.kind==='weapon') chooseShopWeapon(r.key);
     sfx('swap'); return;
   } }

@@ -5,7 +5,7 @@
    intentionally CASUAL: ranked ratings need a trusted game server, not a
    browser that can be edited by either player. */
 const ARENA_FORFEIT_GRACE_MS=15000;
-const ARENA_PROTOCOL=5;
+const ARENA_PROTOCOL=6; // expanded public armory: both peers need matching definitions
 const ARENA_PRESENCE_RETRY_DELAYS_MS=Object.freeze([0,3000,7000,15000,31000]);
 let arenaDisconnectHoldSerial=0,arenaPresenceTrackSerial=0;
 const CASUAL_ARENA_UTILITY_KEYS=Object.freeze(['medkit','grenade','freezer','redball','beachball']);

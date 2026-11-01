@@ -7,10 +7,37 @@ function statBar(x,y,w,label,frac,col){
   ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(x,y,w,6);
   ctx.fillStyle=col; ctx.fillRect(x,y,w*clamp(frac,0.06,1),6);
 }
+function drawArmoryGunPath(w){
+  const frame=w.armoryFrame,len=w.len||30,variant=(w.mag||1)%3;
+  if(frame==='bow'){
+    ctx.moveTo(-22,0);ctx.lineTo(23,0);ctx.moveTo(7,-17-variant);ctx.quadraticCurveTo(25,0,7,17+variant);
+    ctx.lineTo(-1,0);ctx.closePath();ctx.moveTo(-9,0);ctx.lineTo(-13,10);
+  }else if(frame==='pistol'||frame==='revolver'){
+    ctx.rect(-12,-4,17,7);ctx.moveTo(5,0);ctx.lineTo(len-6,0);ctx.moveTo(-7,4);ctx.lineTo(-11,14);
+    if(frame==='revolver'){ctx.moveTo(2,1);ctx.arc(-2,1,5,0,TAU);}
+    else {ctx.moveTo(-4,-5);ctx.lineTo(3,-5);}
+  }else if(frame==='shotgun'){
+    ctx.moveTo(-23,-3);ctx.lineTo(24,-3);ctx.moveTo(-23,3);ctx.lineTo(24,3);
+    ctx.moveTo(-13,4);ctx.lineTo(-18,13);ctx.rect(0,3,12+variant*2,4);
+  }else{
+    ctx.moveTo(-25,0);ctx.lineTo(25+variant*2,0);ctx.rect(-18,-4,28,8);
+    ctx.moveTo(-11,4);ctx.lineTo(-15,13);ctx.moveTo(0,4);ctx.lineTo(2,13);
+    if(frame==='lmg'){ctx.moveTo(4,13);ctx.arc(0,13,6,0,TAU);ctx.moveTo(20,3);ctx.lineTo(25,14);}
+    else if(frame==='sniper'||frame==='marksman'){ctx.rect(-8,-10,18,4);ctx.moveTo(-25,0);ctx.lineTo(-30,7);}
+    else if(frame==='energy'){for(let i=0;i<3;i++){ctx.moveTo(i*6-7,-4);ctx.lineTo(i*6-7,4);}}
+    else if(frame==='smg'){ctx.moveTo(7,4);ctx.lineTo(7,15);}
+  }
+}
+function drawArmoryHeldGun(w,hostile=false){
+  ctx.save();ctx.translate(19,0);ctx.scale(.68,.68);
+  ctx.lineWidth=4;ctx.lineCap='round';ctx.strokeStyle=hostile?'#e07973':(w.armoryAccent||'#a6c6d0');
+  ctx.beginPath();drawArmoryGunPath(w);ctx.stroke();ctx.restore();
+}
 function drawGunIcon(x,y,key,col,sc){
   ctx.save(); ctx.translate(x,y); if(sc&&sc!==1) ctx.scale(sc,sc); ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=3; ctx.lineCap='round';
   ctx.beginPath();
-  if(key==='m9'){ ctx.moveTo(-16,0); ctx.lineTo(14,0); ctx.moveTo(-8,0); ctx.lineTo(-11,12); }
+  if(WEAPONS[key]&&WEAPONS[key].armoryFrame){drawArmoryGunPath(WEAPONS[key]);}
+  else if(key==='m9'){ ctx.moveTo(-16,0); ctx.lineTo(14,0); ctx.moveTo(-8,0); ctx.lineTo(-11,12); }
   else if(key==='g18'){ ctx.moveTo(-15,0); ctx.lineTo(13,0); ctx.moveTo(-7,0); ctx.lineTo(-9,14); ctx.moveTo(-2,0); ctx.lineTo(-2,8); }
   else if(key==='revolver'){ ctx.moveTo(-14,0); ctx.lineTo(16,0); ctx.moveTo(-6,0); ctx.lineTo(-9,12); ctx.moveTo(1,2); ctx.arc(-3,2,4,0,TAU); }
   else if(key==='volt'){ ctx.moveTo(-15,2); ctx.lineTo(13,2); ctx.moveTo(-7,2); ctx.lineTo(-10,13); ctx.moveTo(6,-2); ctx.arc(2,-4,4,0,TAU); ctx.moveTo(9,-8); ctx.lineTo(12,-11); }
@@ -957,12 +984,16 @@ function drawShopWeaponPicker(cw,y){
     ctx.textBaseline='alphabetic';
     return y+48;
   }
-  const cols=compact?3:2, cardGap=compact?5:8, rows=Math.ceil(keys.length/cols);
-  const cardW=(cw-cardGap*(cols-1))/cols, room=Math.max(34,H-72-y-cardGap*(rows-1));
-  const cardH=clamp(Math.floor(room/rows),compact?34:42,compact?50:58);
+  const cols=compact?3:2, cardGap=compact?5:8,minH=compact?34:42,
+    maxRows=Math.max(1,Math.floor((H-112-y+cardGap)/(minH+cardGap))),pageSize=maxRows*cols,
+    pageKey='shop:'+shopWeaponPickerCat,pages=Math.max(1,Math.ceil(keys.length/pageSize)),
+    page=clamp(categoryPages[pageKey]||0,0,pages-1),shown=keys.slice(page*pageSize,(page+1)*pageSize),rows=Math.ceil(shown.length/cols);
+  categoryPages[pageKey]=page;
+  const cardW=(cw-cardGap*(cols-1))/cols,room=Math.max(minH,H-112-y-cardGap*(rows-1));
+  const cardH=clamp(Math.floor(room/rows),minH,compact?50:58);
   const selected=shopWeaponPickerTarget==='anims'?shopAnimWeapon:shopCosWeapon;
-  for(let i=0;i<keys.length;i++){
-    const k=keys[i], def=WEAPONS[k], cx=x+(i%cols)*(cardW+cardGap), cy=y+Math.floor(i/cols)*(cardH+cardGap);
+  for(let i=0;i<shown.length;i++){
+    const k=shown[i], def=WEAPONS[k], cx=x+(i%cols)*(cardW+cardGap), cy=y+Math.floor(i/cols)*(cardH+cardGap);
     const active=k===selected, hot=mouse.x>=cx&&mouse.x<=cx+cardW&&mouse.y>=cy&&mouse.y<=cy+cardH;
     shopWeaponPickerRects.push({kind:'weapon',key:k,x:cx,y:cy,w:cardW,h:cardH});
     ctx.fillStyle=active?'rgba(167,193,94,0.20)':hot?'rgba(127,216,255,0.13)':'rgba(0,0,0,0.40)'; ctx.fillRect(cx,cy,cardW,cardH);
@@ -974,8 +1005,19 @@ function drawShopWeaponPicker(cw,y){
       ctx.fillText('✔ SELECTED',cx+cardW/2,cy+cardH/2+9);
     }
   }
+  y+=rows*(cardH+cardGap)-cardGap;
+  if(pages>1){
+    y+=6;
+    for(const [direction,label,next] of [[-1,'‹ PREV',page-1],[1,'NEXT ›',page+1]]){
+      const bx=direction<0?x:x+cw-90,enabled=next>=0&&next<pages;
+      shopWeaponPickerRects.push({kind:'page',pageKey,page:next,enabled,x:bx,y,w:90,h:27});
+      ctx.fillStyle=enabled?'#263c43':'#1b2428';ctx.fillRect(bx,y,90,27);
+      ctx.fillStyle=enabled?'#bfe8ff':'#6a7476';ctx.font='700 10px ui-monospace,Consolas,monospace';ctx.textBaseline='middle';ctx.fillText(label,bx+45,y+13);
+    }
+    ctx.fillStyle='#bfe8ff';ctx.fillText((page+1)+' / '+pages,W/2,y+13);y+=27;
+  }
   ctx.textBaseline='alphabetic';
-  return y+rows*(cardH+cardGap)-cardGap;
+  return y;
 }
 function drawShopAnims(cw, y){
   const x0=W/2-cw/2;
@@ -1825,7 +1867,12 @@ function launchSelectedMode(temporaryGiftVerified=false,uiIntent=0,expectedMode=
     sfx('swap'); return true;
   }
   if(pendingGameMode==='ai1v1'){
-    loadout.utility=null; startBotArena(); sfx('wave'); return true;
+    loadout.utility=null;
+    if(!startBotArena()){
+      modeBoardNotice=arena.status||'CPU MATCH COULD NOT START · CHECK YOUR PRIMARY';
+      modeBoardNoticeT=performance.now()+5000;return false;
+    }
+    sfx('wave'); return true;
   }
   if(pendingGameMode==='ai2v2'){
     loadout.utility=null; if(!startOfflineCpu2v2())return false; sfx('wave'); return true;
@@ -2876,7 +2923,7 @@ function drawWeaponsHome(){
   ctx.fillStyle='#e8b658'; ctx.font='700 '+(tiny?22:30)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('WEAPONS',W/2,Math.max(10,H*.035));
   ctx.fillStyle='#8a9268'; ctx.font=(W<360?'8':'10')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('BROWSE THE CURRENT ARMORY \u00b7 DETAILS \u00b7 PRACTICE',W-24),W/2,Math.max(39,H*.035+(tiny?28:38)));
+  ctx.fillText(fitLine('35 NEW GUNS \u00b7 BROWSE \u00b7 DETAILS \u00b7 PRACTICE',W-24),W/2,Math.max(39,H*.035+(tiny?28:38)));
 
   const backH=tiny?28:34, backW=Math.min(190,W-margin*2), backX=W/2-backW/2, backY=H-margin-backH;
   const top=tiny?68:82, bottom=backY-(tiny?9:15), gap=tiny?6:10;

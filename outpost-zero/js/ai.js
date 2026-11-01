@@ -1562,16 +1562,21 @@ function arenaMeId(){ return isBotArena()?LOCAL_DUEL_PLAYER:(authUser&&authUser.
 function arenaOpponentId(){ return isBotArena()?LOCAL_DUEL_BOT:(arena&&arena.opponent&&arena.opponent.id); }
 function deferBotLadderMatchStart(mode,start){
   mode=String(mode||'ai1v1');
-  const accountId=authUser&&String(authUser.id||'');
+  // Guests have one stable identity value at both sides of the async boundary.
+  // `null !== ''` used to cancel every signed-out CPU launch forever.
+  const accountId=String(authUser&&authUser.id||'');
   if(botLadderLaunchPending)return true;
   const launchVersion=++botLadderLaunchVersion;botLadderLaunchPending=mode;
   const originArena=arena,originPartyCpu=typeof partyCpuMatch!=='undefined'?partyCpuMatch:null,
     fromBotResult=mode==='ai1v1'&&isBotArena()&&arena.phase==='match_end',
     fromTeamResult=mode==='ai2v2'&&typeof isLocalCpu2v2==='function'&&isLocalCpu2v2()&&partyCpuMatch.phase==='match_end';
   if(arena)arena.status=accountId?'SYNCING CPU LADDER…':'PREPARING CPU MATCH…';
-  const ladderRequest=accountId?refreshBotLadder(true):Promise.resolve(currentBotLadder());
-  void Promise.resolve(ladderRequest).then(()=>{
-    const liveAccountId=authUser&&String(authUser.id||'')||'';
+  let waitTimer;
+  const ladderRequest=Promise.resolve().then(()=>accountId?refreshBotLadder(true):currentBotLadder()),
+    deadline=new Promise((_,reject)=>{waitTimer=setTimeout(()=>reject(new Error('CPU preparation timed out')),8000);});
+  void Promise.race([ladderRequest,deadline]).then(()=>{
+    clearTimeout(waitTimer);
+    const liveAccountId=String(authUser&&authUser.id||'');
     if(launchVersion!==botLadderLaunchVersion||botLadderLaunchPending!==mode||liveAccountId!==accountId)return;
     botLadderLaunchPending='';
     // Leaving the loadout screen while the RPC is in flight cancels launch.
@@ -1581,7 +1586,18 @@ function deferBotLadderMatchStart(mode,start){
       teamResultStill=fromTeamResult&&partyCpuMatch===originPartyCpu&&isLocalCpu2v2()&&partyCpuMatch.phase==='match_end';
     const originStill=fromBotResult?botResultStill:fromTeamResult?teamResultStill:fromLoadout;
     if(!originStill)return;
-    start();
+    if(start()===false&&typeof modeBoardNotice!=='undefined'){
+      modeBoardNotice=arena&&arena.status||'CPU MATCH COULD NOT START · CHECK YOUR PRIMARY';
+      if(typeof modeBoardNoticeT!=='undefined')modeBoardNoticeT=performance.now()+5000;
+    }
+  },()=>{
+    clearTimeout(waitTimer);
+    if(launchVersion!==botLadderLaunchVersion||botLadderLaunchPending!==mode||String(authUser&&authUser.id||'')!==accountId)return;
+    botLadderLaunchPending='';
+    const message='CPU PREPARATION COULD NOT FINISH · TRY START AGAIN';
+    if(arena&&arena===originArena)arena.status=message;
+    if(typeof modeBoardNotice!=='undefined')modeBoardNotice=message;
+    if(typeof modeBoardNoticeT!=='undefined')modeBoardNoticeT=performance.now()+5000;
   });
   return true;
 }

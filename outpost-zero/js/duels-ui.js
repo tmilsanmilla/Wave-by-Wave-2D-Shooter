@@ -82,6 +82,8 @@ function drawMultideviceActors(){
       if(!(e.cur==='bdaggers'&&e.meleeFxKey==='bdaggers'&&now<e.meleeFxUntil)){
         ctx.save();ctx.translate(e.x,e.y);ctx.rotate(a);drawMeleeWeaponSilhouette(parry?'twinsai':e.cur,!ally,parry);ctx.restore();
       }
+    }else if(w.armoryFrame&&typeof drawArmoryHeldGun==='function'){
+      ctx.save();ctx.translate(e.x,e.y);ctx.rotate(a);drawArmoryHeldGun(w,!ally);ctx.restore();
     }else{
       const len=Math.min(38,w.len||24);ctx.strokeStyle=weaponColor(e.cur,ally?'#bde7ff':'#e0a8a0');ctx.lineWidth=5/zoom;ctx.lineCap='round';
       ctx.beginPath();ctx.moveTo(e.x+Math.cos(a)*6,e.y+Math.sin(a)*6);ctx.lineTo(e.x+Math.cos(a)*(len+8),e.y+Math.sin(a)*(len+8));ctx.stroke();
