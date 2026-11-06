@@ -9,7 +9,33 @@ function statBar(x,y,w,label,frac,col){
 }
 function drawArmoryGunPath(w){
   const frame=w.armoryFrame,len=w.len||30,variant=(w.mag||1)%3;
-  if(frame==='bow'){
+  if(frame==='crossbow'){
+    ctx.moveTo(-20,0);ctx.lineTo(25,0);ctx.rect(-13,-3,20,6);
+    ctx.moveTo(10,-17);ctx.lineTo(23,-12);ctx.lineTo(23,12);ctx.lineTo(10,17);
+    ctx.moveTo(10,-17);ctx.lineTo(3,0);ctx.lineTo(10,17);ctx.moveTo(-9,3);ctx.lineTo(-13,12);
+  }else if(frame==='bullpup'){
+    ctx.rect(-25,-5,32,10);ctx.moveTo(7,0);ctx.lineTo(27,0);
+    ctx.moveTo(-17,5);ctx.lineTo(-17,14);ctx.moveTo(-2,5);ctx.lineTo(1,12);ctx.rect(-5,-10,14,4);
+  }else if(frame==='pdw'){
+    ctx.rect(-17,-5,29,10);ctx.moveTo(12,0);ctx.lineTo(23,0);
+    ctx.moveTo(-11,5);ctx.lineTo(-12,14);ctx.moveTo(6,5);ctx.lineTo(6,13);ctx.moveTo(-19,-5);ctx.lineTo(8,-9);
+  }else if(frame==='beltfed'){
+    ctx.rect(-22,-5,34,10);ctx.moveTo(-27,0);ctx.lineTo(30,0);ctx.rect(-2,6,12,10);
+    for(let n=0;n<3;n++){ctx.moveTo(-15+n*4,5);ctx.lineTo(-15+n*4,11);}
+    ctx.moveTo(22,3);ctx.lineTo(18,15);ctx.moveTo(22,3);ctx.lineTo(28,15);
+  }else if(frame==='lever'){
+    ctx.moveTo(-28,-2);ctx.lineTo(28,-2);ctx.moveTo(-28,3);ctx.lineTo(-9,3);ctx.lineTo(-15,10);
+    ctx.rect(-10,-5,19,8);ctx.moveTo(-4,4);ctx.quadraticCurveTo(5,17,10,5);ctx.moveTo(15,-3);ctx.lineTo(15,-8);
+  }else if(frame==='rail'){
+    ctx.rect(-22,-4,34,8);ctx.moveTo(-27,0);ctx.lineTo(31,0);ctx.rect(-8,-11,18,4);
+    for(let n=0;n<4;n++){ctx.rect(10+n*4,-7,2,14);}ctx.moveTo(-10,4);ctx.lineTo(-14,14);
+  }else if(frame==='coilpistol'){
+    ctx.rect(-13,-4,19,8);ctx.moveTo(6,0);ctx.lineTo(24,0);ctx.moveTo(-7,4);ctx.lineTo(-11,14);
+    ctx.moveTo(13,0);ctx.arc(8,0,5,0,TAU);ctx.moveTo(18,-5);ctx.lineTo(18,5);
+  }else if(frame==='scatterpistol'){
+    ctx.rect(-13,-6,22,12);ctx.moveTo(9,-3);ctx.lineTo(23,-3);ctx.moveTo(9,3);ctx.lineTo(23,3);
+    ctx.moveTo(-7,6);ctx.lineTo(-12,15);ctx.moveTo(-3,6);ctx.lineTo(5,11);
+  }else if(frame==='bow'){
     ctx.moveTo(-22,0);ctx.lineTo(23,0);ctx.moveTo(7,-17-variant);ctx.quadraticCurveTo(25,0,7,17+variant);
     ctx.lineTo(-1,0);ctx.closePath();ctx.moveTo(-9,0);ctx.lineTo(-13,10);
   }else if(frame==='pistol'||frame==='revolver'){
@@ -26,6 +52,11 @@ function drawArmoryGunPath(w){
     else if(frame==='sniper'||frame==='marksman'){ctx.rect(-8,-10,18,4);ctx.moveTo(-25,0);ctx.lineTo(-30,7);}
     else if(frame==='energy'){for(let i=0;i<3;i++){ctx.moveTo(i*6-7,-4);ctx.lineTo(i*6-7,4);}}
     else if(frame==='smg'){ctx.moveTo(7,4);ctx.lineTo(7,15);}
+  }
+  if(Number.isInteger(w.armoryMark)){
+    const mark=w.armoryMark;
+    ctx.moveTo(-20,-10);ctx.lineTo(-16,-14);ctx.lineTo(-12,-10);
+    for(let n=0;n<=mark;n++){ctx.moveTo(-22+n*3,-8);ctx.lineTo(-22+n*3,-5);}
   }
 }
 function drawArmoryHeldGun(w,hostile=false){
@@ -2923,7 +2954,7 @@ function drawWeaponsHome(){
   ctx.fillStyle='#e8b658'; ctx.font='700 '+(tiny?22:30)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('WEAPONS',W/2,Math.max(10,H*.035));
   ctx.fillStyle='#8a9268'; ctx.font=(W<360?'8':'10')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('35 NEW GUNS \u00b7 BROWSE \u00b7 DETAILS \u00b7 PRACTICE',W-24),W/2,Math.max(39,H*.035+(tiny?28:38)));
+  ctx.fillText(fitLine('50 MORE GUNS \u00b7 BROWSE \u00b7 DETAILS \u00b7 PRACTICE',W-24),W/2,Math.max(39,H*.035+(tiny?28:38)));
 
   const backH=tiny?28:34, backW=Math.min(190,W-margin*2), backX=W/2-backW/2, backY=H-margin-backH;
   const top=tiny?68:82, bottom=backY-(tiny?9:15), gap=tiny?6:10;
@@ -3541,6 +3572,9 @@ function drawCard(k, cat, slot, x, yb, cw, ch, sc, isTemp){
     ctx.fillStyle=roleCol; ctx.fillRect(x,yb,cw,13);
     ctx.fillStyle='#101208'; ctx.font='700 8px ui-monospace,Consolas,monospace';
     ctx.fillText('EQUIPPED', x+cw/2, yb+3);
+  }else if(!isUtil&&w.armoryCollection==='reinforcements'){
+    ctx.fillStyle='#9ed7ce';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.textAlign='center';
+    ctx.fillText('NEW',x+cw/2,yb+7);
   }
   if(!isUtil) drawGunIcon(x+cw/2, yb+Math.round(44*sc), k, sel?'#e8d9a8':'#8a9268', sc);
   else drawUtilIcon(x+cw/2, yb+Math.round(44*sc), k, locked?'#4a4634':(sel?'#e8d9a8':'#8fb3c9'), sc);
@@ -4317,6 +4351,7 @@ async function unbanPlayerFromList(banId){
 function drawCurrencyHUD(){
   if(practiceMode==='arena') return;                       // Arena has no spendable rewards during a match
   if(state==='select' && selPage==='arena') return;        // Arena page owns the full canvas
+  if(state==='select'&&W<1200&&['weapons','weaponbrowse','loadout','PRIMARY','SIDEARM','MELEE','UTILITY'].includes(selPage))return; // do not cover narrow weapon cards
   if(compactStatus && state==='select' && selPage==='hub') return;   // shown in the status line instead
   // gems + coins, left side, visible on every screen at all times
   ctx.save();

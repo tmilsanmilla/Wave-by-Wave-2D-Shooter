@@ -120,7 +120,7 @@ assert.match(hostSource,/if\(!arenaApplyRoundResult\(p\)\) return false/,
 // Protocol 3 isolates the grace/commit rules in the public queue, advertises
 // itself in Presence, and
 // rejects an old private-room peer with an actionable message.
-assert.match(online,/const ARENA_PROTOCOL=6;/);
+assert.match(online,/const ARENA_PROTOCOL=7;/);
 assert.match(online,/oz-arena-queue-v3/,'new clients must not pair with an older public queue protocol');
 assert.doesNotMatch(online,/oz-arena-queue-v[12]/,'retired public queue topics must not remain reachable');
 assert.match(presenceSource,/REFRESH REQUIRED[\s\S]{0,100}Both players must refresh/,

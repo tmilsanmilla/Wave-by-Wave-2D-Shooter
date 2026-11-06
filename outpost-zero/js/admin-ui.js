@@ -530,7 +530,7 @@ async function fetchWeaponDefs(){
   if(!sb) return false;
   const requestVersion=++weaponDefsRequestVersion;
   try{
-    const { data,error } = await sb.from('weapon_defs').select('key,stats,price,published').limit(80);
+    const { data,error } = await sb.from('weapon_defs').select('key,stats,price,published').limit(256);
     if(error) throw error;
     if(requestVersion!==weaponDefsRequestVersion)return null;
     weaponDefs={};

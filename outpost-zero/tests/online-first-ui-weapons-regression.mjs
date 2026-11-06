@@ -30,7 +30,7 @@ function uiHarness(W,H){
     referralMsgT:0,fallInjected:false,streakBtnRect:null,streakClaimable:()=>false,
     streakClaimBusy:false,streakDays:0,streakMsgT:0,utilLockMsgT:0,settingsBtnRect:null,tutBtnRect:null,shopBtnRect:null,toolsBtnRect:null,
   };
-  vm.createContext(c);vm.runInContext(read('weapons.js'),c);vm.runInContext(read('loadout-flow.js'),c);
+  vm.createContext(c);vm.runInContext(read('weapons.js'),c);vm.runInContext(read('armory-reinforcements.js'),c);vm.runInContext(read('loadout-flow.js'),c);
   vm.runInContext(`CATS=[['PRIMARY','primary',()=>PRIMARIES,()=>TEMP_PRIMARY],['SIDEARM','secondary',()=>SECONDARIES,()=>TEMP_SECONDARY],['MELEE','melee',()=>MELEES,()=>TEMP_MELEE],['UTILITY','utility',()=>UTILKEYS,()=>TEMP_UTILITY]];`,c);
   for(const name of ['duelUiButton'])vm.runInContext(fn(read('duels-ui.js'),name),c);
   for(const name of ['slotFor','hubUtilityLayout','drawHub','drawLoadout','drawCategory','drawCard'])vm.runInContext(fn(ui,name),c);
