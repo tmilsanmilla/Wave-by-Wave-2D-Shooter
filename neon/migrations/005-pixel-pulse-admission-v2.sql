@@ -33,6 +33,11 @@ create table if not exists oz_identity.pixel_runtime_authorities (
 alter table oz_identity.pixel_sessions add column if not exists credential_version bigint;
 alter table oz_identity.pixel_sessions add column if not exists access_cipher text;
 alter table oz_identity.pixel_sessions add column if not exists upstream_until timestamptz;
+alter table oz_identity.pixel_sessions add column if not exists refresh_cipher text;
+alter table oz_identity.pixel_sessions add column if not exists renewal_until bigint;
+alter table oz_identity.pixel_sessions add column if not exists renewal_sid text;
+alter table oz_identity.pixel_sessions add column if not exists renewal_claim uuid;
+alter table oz_identity.pixel_sessions add column if not exists renewal_started_at timestamptz;
 alter table oz_identity.pixel_link_attempts enable row level security;
 alter table oz_identity.pixel_link_attempts force row level security;
 alter table oz_identity.pixel_link_redemptions enable row level security;

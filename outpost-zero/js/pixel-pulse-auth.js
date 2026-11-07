@@ -98,7 +98,8 @@ function installPixelPulseTransport(client){
     const pixel=event==='INITIAL_SESSION'?await current():cachedSession;
     return callback(pixel?'SIGNED_IN':pixelOwned?'SIGNED_OUT':event,pixel||(pixelOwned?null:live));
   });
-  client.pixelPulse={current,request,async waitForNativeRetirement(){if(retirement)await retirement;},async signOut(){
+  client.pixelPulse={current,request,nativeReturnToken:()=>nativeToken(false),
+    async waitForNativeRetirement(){if(retirement)await retirement;},async signOut(){
     if(signingOut)return signingOut;
     epoch++;token=null;pendingToken=null;
     const task=request('signout','POST').then(()=>{
@@ -109,12 +110,12 @@ function installPixelPulseTransport(client){
   return client;
 }
 
-let pixelPulseEnabled=false,pixelPulseProtocol=1,pixelPulseLinkPending=false,pixelPulseStarting=false,pixelPulseLaunchEpoch=0;
+let pixelPulseEnabled=false,pixelPulseProtocol=1,pixelPulseBoundRuntime=false,pixelPulseFirstBindings=false,pixelPulseLinkPending=false,pixelPulseStarting=false,pixelPulseLaunchEpoch=0;
 function pixelPulseLinkUi(){
   const note=$('apixelintent'),create=$('aup'),gate=$('usernameclaimpixel'),hint=$('usernameclaimpixelhint');
   if(note){note.hidden=!pixelPulseLinkPending;note.textContent='LINK EXISTING ACCOUNT · HIGHLY RECOMMENDED. Sign in below once, using the same email as Pixel Pulse. Your progress is kept.';}
   if(create)create.hidden=pixelPulseLinkPending;
-  const suggest=!!(pixelPulseEnabled&&authUser&&!pixelPulseIsLinked());
+  const suggest=!!(pixelPulseEnabled&&(!pixelPulseBoundRuntime||pixelPulseFirstBindings)&&authUser&&!pixelPulseIsLinked());
   if(gate)gate.hidden=!suggest;if(hint)hint.hidden=!suggest;
 }
 function pixelPulseCancelLink(){
@@ -128,6 +129,18 @@ async function pixelPulseBeginLink(){
   try{$('aidentifier').focus();}catch(error){}
   return false;
 }
+function pixelPulseGameInProgress(){
+  // Menus are overlays during play; checking the open dialog alone is not
+  // enough. Queue/map-vote/setup/round-end transports also own a live match.
+  return (typeof state!=='undefined'&&state!=='select')||
+    (typeof arena!=='undefined'&&arena&&!!(arena.active||arena.queueChannel||arena.matchChannel))||
+    (typeof multidevice!=='undefined'&&!!multidevice)||
+    (typeof partyCpuSessionOpen==='function'&&partyCpuSessionOpen());
+}
+function pixelPulseReturnNotice(){
+  const message=typeof accountSettingsOpen!=='undefined'&&accountSettingsOpen?$('settingspixelstatus'):$('authmsg');
+  if(message)message.textContent='Finish or leave your game, then continue with Pixel Pulse from the account menu. Your account and progress will not be reset.';
+}
 function pixelPulseAuthChanged(){
   pixelPulseLinkUi();
   if(pixelPulseEnabled&&pixelPulseLinkPending&&authUser&&!recovering){
@@ -138,7 +151,12 @@ function pixelPulseAuthChanged(){
 }
 async function pixelPulseStart(intent='continue'){
   if(!sb||!sb.pixelPulse)return false;
+  if(pixelPulseGameInProgress()){pixelPulseReturnNotice();return false;}
   if(!['continue','link','create'].includes(intent))intent='continue';
+  if(pixelPulseBoundRuntime&&!pixelPulseFirstBindings&&intent!=='continue'){
+    if($('authmsg'))$('authmsg').textContent='New Link/Create is still being verified. Existing game sign-in is unchanged.';
+    return false;
+  }
   if((intent==='link'||pixelPulseLinkPending)&&!authUser)return pixelPulseBeginLink();
   if(pixelPulseStarting)return false;pixelPulseStarting=true;
   const generation=++pixelPulseLaunchEpoch;
@@ -150,7 +168,8 @@ async function pixelPulseStart(intent='continue'){
   if(link)link.disabled=true;
   if(message)message.textContent='Connecting to Pixel Pulse…';
   try{
-    const linking=!!(authUser&&!authUser.pixel_pulse),linkToken=linking?await sb.auth.getJWTToken(false):'';
+    const returnOnly=pixelPulseBoundRuntime&&intent==='continue',linking=!!(authUser&&!authUser.pixel_pulse),
+      linkToken=linking?await (returnOnly?sb.pixelPulse.nativeReturnToken():sb.auth.getJWTToken(false)):'';
     if(generation!==pixelPulseLaunchEpoch)return false;
     if(linking&&!linkToken)throw new Error('Sign in to your existing game account first.');
     if((authUser&&String(authUser.id||''))!==owner)throw new Error('The game account changed. Start again.');
@@ -165,18 +184,20 @@ async function pixelPulseStart(intent='continue'){
     if(generation!==pixelPulseLaunchEpoch)return false;
     if((authUser&&String(authUser.id||''))!==owner||
       (authUser&&String(authUser.neon_auth_id||authUser.id||''))!==nativeOwner)throw new Error('The game or login account changed. Start again.');
-    const result=await sb.pixelPulse.request('start','POST',{link_token:linkToken||'',intent:linking?'link':intent,
+    if(pixelPulseGameInProgress())throw new Error('Your game started. Finish or leave it, then continue with Pixel Pulse from the account menu.');
+    const result=await sb.pixelPulse.request('start','POST',{link_token:linkToken||'',intent:returnOnly?'continue':linking?'link':intent,
       ...(nativeSessionToken?{native_session_token:nativeSessionToken}:{})});
     if(generation!==pixelPulseLaunchEpoch)return false;
     if((authUser&&String(authUser.id||''))!==owner)throw new Error('The game account changed. Start again.');
     const url=new URL(result&&result.url||'');
     if((authUser&&String(authUser.neon_auth_id||authUser.id||''))!==nativeOwner)throw new Error('The login account changed. Start again.');
     if(url.origin!=='https://pixel-pulse-websites.vercel.app'||url.pathname!=='/api/sso/oauth2/authorize')throw new Error('Pixel Pulse connection is not ready.');
+    if(pixelPulseGameInProgress())throw new Error('Your game started. Finish or leave it, then continue with Pixel Pulse from the account menu.');
     location.assign(url.href);return true;
   }catch(error){
     if(generation!==pixelPulseLaunchEpoch)return false;
     if(message)message.textContent=error.message||'Could not start shared sign-in.';
-    if(message===$('authmsg'))$('authwrap').style.display='flex';
+    if(message===$('authmsg')&&!pixelPulseGameInProgress())$('authwrap').style.display='flex';
     if(button)button.disabled=false;if(connect)connect.disabled=false;if(link)link.disabled=false;
     pixelPulseStarting=false;return false;
   }
@@ -198,7 +219,10 @@ async function setupPixelPulseUi(){
     const status=await sb.pixelPulse.request('status');
     pixelPulseEnabled=!!(status&&status.enabled);
     pixelPulseProtocol=status&&status.protocol===2?2:1;
+    pixelPulseBoundRuntime=!!(status&&status.boundRuntime===true);
+    pixelPulseFirstBindings=!!(status&&status.firstBindings===true);
     if(button)button.hidden=!pixelPulseEnabled;if(link)link.hidden=!pixelPulseEnabled;if(connect)connect.hidden=!pixelPulseEnabled;
+    if(pixelPulseBoundRuntime&&!pixelPulseFirstBindings){if(link)link.hidden=true;if(connect)connect.hidden=true;}
     if(create)create.hidden=!(pixelPulseEnabled&&pixelPulseProtocol===2&&status.firstBindings===true);
   }catch(error){} // Ordinary Neon login remains available while provider deploys.
   const url=new URL(location.href),error=url.searchParams.get('pixel_error'),intent=url.searchParams.get('pixel');

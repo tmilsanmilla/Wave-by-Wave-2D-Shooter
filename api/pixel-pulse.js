@@ -2,6 +2,10 @@ import * as oidc from 'openid-client';
 import { PIXEL_ISSUER,GAME_ORIGIN,CALLBACK,COOKIE,ATTEMPT_COOKIE,hash,random,cookie,cookieValue,
   config,signingKey,trustedDatabaseKeys,databaseReady,nativeOwnership,centralProfile,bindAccount,session,sessionJwt,sessionLifetime,failure } from '../lib/pixel-pulse.js';
 import {protocolV2,firstBindingsEnabled,readyV2,startV2,finishV2,sessionV2,sessionJwtV2} from '../lib/pixel-pulse-v2.js';
+import {renewalEnabled,assertRenewalProvider} from '../lib/pixel-pulse-renewal.js';
+import {boundRuntimeEnabled,readyBoundRuntime,startBoundReturn,
+  sessionBoundRuntime,revokeBoundRuntime} from '../lib/pixel-pulse-bound-return.js';
+import {pairedFirstEnabled,startFirstPaired,finishPairedCallback} from '../lib/pixel-pulse-first-paired.js';
 
 const json=(res,status,data)=>{res.statusCode=status;res.setHeader('Content-Type','application/json');res.end(JSON.stringify(data));};
 const redirect=(res,to)=>{res.statusCode=303;res.setHeader('Location',to);res.end();};
@@ -27,17 +31,27 @@ export default async function handler(req,res){
     if(action==='database-keys'&&req.method==='GET')return json(res,200,await trustedDatabaseKeys());
     if(action==='status'&&req.method==='GET'){
       const enabled=process.env.PIXEL_PULSE_GAME_ENABLED==='true';
-      if(enabled){const database=await databaseReady();if(protocolV2())await readyV2(database);await config();}
-      return json(res,200,{enabled,protocol:protocolV2()?2:1,firstBindings:enabled&&firstBindingsEnabled()});
+      if(enabled){const database=await databaseReady();if(boundRuntimeEnabled())await readyBoundRuntime(database);else if(protocolV2())await readyV2(database);const configuration=await config();if(renewalEnabled())assertRenewalProvider(configuration);}
+      return json(res,200,{enabled,protocol:protocolV2()?2:1,firstBindings:enabled&&(boundRuntimeEnabled()?pairedFirstEnabled():firstBindingsEnabled()),
+        renewal:enabled&&!boundRuntimeEnabled()&&renewalEnabled(),boundRuntime:enabled&&boundRuntimeEnabled()});
     }
     if(!['start','callback','session','token','signout'].includes(action))return json(res,404,{error:'Not found'});
     if(['start','signout','token'].includes(action)&&(req.method!=='POST'||!sameOrigin(req)))return json(res,403,{error:'Continue from this game’s account menu.'});
     if(['callback','session'].includes(action)&&req.method!=='GET')return json(res,405,{error:'Method not allowed'});
-    const currentSession=async()=>protocolV2()&&cookieValue(req,COOKIE)?sessionV2(req,await databaseReady(),await config()):session(req);
+    const currentSession=async()=>{
+      if(boundRuntimeEnabled()){
+        if(!cookieValue(req,COOKIE))return null;
+        const database=await databaseReady();await readyBoundRuntime(database);
+        return sessionBoundRuntime(req,database,await config());
+      }
+      return protocolV2()&&cookieValue(req,COOKIE)?sessionV2(req,await databaseReady(),await config()):session(req);
+    };
     if(action==='session')return json(res,200,{session:await currentSession()});
     if(action==='signout'){
       const raw=cookieValue(req,COOKIE);
-      if(raw)await (await databaseReady()).query('delete from oz_identity.pixel_sessions where token_hash=$1',[hash(raw)]);
+      if(boundRuntimeEnabled()){
+        const database=await databaseReady();await readyBoundRuntime(database);await revokeBoundRuntime(req,database);
+      }else if(raw)await (await databaseReady()).query('delete from oz_identity.pixel_sessions where token_hash=$1',[hash(raw)]);
       res.setHeader('Set-Cookie',[cookie(COOKIE,'',0),cookie(ATTEMPT_COOKIE,'',0)]);
       return json(res,200,{ok:true});
     }
@@ -48,6 +62,17 @@ export default async function handler(req,res){
     if(process.env.PIXEL_PULSE_GAME_ENABLED!=='true')throw failure('PROVIDER','Pixel Pulse shared sign-in is still being connected. Use the existing game sign-in for now.',503);
     const configuration=await config();
     const database=await databaseReady();
+    if(boundRuntimeEnabled()){
+      await readyBoundRuntime(database);
+      if(action==='start'){
+        const body=bodyOf(req),first=body?.intent==='link'||body?.intent==='create';
+        const result=await (first?startFirstPaired:startBoundReturn)(body,req,database,configuration);
+        res.setHeader('Set-Cookie',result.cookie);return json(res,200,{url:result.url});
+      }
+      const callback=new URL(req.url,GAME_ORIGIN);callback.pathname=new URL(CALLBACK).pathname;callback.searchParams.delete('action');
+      const result=await finishPairedCallback(callback,req,database,configuration);
+      res.setHeader('Set-Cookie',result.cookies);return redirect(res,result.url);
+    }
     if(protocolV2()){
       await readyV2(database);
       if(action==='start'){
