@@ -5,10 +5,10 @@
    intentionally CASUAL: ranked ratings need a trusted game server, not a
    browser that can be edited by either player. */
 const ARENA_FORFEIT_GRACE_MS=15000;
-const ARENA_PROTOCOL=7; // reinforcement armory: both peers need matching definitions
+const ARENA_PROTOCOL=8; // daylight field kit: both peers need matching definitions
 const ARENA_PRESENCE_RETRY_DELAYS_MS=Object.freeze([0,3000,7000,15000,31000]);
 let arenaDisconnectHoldSerial=0,arenaPresenceTrackSerial=0;
-const CASUAL_ARENA_UTILITY_KEYS=Object.freeze(['medkit','grenade','freezer','redball','beachball']);
+const CASUAL_ARENA_UTILITY_KEYS=Object.freeze(['medkit','grenade','freezer','redball','beachball','quickfrag','heavycharge','cryovial','lurepod']);
 function casualArenaUtilityKey(raw,requireOwned=false){
   const key=String(raw||'');
   if(!key)return '';
@@ -553,14 +553,15 @@ function arenaBroadcastUtility(key,data={}){
   arena.utilitySeq=Math.max(0,Math.floor(+arena.utilitySeq||0))+1;
   const id=String(authUser.id)+':'+arena.matchEpoch+':'+arena.round+':utility:'+arena.utilitySeq;
   const packet={id,utility:key};
+  const family=typeof utilityFamily==='function'?utilityFamily(key):key;
   if(key==='medkit')packet.action=data.action==='channel'?'channel':'quick';
-  else if(key==='freezer'){
+  else if(family==='freezer'){
     if(!Number.isFinite(+data.x)||!Number.isFinite(+data.y)||!Number.isFinite(+data.angle))return false;
     packet.x=+data.x;packet.y=+data.y;packet.angle=Math.atan2(Math.sin(+data.angle),Math.cos(+data.angle));
-  }else if(key==='grenade'){
+  }else if(family==='grenade'){
     if(!Number.isFinite(+data.x)||!Number.isFinite(+data.y)||!Number.isFinite(+data.angle))return false;
     packet.x=+data.x;packet.y=+data.y;packet.angle=Math.atan2(Math.sin(+data.angle),Math.cos(+data.angle));
-  }else if(key==='redball'||key==='beachball'){
+  }else if(family==='redball'||key==='beachball'){
     if(!['x','y','vx','vy'].every(k=>Number.isFinite(+data[k])))return false;
     packet.x=+data.x;packet.y=+data.y;packet.vx=+data.vx;packet.vy=+data.vy;
   }else return false;
@@ -580,22 +581,23 @@ function arenaApplyRemoteUtility(p){
     x>=bounds.left+pad&&x<=bounds.right-pad&&y>=bounds.top+pad&&y<=bounds.bottom-pad;
   const sx=Number.isFinite(+arena.opponent.tx)?+arena.opponent.tx:+arena.opponent.x;
   const sy=Number.isFinite(+arena.opponent.ty)?+arena.opponent.ty:+arena.opponent.y;
+  const family=typeof utilityFamily==='function'?utilityFamily(key):key,def=UTILITIES[key];
   let apply=null;
   if(key==='medkit'){
     if(!['quick','channel'].includes(String(p.action||'')))return false;
     apply=()=>burst(arena.opponent.x,arena.opponent.y,'#5ec46a',p.action==='channel'?18:10,4);
-  }else if(key==='grenade'){
+  }else if(family==='grenade'){
     const x=+p.x,y=+p.y,a=+p.angle;
     if(!inside(x,y,12)||Math.hypot(x-sx,y-sy)>190||!Number.isFinite(a)||Math.abs(a)>TAU*1000)return false;
-    apply=()=>grenades.push({x,y,vx:Math.cos(a)*14,vy:Math.sin(a)*14,t:now+950,remoteUtility:true,hostile:true});
-  }else if(key==='freezer'){
+    apply=()=>grenades.push({x,y,vx:Math.cos(a)*(def.speed||14),vy:Math.sin(a)*(def.speed||14),t:now+(def.fuseMs||950),utilityKey:key,remoteUtility:true,hostile:true});
+  }else if(family==='freezer'){
     const x=+p.x,y=+p.y,a=+p.angle;
     if(!inside(x,y,7)||Math.hypot(x-sx,y-sy)>190||!Number.isFinite(a)||Math.abs(a)>TAU*1000)return false;
-    apply=()=>launchFreezer(a,{x,y,remoteUtility:true,hostile:true,arenaUtility:true});
-  }else if(key==='redball'||key==='beachball'){
+    apply=()=>launchFreezer(a,{x,y,utilityKey:key,remoteUtility:true,hostile:true,arenaUtility:true});
+  }else if(family==='redball'||key==='beachball'){
     const x=+p.x,y=+p.y,vx=+p.vx,vy=+p.vy,speed=Math.hypot(vx,vy),fire=key==='beachball';
     if(!inside(x,y,12)||Math.hypot(x-sx,y-sy)>210||!Number.isFinite(speed)||speed<1||speed>8)return false;
-    apply=()=>balls.push({x,y,vx,vy,life:3000,hitT:0,taunt:fire?0:750,flee:fire,fire,dmg:8,gen:0,
+    apply=()=>balls.push({x,y,vx,vy,life:def.lifeMs||3000,hitT:0,taunt:fire?0:(def.taunt||750),flee:fire,fire,dmg:8,gen:0,utilityKey:key,
       splitT:fire?now+1000:0,remoteUtility:true,hostile:true,arenaUtility:true,utilitySeed:String(p.id)});
   }else return false;
   if(!arenaRememberRemoteUtility(String(p.id)))return false;

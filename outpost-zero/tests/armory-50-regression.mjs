@@ -135,8 +135,9 @@ test('peers from the earlier 35-gun release fail the reinforcement handshake cle
     multidevice=multideviceCreate(cfg,'host',10000);multidevice.loadoutRequired=true;multidevice.movementRequired=true;multidevice.channel={};
     var p={from:'peer',matchId:cfg.matchId,epoch:cfg.epoch,round:0,loadoutVersion:2,movementVersion:1};`);
   assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),false);assert.match(h.run('multidevice.status'),/REFRESH/);
-  h.run('p.loadoutVersion=3;');assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),true);
-  assert.equal(h.run('ARENA_PROTOCOL'),7);
+  h.run('p.loadoutVersion=3;');assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),false);
+  h.run('p.loadoutVersion=4;');assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),true);
+  assert.equal(h.run('ARENA_PROTOCOL'),8);
 });
 
 test('bounded publication fetch fits the whole expanded registry and retains a late unpublished sidearm',async()=>{

@@ -121,11 +121,11 @@ vm.runInContext(functionSource(rendering,'freezerVisualReach'),visualContext,{fi
 assert.equal(visualContext.freezerVisualReach(0,0,0,105),36,
   'the ice blast artwork must clip its ray before solid geometry instead of painting through it');
 
-assert.match(functionSource(online,'arenaBroadcastUtility'),/key==='freezer'[\s\S]{0,260}angle/,
+assert.match(functionSource(online,'arenaBroadcastUtility'),/family==='freezer'[\s\S]{0,260}angle/,
   'online Freezer packets must describe a launch angle rather than an instant endpoint');
-assert.match(functionSource(online,'arenaApplyRemoteUtility'),/key==='freezer'[\s\S]{0,900}launchFreezer\(/,
+assert.match(functionSource(online,'arenaApplyRemoteUtility'),/family==='freezer'[\s\S]{0,900}launchFreezer\(/,
   'remote Freezers must reproduce the same moving projectile');
-assert.doesNotMatch(functionSource(online,'arenaApplyRemoteUtility'),/key==='freezer'[\s\S]{0,600}utilityFrozenUntil\s*=\s*now/,
+assert.doesNotMatch(functionSource(online,'arenaApplyRemoteUtility'),/family==='freezer'[\s\S]{0,600}utilityFrozenUntil\s*=\s*now/,
   'receiving a cast packet must never freeze the player before the projectile arrives');
 
 for(const [script,version] of [['weapons','20260831-frag-range-v1'],['upgrades','20260831-hub-tools-settings-v1'],

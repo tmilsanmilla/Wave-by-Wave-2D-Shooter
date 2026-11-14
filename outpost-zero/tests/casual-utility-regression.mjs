@@ -150,7 +150,7 @@ for(const flags of [{aiMode:false,partyCpuMode:false,multiMode:false},{aiMode:tr
 }
 assert.doesNotMatch(ui,/if\(pendingGameMode==='arena'\)[\s\S]{0,140}loadout\.utility=null/,
   'launching Casual must not erase the selected utility');
-assert.match(combat,/arenaHitOpponent\(fragDamageAtDistance\(Math\.sqrt\(d2g\)\),'utility_grenade'\)/,
+assert.match(combat,/arenaHitOpponent\(fragDamageAtDistance\(Math\.sqrt\(d2g\),false,utilityKey\),'utility_grenade'\)/,
   'the grenade owner must authoritatively send its opponent the shared distance-based Frag damage');
 assert.match(combat,/!b\.remoteUtility[\s\S]{0,260}arenaHitOpponent\(\(b\.dmg\|\|8\)/,
   'remote balls must remain visual-only while locally owned balls send hits');

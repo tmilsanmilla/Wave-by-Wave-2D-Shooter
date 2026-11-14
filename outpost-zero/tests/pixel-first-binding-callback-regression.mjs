@@ -61,6 +61,12 @@ async function callback({intent='continue',bound=false,sameEmail=false,target=nu
   if(specifier==='../lib/pixel-pulse.js')return synthetic(lib);
   if(specifier==='../lib/pixel-pulse-v2.js')return synthetic({protocolV2:()=>false,firstBindingsEnabled:()=>false,
     ...Object.fromEntries(['readyV2','startV2','finishV2','sessionV2','sessionJwtV2'].map(name=>[name,()=>{throw Error('Dormant v2 path must not execute');}]))});
+  if(specifier==='../lib/pixel-pulse-renewal.js')return synthetic({renewalEnabled:()=>false,
+    assertRenewalProvider(){throw Error('Dormant renewal path must not execute');}});
+  if(specifier==='../lib/pixel-pulse-bound-return.js')return synthetic({boundRuntimeEnabled:()=>false,
+    ...Object.fromEntries(['readyBoundRuntime','startBoundReturn','sessionBoundRuntime','revokeBoundRuntime'].map(name=>[name,()=>{throw Error('Dormant bound path must not execute');}]))});
+  if(specifier==='../lib/pixel-pulse-first-paired.js')return synthetic({pairedFirstEnabled:()=>false,
+    ...Object.fromEntries(['startFirstPaired','finishPairedCallback'].map(name=>[name,()=>{throw Error('Dormant paired path must not execute');}]))});
   throw new Error('Unexpected import');
  });
  await module.evaluate();

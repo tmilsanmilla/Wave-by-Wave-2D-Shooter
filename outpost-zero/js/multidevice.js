@@ -270,7 +270,7 @@ function multideviceReceive(event,p,channel){
     return m.phase==='loadout'&&p.windowId===m.loadoutWindow?.id&&matchLoadoutCommit(m.loadoutWindow,p.from,p.kit,multideviceLoadoutKit);
   }
   if(event==='ready'&&m.phase==='setup'){
-    if(m.loadoutRequired&&p.loadoutVersion!==3){m.status='ARMORY UPDATE · ALL PLAYERS MUST REFRESH TO THE SAME GAME VERSION';return false;}
+    if(m.loadoutRequired&&p.loadoutVersion!==4){m.status='ARMORY UPDATE · ALL PLAYERS MUST REFRESH TO THE SAME GAME VERSION';return false;}
     if(m.movementRequired&&p.movementVersion!==1){m.status='OVERDRIVE UPDATE · ALL PLAYERS MUST REFRESH';return false;}
     m.ready.add(p.from);if(m.selfId===m.hostId)multideviceHostBegin();return true;
   }
@@ -411,17 +411,18 @@ function multideviceRemoteUtility(p){
   const m=multidevice,a=m.actors[p.from],key=String(p.utility||''),clock=Date.now();
   if(!a||a.hp<=0||!arenaUtilityIdValid(p.id,p.from,1,m.round)||m.seen.has(p.id)||m.seen.size>=4096||
      casualArenaUtilityKey(key)!==key||a.loadout.utility!==key||clock<(m.utilityReady[p.from]||0))return false;
-  const hostile=multideviceEnemies(m,m.selfId,p.from),x=+p.x,y=+p.y;
+  const hostile=multideviceEnemies(m,m.selfId,p.from),x=+p.x,y=+p.y,
+    family=typeof utilityFamily==='function'?utilityFamily(key):key,def=UTILITIES[key];
   if(key!=='medkit'&&(!Number.isFinite(x)||!Number.isFinite(y)||x<492||x>1908||y<372||y>1428||Math.hypot(x-a.tx,y-a.ty)>210))return false;
-  if((key==='grenade'||key==='freezer')&&(!Number.isFinite(+p.angle)||Math.abs(p.angle)>TAU*1000))return false;
-  if((key==='redball'||key==='beachball')&&(!Number.isFinite(+p.vx)||!Number.isFinite(+p.vy)||Math.hypot(p.vx,p.vy)>8))return false;
+  if((family==='grenade'||family==='freezer')&&(!Number.isFinite(+p.angle)||Math.abs(p.angle)>TAU*1000))return false;
+  if((family==='redball'||key==='beachball')&&(!Number.isFinite(+p.vx)||!Number.isFinite(+p.vy)||Math.hypot(p.vx,p.vy)>8))return false;
   if(key==='medkit'){
     a.healUntil=clock+10000;burst(a.x,a.y,'#5ec46a',12,4);
-  }else if(key==='grenade')grenades.push({x,y,vx:Math.cos(p.angle)*14,vy:Math.sin(p.angle)*14,t:now+950,remoteUtility:true,hostile,arenaUtility:true});
-  else if(key==='freezer'){
-    const projectile=launchFreezer(p.angle,{x,y,remoteUtility:true,hostile,arenaUtility:true});projectile.multideviceAlly=!hostile;
+  }else if(family==='grenade')grenades.push({x,y,vx:Math.cos(p.angle)*(def.speed||14),vy:Math.sin(p.angle)*(def.speed||14),t:now+(def.fuseMs||950),utilityKey:key,remoteUtility:true,hostile,arenaUtility:true});
+  else if(family==='freezer'){
+    const projectile=launchFreezer(p.angle,{x,y,utilityKey:key,remoteUtility:true,hostile,arenaUtility:true});projectile.multideviceAlly=!hostile;
   }else{
-    const fire=key==='beachball';balls.push({x,y,vx:+p.vx,vy:+p.vy,life:3000,hitT:0,taunt:fire?0:750,flee:fire,fire,dmg:8,gen:0,
+    const fire=key==='beachball';balls.push({x,y,vx:+p.vx,vy:+p.vy,life:def.lifeMs||3000,hitT:0,taunt:fire?0:(def.taunt||750),flee:fire,fire,dmg:8,gen:0,utilityKey:key,
       splitT:fire?now+1000:0,remoteUtility:true,hostile,arenaUtility:true,utilitySeed:p.id});
   }
   m.seen.add(p.id);m.utilityReady[p.from]=clock+Math.max(1000,Math.min(120000,+UTILITIES[key].cd||1000))-250;return true;
@@ -436,7 +437,7 @@ function multideviceWallTick(wall){
     now=Math.max(now,m.gameClockAnchor+Math.max(0,clock-m.gameWallAnchor));
   if(m.phase==='setup'){
     if(clock-m.createdAt>MULTIDEVICE_SETUP_MS){multideviceAbort('Not all players connected. Match cancelled without a result.');return;}
-    if(m.connected&&clock>=m.readyAt){m.readyAt=clock+1500;m.ready.add(m.selfId);multideviceSend('ready',{loadoutVersion:3,movementVersion:1});if(m.selfId===m.hostId)multideviceHostBegin();}
+    if(m.connected&&clock>=m.readyAt){m.readyAt=clock+1500;m.ready.add(m.selfId);multideviceSend('ready',{loadoutVersion:4,movementVersion:1});if(m.selfId===m.hostId)multideviceHostBegin();}
   }
   if(typeof multideviceLoadoutTick==='function')multideviceLoadoutTick(m,clock);
   if(m.phase==='countdown'&&clock>=m.roundStartAt){m.phase='fight';waveMsg='FIGHT';waveMsgT=now+800;}

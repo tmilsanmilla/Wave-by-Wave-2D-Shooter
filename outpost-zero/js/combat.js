@@ -263,24 +263,24 @@ function clearPlayerFreezerFreeze(){
   const was=playerFrozenUntil>now||(arena&&+arena.utilityFrozenUntil>now);
   playerFrozenUntil=0;if(arena)arena.utilityFrozenUntil=0;return !!was;
 }
-function fragBlastRadius(){
-  const configured=UTILITIES&&UTILITIES.grenade?+UTILITIES.grenade.range:NaN;
+function fragBlastRadius(key='grenade'){
+  const configured=UTILITIES&&UTILITIES[key]?+UTILITIES[key].range:NaN;
   return Number.isFinite(configured)?Math.max(1,configured):93.5;
 }
-function fragDamageAtDistance(distance,boss=false){
-  const configured=UTILITIES&&UTILITIES.grenade?+UTILITIES.grenade.dmg:NaN,
+function fragDamageAtDistance(distance,boss=false,key='grenade'){
+  const configured=UTILITIES&&UTILITIES[key]?+UTILITIES[key].dmg:NaN,
     center=Number.isFinite(configured)?Math.max(0,configured):300,
     d=Number.isFinite(+distance)?Math.max(0,+distance):0,
-    falloff=Math.max(0,1-d/fragBlastRadius());
+    falloff=Math.max(0,1-d/fragBlastRadius(key));
   return center*(boss?0.6:1)*falloff;
 }
 function freezerBlastClear(x0,y0,x1,y1){
   return typeof losBlocked!=='function'||!losBlocked(x0,y0,x1,y1);
 }
 function launchFreezer(angle,options={}){
-  const u=UTILITIES.freezer,a=Math.atan2(Math.sin(+angle||0),Math.cos(+angle||0)),
+  const utilityKey=options.utilityKey||'freezer',u=UTILITIES[utilityKey],a=Math.atan2(Math.sin(+angle||0),Math.cos(+angle||0)),
     x=Number.isFinite(+options.x)?+options.x:player.x,y=Number.isFinite(+options.y)?+options.y:player.y;
-  const projectile={x,y,vx:Math.cos(a)*u.speed,vy:Math.sin(a)*u.speed,t:now+u.fuseMs,freezer:true,
+  const projectile={x,y,vx:Math.cos(a)*u.speed,vy:Math.sin(a)*u.speed,t:now+u.fuseMs,freezer:true,utilityKey,
     arenaUtility:!!options.arenaUtility,remoteUtility:!!options.remoteUtility,hostile:!!options.hostile};
   if(typeof clampProjectileToArena==='function')clampProjectileToArena(projectile,7);
   grenades.push(projectile);return projectile;
@@ -301,7 +301,7 @@ function updateFreezerProjectile(projectile,dt){
 }
 function detonateFreezer(projectile){
   if(!projectile||!projectile.freezer)return false;
-  const u=UTILITIES.freezer,R=Math.max(1,+u.radius||105),freezeMs=Math.max(1,+u.freezeMs||2500);
+  const u=UTILITIES[projectile.utilityKey||'freezer'],R=Math.max(1,+u.radius||105),freezeMs=Math.max(1,+u.freezeMs||2500);
   freezeFx.push({x:projectile.x,y:projectile.y,r:R,t:now,wallClipped:true,remoteUtility:!!projectile.remoteUtility});
   burst(projectile.x,projectile.y,'#9fe6ff',24,6);addShake(5);sfx('pickup');
   for(const e of enemies){
@@ -320,21 +320,23 @@ function utilCast(u){
     if(typeof dropUnownedFromLoadout==='function')dropUnownedFromLoadout();sfx('dry');return;
   }
   if(now < utilReadyT){ sfx('dry'); return; }
-  if(u==='grenade'){
+  const family=typeof utilityFamily==='function'?utilityFamily(u):u,def=UTILITIES[u];
+  if(!def)return;
+  if(family==='grenade'){
     const a=aimAngle();
-    const thrown={x:player.x,y:player.y,vx:Math.cos(a)*14,vy:Math.sin(a)*14,t:now+950,
+    const thrown={x:player.x,y:player.y,vx:Math.cos(a)*(def.speed||14),vy:Math.sin(a)*(def.speed||14),t:now+(def.fuseMs||950),utilityKey:u,
       arenaUtility:typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()};
     grenades.push(thrown);
     if(thrown.arenaUtility&&typeof arenaBroadcastUtility==='function')
-      arenaBroadcastUtility('grenade',{x:thrown.x,y:thrown.y,angle:a});
-    utilReadyT=now+utilityCdOf('grenade'); sfx('swap');
+      arenaBroadcastUtility(u,{x:thrown.x,y:thrown.y,angle:a});
+    utilReadyT=now+utilityCdOf(u); sfx('swap');
     if(tutorialOn&&typeof tutorialRecordUtilityUsed==='function')tutorialRecordUtilityUsed();
-  } else if(u==='freezer'){
+  } else if(family==='freezer'){
     const a=aimAngle(),arenaUtility=typeof isCasualOnlineArena==='function'&&isCasualOnlineArena(),
-      thrown=launchFreezer(a,{arenaUtility});
+      thrown=launchFreezer(a,{arenaUtility,utilityKey:u});
     if(arenaUtility&&typeof arenaBroadcastUtility==='function')
-      arenaBroadcastUtility('freezer',{x:thrown.x,y:thrown.y,angle:a});
-    utilReadyT=now+utilityCdOf('freezer');sfx('swap');
+      arenaBroadcastUtility(u,{x:thrown.x,y:thrown.y,angle:a});
+    utilReadyT=now+utilityCdOf(u);sfx('swap');
     if(tutorialOn&&typeof tutorialRecordUtilityUsed==='function')tutorialRecordUtilityUsed();
   } else if(u==='portal'){
     // ENDER PEARL: hurl a warp pearl toward the crosshair; you teleport to wherever it lands
@@ -348,15 +350,15 @@ function utilCast(u){
     burst(player.x,player.y,'#7fd8ff',24,6); addShake(4);
     waveMsg='\u23F3 TIME CAPSULE \u2014 don\u0027t move'; waveMsgT=now+2400;
     utilReadyT=now+utilityCdOf('timecapsule'); sfx('pickup');
-  } else if(u==='redball'){
+  } else if(family==='redball'){
     const a=aimAngle();
     // launch it out ahead of you so the swarm it lures gathers away from your position
     const sx=player.x+Math.cos(a)*90, sy=player.y+Math.sin(a)*90;
-    const ball={x:sx,y:sy,vx:Math.cos(a)*6,vy:Math.sin(a)*6,life:3000,hitT:0,taunt:750,
+    const ball={x:sx,y:sy,vx:Math.cos(a)*(def.speed||6),vy:Math.sin(a)*(def.speed||6),life:def.lifeMs||3000,hitT:0,taunt:def.taunt||750,utilityKey:u,
       arenaUtility:typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()};
     clampProjectileToArena(ball,9); balls.push(ball);
-    if(ball.arenaUtility&&typeof arenaBroadcastUtility==='function')ball.utilitySeed=arenaBroadcastUtility('redball',ball)||'';
-    utilReadyT=now+utilityCdOf('redball'); sfx('swap');
+    if(ball.arenaUtility&&typeof arenaBroadcastUtility==='function')ball.utilitySeed=arenaBroadcastUtility(u,ball)||'';
+    utilReadyT=now+utilityCdOf(u); sfx('swap');
   } else if(u==='beachball'){
     const a=aimAngle();
     const sx=player.x+Math.cos(a)*80, sy=player.y+Math.sin(a)*80;
@@ -798,7 +800,7 @@ function update(dtms){
     if(now>=g.t || reached){
       const fw=g.firework;
       burst(g.x,g.y, fw?'#ff5a3c':'#e8b658', fw?24:30, fw?6:7); addShake(fw?6:8); sfx('die');
-      const rad=fw?85:fragBlastRadius();
+      const utilityKey=g.utilityKey||'grenade',rad=fw?85:fragBlastRadius(utilityKey);
       destroyMissilesInRadius(g.x, g.y, rad);        // explosions knock down incoming missiles
       for(let j=enemies.length-1;j>=0;j--){
         const e=enemies[j];
@@ -806,7 +808,7 @@ function update(dtms){
         if(d2g<rad*rad){
           const distance=Math.sqrt(d2g),blastDamage=fw
             ?(ETYPES[e.type].boss?50:75)*(1-distance/(rad*1.3))
-            :fragDamageAtDistance(distance,!!ETYPES[e.type].boss);
+            :fragDamageAtDistance(distance,!!ETYPES[e.type].boss,utilityKey);
           damageEnemy(e,blastDamage*perks.dmg*freezeHit(e));
           e.hitT=now+80;
           if(e.hp<=0) killEnemy(j);
@@ -816,13 +818,13 @@ function update(dtms){
         for(const target of multideviceTargets()){
           const d=Math.hypot(target.x-g.x,target.y-g.y);
           if(d<rad&&!losBlocked(g.x,g.y,target.x,target.y))
-            multideviceHit(target,fw?65*(1-d/(rad*1.3)):fragDamageAtDistance(d),fw?'firework':'utility_grenade');
+            multideviceHit(target,fw?65*(1-d/(rad*1.3)):fragDamageAtDistance(d,false,utilityKey),fw?'firework':'utility_grenade');
         }
       }else if(!fw&&g.arenaUtility&&!g.remoteUtility&&typeof isCasualOnlineArena==='function'&&isCasualOnlineArena()&&arenaCanAct()&&arena.opponent){
         const d2g=dist2(arena.opponent.x,arena.opponent.y,g.x,g.y),clear=typeof losBlocked!=='function'||
           !losBlocked(g.x,g.y,arena.opponent.x,arena.opponent.y);
         if(clear&&d2g<rad*rad){
-          arenaHitOpponent(fragDamageAtDistance(Math.sqrt(d2g)),'utility_grenade');
+          arenaHitOpponent(fragDamageAtDistance(Math.sqrt(d2g),false,utilityKey),'utility_grenade');
         }
       } else if(fw&&typeof isCpuTeamArena==='function'&&isCpuTeamArena()&&arenaCanAct()){
         for(const target of partyCpuMatch.bots.filter(b=>b.team==='B'&&b.hp>0)){

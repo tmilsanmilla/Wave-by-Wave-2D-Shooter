@@ -4,7 +4,8 @@
 // remain owned by the existing ability state; this descriptor only lets every
 // screen show the same readable animation after quick-melee restores a gun.
 const MELEE_ABILITY_VISUAL_MS=Object.freeze({
-  scythe:260,terafists:1600,knife:250,hammer:220,chainsaw:400,bdaggers:3000
+  scythe:260,terafists:1600,knife:250,hammer:220,chainsaw:400,bdaggers:3000,
+  saber:300,pike:260,mace:340,kukri:240
 });
 const MELEE_ABILITY_VISUAL_MAX_MS=3000;
 function resetMeleeAbilityVisual(actor=player){
@@ -64,7 +65,15 @@ function meleeAbility(){
   }
   const ready = now >= (abilityCD[k]||0);
   let activated=false;
-  if(k==='scythe'){                                  // reaper dash: far, slow to restore
+  if(typeof WEAPONS!=='undefined'&&WEAPONS[k]&&WEAPONS[k].fieldSkill){
+    if(!ready||player.equipEnd>now){sfx('dry');return;}
+    const skill=WEAPONS[k].fieldSkill;
+    // The normal melee pipeline owns target selection, wall checks, damage
+    // and peer animation. These abilities cannot teleport through cover.
+    meleeSwing({...WEAPONS[k],range:skill.range,arc:skill.arc},skill.mul);
+    if(skill.missiles)destroyMissilesInRadius(player.x,player.y,skill.range);
+    player.lastShot=now;weaponLastShotAt[k]=now;abilityCD[k]=now+abilityCdOf(k);activated=true;
+  }else if(k==='scythe'){                                  // reaper dash: far, slow to restore
     if(!ready){ sfx('dry'); return; }
     activated=true;
     let dx=0,dy=0;

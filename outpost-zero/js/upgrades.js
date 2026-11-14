@@ -11,6 +11,7 @@ let abilityCD={}, quickReadyT=0, sawChargeDmg=28, sawChargeR=72;
 let utilReadyT=0, medChan=0, medChanHeal=0, medKillCharge=MED_KILLS_REQUIRED, medDropKillAcc=0, medStash=0, medkitFlyFx=[], balls=[], grenades=[], pearls=[], utilityOut=false;
 let playerFrozenUntil=0;
 const ABILITY_CD={scythe:9600, knife:4800, chainsaw:16000, hammer:8000, bdaggers:3000, terafists:0, twinsai:2500, warpwave:18000, timeturner:12000};
+if(typeof FIELD_MELEE_KEYS!=='undefined')for(const key of FIELD_MELEE_KEYS)ABILITY_CD[key]=WEAPONS[key].fieldSkill.cd;
 const TWIN_SAI_PARRY_MS=1000;
 let wmods={}, utilMods={}, bossBounty=false;
 const UPGRADE_EFFECT_BOOST=1.15;

@@ -101,14 +101,22 @@ test('new protocol and first bindings default off; discovery cannot silently cre
   const configuration=providerConfiguration({issuer:PIXEL_ISSUER,authorization_endpoint:PIXEL_ISSUER+'/oauth2/authorize',
     token_endpoint:PIXEL_ISSUER+'/oauth2/token',userinfo_endpoint:PIXEL_ISSUER+'/oauth2/userinfo',jwks_uri:PIXEL_ISSUER+'/jwks',
     authorization_response_iss_parameter_supported:true,id_token_signing_alg_values_supported:['EdDSA']});
-  const calls=[],db={async query(sql,args){calls.push({sql,args});return {rows:[]};}};
+  const calls=[],db={async query(sql,args){
+    calls.push({sql,args});
+    assert.match(sql,/insert into oz_identity\.pixel_link_attempts/);
+    assert.match(sql,/where \$4::timestamptz>clock_timestamp\(\) returning state_hash/);
+    return {rows:[{state_hash:args[0]}],rowCount:1};
+  }};
   await assert.rejects(startV2({intent:'create'},db,configuration),{code:'LINK_CONFIRMATION_PENDING'});
   await assert.rejects(startV2({intent:'link'},db,configuration),{code:'LINK_CONFIRMATION_PENDING'});
   assert.equal(calls.length,0);
   const result=await startV2({intent:'continue'},db,configuration),url=new URL(result.url);
   assert.equal(url.origin,new URL(PIXEL_ISSUER).origin);assert.equal(url.searchParams.has('pixel_intent'),false);
-  const stored=JSON.parse(calls[1].args[2]);assert.equal(stored.phase,'discover');assert.equal(stored.mode,'continue');
+  assert.equal(calls.length,1,'one deadline-guarded insert, no obsolete parent DELETE');
+  const stored=JSON.parse(calls[0].args[2]);assert.equal(stored.phase,'discover');assert.equal(stored.mode,'continue');
   assert.ok(calls.every(c=>!c.sql.includes('oz_identity.accounts')));
+  await assert.rejects(startV2({intent:'continue'},{query:async()=>({rows:[],rowCount:0})},configuration),{code:'LINK_ACCOUNT_CHANGED'},
+    'a refused/expired insert cannot produce an authorization URL');
 });
 test('callbacks reject duplicates, wrong issuer, errors and missing browser binding',()=>{
   const good=new URL(CALLBACK+'?'+new URLSearchParams({iss:PIXEL_ISSUER,state:attempt.state,code}));

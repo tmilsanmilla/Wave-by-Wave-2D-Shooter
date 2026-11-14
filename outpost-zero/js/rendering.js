@@ -127,6 +127,22 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
     ctx.strokeStyle=p.shaft;ctx.lineWidth=3.4;ctx.beginPath();ctx.moveTo(2,7);ctx.lineTo(36,-7);ctx.stroke();
     ctx.strokeStyle=p.blade;ctx.lineWidth=3.8;ctx.beginPath();ctx.arc(30,-16,12,.45,2.7);ctx.stroke();
     ctx.strokeStyle=p.edge;ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(30,-16,8.5,.55,2.6);ctx.stroke();
+  }else if(key==='saber'||key==='kukri'){
+    ctx.strokeStyle=p.grip;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(2,0);ctx.lineTo(12,0);ctx.stroke();
+    ctx.fillStyle=p.blade;ctx.strokeStyle=p.edge;ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(12,-3);
+    if(key==='saber'){ctx.quadraticCurveTo(33,-9,45,-3);ctx.quadraticCurveTo(35,6,12,3);}
+    else{ctx.quadraticCurveTo(24,-4,30,-10);ctx.quadraticCurveTo(42,-5,36,3);ctx.quadraticCurveTo(24,10,12,3);}
+    ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.strokeStyle=p.bright;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(12,-6);ctx.lineTo(12,6);ctx.stroke();
+  }else if(key==='pike'){
+    ctx.strokeStyle=p.shaft;ctx.lineWidth=3.5;ctx.beginPath();ctx.moveTo(-10,0);ctx.lineTo(37,0);ctx.stroke();
+    ctx.fillStyle=p.bright;ctx.strokeStyle=p.edge;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(32,-5);ctx.lineTo(54,0);ctx.lineTo(32,5);ctx.lineTo(37,0);ctx.closePath();ctx.fill();ctx.stroke();
+    ctx.strokeStyle=p.grip;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(13,0);ctx.stroke();
+  }else if(key==='mace'){
+    ctx.strokeStyle=p.shaft;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(31,0);ctx.stroke();
+    ctx.fillStyle=p.blade;ctx.strokeStyle=p.edge;ctx.lineWidth=1.4;ctx.beginPath();
+    for(let i=0;i<16;i++){const a=i*TAU/16,r=i%2?7:11;const x=32+Math.cos(a)*r,y=Math.sin(a)*r;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+    ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle=p.bright;ctx.beginPath();ctx.arc(32,0,3,0,TAU);ctx.fill();
   }else if(key==='knife'){
     ctx.strokeStyle=p.grip;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(12,0);ctx.stroke();
     ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(12,-3);ctx.lineTo(38,0);ctx.lineTo(12,3);ctx.closePath();ctx.fill();
@@ -180,7 +196,14 @@ function drawMeleeAbilityVisual(actor,clock,hostile=false,localActor=false){
   const x=+actor.x||0,y=+actor.y||0,raw=Number.isFinite(+actor.meleeFxAngle)?+actor.meleeFxAngle:(+actor.angle||0);
   const angle=Math.atan2(Math.sin(raw),Math.cos(raw)),main=hostile?'255,59,52':'191,232,255';
   ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
-  if(key==='scythe'){
+  if(WEAPONS[key]&&WEAPONS[key].fieldSkill){
+    const skill=WEAPONS[key].fieldSkill;
+    ctx.strokeStyle='rgba('+main+','+(.85*fade)+')';ctx.lineWidth=(key==='mace'?5:4)/zoom;
+    drawMeleeSwingPath(x,y,angle,skill.arc,skill.range,progress);
+    ctx.translate(x,y);ctx.rotate(angle+(skill.arc<.6?0:(progress-.5)*skill.arc));
+    if(skill.arc<.6)ctx.translate(progress*25,0);
+    ctx.globalAlpha=.4+.6*fade;drawMeleeWeaponSilhouette(key,hostile,false);
+  }else if(key==='scythe'){
     ctx.strokeStyle='rgba('+main+','+(0.25+fade*.55)+')';ctx.lineWidth=5/zoom;ctx.beginPath();
     ctx.moveTo(x-Math.cos(angle)*12,y-Math.sin(angle)*12);ctx.lineTo(x-Math.cos(angle)*(55+progress*35),y-Math.sin(angle)*(55+progress*35));ctx.stroke();
     for(let i=1;i<=3;i++){
@@ -396,11 +419,31 @@ function drawScopedHostileProjectileCues(){
   }
   ctx.restore();return drawn;
 }
+const MAP_VISUAL_THEMES=Object.freeze({
+  arena:Object.freeze({floor:'#345866',outside:'#1c303b',grid:'rgba(169,214,222,.14)',wall:'#203746',trim:'#8cb6c6',crate:'#aa8051',crateTrim:'#e0bb83',inlay:'#223c4b'}),
+  dimension:Object.freeze({floor:'#514667',outside:'#292437',grid:'rgba(211,187,242,.16)',wall:'#302b46',trim:'#b0a0d1',crate:'#977695',crateTrim:'#dac1d6',inlay:'#3c3353'}),
+  construction:Object.freeze({floor:'#786747',outside:'#3b3428',grid:'rgba(245,221,160,.14)',wall:'#494133',trim:'#c8b68e',crate:'#ba8c50',crateTrim:'#f0d39b',inlay:'#5e5037'}),
+  endless:Object.freeze({floor:'#3c6057',outside:'#243d38',grid:'rgba(178,220,200,.14)',wall:'#263f39',trim:'#91b9a0',crate:'#aa8251',crateTrim:'#dfbd88',inlay:'#2e4b43'})
+});
+function worldVisualTheme(mapId,duelView){return MAP_VISUAL_THEMES[duelView&&MAP_VISUAL_THEMES[mapId]?mapId:'endless'];}
+function drawMapFloorAccents(bounds,mapId,duelView){
+  // Paint only: symmetric color blocks and edge markings never add collision,
+  // hide cover, or imply a new hazard. Keep the combat lanes uncluttered.
+  const {left,top,right,bottom}=bounds,w=right-left,h=bottom-top,
+    colors=!duelView?['#77baa0','#95b876']:mapId==='dimension'?['#b49ada','#75bfd2']:
+      mapId==='construction'?['#ddbc77','#dca179']:['#74bdcd','#86b9a4'];
+  ctx.save();ctx.globalAlpha=.13;
+  for(const side of [0,1]){
+    ctx.fillStyle=colors[side];
+    ctx.fillRect(left+36+side*(w*.5),top+36,w*.5-72,h-72);
+  }
+  ctx.globalAlpha=.4;ctx.strokeStyle=colors[0];ctx.lineWidth=3/zoom;ctx.setLineDash([24,18]);
+  ctx.strokeRect(left+24,top+24,w-48,h-48);ctx.setLineDash([]);ctx.restore();
+}
 function drawWorld(){
-  ctx.fillStyle='#08131c';
+  const duelView=isArenaMapBattlefield(),playBounds=activeArenaBounds(),mapId=activeArenaMapId(),theme=worldVisualTheme(mapId,duelView);
+  ctx.fillStyle=theme.outside;
   ctx.fillRect(0,0,W,H);
-
-  const duelView=isArenaMapBattlefield(),playBounds=activeArenaBounds(),mapId=activeArenaMapId();
   // Rendering enforces the same invariant even while countdowns, menus, or
   // other gameplay modals freeze simulation. Scope zoom and map edges never
   // move the local player away from the exact screen center.
@@ -414,9 +457,10 @@ function drawWorld(){
     ctx.beginPath();
     ctx.rect(playBounds.left,playBounds.top,playBounds.right-playBounds.left,playBounds.bottom-playBounds.top);
     ctx.clip();
-    ctx.fillStyle=mapId==='dimension'?'#100d1d':mapId==='construction'?'#17150f':'#08131c';
-    ctx.fillRect(playBounds.left,playBounds.top,playBounds.right-playBounds.left,playBounds.bottom-playBounds.top);
   }
+  ctx.fillStyle=theme.floor;
+  ctx.fillRect(playBounds.left,playBounds.top,playBounds.right-playBounds.left,playBounds.bottom-playBounds.top);
+  drawMapFloorAccents(playBounds,mapId,duelView);
 
   // grid
   const hw=W/2/zoom, hh=H/2/zoom;
@@ -424,7 +468,7 @@ function drawWorld(){
   const worldRight=duelView?playBounds.right:WORLD.w, worldBottom=duelView?playBounds.bottom:WORLD.h;
   const x0=Math.max(worldLeft,cam.x-hw), x1=Math.min(worldRight,cam.x+hw);
   const y0=Math.max(worldTop,cam.y-hh), y1=Math.min(worldBottom,cam.y+hh);
-  ctx.strokeStyle=mapId==='dimension'?'rgba(166,105,255,0.10)':mapId==='construction'?'rgba(205,172,95,0.09)':'rgba(99,230,223,0.065)'; ctx.lineWidth=1/zoom;
+  ctx.strokeStyle=theme.grid; ctx.lineWidth=1/zoom;
   ctx.beginPath();
   for(let x=Math.floor(x0/80)*80;x<=x1;x+=80){ ctx.moveTo(x,y0); ctx.lineTo(x,y1); }
   for(let y=Math.floor(y0/80)*80;y<=y1;y+=80){ ctx.moveTo(x0,y); ctx.lineTo(x1,y); }
@@ -448,6 +492,7 @@ function drawWorld(){
   // Obstacles use the same collision rectangles rendered here. Construction
   // swaps concrete walls for timber crates and live TNT blocks.
   for(const o of activeObstacles()){
+    ctx.fillStyle='rgba(8,16,22,.28)';ctx.fillRect(o.x+6,o.y+7,o.w,o.h); // visual shadow only; collision stays exact
     if(o.kind==='tnt'){
       const hp=arenaTntHp(o.id),ratio=clamp(hp/ARENA_TNT_HP,0,1),barY=o.y-10/zoom,barH=5/zoom;
       ctx.fillStyle='#a9322b'; ctx.fillRect(o.x,o.y,o.w,o.h);
@@ -467,14 +512,15 @@ function drawWorld(){
       ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillStyle='#fff1c0';ctx.font='800 '+(7/zoom)+'px ui-monospace,Consolas,monospace';
       ctx.fillText(Math.ceil(hp)+'/'+ARENA_TNT_HP,o.x+o.w/2,barY-2/zoom);ctx.textAlign='left';ctx.textBaseline='alphabetic';
     } else if(o.kind==='crate'){
-      ctx.fillStyle='#6b4a28'; ctx.fillRect(o.x,o.y,o.w,o.h);
-      ctx.strokeStyle='#bb8750'; ctx.lineWidth=3/zoom; ctx.strokeRect(o.x,o.y,o.w,o.h);
+      ctx.fillStyle=theme.crate; ctx.fillRect(o.x,o.y,o.w,o.h);
+      ctx.strokeStyle=theme.crateTrim; ctx.lineWidth=3/zoom; ctx.strokeRect(o.x,o.y,o.w,o.h);
       ctx.strokeStyle='rgba(45,25,12,.7)';ctx.lineWidth=4/zoom;ctx.beginPath();
       ctx.moveTo(o.x,o.y);ctx.lineTo(o.x+o.w,o.y+o.h);ctx.moveTo(o.x+o.w,o.y);ctx.lineTo(o.x,o.y+o.h);ctx.stroke();
     } else {
-      ctx.fillStyle=o.kind==='dimension'?'#24203b':'#262620'; ctx.fillRect(o.x,o.y,o.w,o.h);
-      ctx.strokeStyle=o.kind==='dimension'?'#7456a8':'#4a4634'; ctx.lineWidth=2/zoom; ctx.strokeRect(o.x,o.y,o.w,o.h);
-      ctx.strokeStyle=o.kind==='dimension'?'rgba(142,100,210,.45)':'rgba(74,70,52,0.5)';
+      ctx.fillStyle=theme.wall; ctx.fillRect(o.x,o.y,o.w,o.h);
+      ctx.strokeStyle=theme.trim; ctx.lineWidth=2/zoom; ctx.strokeRect(o.x,o.y,o.w,o.h);
+      ctx.fillStyle=theme.trim;ctx.fillRect(o.x+2,o.y+2,Math.max(0,o.w-4),3/zoom);
+      ctx.strokeStyle=theme.inlay;
       ctx.beginPath();ctx.moveTo(o.x,o.y);ctx.lineTo(o.x+o.w,o.y+o.h);ctx.moveTo(o.x+o.w,o.y);ctx.lineTo(o.x,o.y+o.h);ctx.stroke();
     }
   }
@@ -627,6 +673,8 @@ function drawWorld(){
 
   // player bullets
   for(const b of bullets){
+    ctx.strokeStyle='rgba(8,18,27,.65)';ctx.lineWidth=5.2/zoom;
+    ctx.beginPath();ctx.moveTo(b.x,b.y);ctx.lineTo(b.x-b.vx*1.7,b.y-b.vy*1.7);ctx.stroke();
     ctx.strokeStyle=b.col||'rgba(232,182,88,0.85)'; ctx.lineWidth=3.2/zoom;
     ctx.beginPath(); ctx.moveTo(b.x,b.y); ctx.lineTo(b.x-b.vx*1.7,b.y-b.vy*1.7); ctx.stroke();
     ctx.strokeStyle='#fff5da'; ctx.lineWidth=1.2/zoom;
@@ -1083,7 +1131,7 @@ function drawHUD(){
     } else {
       const cdMax=abilityCdOf(player.cur)||1;
       frac=clamp(1-((abilityCD[player.cur]||0)-now)/cdMax, 0, 1);
-      lbl = player.cur==='scythe' ? 'E/F/RMB: DASH' : player.cur==='knife' ? 'E/F/RMB: CRIT' : player.cur==='hammer' ? 'E/F/RMB: SLAM' : player.cur==='twinsai' ? 'E/F/RMB: PARRY' : 'E/F/RMB: RIP';
+      lbl = WEAPONS[player.cur].fieldSkill ? 'E/F/RMB: '+WEAPONS[player.cur].fieldSkill.label : player.cur==='scythe' ? 'E/F/RMB: DASH' : player.cur==='knife' ? 'E/F/RMB: CRIT' : player.cur==='hammer' ? 'E/F/RMB: SLAM' : player.cur==='twinsai' ? 'E/F/RMB: PARRY' : 'E/F/RMB: RIP';
     }
     ctx.fillStyle='#8a9268'; ctx.font='10px ui-monospace,Consolas,monospace'; ctx.textAlign='left';
     ctx.fillText(lbl, cdX, H-124);

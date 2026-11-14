@@ -73,6 +73,10 @@ function drawGunIcon(x,y,key,col,sc){
   else if(key==='revolver'){ ctx.moveTo(-14,0); ctx.lineTo(16,0); ctx.moveTo(-6,0); ctx.lineTo(-9,12); ctx.moveTo(1,2); ctx.arc(-3,2,4,0,TAU); }
   else if(key==='volt'){ ctx.moveTo(-15,2); ctx.lineTo(13,2); ctx.moveTo(-7,2); ctx.lineTo(-10,13); ctx.moveTo(6,-2); ctx.arc(2,-4,4,0,TAU); ctx.moveTo(9,-8); ctx.lineTo(12,-11); }
   else if(key==='chainsaw'){ ctx.moveTo(-16,3); ctx.lineTo(-6,3); ctx.moveTo(-6,-2); ctx.lineTo(16,-2); ctx.lineTo(16,4); ctx.lineTo(-6,4); ctx.moveTo(-2,4); ctx.lineTo(0,7); ctx.moveTo(4,4); ctx.lineTo(6,7); ctx.moveTo(10,4); ctx.lineTo(12,7); }
+  else if(key==='saber'){ctx.moveTo(-18,4);ctx.lineTo(-8,4);ctx.moveTo(-8,-2);ctx.lineTo(-8,10);ctx.moveTo(-8,2);ctx.quadraticCurveTo(10,-8,23,-2);ctx.quadraticCurveTo(12,8,-8,6);}
+  else if(key==='kukri'){ctx.moveTo(-18,2);ctx.lineTo(-8,2);ctx.lineTo(-8,-2);ctx.quadraticCurveTo(4,-1,9,-9);ctx.quadraticCurveTo(23,-8,19,2);ctx.quadraticCurveTo(8,12,-8,5);}
+  else if(key==='pike'){ctx.moveTo(-26,0);ctx.lineTo(13,0);ctx.lineTo(8,-6);ctx.lineTo(28,0);ctx.lineTo(8,6);ctx.lineTo(13,0);}
+  else if(key==='mace'){ctx.moveTo(-22,0);ctx.lineTo(8,0);for(let i=0;i<=16;i++){const a=i*TAU/16,r=i%2?7:12;const px=12+Math.cos(a)*r,py=Math.sin(a)*r;i?ctx.lineTo(px,py):ctx.moveTo(px,py);}}
   else if(key==='knife'){ ctx.moveTo(-14,5); ctx.lineTo(-4,5); ctx.moveTo(-4,1); ctx.lineTo(-4,9); ctx.moveTo(-4,5); ctx.lineTo(15,5); ctx.lineTo(8,0); }
   else if(key==='scythe'){ ctx.moveTo(-13,15); ctx.lineTo(7,-9); ctx.moveTo(15,-2); ctx.arc(6,-4,9,0.3,3.0); }
   else if(key==='hammer'){ ctx.moveTo(-14,12); ctx.lineTo(5,-5); ctx.moveTo(2,-13); ctx.rect(2,-13,13,13); }
@@ -135,9 +139,9 @@ function drawGunIcon(x,y,key,col,sc){
   ctx.stroke(); ctx.restore();
 }
 function liveUtilityCopy(k,u){
-  if(k==='grenade'){
-    const radius=typeof fragBlastRadius==='function'?fragBlastRadius():Math.max(1,+u.range||93.5),
-      damage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0):Math.max(0,+u.dmg||300);
+  if((typeof utilityFamily==='function'?utilityFamily(k):k)==='grenade'){
+    const radius=typeof fragBlastRadius==='function'?fragBlastRadius(k):Math.max(1,+u.range||93.5),
+      damage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0,false,k):Math.max(0,+u.dmg||300);
     return 'A compact '+radius+'-radius timed blast deals up to '+damage+
       ' damage at its center, then falls to zero at its edge.';
   }
@@ -163,26 +167,26 @@ function weaponDetails(k){
   if(FALL_KEYS.includes(k)) rows.push(['\uD83C\uDF42 FALL UPDATE',FALL_UPDATE_LIVE?'live for everyone':'admins \u00b7 Test Mode/editor only']);
   const slot=typeof storedLoadoutSlot==='function'?storedLoadoutSlot(k):(VAULT_SLOTS[k]||null);
   if(slot==='utility'||UTILKEYS.includes(k)||TEMP_UTILITY.includes(k)){
-    const u=UTILITIES[k]||VAULT_UTILITIES[k];
-    addGimmick(u,k==='grenade'?liveUtilityCopy(k,u):undefined);
+    const u=UTILITIES[k]||VAULT_UTILITIES[k],family=typeof utilityFamily==='function'?utilityFamily(k):k;
+    addGimmick(u,family==='grenade'?liveUtilityCopy(k,u):undefined);
     rows.push(['RECHARGE',k==='medkit' ? medKillsRequired()+' enemy kills' : (u.cd/1000)+'s']);
     if(k==='medkit') rows.push(['QUICK HEAL','G / utility RMB \u00b7 5% max HP over 1s'],['CHANNEL HEAL','equip + LMB \u00b7 20% max HP over 8s'],
       ['HEAL PENALTY','-10% move speed'],['INTERRUPTED BY','taking damage or switching'],['CHARGES','one ready at a time']);
-    if(k==='grenade'){
-      const radius=typeof fragBlastRadius==='function'?fragBlastRadius():Math.max(1,+u.range||93.5),
-        damage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0):Math.max(0,+u.dmg||300),
-        bossDamage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0,true):damage*0.6;
+    if(family==='grenade'){
+      const radius=typeof fragBlastRadius==='function'?fragBlastRadius(k):Math.max(1,+u.range||93.5),
+        damage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0,false,k):Math.max(0,+u.dmg||300),
+        bossDamage=typeof fragDamageAtDistance==='function'?fragDamageAtDistance(0,true,k):damage*0.6;
       rows.push(['DAMAGE','up to '+damage+' at center'],['VS BOSS','up to '+bossDamage],
-        ['BLAST RADIUS',''+radius],['FALLOFF','50% halfway · 0 at edge'],['FUSE','0.95s'],['THROW SPEED','14']);
+        ['BLAST RADIUS',''+radius],['FALLOFF','50% halfway · 0 at edge'],['FUSE',((u.fuseMs||950)/1000)+'s'],['THROW SPEED',''+(u.speed||14)]);
     }
     if(k==='portal') rows.push(['EFFECT','teleport to crosshair'],['I-FRAMES','0.35s']);
     if(k==='timecapsule') rows.push(['VAULT','not released'],['EFFECT','enemies & their shots at 25% speed'],
       ['ON CAST','clears every enemy projectile'],['DURATION','15s, ends if you move'],['RECHARGE',''+u.cd/1000+'s']);
-    if(k==='freezer') rows.push(['EFFECT','throw a moving ice charge'],['BLAST RADIUS',''+u.radius],
+    if(family==='freezer') rows.push(['EFFECT','throw a moving ice charge'],['BLAST RADIUS',''+u.radius],
       ['FUSE',''+Math.round(u.fuseMs/10)/100+'s'],['THROW SPEED',''+u.speed],['FREEZE TIME',''+Math.round(u.freezeMs/100)/10+'s'],
       ['WALLS','stop the charge and shield the blast'],['SELF RISK','your blast can freeze you'],
       ['WHILE FROZEN','take half damage, can\u0027t move'],['ON HIT','first hit thaws'],['RECHARGE',''+u.cd/1000+'s']);
-    if(k==='redball') rows.push(['LIFETIME','3s'],['TAUNT RADIUS','750'],
+    if(family==='redball') rows.push(['LIFETIME',((u.lifeMs||3000)/1000)+'s'],['TAUNT RADIUS',''+(u.taunt||750)],
       ['CONTACT DMG','8 per 0.28s'],['LURES','all enemies incl. shooters'],['BOSSES','immune to taunt']);
     if(k==='beachball') rows.push(['\uD83D\uDD25 SEASONAL','temporary'],['EFFECT','enemies FLEE it'],
       ['CONTACT DMG','8 base + burn'],['BURN','ignites on touch'],['LIFETIME','3s'],
@@ -239,6 +243,8 @@ function weaponDetails(k){
               twinsai:['E / F / MELEE RMB: PARRY','stop firing first \u00b7 cannot attack during 1s guard \u00b7 reflects every shot toward crosshair \u00b7 returns the shot\'s damage 1:1 \u00b7 2.5s cd after guard'],
               bdaggers:['E / F / MELEE RMB: HURL','throw both \u00b7 return in 1.5s \u00b7 ignite \u00b7 wall hit instantly recalls + resets Hurl']}[k];
     if(ab) rows.push(ab);
+    if(w.fieldSkill)rows.push(['E / F / MELEE RMB: '+w.fieldSkill.label,
+      w.fieldSkill.mul+'x damage · range '+w.fieldSkill.range+' · '+(w.fieldSkill.cd/1000)+'s recharge']);
     return rows;
   }
   const shot=w.dmg*w.pellets;
@@ -3642,6 +3648,10 @@ function drawUtilIcon(x,y,key,col,sc){
   ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=3; ctx.lineCap='round';
   ctx.beginPath();
   if(key==='medkit'){ ctx.rect(-12,-9,24,18); ctx.moveTo(-4,0); ctx.lineTo(4,0); ctx.moveTo(0,-4); ctx.lineTo(0,4); }
+  else if(key==='quickfrag'){ctx.arc(0,3,7,0,TAU);ctx.moveTo(-3,-4);ctx.rect(-3,-9,6,5);ctx.moveTo(-15,-2);ctx.lineTo(-8,-2);ctx.moveTo(-17,5);ctx.lineTo(-9,5);}
+  else if(key==='heavycharge'){ctx.rect(-12,-6,24,17);ctx.moveTo(-6,-6);ctx.lineTo(-6,-12);ctx.lineTo(6,-12);ctx.lineTo(6,-6);ctx.moveTo(-8,2);ctx.lineTo(8,2);ctx.moveTo(0,-2);ctx.lineTo(0,6);}
+  else if(key==='cryovial'){ctx.rect(-5,-14,10,5);ctx.moveTo(-4,-9);ctx.lineTo(-4,-1);ctx.lineTo(-10,9);ctx.lineTo(10,9);ctx.lineTo(4,-1);ctx.lineTo(4,-9);ctx.moveTo(-3,3);ctx.lineTo(3,3);ctx.moveTo(0,0);ctx.lineTo(0,6);}
+  else if(key==='lurepod'){ctx.moveTo(0,-13);ctx.lineTo(12,0);ctx.lineTo(0,13);ctx.lineTo(-12,0);ctx.closePath();ctx.moveTo(5,0);ctx.arc(0,0,5,0,TAU);ctx.moveTo(-17,-8);ctx.lineTo(-20,0);ctx.lineTo(-17,8);ctx.moveTo(17,-8);ctx.lineTo(20,0);ctx.lineTo(17,8);}
   else if(key==='grenade'){ ctx.arc(0,3,9,0,TAU); ctx.moveTo(-3,-6); ctx.rect(-4,-11,8,5); ctx.moveTo(6,-9); ctx.lineTo(11,-12); }
   else if(key==='portal'){ ctx.ellipse(0,0,7,13,0,0,TAU); ctx.moveTo(3.5,0); ctx.ellipse(0,0,3.5,8,0,0,TAU); }
   else if(key==='freezer'){ for(let s=0;s<6;s++){ const a=s/6*TAU; ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*12,Math.sin(a)*12); const bx=Math.cos(a)*7,by=Math.sin(a)*7; ctx.moveTo(bx,by); ctx.lineTo(bx+Math.cos(a+0.9)*4,by+Math.sin(a+0.9)*4); ctx.moveTo(bx,by); ctx.lineTo(bx+Math.cos(a-0.9)*4,by+Math.sin(a-0.9)*4); } }
