@@ -73,10 +73,7 @@ function drawGunIcon(x,y,key,col,sc){
   else if(key==='revolver'){ ctx.moveTo(-14,0); ctx.lineTo(16,0); ctx.moveTo(-6,0); ctx.lineTo(-9,12); ctx.moveTo(1,2); ctx.arc(-3,2,4,0,TAU); }
   else if(key==='volt'){ ctx.moveTo(-15,2); ctx.lineTo(13,2); ctx.moveTo(-7,2); ctx.lineTo(-10,13); ctx.moveTo(6,-2); ctx.arc(2,-4,4,0,TAU); ctx.moveTo(9,-8); ctx.lineTo(12,-11); }
   else if(key==='chainsaw'){ ctx.moveTo(-16,3); ctx.lineTo(-6,3); ctx.moveTo(-6,-2); ctx.lineTo(16,-2); ctx.lineTo(16,4); ctx.lineTo(-6,4); ctx.moveTo(-2,4); ctx.lineTo(0,7); ctx.moveTo(4,4); ctx.lineTo(6,7); ctx.moveTo(10,4); ctx.lineTo(12,7); }
-  else if(key==='saber'){ctx.moveTo(-18,4);ctx.lineTo(-8,4);ctx.moveTo(-8,-2);ctx.lineTo(-8,10);ctx.moveTo(-8,2);ctx.quadraticCurveTo(10,-8,23,-2);ctx.quadraticCurveTo(12,8,-8,6);}
-  else if(key==='kukri'){ctx.moveTo(-18,2);ctx.lineTo(-8,2);ctx.lineTo(-8,-2);ctx.quadraticCurveTo(4,-1,9,-9);ctx.quadraticCurveTo(23,-8,19,2);ctx.quadraticCurveTo(8,12,-8,5);}
   else if(key==='pike'){ctx.moveTo(-26,0);ctx.lineTo(13,0);ctx.lineTo(8,-6);ctx.lineTo(28,0);ctx.lineTo(8,6);ctx.lineTo(13,0);}
-  else if(key==='mace'){ctx.moveTo(-22,0);ctx.lineTo(8,0);for(let i=0;i<=16;i++){const a=i*TAU/16,r=i%2?7:12;const px=12+Math.cos(a)*r,py=Math.sin(a)*r;i?ctx.lineTo(px,py):ctx.moveTo(px,py);}}
   else if(key==='knife'){ ctx.moveTo(-14,5); ctx.lineTo(-4,5); ctx.moveTo(-4,1); ctx.lineTo(-4,9); ctx.moveTo(-4,5); ctx.lineTo(15,5); ctx.lineTo(8,0); }
   else if(key==='scythe'){ ctx.moveTo(-13,15); ctx.lineTo(7,-9); ctx.moveTo(15,-2); ctx.arc(6,-4,9,0.3,3.0); }
   else if(key==='hammer'){ ctx.moveTo(-14,12); ctx.lineTo(5,-5); ctx.moveTo(2,-13); ctx.rect(2,-13,13,13); }
@@ -93,13 +90,7 @@ function drawGunIcon(x,y,key,col,sc){
   else if(key==='smg'){ ctx.moveTo(-20,0); ctx.lineTo(18,0); ctx.moveTo(-6,0); ctx.lineTo(-6,12); ctx.moveTo(-16,0); ctx.lineTo(-18,9); }
   else if(key==='shotgun'){ ctx.moveTo(-24,0); ctx.lineTo(24,0); ctx.moveTo(-24,4); ctx.lineTo(2,4); ctx.moveTo(-16,4); ctx.lineTo(-19,13); }
   else if(key==='shorty'){ctx.moveTo(-14,-3);ctx.lineTo(14,-3);ctx.moveTo(-14,3);ctx.lineTo(14,3);ctx.moveTo(-9,4);ctx.lineTo(-13,12);}
-  else if(key==='handcannon'){ctx.rect(-11,-4,18,7);ctx.moveTo(7,0);ctx.lineTo(21,0);ctx.moveTo(-6,3);ctx.lineTo(-10,14);}
-  else if(key==='crossbow'){ctx.moveTo(-22,0);ctx.lineTo(22,0);ctx.moveTo(7,-18);ctx.quadraticCurveTo(23,0,7,18);ctx.lineTo(-2,0);ctx.closePath();ctx.moveTo(-9,0);ctx.lineTo(-13,10);}
-  else if(key==='lmg'){ctx.moveTo(-27,0);ctx.lineTo(28,0);ctx.rect(-20,-5,29,8);ctx.moveTo(5,10);ctx.arc(-2,10,7,0,TAU);ctx.moveTo(19,2);ctx.lineTo(15,12);ctx.moveTo(19,2);ctx.lineTo(24,12);}
-  else if(key==='carbine'){ctx.moveTo(-23,0);ctx.lineTo(23,0);ctx.rect(-16,-4,25,7);ctx.moveTo(-5,3);ctx.lineTo(-2,13);ctx.moveTo(7,0);ctx.lineTo(7,-7);}
   else if(key==='dmr'){ctx.moveTo(-27,0);ctx.lineTo(29,0);ctx.moveTo(-8,0);ctx.lineTo(-10,12);ctx.rect(-7,-8,15,4);ctx.moveTo(-23,0);ctx.lineTo(-27,6);}
-  else if(key==='autoshotgun'){ctx.moveTo(-24,0);ctx.lineTo(23,0);ctx.rect(-15,-4,27,7);ctx.moveTo(-7,3);ctx.lineTo(-11,12);ctx.moveTo(0,3);ctx.lineTo(2,15);}
-  else if(key==='pulserifle'){ctx.moveTo(-24,0);ctx.lineTo(25,0);ctx.rect(-16,-5,28,10);ctx.moveTo(-5,5);ctx.lineTo(-8,13);for(let i=0;i<3;i++){ctx.moveTo(i*6-6,-4);ctx.lineTo(i*6-6,4);}}
   else if(key==='solarrifle'){
     // long barrel
     ctx.moveTo(-16,1); ctx.lineTo(14,1);
@@ -2916,11 +2907,8 @@ function weaponBrowserKeys(cat){
     if(!k||keys.includes(k)) return;
     const valid=slot==='utility' ? !!(UTILITIES[k]||VAULT_UTILITIES[k]) : !!(WEAPONS[k]||VAULT_WEAPONS[k]);
     if(!valid) return;
-    const vaulted=Object.prototype.hasOwnProperty.call(VAULT_SLOTS,k);
-    const adminTest=typeof fallEligible==='function'&&fallEligible();
     const published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
-    if(vaulted&&!adminTest&&!published) return;              // no storage-only/public leaks
-    if(FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE&&!adminTest) return;
+    if(!published&&!(typeof unreleasedSeasonPreview==='function'&&unreleasedSeasonPreview(k)))return;
     keys.push(k);
   };
   entry[2]().forEach(add);                                 // current released roster
@@ -2932,12 +2920,11 @@ function weaponBrowserAccess(k){
   const limited=TEMP_PRIMARY.includes(k)||TEMP_SECONDARY.includes(k)||TEMP_MELEE.includes(k)||TEMP_UTILITY.includes(k);
   const shop=GEM_SHOP.find(it=>it.key===k),locked=typeof isLocked==='function'&&isLocked(k),
     published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
-  const adminTest=typeof fallEligible==='function'&&fallEligible();
+  const preview=typeof unreleasedSeasonPreview==='function'&&unreleasedSeasonPreview(k);
+  if(!published&&!preview)return {text:'UNAVAILABLE \u00b7 NOT CURRENTLY LIVE',col:'#d05548',locked:true};
   if(FALL_KEYS.includes(k)) return FALL_UPDATE_LIVE
     ? {text:'FALL UPDATE \u00b7 LIVE',col:'#d0763e',locked:false}
     : {text:'ADMIN TEST \u00b7 NEXT SEASON',col:'#d0763e',locked:false};
-  if(Object.prototype.hasOwnProperty.call(VAULT_SLOTS,k)&&!shop&&adminTest)
-    return {text:'ADMIN TEST \u00b7 DORMANT',col:'#d0763e',locked:false};
   if(limited) return locked
     ? {text:'LIMITED \u00b7 SIGN IN',col:'#d05548',locked:true}
     : {text:'LIMITED \u00b7 AVAILABLE',col:'#ff8b4d',locked:false};
@@ -2960,7 +2947,7 @@ function drawWeaponsHome(){
   ctx.fillStyle='#e8b658'; ctx.font='700 '+(tiny?22:30)+'px ui-monospace,Consolas,monospace';
   ctx.fillText('WEAPONS',W/2,Math.max(10,H*.035));
   ctx.fillStyle='#8a9268'; ctx.font=(W<360?'8':'10')+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine('50 MORE GUNS \u00b7 BROWSE \u00b7 DETAILS \u00b7 PRACTICE',W-24),W/2,Math.max(39,H*.035+(tiny?28:38)));
+  ctx.fillText(fitLine('PICK A CATEGORY \u00b7 INSPECT GEAR OR TRY IT IN PRACTICE',W-24),W/2,Math.max(39,H*.035+(tiny?28:38)));
 
   const backH=tiny?28:34, backW=Math.min(190,W-margin*2), backX=W/2-backW/2, backY=H-margin-backH;
   const top=tiny?68:82, bottom=backY-(tiny?9:15), gap=tiny?6:10;
@@ -3008,7 +2995,7 @@ function drawWeaponBrowserCard(k,cat,x,y,w,h){
   const practiceW=compact?Math.min(44,w*.44):Math.min(78,Math.max(58,w*.36)), practiceH=compact?30:28;
   const practiceX=x+w-practiceW-6, practiceY=y+7;
   const practiceAllowed=(typeof isWeaponPublished!=='function'||isWeaponPublished(k))||
-    (typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)&&typeof fallEligible==='function'&&fallEligible());
+    (typeof unreleasedSeasonPreview==='function'&&unreleasedSeasonPreview(k));
   if(practiceAllowed)weaponBrowserRects.push({kind:'practice',key:k,x:practiceX,y:practiceY,w:practiceW,h:practiceH});
   const practiceHot=mouse.x>=practiceX&&mouse.x<=practiceX+practiceW&&mouse.y>=practiceY&&mouse.y<=practiceY+practiceH;
   ctx.fillStyle=practiceAllowed?(practiceHot?'#a7c15e':'rgba(167,193,94,0.13)'):'rgba(208,85,72,0.08)'; ctx.fillRect(practiceX,practiceY,practiceW,practiceH);
@@ -3022,10 +3009,13 @@ function drawWeaponBrowserCard(k,cat,x,y,w,h){
     if(isUtil) drawUtilIcon(iconX,iconY,k,access.locked?'#53605e':col,scale);
     else drawGunIcon(iconX,iconY,k,access.locked?'#53605e':col,scale);
   }
-  const nameX=x+(veryTight?8:compact?53:66), nameRoom=Math.max(40,practiceX-nameX-5);
+  // Below the practice button the name can use the rest of the card. Reserving
+  // its width there unnecessarily clipped names such as ANCHOR LMG and LONGBOW.
+  const nameX=x+(veryTight?8:compact?53:66),nameY=y+(veryTight?9:compact?33:36);
+  const nameRoom=Math.max(40,(nameY>=practiceY+practiceH?x+w-6:practiceX)-nameX-5);
   ctx.textAlign='left'; ctx.textBaseline='top'; ctx.fillStyle=access.locked?'#8c9992':'#e8d9a8';
   ctx.font='700 '+(veryTight?8:compact?9:12)+'px ui-monospace,Consolas,monospace';
-  ctx.fillText(fitLine(def.name,nameRoom),nameX,y+(veryTight?9:compact?33:36));
+  ctx.fillText(fitLine(def.name,nameRoom),nameX,nameY);
   if(!veryTight){
     ctx.fillStyle=access.col; ctx.font='700 '+(compact?6:8)+'px ui-monospace,Consolas,monospace';
     ctx.fillText(fitLine(access.text,w-16),x+8,y+h-(compact?17:20));
@@ -3578,9 +3568,6 @@ function drawCard(k, cat, slot, x, yb, cw, ch, sc, isTemp){
     ctx.fillStyle=roleCol; ctx.fillRect(x,yb,cw,13);
     ctx.fillStyle='#101208'; ctx.font='700 8px ui-monospace,Consolas,monospace';
     ctx.fillText('EQUIPPED', x+cw/2, yb+3);
-  }else if(!isUtil&&w.armoryCollection==='reinforcements'){
-    ctx.fillStyle='#9ed7ce';ctx.font='700 8px ui-monospace,Consolas,monospace';ctx.textAlign='center';
-    ctx.fillText('NEW',x+cw/2,yb+7);
   }
   if(!isUtil) drawGunIcon(x+cw/2, yb+Math.round(44*sc), k, sel?'#e8d9a8':'#8a9268', sc);
   else drawUtilIcon(x+cw/2, yb+Math.round(44*sc), k, locked?'#4a4634':(sel?'#e8d9a8':'#8fb3c9'), sc);
@@ -3648,10 +3635,6 @@ function drawUtilIcon(x,y,key,col,sc){
   ctx.strokeStyle=col; ctx.fillStyle=col; ctx.lineWidth=3; ctx.lineCap='round';
   ctx.beginPath();
   if(key==='medkit'){ ctx.rect(-12,-9,24,18); ctx.moveTo(-4,0); ctx.lineTo(4,0); ctx.moveTo(0,-4); ctx.lineTo(0,4); }
-  else if(key==='quickfrag'){ctx.arc(0,3,7,0,TAU);ctx.moveTo(-3,-4);ctx.rect(-3,-9,6,5);ctx.moveTo(-15,-2);ctx.lineTo(-8,-2);ctx.moveTo(-17,5);ctx.lineTo(-9,5);}
-  else if(key==='heavycharge'){ctx.rect(-12,-6,24,17);ctx.moveTo(-6,-6);ctx.lineTo(-6,-12);ctx.lineTo(6,-12);ctx.lineTo(6,-6);ctx.moveTo(-8,2);ctx.lineTo(8,2);ctx.moveTo(0,-2);ctx.lineTo(0,6);}
-  else if(key==='cryovial'){ctx.rect(-5,-14,10,5);ctx.moveTo(-4,-9);ctx.lineTo(-4,-1);ctx.lineTo(-10,9);ctx.lineTo(10,9);ctx.lineTo(4,-1);ctx.lineTo(4,-9);ctx.moveTo(-3,3);ctx.lineTo(3,3);ctx.moveTo(0,0);ctx.lineTo(0,6);}
-  else if(key==='lurepod'){ctx.moveTo(0,-13);ctx.lineTo(12,0);ctx.lineTo(0,13);ctx.lineTo(-12,0);ctx.closePath();ctx.moveTo(5,0);ctx.arc(0,0,5,0,TAU);ctx.moveTo(-17,-8);ctx.lineTo(-20,0);ctx.lineTo(-17,8);ctx.moveTo(17,-8);ctx.lineTo(20,0);ctx.lineTo(17,8);}
   else if(key==='grenade'){ ctx.arc(0,3,9,0,TAU); ctx.moveTo(-3,-6); ctx.rect(-4,-11,8,5); ctx.moveTo(6,-9); ctx.lineTo(11,-12); }
   else if(key==='portal'){ ctx.ellipse(0,0,7,13,0,0,TAU); ctx.moveTo(3.5,0); ctx.ellipse(0,0,3.5,8,0,0,TAU); }
   else if(key==='freezer'){ for(let s=0;s<6;s++){ const a=s/6*TAU; ctx.moveTo(0,0); ctx.lineTo(Math.cos(a)*12,Math.sin(a)*12); const bx=Math.cos(a)*7,by=Math.sin(a)*7; ctx.moveTo(bx,by); ctx.lineTo(bx+Math.cos(a+0.9)*4,by+Math.sin(a+0.9)*4); ctx.moveTo(bx,by); ctx.lineTo(bx+Math.cos(a-0.9)*4,by+Math.sin(a-0.9)*4); } }

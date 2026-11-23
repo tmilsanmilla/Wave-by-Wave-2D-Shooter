@@ -75,7 +75,7 @@ for(const [W,H] of [[390,844],[1280,720],[844,390],[320,568]]){
     for(const key of h.run('PRIMARIES.concat(TEMP_PRIMARY)'))assert.ok(seen.has(key),key);
   });
 }
-for(const key of ['carbine','lmg','dmr','autoshotgun','crossbow','pulserifle','shorty','handcannon'])test(`${key} fires real pellets, spends ammo, respects cadence and reloads`,()=>{
+for(const key of ['ar','anchor','dmr','shotgun','longbow','smg','shorty','m9'])test(`${key} fires real pellets, spends ammo, respects cadence and reloads`,()=>{
   let reloads=0;const c={console,Math,Number,Object,Array,Map,Set,now:10000,state:'play',practiceMode:null,fireSuppressT:0,
     parryUntil:0,TWIN_SAI_PARRY_MS:1000,aiming:false,tutorialOn:false,surgeT:0,weaponLastShotAt:{},fanShots:0,fanBurstUntil:0,
     bullets:[],grenades:[],perks:{rate:1,acc:1,dmg:1,pierce:0,velo:1,range:1,noBloom:false},
@@ -83,7 +83,7 @@ for(const key of ['carbine','lmg','dmr','autoshotgun','crossbow','pulserifle','s
     isLocked:()=>false,sfx:()=>{},addShake:()=>{},aimAngle:()=>0,effSpread:()=>0,
     wm:()=>({rate:1,spread:1,dmg:1,pierce:0,range:1,fall:1,pellets:0}),weaponColor:(key,col)=>col,
     fireCadenceLastShot:()=>c.player.lastShot,weaponBulletSpeed:()=>20,weaponBulletLife:(_key,life)=>life,
-    startReload:()=>{reloads++;c.player.reloadEnd=c.now+1000;}
+    clampActorToArena(){},collideRects(){},startReload:()=>{reloads++;c.player.reloadEnd=c.now+1000;}
   };
   vm.createContext(c);vm.runInContext(read('weapons.js'),c);vm.runInContext(fn(read('combat.js'),'tryFire'),c);
   const w=vm.runInContext(`WEAPONS.${key}`,c);c.player.mags[key]=w.mag;c.player.reserve[key]=w.mag*5;

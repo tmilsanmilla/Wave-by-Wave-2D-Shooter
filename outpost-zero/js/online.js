@@ -5,10 +5,10 @@
    intentionally CASUAL: ranked ratings need a trusted game server, not a
    browser that can be edited by either player. */
 const ARENA_FORFEIT_GRACE_MS=15000;
-const ARENA_PROTOCOL=8; // daylight field kit: both peers need matching definitions
+const ARENA_PROTOCOL=9; // trimmed armory: older peers can still equip retired gear
 const ARENA_PRESENCE_RETRY_DELAYS_MS=Object.freeze([0,3000,7000,15000,31000]);
 let arenaDisconnectHoldSerial=0,arenaPresenceTrackSerial=0;
-const CASUAL_ARENA_UTILITY_KEYS=Object.freeze(['medkit','grenade','freezer','redball','beachball','quickfrag','heavycharge','cryovial','lurepod']);
+const CASUAL_ARENA_UTILITY_KEYS=Object.freeze(['medkit','grenade','freezer','redball','beachball']);
 function casualArenaUtilityKey(raw,requireOwned=false){
   const key=String(raw||'');
   if(!key)return '';
@@ -809,15 +809,20 @@ function arenaApplyRemoteFirework(p){
 function stepRemoteShotVisuals(list,dtms){
   if(!Array.isArray(list)||!list.length)return;
   const elapsed=Math.max(0,+dtms||0),dt=elapsed/16.667;
+  // This synchronous pass is cosmetic: geometry cannot change inside it.
+  // Capture ONCE, not for every swept substep of every received pellet. Never
+  // retain across passes: a TNT detonation/map switch must affect the next one.
+  const rects=activeObstacles(),bounds=activeArenaBounds(),
+    tnt=isArenaMapBattlefield()&&activeArenaMapId()==='construction'?activeArenaTnt():null;
   for(let i=list.length-1;i>=0;i--){
     const b=list[i];b.life-=elapsed;let dead=b.life<=0;
     const stepLen=Math.hypot(b.vx,b.vy)*dt,steps=Math.max(1,Math.ceil(stepLen/7)),stepDt=dt/steps;
     for(let s=0;s<steps&&!dead;s++){
       const bx=b.x,by=b.y;b.x+=b.vx*stepDt;b.y+=b.vy*stepDt;b.dist+=Math.hypot(b.vx,b.vy)*stepDt;
       if(b.wv){const A=b.wamp||24,K=b.wk||0.05;b.x=b.ox+Math.cos(b.ba)*b.dist-Math.sin(b.ba)*A*Math.sin(b.dist*K);b.y=b.oy+Math.sin(b.ba)*b.dist+Math.cos(b.ba)*A*Math.sin(b.dist*K);}
-      if(projectileOutsideArena(b)){
+      if(projectileOutsideArena(b,0,bounds)){
         if(b.bounce>0){
-          const bounds=activeArenaBounds();if(b.x<bounds.left||b.x>bounds.right)b.vx*=-1;if(b.y<bounds.top||b.y>bounds.bottom)b.vy*=-1;
+          if(b.x<bounds.left||b.x>bounds.right)b.vx*=-1;if(b.y<bounds.top||b.y>bounds.bottom)b.vy*=-1;
           b.x=clamp(b.x,bounds.left+1,bounds.right-1);b.y=clamp(b.y,bounds.top+1,bounds.bottom-1);b.bounce--;continue;
         }
         dead=true;break;
@@ -825,13 +830,12 @@ function stepRemoteShotVisuals(list,dtms){
       // Remote tracers are cosmetic only, but must mirror the real collision
       // order: live Construction TNT absorbs a Railgun before wall phasing.
       // This receiver-owned visual path never mutates TNT health or authority.
-      if(isArenaMapBattlefield()&&activeArenaMapId()==='construction'&&
-         typeof arenaTntAtPoint==='function'&&arenaTntAtPoint(b.x,b.y,4)){
+      if(tnt&&typeof arenaTntAtPoint==='function'&&arenaTntAtPoint(b.x,b.y,4,tnt)){
         dead=true;break;
       }
-      if(projectileHitsSolidWall(b)){
+      if(projectileHitsSolidWall(b,rects)){
         if(b.bounce>0){
-          if(!pointInRects(bx,b.y))b.vx*=-1;else if(!pointInRects(b.x,by))b.vy*=-1;else{b.vx*=-1;b.vy*=-1;}
+          if(!pointInRects(bx,b.y,rects))b.vx*=-1;else if(!pointInRects(b.x,by,rects))b.vy*=-1;else{b.vx*=-1;b.vy*=-1;}
           b.x=bx;b.y=by;b.bounce--;continue;
         }
         dead=true;break;
@@ -848,13 +852,15 @@ function remoteFireworkAddFx(x,y){
 }
 function stepRemoteFireworkVisuals(list,dtms){
   const elapsed=Math.max(0,+dtms||0),dt=elapsed/16.667;
+  const rects=Array.isArray(list)&&list.length?activeObstacles():null,
+    bounds=rects?activeArenaBounds():null;
   if(Array.isArray(list))for(let i=list.length-1;i>=0;i--){
     const b=list[i];b.life-=elapsed;let burstNow=false;
     const stepLen=Math.hypot(+b.vx||0,+b.vy||0)*dt,steps=Math.max(1,Math.ceil(stepLen/7)),stepDt=dt/steps;
     for(let s=0;s<steps&&!burstNow;s++){
       b.x+=b.vx*stepDt;b.y+=b.vy*stepDt;
-      if(projectileOutsideArena(b,12)){clampProjectileToArena(b,12);burstNow=true;break;}
-      if(pointInRects(b.x,b.y)){b.vx*=-0.5;b.vy*=-0.5;}
+      if(projectileOutsideArena(b,12,bounds)){clampProjectileToArena(b,12,bounds);burstNow=true;break;}
+      if(pointInRects(b.x,b.y,rects)){b.vx*=-0.5;b.vy*=-0.5;}
       if(b.life<=40&&Math.hypot(b.x-b.tx,b.y-b.ty)<18)burstNow=true;
     }
     if(b.life<=0)burstNow=true;

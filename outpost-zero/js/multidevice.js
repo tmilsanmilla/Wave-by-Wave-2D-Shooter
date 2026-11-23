@@ -7,6 +7,7 @@
    settlement belongs to the server's all-participant agreement workflow. */
 const MULTIDEVICE_HP=250, MULTIDEVICE_TARGET=5, MULTIDEVICE_ROUND_MS=90000;
 const MULTIDEVICE_GRACE_MS=45000, MULTIDEVICE_SETUP_MS=90000;
+const MULTIDEVICE_LOADOUT_VERSION=5;
 let multidevice=null;
 
 function multideviceRoster(config,selfId){
@@ -270,7 +271,7 @@ function multideviceReceive(event,p,channel){
     return m.phase==='loadout'&&p.windowId===m.loadoutWindow?.id&&matchLoadoutCommit(m.loadoutWindow,p.from,p.kit,multideviceLoadoutKit);
   }
   if(event==='ready'&&m.phase==='setup'){
-    if(m.loadoutRequired&&p.loadoutVersion!==4){m.status='ARMORY UPDATE · ALL PLAYERS MUST REFRESH TO THE SAME GAME VERSION';return false;}
+    if(m.loadoutRequired&&p.loadoutVersion!==MULTIDEVICE_LOADOUT_VERSION){m.status='ARMORY UPDATE · ALL PLAYERS MUST REFRESH TO THE SAME GAME VERSION';return false;}
     if(m.movementRequired&&p.movementVersion!==1){m.status='OVERDRIVE UPDATE · ALL PLAYERS MUST REFRESH';return false;}
     m.ready.add(p.from);if(m.selfId===m.hostId)multideviceHostBegin();return true;
   }
@@ -437,7 +438,7 @@ function multideviceWallTick(wall){
     now=Math.max(now,m.gameClockAnchor+Math.max(0,clock-m.gameWallAnchor));
   if(m.phase==='setup'){
     if(clock-m.createdAt>MULTIDEVICE_SETUP_MS){multideviceAbort('Not all players connected. Match cancelled without a result.');return;}
-    if(m.connected&&clock>=m.readyAt){m.readyAt=clock+1500;m.ready.add(m.selfId);multideviceSend('ready',{loadoutVersion:4,movementVersion:1});if(m.selfId===m.hostId)multideviceHostBegin();}
+    if(m.connected&&clock>=m.readyAt){m.readyAt=clock+1500;m.ready.add(m.selfId);multideviceSend('ready',{loadoutVersion:MULTIDEVICE_LOADOUT_VERSION,movementVersion:1});if(m.selfId===m.hostId)multideviceHostBegin();}
   }
   if(typeof multideviceLoadoutTick==='function')multideviceLoadoutTick(m,clock);
   if(m.phase==='countdown'&&clock>=m.roundStartAt){m.phase='fight';waveMsg='FIGHT';waveMsgT=now+800;}

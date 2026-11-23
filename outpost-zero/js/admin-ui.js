@@ -537,7 +537,7 @@ async function fetchWeaponDefs(){
     weaponDefsLoaded=true;
     for(const raw of (data||[])){
       const key=String(raw&&raw.key||'').trim().toLowerCase();
-      if(!key||weaponDefs[key])continue;
+      if(!Object.prototype.hasOwnProperty.call(WEAPON_EDITOR_SLOTS,key)||weaponDefs[key])continue;
       const r=Object.assign({},raw,{key});
       weaponDefs[key]=r;
       applyWeaponDef(r);

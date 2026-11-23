@@ -127,22 +127,10 @@ function drawMeleeWeaponSilhouette(key,hostile=false,parryActive=false){
     ctx.strokeStyle=p.shaft;ctx.lineWidth=3.4;ctx.beginPath();ctx.moveTo(2,7);ctx.lineTo(36,-7);ctx.stroke();
     ctx.strokeStyle=p.blade;ctx.lineWidth=3.8;ctx.beginPath();ctx.arc(30,-16,12,.45,2.7);ctx.stroke();
     ctx.strokeStyle=p.edge;ctx.lineWidth=1.6;ctx.beginPath();ctx.arc(30,-16,8.5,.55,2.6);ctx.stroke();
-  }else if(key==='saber'||key==='kukri'){
-    ctx.strokeStyle=p.grip;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(2,0);ctx.lineTo(12,0);ctx.stroke();
-    ctx.fillStyle=p.blade;ctx.strokeStyle=p.edge;ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(12,-3);
-    if(key==='saber'){ctx.quadraticCurveTo(33,-9,45,-3);ctx.quadraticCurveTo(35,6,12,3);}
-    else{ctx.quadraticCurveTo(24,-4,30,-10);ctx.quadraticCurveTo(42,-5,36,3);ctx.quadraticCurveTo(24,10,12,3);}
-    ctx.closePath();ctx.fill();ctx.stroke();
-    ctx.strokeStyle=p.bright;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(12,-6);ctx.lineTo(12,6);ctx.stroke();
   }else if(key==='pike'){
     ctx.strokeStyle=p.shaft;ctx.lineWidth=3.5;ctx.beginPath();ctx.moveTo(-10,0);ctx.lineTo(37,0);ctx.stroke();
     ctx.fillStyle=p.bright;ctx.strokeStyle=p.edge;ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(32,-5);ctx.lineTo(54,0);ctx.lineTo(32,5);ctx.lineTo(37,0);ctx.closePath();ctx.fill();ctx.stroke();
     ctx.strokeStyle=p.grip;ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(13,0);ctx.stroke();
-  }else if(key==='mace'){
-    ctx.strokeStyle=p.shaft;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(3,0);ctx.lineTo(31,0);ctx.stroke();
-    ctx.fillStyle=p.blade;ctx.strokeStyle=p.edge;ctx.lineWidth=1.4;ctx.beginPath();
-    for(let i=0;i<16;i++){const a=i*TAU/16,r=i%2?7:11;const x=32+Math.cos(a)*r,y=Math.sin(a)*r;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
-    ctx.closePath();ctx.fill();ctx.stroke();ctx.fillStyle=p.bright;ctx.beginPath();ctx.arc(32,0,3,0,TAU);ctx.fill();
   }else if(key==='knife'){
     ctx.strokeStyle=p.grip;ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(4,0);ctx.lineTo(12,0);ctx.stroke();
     ctx.fillStyle=p.bright;ctx.beginPath();ctx.moveTo(12,-3);ctx.lineTo(38,0);ctx.lineTo(12,3);ctx.closePath();ctx.fill();
@@ -198,7 +186,7 @@ function drawMeleeAbilityVisual(actor,clock,hostile=false,localActor=false){
   ctx.save();ctx.lineCap='round';ctx.lineJoin='round';
   if(WEAPONS[key]&&WEAPONS[key].fieldSkill){
     const skill=WEAPONS[key].fieldSkill;
-    ctx.strokeStyle='rgba('+main+','+(.85*fade)+')';ctx.lineWidth=(key==='mace'?5:4)/zoom;
+    ctx.strokeStyle='rgba('+main+','+(.85*fade)+')';ctx.lineWidth=4/zoom;
     drawMeleeSwingPath(x,y,angle,skill.arc,skill.range,progress);
     ctx.translate(x,y);ctx.rotate(angle+(skill.arc<.6?0:(progress-.5)*skill.arc));
     if(skill.arc<.6)ctx.translate(progress*25,0);

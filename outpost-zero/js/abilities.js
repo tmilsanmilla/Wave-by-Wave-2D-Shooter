@@ -5,7 +5,7 @@
 // screen show the same readable animation after quick-melee restores a gun.
 const MELEE_ABILITY_VISUAL_MS=Object.freeze({
   scythe:260,terafists:1600,knife:250,hammer:220,chainsaw:400,bdaggers:3000,
-  saber:300,pike:260,mace:340,kukri:240
+  pike:260
 });
 const MELEE_ABILITY_VISUAL_MAX_MS=3000;
 function resetMeleeAbilityVisual(actor=player){

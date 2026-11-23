@@ -6,7 +6,7 @@ import test from 'node:test';
 const read=name=>fs.readFileSync(new URL('../js/'+name,import.meta.url),'utf8');
 const flow=read('loadout-flow.js'),online=read('online.js'),weapons=read('weapons.js');
 const kit={primary:'ar',secondary:'m9',melee:'knife',utility:null};
-const alt={primary:'crossbow',secondary:'shorty',melee:'twinsai',utility:null};
+const alt={primary:'longbow',secondary:'shorty',melee:'twinsai',utility:null};
 const json=x=>JSON.parse(JSON.stringify(x));
 function functionSource(source,name){
   const start=source.indexOf(`function ${name}(`),next=source.indexOf('\nfunction ',start+1);
@@ -38,12 +38,12 @@ test('primary-only offline modes never include practice, parties, or online matc
   const h=harness();
   for(const mode of ['endless','ai1v1','ai2v2'])assert.equal(h.c.primaryOnlyMode(mode),true);
   for(const mode of ['practice','arena','arena2v2','ranked1v1','ranked2v2','partycpu2v2','partyduel_1v1v1'])assert.equal(h.c.primaryOnlyMode(mode),false);
-  assert.deepEqual(json(h.c.primaryOnlyKit(alt)),{primary:'crossbow',secondary:null,melee:null,utility:null});
+  assert.deepEqual(json(h.c.primaryOnlyKit(alt)),{primary:'longbow',secondary:null,melee:null,utility:null});
 });
 test('offline restoration leaves saved online equipment untouched',()=>{
   const h=harness();h.c.lastLoadout={...alt,utility:'grenade'};h.c.playableLastLoadout=raw=>({...raw});h.c.modeAllowsUtility=()=>true;
   vm.runInContext(functionSource(read('persistence.js'),'restoreLastLoadoutForMode'),h.c);
-  h.c.restoreLastLoadoutForMode('endless');assert.deepEqual(json(h.c.loadout),{primary:'crossbow',secondary:null,melee:null,utility:null});
+  h.c.restoreLastLoadoutForMode('endless');assert.deepEqual(json(h.c.loadout),{primary:'longbow',secondary:null,melee:null,utility:null});
   h.c.restoreLastLoadoutForMode('arena');assert.deepEqual(json(h.c.loadout),{...alt,utility:'grenade'});
   assert.deepEqual(h.c.lastLoadout,{...alt,utility:'grenade'});
 });
@@ -57,8 +57,8 @@ test('local primary-only readiness does not relax remote full-kit validation',()
 test('local CPU2v2 accepts a primary only but remote party CPU kits remain full',()=>{
   const h=harness();h.c.GEM_SHOP=[];
   vm.runInContext(functionSource(read('party.js'),'partyCpuKit'),h.c);
-  assert.deepEqual(json(h.c.partyCpuKit({primary:'crossbow'},true,true)),json(h.c.primaryOnlyKit({primary:'crossbow'})));
-  assert.equal(h.c.partyCpuKit({primary:'crossbow'},true),null);
+  assert.deepEqual(json(h.c.partyCpuKit({primary:'longbow'},true,true)),json(h.c.primaryOnlyKit({primary:'longbow'})));
+  assert.equal(h.c.partyCpuKit({primary:'longbow'},true),null);
   assert.equal(h.c.partyCpuKit({primary:'shorty'},true,true),null);
 });
 for(const mode of ['ai1v1','ai2v2'])test(`${mode} Play Again accepts its single primary without routing to a missing-sidearm error`,()=>{
@@ -70,13 +70,13 @@ for(const mode of ['ai1v1','ai2v2'])test(`${mode} Play Again accepts its single 
   vm.runInContext(functionSource(read('ui.js'),'cpuResultRematch'),h.c);
   assert.equal(h.c.cpuResultRematch(mode,true,true,1),true);assert.equal(starts,1);
 });
-test('eight released guns have finite playable stats and exact slots; Shorty has two shells',()=>{
+test('retained guns have finite playable stats and correct slots; Shorty has two shells',()=>{
   const h=harness();
-  for(const key of ['carbine','lmg','dmr','autoshotgun','crossbow','pulserifle','shorty','handcannon']){
+  for(const key of ['ar','anchor','dmr','shotgun','longbow','smg','shorty','m9']){
     const w=h.run(`WEAPONS['${key}']`);
     for(const field of ['dmg','mag','reload','fireRate','pellets','spread','aimSpread','speed','range','fall','moveMod'])assert.ok(Number.isFinite(w[field]),key+':'+field);
     assert.ok(w.dmg>0&&w.mag>=1&&w.reload>0&&w.fireRate>0&&w.pellets>=1&&w.range>0&&w.fall>0&&w.fall<=1);
-    assert.equal(h.c.storedLoadoutSlot(key),['shorty','handcannon'].includes(key)?'secondary':'primary');
+    assert.equal(h.c.storedLoadoutSlot(key),['shorty','m9'].includes(key)?'secondary':'primary');
     assert.ok(w.blurb&&w.gimmick.copy);
   }
   assert.equal(h.run('WEAPONS.shorty.mag'),2);assert.equal(h.run('WEAPONS.shorty.pellets'),6);
@@ -108,8 +108,8 @@ test('queued required slots are replaced, never cleared by clicking the same wea
   const h=harness();h.c.arena.phase='queue';h.c.arena.queueChannel={};h.c.rememberLoadoutSlot=()=>{};
   vm.runInContext(functionSource(read('input.js'),'pickWeapon'),h.c);
   h.c.openOnlineLoadoutEditor();h.c.pickWeapon('ar');assert.equal(h.c.loadout.primary,'ar');
-  h.c.pickWeapon('crossbow');assert.equal(h.c.loadout.primary,'crossbow');
-  h.c.onlineLoadoutSave();h.c.pickWeapon('crossbow');assert.equal(h.c.loadout.primary,null,'outside a search the existing clear action remains');
+  h.c.pickWeapon('longbow');assert.equal(h.c.loadout.primary,'longbow');
+  h.c.onlineLoadoutSave();h.c.pickWeapon('longbow');assert.equal(h.c.loadout.primary,null,'outside a search the existing clear action remains');
 });
 test('a match arriving during queued category editing still launches the exact assignment',()=>{
   const h=harness();h.c.arena.phase='idle';h.c.arena.matchChannel=null;
@@ -131,15 +131,15 @@ test('two casual clients choose different new guns, then start with exactly thos
   const a=harness(),b=harness('guest','host');
   function deliver(){for(const [from,to] of [[a,b],[b,a]])while(from.sent.length){const {event,p}=from.sent.shift();to.c.arenaReceive(event,p,to.c.arena.matchChannel);}}
   a.c.arenaHostStartRound();deliver();assert.equal(a.c.arena.round,0);assert.equal(b.c.arena.round,0);
-  a.c.loadout={...alt};b.c.loadout={...kit,primary:'lmg',secondary:'handcannon'};
+  a.c.loadout={...alt};b.c.loadout={...kit,primary:'anchor',secondary:'m9'};
   a.at(10999);b.at(10999);a.c.arenaLoadoutTick(10999);b.c.arenaLoadoutTick(10999);deliver();
   assert.equal(a.c.arena.round,0);assert.equal(b.c.arena.round,0);
   a.at(11000);b.at(11000);a.c.arenaLoadoutTick(11000);b.c.arenaLoadoutTick(11000);deliver();
   a.c.arenaLoadoutTick(11001);deliver();
   for(const h of [a,b]){assert.equal(h.c.arena.round,1);assert.equal(h.c.arena.phase,'countdown');assert.equal(h.errors.length,0);}
-  assert.equal(a.c.loadout.primary,'crossbow');assert.equal(a.c.arena.opponent.loadout.primary,'lmg');
-  assert.equal(b.c.loadout.secondary,'handcannon');assert.equal(b.c.arena.opponent.loadout.secondary,'shorty');
-  assert.equal(a.c.player.cur,'crossbow');assert.equal(b.c.player.cur,'lmg');
+  assert.equal(a.c.loadout.primary,'longbow');assert.equal(a.c.arena.opponent.loadout.primary,'anchor');
+  assert.equal(b.c.loadout.secondary,'m9');assert.equal(b.c.arena.opponent.loadout.secondary,'shorty');
+  assert.equal(a.c.player.cur,'longbow');assert.equal(b.c.player.cur,'anchor');
   assert.equal(a.c.arenaLoadoutWindowReceive({from:'host',epoch:1,windowId:'arena:1',remaining:10000}),false,'no mid-fight editing');
 });
 test('temporary expiry or unpublication refuses a deadline kit rather than granting access',()=>{

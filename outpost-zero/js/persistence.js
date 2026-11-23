@@ -212,7 +212,11 @@ function storedLastLoadout(candidate=lastLoadout){
   const source=candidate&&typeof candidate==='object'?candidate:{}, result={};
   for(const slot of LOADOUT_SLOTS){
     const has=Object.prototype.hasOwnProperty.call(source,slot), value=has?source[slot]:SHARED_LOADOUT_DEFAULTS[slot];
-    result[slot]=value==null?null:(storedLoadoutSlot(value)===slot?value:SHARED_LOADOUT_DEFAULTS[slot]);
+    // Migrate a preference, not an entitlement. This also runs before the
+    // server has loaded publication/ownership; playableLastLoadout checks both.
+    // Never interpret retired IDs as aliases in the shop or a peer's loadout.
+    const key=(typeof retiredEquipmentTarget==='function'&&retiredEquipmentTarget(value))||value;
+    result[slot]=value==null?null:(storedLoadoutSlot(key)===slot?key:SHARED_LOADOUT_DEFAULTS[slot]);
   }
   return result;
 }
@@ -560,12 +564,15 @@ function purgeUnpublishedWeaponState(keys){
     typeof player!=='undefined'&&player?player.cur:null,
   ];
   const unpublished=new Set(candidates.filter(k=>k&&!isWeaponPublished(k)));
-  const blocked=new Set([...unpublished].filter(k=>
-    !(typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)&&typeof fallEligible==='function'&&fallEligible())));
+  const blocked=new Set([...unpublished].filter(k=>!unreleasedSeasonPreview(k)));
   if(!unpublished.size)return false;
   let changed=false,liveChanged=false,savedChanged=false,currentBlocked=false;
   for(const key of unpublished){
-    if(gemOwned&&gemOwned[key]){delete gemOwned[key];changed=true;}
+    // A catalog retirement is not an admin revoke. Keep the original purchase
+    // on the profile, inert under its old ID; never unlock its replacement.
+    if(gemOwned&&gemOwned[key]&&!(typeof retiredEquipmentTarget==='function'&&retiredEquipmentTarget(key))){
+      delete gemOwned[key];changed=true;
+    }
     if(temporaryWeaponGrants&&temporaryWeaponGrants[key]){delete temporaryWeaponGrants[key];changed=true;}
   }
   for(const key of blocked){
@@ -632,6 +639,9 @@ let fallInjected=false;
 function fallEligible(){
   return !!FALL_UPDATE_LIVE||!!(isAdmin()&&testMode);
 }
+function unreleasedSeasonPreview(key){
+  return !FALL_UPDATE_LIVE&&FALL_KEYS.includes(key)&&fallEligible();
+}
 function syncFallAccess(){
   const rosters={warpwave:PRIMARIES, timeturner:SECONDARIES, terafists:MELEES};
   const liveFallRun=(state==='play'||state==='upgrade'||state==='over') &&
@@ -653,12 +663,15 @@ function syncFallAccess(){
   }
   if(fallEligible()){
     for(const k of ['warpwave','timeturner','terafists']){
+      if(FALL_UPDATE_LIVE&&!isWeaponPublished(k))continue;
       if(!WEAPONS[k]) WEAPONS[k]=VAULT_WEAPONS[k];
       if(!rosters[k].includes(k)) rosters[k].push(k);
       if(!WKEYS.includes(k)) WKEYS.push(k);
     }
-    if(!UTILITIES.portal) UTILITIES.portal=VAULT_UTILITIES.portal;
-    if(!UTILKEYS.includes('portal')) UTILKEYS.push('portal');
+    if(!FALL_UPDATE_LIVE||isWeaponPublished('portal')){
+      if(!UTILITIES.portal) UTILITIES.portal=VAULT_UTILITIES.portal;
+      if(!UTILKEYS.includes('portal')) UTILKEYS.push('portal');
+    }
     fallInjected=!FALL_UPDATE_LIVE;
   } else if(!fallEligible()){
     for(const k of ['warpwave','timeturner','terafists']){
@@ -818,7 +831,7 @@ function recordDailyDuelMatch(won){ return recordDailyDuelOutcome(false,true,won
 const LOCKED_KEYS = ['fireworks','solarrifle','bdaggers','beachball'];   // seasonal = sign-in only
 const TEMP_KEYS = ['flamethrower','fireworks','bdaggers','beachball'];  // limited-time seasonal set
 function isLocked(k){
-  if(FALL_KEYS.includes(k)) return !fallEligible();
+  if(FALL_KEYS.includes(k)&&!FALL_UPDATE_LIVE) return !fallEligible();
   if(typeof isWeaponPublished==='function'&&!isWeaponPublished(k)) return true; // publication outranks ownership, offline preview, and Test Mode
   if(typeof tutorialLoanAllows==='function'&&tutorialLoanAllows(k)) return false;
   // A weapon card can lend exactly one published item inside solo Practice.

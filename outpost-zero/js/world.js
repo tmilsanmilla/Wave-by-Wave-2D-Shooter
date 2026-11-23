@@ -95,12 +95,10 @@ function activeArenaBounds(){
   const layout=typeof activeArenaMap==='function'?activeArenaMap():null;
   return layout?layout.bounds:FULL_ARENA_BOUNDS;
 }
-function projectileOutsideArena(p,r=0){
-  const b=activeArenaBounds();
+function projectileOutsideArena(p,r=0,b=activeArenaBounds()){
   return p.x-r<b.left || p.y-r<b.top || p.x+r>b.right || p.y+r>b.bottom;
 }
-function clampProjectileToArena(p,r=0){
-  const b=activeArenaBounds();
+function clampProjectileToArena(p,r=0,b=activeArenaBounds()){
   p.x=clamp(p.x,b.left+r,b.right-r);
   p.y=clamp(p.y,b.top+r,b.bottom-r);
 }
@@ -231,8 +229,8 @@ function arenaPortalStep(actor,clock){
   if(actor===player&&typeof sfx==='function') sfx('pickup');
   return true;
 }
-function arenaTntAtPoint(x,y,r=0){
-  return activeArenaTnt().find(t=>x+r>=t.x&&x-r<=t.x+t.w&&y+r>=t.y&&y-r<=t.y+t.h)||null;
+function arenaTntAtPoint(x,y,r=0,tnt=activeArenaTnt()){
+  return tnt.find(t=>x+r>=t.x&&x-r<=t.x+t.w&&y+r>=t.y&&y-r<=t.y+t.h)||null;
 }
 function arenaTntDamage(actor,tnt){
   const cx=tnt.x+tnt.w/2,cy=tnt.y+tnt.h/2,d=Math.hypot(actor.x-cx,actor.y-cy);

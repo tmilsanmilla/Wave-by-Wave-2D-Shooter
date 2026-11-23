@@ -154,8 +154,8 @@ function collideRects(e){
     }
   }
 }
-function pointInRects(x,y){
-  for(const o of activeObstacles())
+function pointInRects(x,y,rects=activeObstacles()){
+  for(const o of rects)
     if(x>=o.x && x<=o.x+o.w && y>=o.y && y<=o.y+o.h) return true;
   return false;
 }
@@ -170,8 +170,8 @@ function circleHitsRects(x,y,r){
 // slug spends one charge on wall entry, remains intangible inside that same
 // wall, and rearms ordinary collision only after it has exited the geometry.
 // Arena fences and TNT are handled before this helper and are never bypassed.
-function projectileHitsSolidWall(b){
-  const inside=pointInRects(b.x,b.y);
+function projectileHitsSolidWall(b,rects){
+  const inside=pointInRects(b.x,b.y,rects);
   if(!inside){ b.phaseWallActive=false; return false; }
   if(b.phaseWallActive) return false;
   if(Number.isFinite(+b.phaseWalls)&&b.phaseWalls>0){
@@ -274,7 +274,7 @@ function startGame(options){
   // possible boundary before player.cur is assigned.
   if(soloPractice){
     const storageOnly=selected.some(k=>!isWeaponPublished(k)&&
-      !(typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)&&typeof fallEligible==='function'&&fallEligible()));
+      !(typeof unreleasedSeasonPreview==='function'&&unreleasedSeasonPreview(k)));
     if(storageOnly){sfx('dry');return false;}
   }else if(selected.some(k=>isLocked(k))){
     dropUnownedFromLoadout();sfx('dry');return false;
@@ -435,8 +435,7 @@ function soloPracticeLoanAllows(k){
   // The loan exists only inside a real Practice drill. It never authorizes an
   // Arena match, an unpublished item, another loadout slot, or saved ownership.
   if(practiceMode==='arena'||!PRACTICE_MODES.some(mode=>mode.id===practiceMode))return false;
-  const adminSeasonPreview=typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(key)&&
-    typeof fallEligible==='function'&&fallEligible();
+  const adminSeasonPreview=typeof unreleasedSeasonPreview==='function'&&unreleasedSeasonPreview(key);
   return (typeof isWeaponPublished!=='function'||isWeaponPublished(key))||adminSeasonPreview;
 }
 function normalizePracticeTrackingDirection(value=practiceTrackingDirection){
@@ -514,8 +513,7 @@ function practicePickClick(){
 }
 function tryWeaponOnRange(k, mode){
   const w=WEAPONS[k]||VAULT_WEAPONS[k], isUtil=UTILKEYS.includes(k)||TEMP_UTILITY.includes(k)||VAULT_UTILITIES[k];
-  const adminSeasonPreview=typeof FALL_KEYS!=='undefined'&&FALL_KEYS.includes(k)&&
-    typeof fallEligible==='function'&&fallEligible();
+  const adminSeasonPreview=typeof unreleasedSeasonPreview==='function'&&unreleasedSeasonPreview(k);
   const published=typeof isWeaponPublished!=='function'||isWeaponPublished(k);
   if((!w&&!isUtil)||(!published&&!adminSeasonPreview)){sfx('dry');return false;}
   tryLoadoutBackup={primary:loadout.primary, secondary:loadout.secondary, melee:loadout.melee, utility:loadout.utility};

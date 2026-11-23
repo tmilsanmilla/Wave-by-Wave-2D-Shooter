@@ -1001,6 +1001,13 @@ function partyToggleLock(){
    Party 2v2 stays on the existing Party channel and requires exactly two
    humans on Team A. Offline 2v2 has one local human plus an ally CPU. Both
    modes face two authority-simulated Team B CPUs through the neutral core. */
+// Party CPU uses a separate channel from the versioned duel queues. An old
+// tab carrying retired gear must not strand both players waiting for Ready.
+function partyCpuRejectRetiredKit(raw){
+  if(partyCpuMatch.round!==0||!['loadout','waiting'].includes(partyCpuMatch.phase)||!raw)return;
+  if(['primary','secondary','melee'].some(slot=>retiredEquipmentTarget(raw[slot])))
+    partyCpuAbort('A LOADOUT HAS RETIRED GEAR. BOTH PLAYERS: REFRESH AND REJOIN.',true);
+}
 function partyCpuKit(raw,requireLocalAccess=false,primaryOnly=false){
   const primary=String(raw&&raw.primary||''), secondary=String(raw&&raw.secondary||''), melee=String(raw&&raw.melee||'');
   if(primaryOnly){
@@ -1215,7 +1222,10 @@ function partyCpuApplyRoundStart(p){
     return false;
   }
   const kits={};
-  for(const id of partyCpuMatch.humanIds){ const kit=partyCpuKit(p.loadouts&&p.loadouts[id]); if(!kit) return false; kits[id]=kit; }
+  for(const id of partyCpuMatch.humanIds){
+    const raw=p.loadouts&&p.loadouts[id],kit=partyCpuKit(raw);
+    if(!kit){partyCpuRejectRetiredKit(raw);return false;} kits[id]=kit;
+  }
   const mine=kits[party.self.id]; if(!mine) return false;
   if(party.chatComposing&&formOpen)closeForm();party.chatComposing=false;party.chatOpen=false;
   return cpuTeamBeginRound({round,startDelay:p.startDelay,scores:p.scores,kits,clock:Date.now(),mode:'partycpu',status:party.directCpu?'FRIEND 2v2 VS CPUs':'Party 2v2 vs CPUs',pendingMode:PARTY_CPU_MODE});
@@ -1937,7 +1947,8 @@ function partyCpuReceive(event,p){
   if(!partyCpuSessionOpen())return;
   if(event==='cpu_ready'){
     if(!partyCpuIsHost()||!partyCpuEnvelope(p,false)||!partyCpuMatch.humanIds.includes(String(p.from||'')))return;
-    const kit=partyCpuKit(p.loadout);if(!kit)return;partyCpuMatch.loadouts[p.from]=kit;partyCpuMatch.ready[p.from]=true;
+    const kit=partyCpuKit(p.loadout);if(!kit){partyCpuRejectRetiredKit(p.loadout);return;}
+    partyCpuMatch.loadouts[p.from]=kit;partyCpuMatch.ready[p.from]=true;
     party.status=(partyCpuMatch.humanNames[p.from]||'An operator')+' is ready for 2v2 vs CPUs.';partyCpuMaybeStart();return;
   }
   if(event==='cpu_cancel'){

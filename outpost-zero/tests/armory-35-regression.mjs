@@ -3,12 +3,12 @@ import test from 'node:test';
 import {gameSimulation} from './helpers/game-simulation.mjs';
 
 const baseline=gameSimulation(),keys=baseline.json('ARMORY_EXPANSION_KEYS');
-test('the expansion adds exactly 35 unique named guns:24primary/11sidearm, no replacement or grants',()=>{
-  assert.equal(keys.length,35);assert.equal(new Set(keys).size,35);
+test('retained field guns are the sustained LMG, single-shot bow and penetrating backup; no item grants',()=>{
+  assert.deepEqual([...keys].sort(),['anchor','longbow','nailgun']);
   const defs=baseline.json('ARMORY_EXPANSION.map(([key])=>({key,...WEAPONS[key]}))');
-  assert.equal(new Set(defs.map(d=>d.name)).size,35);
-  assert.equal(defs.filter(d=>d.armorySlot==='primary').length,24);
-  assert.equal(defs.filter(d=>d.armorySlot==='secondary').length,11);
+  assert.equal(new Set(defs.map(d=>d.name)).size,keys.length);
+  assert.equal(defs.filter(d=>d.armorySlot==='primary').length,2);
+  assert.equal(defs.filter(d=>d.armorySlot==='secondary').length,1);
   assert.equal(baseline.run('WEAPONS.volt.dmg'),24);assert.equal(baseline.run('WEAPONS.volt.fireRate'),145);
   assert.deepEqual(baseline.json('gemOwned'),{});
   for(const d of defs){
@@ -47,7 +47,7 @@ for(const key of keys)test(`${key}:actual Practice→equip→fire→dummy damage
   assert.equal(h.networkCalls(),0);
 });
 
-for(const [W,H] of [[320,568],[390,844],[844,390],[1280,720]])test(`all35loadout/armory/shop choices remain reachable and bounded ${W}x${H}`,()=>{
+for(const [W,H] of [[320,568],[390,844],[844,390],[1280,720]])test(`surviving expansion loadout/armory/shop choices remain reachable and bounded ${W}x${H}`,()=>{
   const h=gameSimulation(W,H);
   for(const [cat,slot] of [['PRIMARY','primary'],['SIDEARM','secondary']]){
     const seen=new Set();h.run(`pendingGameMode='arena';`);
@@ -74,7 +74,7 @@ test('new guns use existing publication enforcement;unpublishing cannot be bypas
   for(const key of keys){
     h.run(`weaponDefs['${key}']={published:false};`);
     assert.equal(h.run(`isLocked('${key}')`),true);
-    assert.equal(h.run(`arenaRemoteLoadout({primary:'${key}',secondary:'m9',melee:'knife'})`),null);
+    assert.equal(h.run(`arenaRemoteLoadout(${JSON.stringify({primary:'ar',secondary:'m9',melee:'knife',[h.run(`WEAPONS.${key}.armorySlot`)]:key})})`),null);
   }
   assert.deepEqual(h.json('gemOwned'),{});assert.equal(h.networkCalls(),0);
 });

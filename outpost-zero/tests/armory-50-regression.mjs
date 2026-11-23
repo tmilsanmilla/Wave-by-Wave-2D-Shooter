@@ -5,18 +5,18 @@ import test from 'node:test';
 import {gameSimulation} from './helpers/game-simulation.mjs';
 
 const base=gameSimulation(),keys=base.json('REINFORCEMENT_KEYS');
-test('exactly 50 additive reinforcement guns:30primaries/20sidearms, unique profiles, no grants or old stat changes',()=>{
-  assert.equal(keys.length,50);assert.equal(new Set(keys).size,50);
+test('Quasar adds the bank-shot role without changing the underlying roster or granting items',()=>{
+  assert.deepEqual(keys,['quasar']);
   const oldContext=vm.createContext({});
   vm.runInContext(fs.readFileSync(new URL('../js/weapons.js',import.meta.url),'utf8'),oldContext);
   const old=JSON.parse(vm.runInContext('JSON.stringify(WEAPONS)',oldContext));
   for(const [key,definition] of Object.entries(old))assert.deepEqual(base.json(`WEAPONS[${JSON.stringify(key)}]`),definition,key+' must remain unchanged');
   const defs=base.json('REINFORCEMENT_KEYS.map(k=>WEAPONS[k])');
-  assert.equal(defs.filter(w=>w.armorySlot==='primary').length,30);
-  assert.equal(defs.filter(w=>w.armorySlot==='secondary').length,20);
+  assert.equal(defs.filter(w=>w.armorySlot==='primary').length,1);
+  assert.equal(defs.filter(w=>w.armorySlot==='secondary').length,0);
   assert.equal(new Set(base.json('WKEYS.map(k=>WEAPONS[k].name)')).size,base.run('WKEYS.length'));
   const profiles=defs.map(w=>JSON.stringify(['dmg','mag','reload','fireRate','auto','pellets','spread','aimSpread','speed','range','fall','moveMod','pierce','bounce','wave','energy'].map(k=>w[k]??null)));
-  assert.equal(new Set(profiles).size,50,'not fifty renamed copies');
+  assert.equal(new Set(profiles).size,keys.length,'unique ballistic profiles');
   for(const key of keys){
     const w=base.json(`WEAPONS.${key}`);
     for(const f of ['dmg','mag','reload','fireRate','pellets','spread','aimSpread','speed','range','fall','moveMod','len','kick','zoom'])assert.ok(Number.isFinite(w[f]),key+':'+f);
@@ -84,7 +84,7 @@ for(const key of keys.filter(k=>base.run(`WEAPONS.${k}.armorySlot`)==='primary')
   assert.equal(h.networkCalls(),0);
 });
 
-for(const [W,H] of [[320,568],[390,844],[844,390],[1280,720]])test(`50newguns reachable via loadout, browser and cosmetics picker at ${W}x${H}`,()=>{
+for(const [W,H] of [[320,568],[390,844],[844,390],[1280,720]])test(`remaining reinforcement reachable via loadout, browser and cosmetics picker at ${W}x${H}`,()=>{
   const h=gameSimulation(W,H);
   for(const [cat,slot] of [['PRIMARY','primary'],['SIDEARM','secondary']]){
     const seen=new Set(),shopSeen=new Set(),browserSeen=new Set();h.run("pendingGameMode='arena';");
@@ -106,8 +106,8 @@ for(const [W,H] of [[320,568],[390,844],[844,390],[1280,720]])test(`50newguns re
   }
 });
 
-test('600new primary/sidearm pairings validate, reversed slots fail and unpublished guns remain blocked',()=>{
-  const h=gameSimulation(),primary=keys.filter(k=>h.run(`WEAPONS.${k}.armorySlot`)==='primary'),secondary=keys.filter(k=>h.run(`WEAPONS.${k}.armorySlot`)==='secondary');
+test('ricochet primary pairs with every regular sidearm; reversed slots and unpublished picks are rejected',()=>{
+  const h=gameSimulation(),primary=keys.filter(k=>h.run(`WEAPONS.${k}.armorySlot`)==='primary'),secondary=h.json('SECONDARIES.filter(k=>savedWeaponPublished(k))');
   for(const p of primary)for(const s of secondary){
     const kit={primary:p,secondary:s,melee:'knife',utility:null};assert.deepEqual(h.json(`arenaRemoteLoadout(${JSON.stringify(kit)})`),kit);
     assert.equal(h.run(`arenaRemoteLoadout({primary:'${s}',secondary:'${p}',melee:'knife'})`),null);
@@ -120,7 +120,7 @@ test('600new primary/sidearm pairings validate, reversed slots fail and unpublis
   assert.deepEqual(h.json('gemOwned'),{});assert.equal(h.networkCalls(),0);
 });
 
-for(const key of ['quasar','capacitor'])test(`${key}:real local and peer wall ricochets spend a bounded bounce`,()=>{
+for(const key of ['quasar'])test(`${key}:real local and peer wall ricochets spend a bounded bounce`,()=>{
   const h=gameSimulation();prepareRange(h,key,500);
   h.run(`activeObstacles=()=>[{x:145,y:0,w:20,h:300}];tryFire();var originalBounce=bullets[0].bounce;var visual=bullets.map(b=>({...b}));
     for(let i=0;i<3;i++){now+=1000/60;update(1000/60);stepRemoteShotVisuals(visual,1000/60);}`);
@@ -129,29 +129,31 @@ for(const key of ['quasar','capacitor'])test(`${key}:real local and peer wall ri
   assert.ok(h.run('bullets[0].vx')<0);assert.ok(h.run('visual[0].vx')<0);
 });
 
-test('peers from the earlier 35-gun release fail the reinforcement handshake clearly',()=>{
+test('peers presenting a pre-curation roster cannot pass the ready handshake',()=>{
   const h=gameSimulation();h.run(`var cfg={matchId:'00000000-0000-4000-8000-000000000099',epoch:'fixture',hostId:'host',mode:'1v1',source:'queue',ranked:false,
     roster:[{id:'host',team:'A',loadout:{primary:'ar',secondary:'m9',melee:'knife'}},{id:'peer',team:'B',loadout:{primary:'ar',secondary:'m9',melee:'knife'}}]};
     multidevice=multideviceCreate(cfg,'host',10000);multidevice.loadoutRequired=true;multidevice.movementRequired=true;multidevice.channel={};
     var p={from:'peer',matchId:cfg.matchId,epoch:cfg.epoch,round:0,loadoutVersion:2,movementVersion:1};`);
   assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),false);assert.match(h.run('multidevice.status'),/REFRESH/);
   h.run('p.loadoutVersion=3;');assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),false);
-  h.run('p.loadoutVersion=4;');assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),true);
-  assert.equal(h.run('ARENA_PROTOCOL'),8);
+  h.run('p.loadoutVersion=4;');assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),false);
+  h.run('p.loadoutVersion=5;');assert.equal(h.run("multideviceReceive('ready',p,multidevice.channel)"),true);
+  assert.equal(h.run('ARENA_PROTOCOL'),9);
 });
 
-test('bounded publication fetch fits the whole expanded registry and retains a late unpublished sidearm',async()=>{
+test('bounded publication fetch ignores archived rows without losing the active Quasar override',async()=>{
   const h=gameSimulation();
-  h.run(`var requestedLimit=0;var catalogRows=Object.keys(WEAPON_EDITOR_SLOTS).map(key=>({key,stats:{},published:key!=='capacitor'}));
+  h.run(`var requestedLimit=0;var oldRows=Object.keys(RETIRED_EQUIPMENT).map(key=>({key,stats:{dmg:999},published:true}));var catalogRows=[...oldRows,...Object.keys(WEAPON_EDITOR_SLOTS).map(key=>({key,stats:{},published:key!=='quasar'}))];
     sb={from:table=>{if(table!=='weapon_defs')throw new Error('Unexpected table');return {select:()=>({limit:n=>{requestedLimit=n;return Promise.resolve({data:catalogRows.slice(0,n),error:null});}})};}};`);
   assert.equal(await h.run('fetchWeaponDefs()'),true);
   assert.ok(h.run('requestedLimit')>=h.run('catalogRows.length'));
   assert.ok(h.run('requestedLimit')<=256,'catalog reads remain bounded');
-  assert.ok(h.run('catalogRows.findIndex(r=>r.key==="capacitor")')>=80,'the fixture exercises the old truncation boundary');
-  assert.equal(h.run('weaponDefs.capacitor.published'),false);
-  assert.equal(h.run('isWeaponPublished("capacitor")'),false);
-  assert.equal(h.run('isLocked("capacitor")'),true);
-  assert.equal(h.run('isWeaponPublished("peregrine")'),true);
+  assert.ok(h.run('catalogRows.findIndex(r=>r.key==="quasar")')>=80,'the fixture exercises the old truncation boundary');
+  assert.equal(h.run('weaponDefs.quasar.published'),false);
+  assert.equal(h.run('isWeaponPublished("quasar")'),false);
+  assert.equal(h.run('isLocked("quasar")'),true);
+  assert.equal(h.run('isWeaponPublished("ar")'),true);
+  assert.equal(h.run('oldRows.some(row=>Object.hasOwn(weaponDefs,row.key))'),false);
   assert.equal(h.networkCalls(),0,'synthetic command result only; no hosted query');
 });
 

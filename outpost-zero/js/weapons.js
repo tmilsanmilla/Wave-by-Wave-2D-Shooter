@@ -29,31 +29,13 @@ const WEAPONS = {
              moveMod:0.85, range:99999,fall:1.0,  sndF:340,  sndD:0.24, shotSfx:'sniper',
              gimmick:{id:'awm_deadeye',copy:'Perfect scoped accuracy, no falloff, pierces five; unscoped eliminations celebrate.'},
              blurb:'160 damage at any range, pierces 5. Faster follow-up; unscoped eliminations celebrate.' },
-  /* sidearms */
-  carbine: {name:'TACTICAL CARBINE',dmg:28,mag:30,reload:1500,fireRate:100,auto:true,pellets:1,fg:12,
-    spread:0.065,aimSpread:0.018,speed:19,len:30,kick:1.8,zoom:1.5,scoped:false,moveMod:1,range:550,fall:0.65,shotSfx:'ar',sndF:1150,sndD:0.07,
-    gimmick:{id:'carbine_control',copy:'A light, controllable automatic rifle with a thirty-round magazine.'},blurb:'Light automatic rifle. Trades SCAR-H damage for faster, steadier follow-up shots.'},
-  lmg: {name:'BULWARK LMG',dmg:20,mag:75,reload:2800,fireRate:95,auto:true,pellets:1,fg:12,
-    spread:0.10,aimSpread:0.032,speed:18,len:39,kick:2,zoom:1.4,scoped:false,moveMod:0.85,range:580,fall:0.7,shotSfx:'ar',sndF:750,sndD:0.09,
-    gimmick:{id:'lmg_capacity',copy:'Seventy-five rounds of sustained fire; heavy movement and a long reload.'},blurb:'Keep a lane covered with 75 rounds. Heavy to carry and slow to reload.'},
   dmr: {name:'SENTINEL DMR',dmg:70,mag:10,reload:1800,fireRate:420,auto:false,pellets:1,fg:8,
     spread:0.12,aimSpread:0.003,speed:24,len:38,kick:4.5,zoom:1.9,scoped:false,moveMod:0.94,range:750,fall:0.8,shotSfx:'sniper',sndF:600,sndD:0.14,
     gimmick:{id:'dmr_precision',copy:'Accurate aimed single shots, with less commitment than a bolt-action sniper.'},blurb:'Semi-auto marksman rifle. Aim carefully and pace your shots.'},
-  autoshotgun: {name:'BREACHER AUTO SHOTGUN',dmg:13,mag:8,reload:2200,fireRate:430,auto:true,pellets:7,fg:9,
-    spread:0.22,aimSpread:0.13,speed:14,len:28,kick:5,zoom:1.2,scoped:false,moveMod:0.94,range:150,fall:0.18,shotSfx:'shotgun',sndF:650,sndD:0.14,
-    gimmick:{id:'breacher_auto',copy:'Hold fire for rapid seven-pellet blasts; damage falls sharply outside close range.'},blurb:'Automatic close-range blasts. Less punch per shell than the M870.'},
-  crossbow: {name:'HUNTER CROSSBOW',dmg:118,mag:1,reload:1000,fireRate:1050,auto:false,pellets:1,pierce:1,fg:5,
-    spread:0.06,aimSpread:0.001,speed:21,len:34,kick:2,zoom:1.7,scoped:false,moveMod:1,range:800,fall:0.9,shotSfx:'dart',sndF:850,sndD:0.06,
-    tracer:'rgba(167,193,94,0.95)',gimmick:{id:'crossbow_bolt',copy:'One precise bolt per reload, piercing one extra target.'},blurb:'A single heavy bolt. Make it count, then reload.'},
-  pulserifle: {name:'PRISM PULSE RIFLE',dmg:16,mag:36,reload:1700,fireRate:120,auto:true,pellets:1,fg:10,
-    spread:0.055,aimSpread:0.012,speed:22,len:32,kick:1.4,zoom:1.45,scoped:false,moveMod:1,range:700,fall:0.85,shotSfx:'volt',sndF:1500,sndD:0.06,
-    tracer:'rgba(191,168,255,0.95)',gimmick:{id:'prism_reach',copy:'Fast violet projectiles retain most of their damage at long range.'},blurb:'Low-recoil automatic fire with fast violet tracers and gentle falloff.'},
+  /* sidearms */
   shorty: {name:'SHORTY',dmg:18,mag:2,reload:1700,fireRate:390,auto:false,pellets:6,fg:8,
     spread:0.25,aimSpread:0.16,speed:14,len:18,kick:5,zoom:1.15,scoped:false,moveMod:1.05,range:115,fall:0.2,shotSfx:'shotgun',sndF:720,sndD:0.12,
     gimmick:{id:'shorty_backup',copy:'A pocket shotgun: two six-pellet blasts, best at point-blank range.'},blurb:'Two shells of close-range backup. Weak at a distance; reload before pushing.'},
-  handcannon: {name:'IRON HAND CANNON',dmg:62,mag:5,reload:1300,fireRate:450,auto:false,pellets:1,fg:7,
-    spread:0.07,aimSpread:0.008,speed:20,len:24,kick:5,zoom:1.5,scoped:false,moveMod:1,range:310,fall:0.6,shotSfx:'revolver',sndF:700,sndD:0.13,
-    gimmick:{id:'handcannon_heavy',copy:'Five heavy semi-auto shots; accurate when aimed, unforgiving when missed.'},blurb:'Heavy five-shot sidearm. Aim, fire, and reset between shots.'},
   m9     : { name:'M9 SIDEARM',   dmg:38,  mag:12, reload:800,  fireRate:200, auto:false, pellets:1,
              spread:0.055, aimSpread:0.006, speed:17, len:22, kick:3,  zoom:1.45, scoped:false,
              moveMod:1.0,  range:340,  fall:0.55, sndF:1400, sndD:0.09, shotSfx:'m9', quickdrawMs:120,
@@ -120,92 +102,48 @@ const WEAPONS = {
              gimmick:{id:'war_hammer_kit_slam',copy:'Buffs the whole kit; Slam creates a 360° missile-breaking shockwave.'},
              blurb:'Slow, heavy swings. Carrying it: -30% reload, +5% dmg/range on your whole kit.' },
 };
-// 35 additional public guns. These use the same finite-ammo, projectile,
-// collision, publication and ownership paths as the original roster.
-// Frames are presentation metadata, never a second source of combat stats.
+// Keep one profile per play style. Legacy IDs below are migration hints, never
+// combat definitions or entitlements. Old profiles can be read without making
+// those items available in the shop, Practice, bots, or online packets.
+const RETIRED_EQUIPMENT=Object.freeze(Object.assign(Object.create(null),...Object.entries({
+  ar:'carbine pulserifle vanguard compact needle emberrifle ion cobalt clockwork peregrine jackal nomad lumen',
+  smg:'kestrel cyclone lynx flux viper firefly hornet torrent wisp',
+  anchor:'lmg avalanche goliath rampart mammoth',
+  shotgun:'autoshotgun drumshot coachgun scattershot slugger trident thunderclap trench needleshot backdraft',
+  dmr:'outrider scoutdmr watchman redwood spectre meridian falcon osprey',
+  sniper:'ranger polaris monolith eclipse',
+  longbow:'crossbow recurve harpoon ballista arbalest',
+  warpwave:'resonator helix',
+  m9:'pocketnine service45 hush swift courier nightjar compass',
+  g18:'machinenine fireant locust squall zipper',
+  revolver:'handcannon derringer marshal trailblazer outlaw mercury slugpistol boltcaster',
+  shorty:'sawedoff doorknocker pepperbox',
+  nailgun:'stinger rivet talon handbow',
+  volt:'spark arclet capacitor',
+  dart:'emberpistol',
+  scythe:'saber',
+  hammer:'mace',
+  knife:'kukri',
+  grenade:'quickfrag heavycharge',
+  freezer:'cryovial',
+  redball:'lurepod'
+}).map(([target,keys])=>Object.fromEntries(keys.split(' ').map(key=>[key,target])))));
+function retiredEquipmentTarget(key){return typeof key==='string'?RETIRED_EQUIPMENT[key]||null:null;}
+
+// Presentation metadata only; combat draws stats from each active definition.
 const ARMORY_FRAMES=Object.freeze({
-  rifle:{len:33,kick:2.2,zoom:1.5,moveMod:.97,shotSfx:'ar'},
-  smg:{len:25,kick:1.5,zoom:1.3,moveMod:1.06,shotSfx:'smg'},
   lmg:{len:40,kick:2.5,zoom:1.4,moveMod:.84,shotSfx:'ar'},
-  shotgun:{len:30,kick:6,zoom:1.2,moveMod:.94,shotSfx:'shotgun'},
-  marksman:{len:39,kick:4,zoom:1.9,moveMod:.95,shotSfx:'sniper'},
-  sniper:{len:44,kick:8,zoom:2.7,moveMod:.87,shotSfx:'sniper',scoped:true},
   bow:{len:33,kick:2,zoom:1.7,moveMod:1,shotSfx:'dart'},
   energy:{len:32,kick:1.7,zoom:1.5,moveMod:.99,shotSfx:'volt'},
-  pistol:{len:21,kick:2.5,zoom:1.4,moveMod:1.03,shotSfx:'m9'},
-  revolver:{len:25,kick:5,zoom:1.5,moveMod:1,shotSfx:'revolver'}
+  pistol:{len:21,kick:2.5,zoom:1.4,moveMod:1.03,shotSfx:'m9'}
 });
 const ARMORY_EXPANSION=[
-  ['vanguard','VANGUARD RIFLE','primary','rifle',{dmg:32,mag:28,reload:1550,fireRate:125,spread:.065,aimSpread:.018,speed:20,range:590,fall:.68,focusMs:600},'#78b5df',
-    'Balanced automatic rifle. Rest for 0.6s to line up a bloom-free first shot.'],
-  ['outrider','OUTRIDER SCOUT','primary','rifle',{dmg:46,mag:18,reload:1350,fireRate:240,auto:false,spread:.075,aimSpread:.008,speed:23,range:720,fall:.78,moveMod:1.04},'#cfba76',
-    'Light semi-auto scout rifle: quick reloads and accurate aimed taps.'],
-  ['kestrel','KESTREL SMG','primary','smg',{dmg:12,mag:36,reload:1200,fireRate:70,spread:.12,aimSpread:.045,speed:18,range:300,fall:.38,aimMoveMul:.85},'#90d7aa',
-    'An agile SMG that retains 85% movement while aiming. Stay close.'],
-  ['cyclone','CYCLONE SMG','primary','smg',{dmg:10,mag:40,reload:1450,fireRate:55,spread:.155,aimSpread:.06,speed:17,range:245,fall:.28},'#dc9d78',
-    'Very fast forty-round spray. Wide spread and steep falloff punish distant fire.'],
-  ['lynx','LYNX PDW','primary','smg',{dmg:16,mag:28,reload:1300,fireRate:90,spread:.085,aimSpread:.025,speed:20,range:390,fall:.5,quickdrawMs:180},'#b6a2e8',
-    'A compact personal-defense weapon with a 180ms draw and controlled recoil.'],
-  ['compact','COMPACT CARBINE','primary','rifle',{dmg:24,mag:24,reload:1150,fireRate:100,spread:.08,aimSpread:.022,speed:20,range:460,fall:.56,quickdrawMs:160,moveMod:1.05,len:27},'#69c5ce',
-    'Short, mobile automatic carbine. Draws in 160ms; reload often.'],
   ['anchor','ANCHOR LMG','primary','lmg',{dmg:18,mag:90,reload:3200,fireRate:95,spread:.115,aimSpread:.04,speed:18,range:600,fall:.65},'#a4b17e',
     'Ninety rounds of lane coverage, offset by a heavy frame and a long reload.'],
-  ['avalanche','AVALANCHE LMG','primary','lmg',{dmg:27,mag:55,reload:2700,fireRate:125,spread:.095,aimSpread:.028,speed:20,range:640,fall:.72,moveMod:.81,kick:3.3},'#adadbf',
-    'A slower, hard-hitting support gun. Accurate while aimed, cumbersome to carry.'],
-  ['drumshot','DRUMSHOT AUTO','primary','shotgun',{dmg:9,mag:12,reload:2600,fireRate:350,pellets:8,spread:.24,aimSpread:.15,speed:14,range:135,fall:.16},'#dcab64',
-    'Twelve automatic scatter shells. Short reach and low pellet damage reward sustained close pressure.'],
-  ['coachgun','COACH GUN','primary','shotgun',{dmg:21,mag:2,reload:1950,fireRate:400,auto:false,pellets:9,spread:.24,aimSpread:.13,speed:15,range:155,fall:.2,selfRecoil:9,len:34},'#c79670',
-    'Two heavy nine-pellet blasts. Each shot pushes you back 9px; both barrels need a reload.'],
-  ['scattershot','SCATTERSHOT PUMP','primary','shotgun',{dmg:17,mag:6,reload:1800,fireRate:700,auto:false,pellets:10,spread:.25,aimSpread:.12,speed:15,range:200,fall:.25},'#9ba994',
-    'A six-shell pump with ten pellets per shot. Aim to tighten the spread.'],
-  ['slugger','SLUGGER SHOTGUN','primary','shotgun',{dmg:95,mag:5,reload:1850,fireRate:650,auto:false,pellets:1,pierce:1,spread:.09,aimSpread:.012,speed:23,range:430,fall:.6},'#cf9d8e',
-    'Single solid slugs instead of pellets. Each slug can pierce one additional target.'],
   ['longbow','LONGBOW','primary','bow',{dmg:125,mag:1,reload:1200,fireRate:1250,auto:false,spread:.045,aimSpread:.001,speed:22,range:880,fall:.9,len:37},'#a8c97a',
     'A precise single-arrow weapon. Slow follow-up, heavy impact, and gentle distance falloff.'],
-  ['recurve','RECURVE BOW','primary','bow',{dmg:62,mag:3,reload:1400,fireRate:420,auto:false,spread:.07,aimSpread:.008,speed:21,range:650,fall:.8,len:29},'#d2bd82',
-    'Three lighter arrows before reloading. More forgiving than the Longbow.'],
-  ['harpoon','HARPOON RIFLE','primary','bow',{dmg:150,mag:1,reload:1850,fireRate:1900,auto:false,pierce:2,spread:.1,aimSpread:.004,speed:17,range:740,fall:.8,moveMod:.93,len:41},'#91bfc0',
-    'One heavy, slower harpoon. Pierces two additional targets but demands a long reload.'],
-  ['scoutdmr','SCOUT DMR','primary','marksman',{dmg:53,mag:12,reload:1450,fireRate:300,auto:false,spread:.1,aimSpread:.005,speed:25,range:780,fall:.82},'#90bda0',
-    'A fast semi-auto marksman rifle. Pace accurate taps rather than holding fire.'],
-  ['watchman','WATCHMAN DMR','primary','marksman',{dmg:83,mag:8,reload:1800,fireRate:520,auto:false,spread:.13,aimSpread:.002,speed:26,range:950,fall:.86,focusMs:700},'#b5a8cc',
-    'Eight weighty precision rounds. Rested first shots ignore accumulated bloom.'],
-  ['ranger','RANGER SNIPER','primary','sniper',{dmg:142,mag:4,reload:2400,fireRate:1250,auto:false,pierce:2,spread:.24,aimSpread:0,speed:29,range:1200,fall:.85},'#bbc8d5',
-    'A four-round scoped bolt-action. Perfect aimed accuracy; slower and lighter-hitting than the AWM.'],
-  ['needle','NEEDLE RIFLE','primary','rifle',{dmg:15,mag:30,reload:1650,fireRate:135,spread:.07,aimSpread:.018,speed:20,range:490,fall:.55,poison:true},'#83cd8c',
-    'Low-impact toxic needles. In Endless, repeated hits stack the Dart Pistol poison.'],
-  ['emberrifle','EMBER RIFLE','primary','rifle',{dmg:14,mag:20,reload:1600,fireRate:160,spread:.08,aimSpread:.025,speed:18,range:440,fall:.5,fire:true},'#f4a367',
-    'Low-impact incendiary rounds. In Endless, hits ignite enemies for burning damage.'],
-  ['ion','ION RIFLE','primary','energy',{dmg:24,mag:24,reload:1700,fireRate:165,spread:.065,aimSpread:.015,speed:24,range:650,fall:.8,energy:true},'#78d7eb',
-    'An energy rifle with infinite reserve, not an infinite magazine. Reload its 24-round cell.'],
-  ['cobalt','COBALT CARBINE','primary','energy',{dmg:22,mag:28,reload:1500,fireRate:110,spread:.07,aimSpread:.018,speed:25,range:680,fall:.72},'#80a8ee',
-    'Fast blue projectiles and a controlled automatic cadence. Uses ordinary finite reserve.'],
-  ['clockwork','CLOCKWORK RIFLE','primary','marksman',{dmg:28,mag:16,reload:1650,fireRate:225,spread:.06,aimSpread:.01,speed:21,range:590,fall:.7,chrono:true},'#dfc078',
-    'Time-drag rounds. In Endless, hits stack the Timeturner movement-slow effect.'],
-  ['flux','FLUX REPEATER','primary','energy',{dmg:13,mag:40,reload:1700,fireRate:85,spread:.1,aimSpread:.035,speed:21,range:460,fall:.55,frenzyAt:8,frenzyRateMul:.8},'#c2a1ee',
-    'Forty-round automatic repeater. Its last eight rounds fire 20% faster.'],
-  ['pocketnine','POCKET NINE','secondary','pistol',{dmg:29,mag:15,reload:850,fireRate:180,auto:false,spread:.07,aimSpread:.012,speed:18,range:310,fall:.5,quickdrawMs:100},'#9fc5d8',
-    'Fifteen light semi-auto shots and a 100ms quick draw. A dependable close-range backup.'],
-  ['service45','SERVICE .45','secondary','pistol',{dmg:47,mag:9,reload:1050,fireRate:300,auto:false,spread:.065,aimSpread:.009,speed:20,range:360,fall:.6},'#c1b59d',
-    'A slower nine-round service pistol. More impact per shot, less room for misses.'],
-  ['hush','HUSH PISTOL','secondary','pistol',{dmg:28,mag:14,reload:950,fireRate:210,auto:false,spread:.045,aimSpread:.004,speed:20,range:380,fall:.6,kick:1.2,len:27},'#9db0a6',
-    'Low-recoil precision sidearm. Tight aimed groups and a longer barrel.'],
-  ['machinenine','MACHINE NINE','secondary','pistol',{dmg:9,mag:24,reload:1250,fireRate:65,spread:.18,aimSpread:.08,speed:16,range:190,fall:.25,shotSfx:'g18'},'#d6a58b',
-    'Full-auto pocket firepower. A small magazine and very short effective range.'],
-  ['derringer','DERRINGER','secondary','pistol',{dmg:82,mag:2,reload:1550,fireRate:420,auto:false,spread:.09,aimSpread:.02,speed:19,range:210,fall:.35,len:16,kick:5},'#dab582',
-    'Two powerful single shots in a tiny frame. Reload before committing to a second duel.'],
-  ['marshal','MARSHAL REVOLVER','secondary','revolver',{dmg:66,mag:6,reload:1500,fireRate:520,auto:false,spread:.055,aimSpread:.005,speed:22,range:470,fall:.72},'#bcb6c9',
-    'Six precise revolver rounds. A normal semi-auto trigger, not Python fan fire.'],
-  ['sawedoff','SAWED-OFF','secondary','shotgun',{dmg:15,mag:2,reload:1750,fireRate:430,auto:false,pellets:7,spread:.28,aimSpread:.18,speed:14,range:100,fall:.15,len:19,moveMod:1.04},'#cfab87',
-    'A wide seven-pellet pocket shotgun. More spread and shorter reach than the Shorty.'],
   ['nailgun','NAIL DRIVER','secondary','pistol',{dmg:13,mag:22,reload:1200,fireRate:100,spread:.1,aimSpread:.035,speed:17,range:280,fall:.45,pierce:1,len:23},'#c2bd77',
-    'Automatic metal spikes. Each shot pierces one extra target, with modest direct damage.'],
-  ['spark','SPARK PISTOL','secondary','energy',{dmg:22,mag:10,reload:950,fireRate:180,auto:false,spread:.055,aimSpread:.008,speed:25,range:430,fall:.7,energy:true,len:21,moveMod:1.03},'#8ddbea',
-    'Ten fast energy shots with infinite reserve. Its cell still needs a normal reload.'],
-  ['emberpistol','EMBER PISTOL','secondary','pistol',{dmg:20,mag:8,reload:1100,fireRate:300,auto:false,spread:.07,aimSpread:.014,speed:18,range:300,fall:.45,fire:true},'#efa27d',
-    'Eight low-impact incendiary rounds. In Endless, hits also ignite enemies.'],
-  ['stinger','STINGER SIDEARM','secondary','revolver',{dmg:54,mag:5,reload:1250,fireRate:390,auto:false,pierce:1,spread:.075,aimSpread:.008,speed:24,range:450,fall:.65},'#b8cc86',
-    'Five high-speed penetrator rounds. Each shot pierces one additional target.']
+    'Automatic metal spikes. Each shot pierces one extra target, with modest direct damage.']
 ];
 const ARMORY_EXPANSION_KEYS=Object.freeze(ARMORY_EXPANSION.map(row=>row[0]));
 for(const [key,name,slot,frame,stats,accent,copy] of ARMORY_EXPANSION){
@@ -213,8 +151,8 @@ for(const [key,name,slot,frame,stats,accent,copy] of ARMORY_EXPANSION){
     {name,armoryFrame:frame,armoryAccent:accent,armorySlot:slot,tracer:accent,
       gimmick:{id:key+'_profile',copy},blurb:copy});
 }
-const PRIMARIES   = ['sniper','smg','shotgun','ar','carbine','lmg','dmr','autoshotgun','crossbow','pulserifle',...ARMORY_EXPANSION.filter(row=>row[2]==='primary').map(row=>row[0])];
-const SECONDARIES = ['m9','revolver','g18','volt','dart','shorty','handcannon',...ARMORY_EXPANSION.filter(row=>row[2]==='secondary').map(row=>row[0])];
+const PRIMARIES   = ['sniper','smg','shotgun','ar','dmr',...ARMORY_EXPANSION.filter(row=>row[2]==='primary').map(row=>row[0])];
+const SECONDARIES = ['m9','revolver','g18','volt','dart','shorty',...ARMORY_EXPANSION.filter(row=>row[2]==='secondary').map(row=>row[0])];
 const TEMP_PRIMARY=['fireworks'], TEMP_SECONDARY=['solarrifle'], TEMP_MELEE=['bdaggers'], TEMP_UTILITY=['beachball'];
 const MELEES      = ['chainsaw','knife','scythe','hammer','twinsai'];
 

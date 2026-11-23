@@ -30,7 +30,14 @@ for(const key of [...FIELD_MELEE_KEYS,...FIELD_UTILITY_KEYS])makeButton((WEAPONS
   enemies[0].x=player.x+65;enemies[0].y=player.y;practiceSpawns[0].x=enemies[0].x;practiceSpawns[0].y=enemies[0].y;
 });
 makeButton('CATALOG',()=>{reset();state='select';selPage='weaponbrowse';weaponBrowserCat='MELEE';});
-document.body.append(bar);reset();startBotArena({ladderReady:true});arena.mapId='arena';arena.mapVotePhase='locked';arenaBotStartRound();requestAnimationFrame(frame);
+reset();
+if(new URLSearchParams(location.search).get('view')==='armory'){
+  // Show the actual guest armory without the diagnostic toolbar covering it.
+  state='select';selPage='weapons';
+}else{
+  document.body.append(bar);startBotArena({ladderReady:true});arena.mapId='arena';arena.mapVotePhase='locked';arenaBotStartRound();
+}
+requestAnimationFrame(frame);
 `;
 const server=http.createServer(async(req,res)=>{
   try{
