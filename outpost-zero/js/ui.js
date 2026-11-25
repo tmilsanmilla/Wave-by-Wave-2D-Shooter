@@ -4291,49 +4291,83 @@ async function fetchPlayersData(){
     if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
     banList=b.data||[];
   }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId))banList=[]; }
-  if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
+  if(!adminPrivacyRequestCurrent(epoch,userId)||!isMainAdmin())return;
   try{
-    const a=await sb.rpc('list_outpost_zero_ban_appeals_by_username',{p_limit:40});
-    if(a.error)throw a.error;
-    if(!adminPrivacyRequestCurrent(epoch,userId)||!canUsePlayerTools())return;
-    appealList=a.data||[];
-  }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId))appealList=[]; }
+    const results=await Promise.all([false,true].map(p_resolved=>sb.rpc('list_outpost_zero_moderation_appeals',{p_resolved,p_limit:100})));
+    if(results.some(r=>r.error))throw new Error('Appeals unavailable');
+    if(!adminPrivacyRequestCurrent(epoch,userId)||!isMainAdmin())return;
+    appealList=results.flatMap(r=>r.data||[]);
+  }catch(e){ if(adminPrivacyRequestCurrent(epoch,userId)&&isMainAdmin())appealReviewStatus='Could not refresh appeals.'; }
 }
-function openAppeal(){
+function openAppeal(historyOnly=false){
   appealOpen=true;
+  const generation=++appealFormGeneration,actor=currentAuthUserId(),
+    current=()=>appealOpen&&appealFormGeneration===generation&&currentAuthUserId()===actor;
   $('appealwrap').style.display='flex'; $('appealstatus').textContent=''; $('appealmsg').value='';
+  $('appealbanreason').textContent=myBan?('Reason: '+(myBan.note||'Not recorded')+'\n'+
+    (myBan.until?'Until: '+new Date(myBan.until).toLocaleString():'Permanent')+' · '+banScopes().join(', ')):'';
+  $('appealhistory').textContent='';
+  if(sb&&actor){
+    $('appealhistory').textContent='Loading your appeal history…';
+    void (async()=>{
+      try{
+        const {data,error}=await sb.rpc('list_my_outpost_zero_appeals');
+        if(error)throw error;
+        if(!current())return;
+        const labels={open:'Pending',lifted:'Accepted',denied:'Rejected'};
+        $('appealhistory').textContent=(Array.isArray(data)?data:[]).map(row=>
+          '#'+String(row.id)+' · '+(labels[row.status]||'Unknown')+' · '+String(row.decided_at||row.created_at||'').slice(0,10)
+        ).join('\n')||'No previous appeals.';
+      }catch(e){if(current())$('appealhistory').textContent='Could not load your appeal history.';}
+    })();
+  }
   appealSubmitBusy=false;appealOperationReceipt=null;$('appealsend').disabled=false;$('appealcancel').disabled=false;
-  try{ $('appealmsg').focus(); }catch(e){}
+  $('appealtitle').textContent=historyOnly?'YOUR APPEALS':'APPEAL YOUR BAN';
+  $('appealhint').textContent=historyOnly?'Pending and recently decided cases.':'Explain what happened. An admin will review it.';
+  $('appealmsg').hidden=$('appealsend').hidden=historyOnly;
+  try{ $(historyOnly?'appealcancel':'appealmsg').focus(); }catch(e){}
 }
-function closeAppeal(){ if(appealSubmitBusy)return false;appealOpen=false; $('appealwrap').style.display='none';return true; }
+let appealFormGeneration=0;
+function closeAppeal(){ if(appealSubmitBusy)return false;appealOpen=false;appealFormGeneration++;$('appealwrap').style.display='none';return true; }
 async function sendAppeal(){
-  if(appealSubmitBusy)return;
+  if(!appealOpen||appealSubmitBusy||$('appealsend').hidden)return;
   const t=String($('appealmsg').value||'').trim();
   if(!t){ $('appealstatus').textContent='write your appeal first'; return; }
   if(!sb || !authUser){ $('appealstatus').textContent='sign in to appeal'; return; }
   const fingerprint=t.slice(0,600);
   if(!appealOperationReceipt||appealOperationReceipt.fingerprint!==fingerprint)
     appealOperationReceipt={fingerprint,operationId:adminOperationUuid()};
-  const operationId=appealOperationReceipt.operationId;
+  const operationId=appealOperationReceipt.operationId,actor=currentAuthUserId(),generation=appealFormGeneration,
+    current=()=>appealOpen&&appealFormGeneration===generation&&currentAuthUserId()===actor;
   appealSubmitBusy=true;$('appealsend').disabled=true;$('appealcancel').disabled=true;$('appealstatus').textContent='sending...';
   let completed=false;
   try{
     await adminReceiptRpc('submit_outpost_zero_ban_appeal',{p_message:t.slice(0,600)},operationId);
+    if(!current())return;
     $('appealstatus').textContent='sent \u2014 an admin will review it';
     appealSent=true;
     completed=true;appealOperationReceipt=null;
-    setTimeout(()=>{appealSubmitBusy=false;$('appealsend').disabled=false;$('appealcancel').disabled=false;closeAppeal();},1400);
-  }catch(err){ $('appealstatus').textContent='could not send \u2014 try again later'; }
-  finally{if(!completed){appealSubmitBusy=false;$('appealsend').disabled=false;$('appealcancel').disabled=false;}}
+    setTimeout(()=>{if(current()){appealSubmitBusy=false;closeAppeal();}},1400);
+  }catch(err){ if(current())$('appealstatus').textContent=String(err?.message)==='open_appeal_exists'?'You already have a pending appeal.':'Could not send — try again later.'; }
+  finally{if(current()&&!completed){appealSubmitBusy=false;$('appealsend').disabled=false;$('appealcancel').disabled=false;}}
 }
 let appealSent=false;
+let appealReviewStatus='',appealHistoryView=false,appealReviewPage=0;
 async function resolveAppeal(id, status){
   if(!isMainAdmin() || !sb) return;
   const key=String(id||'');if(!key||appealDecisionBusy.has(key))return;
-  appealDecisionBusy.add(key);const operationId=adminOperationUuid();
+  appealDecisionBusy.add(key);const operationId=adminOperationUuid(),epoch=adminPrivacyEpoch,actor=currentAuthUserId();
+  appealReviewStatus='Saving decision…';
   const decision=status==='lifted'||status==='lift'?'lift':'deny';
-  try{ await adminReceiptRpc('resolve_outpost_zero_ban_appeal',{p_appeal_id:id,p_decision:decision},operationId); }
-  catch(e){}finally{await fetchPlayersData();appealDecisionBusy.delete(key);}
+  try{
+    await adminReceiptRpc('resolve_outpost_zero_ban_appeal',{p_appeal_id:id,p_decision:decision},operationId);
+    if(adminPrivacyRequestCurrent(epoch,actor))appealReviewStatus=decision==='lift'?'Accepted. The linked ban was lifted.':'Appeal rejected.';
+  }catch(e){
+    if(adminPrivacyRequestCurrent(epoch,actor))appealReviewStatus=String(e?.message)==='ban_not_bound_or_replaced'
+      ?'This case has no matching current ban. Review the ban list separately.':'Could not save that decision.';
+  }finally{
+    if(adminPrivacyRequestCurrent(epoch,actor)){await fetchPlayersData();if(adminPrivacyRequestCurrent(epoch,actor))appealDecisionBusy.delete(key);}
+  }
 }
 async function unbanPlayerFromList(banId){
   const key=String(banId||'');if(!/^\d+$/.test(key)||!canBan()||!sb||playerBanActionBusy.has(key))return false;

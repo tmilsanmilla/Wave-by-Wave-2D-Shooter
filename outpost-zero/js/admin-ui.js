@@ -1187,8 +1187,15 @@ function drawPlayers(){
       ctx.textBaseline='alphabetic'; y+=h+5;
     }
   } else if(playersTab==='appeals'){
-    if(!appealList.length) empty('no appeals');
-    for(const a of appealList.slice(0,7)){
+    duelUiButton(playersRects,'appeal_pending','PENDING',x0,y,rw/2-4,24,true);
+    duelUiButton(playersRects,'appeal_history','RESOLVED HISTORY',x0+rw/2+4,y,rw/2-4,24,true);
+    y+=32;
+    const cases=appealList.filter(a=>appealHistoryView?a.status!=='open':a.status==='open'),
+      perPage=Math.max(1,Math.min(7,Math.floor((py+ph-88-y)/45))),
+      pages=Math.max(1,Math.ceil(cases.length/perPage));
+    appealReviewPage=clamp(appealReviewPage,0,pages-1);
+    if(!cases.length) empty(appealHistoryView?'No resolved appeals.':'No pending appeals.');
+    for(const a of cases.slice(appealReviewPage*perPage,(appealReviewPage+1)*perPage)){
       const h=40, bw2=46;
       if(y+h>py+ph-52) break;
       const open=a.status==='open';
@@ -1199,6 +1206,7 @@ function drawPlayers(){
       ctx.fillText(fitLine(adminAccountLabel(a.player_username,'UNKNOWN PLAYER')+'  \u00b7  '+String(a.created_at||'').slice(5,16).replace('T',' '), rw-2*bw2-24), x0+8, y+11);
       ctx.fillStyle='#cdd6b0'; ctx.font='9px ui-monospace,Consolas,monospace';
       wrapTextClamped(String(a.message||''), x0+8, y+24, rw-2*bw2-24, 11, 2);
+      playersRects.push({x:x0,y,w:rw-2*bw2-10,h,id:'apread:'+a.id});
       if(open && canBan()){
         const ax=x0+rw-2*bw2-8, rx=x0+rw-bw2-4,busy=appealDecisionBusy.has(String(a.id));
         if(!busy){playersRects.push({x:ax,y:y+8,w:bw2,h:h-16,id:'apok:'+a.id});playersRects.push({x:rx,y:y+8,w:bw2,h:h-16,id:'apno:'+a.id});}
@@ -1207,13 +1215,21 @@ function drawPlayers(){
         ctx.fillStyle='rgba(208,85,72,0.25)'; ctx.fillRect(rx,y+8,bw2,h-16);
         ctx.strokeStyle='#d05548'; ctx.strokeRect(rx+0.5,y+8.5,bw2,h-16);
         ctx.textAlign='center'; ctx.font='700 8px ui-monospace,Consolas,monospace';
-        ctx.fillStyle=busy?'#8a9268':'#cfe0a8'; ctx.fillText(busy?'WAIT':'LIFT', ax+bw2/2, y+h/2);
-        ctx.fillStyle=busy?'#8a9268':'#e0a8a0'; ctx.fillText(busy?'…':'DENY', rx+bw2/2, y+h/2);
+        ctx.fillStyle=busy?'#8a9268':'#cfe0a8'; ctx.fillText(busy?'WAIT':'ACCEPT', ax+bw2/2, y+h/2);
+        ctx.fillStyle=busy?'#8a9268':'#e0a8a0'; ctx.fillText(busy?'…':'REJECT', rx+bw2/2, y+h/2);
       } else if(!open){
         ctx.textAlign='right'; ctx.fillStyle='#6b7455'; ctx.font='700 8px ui-monospace,Consolas,monospace';
         ctx.fillText(String(a.status||'').toUpperCase(), x0+rw-10, y+h/2);
       }
       ctx.textBaseline='alphabetic'; y+=h+5;
+    }
+    if(pages>1){
+      duelUiButton(playersRects,'appeal_prev','‹ PREV',x0,py+ph-84,70,22,appealReviewPage>0);
+      duelUiButton(playersRects,'appeal_next','NEXT ›',x0+rw-70,py+ph-84,70,22,appealReviewPage+1<pages);
+    }
+    if(appealReviewStatus){
+      ctx.textAlign='center';ctx.font='9px ui-monospace,Consolas,monospace';ctx.fillStyle='#e8d9a8';
+      ctx.fillText(fitLine(appealReviewStatus,rw-12),W/2,py+ph-44);
     }
   }
 
@@ -1239,6 +1255,13 @@ function playersClick(){
       const id=String(r.id||'');
       if(id==='close'){ playersOpen=false; sfx('swap'); return; }
       if(id==='refresh'){ fetchPlayersData(); if(isMainAdmin()) fetchScoreReqs(); sfx('swap'); return; }
+      if(id==='appeal_pending'||id==='appeal_history'){appealHistoryView=id==='appeal_history';appealReviewPage=0;return;}
+      if(id==='appeal_prev'||id==='appeal_next'){if(r.enabled!==false)appealReviewPage+=id==='appeal_prev'?-1:1;return;}
+      if(id.startsWith('apread:')&&canBan()){
+        const a=appealList.find(x=>String(x.id)===id.slice(7));
+        if(a)openReader('BAN APPEAL #'+a.id,String(a.created_at||'')+' · '+a.status,String(a.message||''),'main');
+        return;
+      }
       if(id.indexOf('tab:')===0){ playersTab=id.slice(4); sfx('aim'); return; }
       if(id==='go_lookup'){ playersOpen=false; scoresOpen=true; peStep='choose'; peData=null; peMode='edit'; resetPlayerEditScroll(); openScoreEdit(); sfx('swap'); return; }
       if(id==='go_ban'){ if(!canBan()){ sfx('dry'); return; } playersOpen=false; scoresOpen=true; peMode='ban'; openScoreEdit(); sfx('swap'); return; }

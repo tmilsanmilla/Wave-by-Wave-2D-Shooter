@@ -174,6 +174,9 @@ function scrubPrivilegedUiForAccountChange(){
   if(typeof banList!=='undefined')banList=[];if(typeof appealList!=='undefined')appealList=[];
   if(typeof appealDecisionBusy!=='undefined')appealDecisionBusy.clear();if(typeof playerBanActionBusy!=='undefined')playerBanActionBusy.clear();
   if(typeof appealOperationReceipt!=='undefined')appealOperationReceipt=null;if(typeof appealSubmitBusy!=='undefined')appealSubmitBusy=false;
+  if(typeof appealSent!=='undefined')appealSent=false;
+  if(typeof appealReviewStatus!=='undefined'){appealReviewStatus='';appealHistoryView=false;appealReviewPage=0;appealFormGeneration++;}
+  if(typeof reportOpen!=='undefined'&&reportOpen&&typeof closeReport==='function')closeReport();
   if(typeof clearReaderState==='function')clearReaderState();
   msgOpen=false;msgTo='';adminMsgOperationId=null;clearPostComposerPrivateState();staffReport=false;if(typeof appealOpen!=='undefined')appealOpen=false;
   clearAdminIdentityFallbackCache();
@@ -793,7 +796,7 @@ const ADMIN_AUDIT_ACTION_TITLES=Object.freeze({
   'ban.apply':'Player ban','ban.unban':'Player unban','player.edit':'Player edit',
   'player.edit.receipt':'Player edit completed','player_request.submit':'Player edit requested',
   'player_request.approve':'Player edit request approval','player_request.reject':'Player edit request rejection',
-  'player_request.resolve':'Player edit request reviewed','ban_appeal.submit':'Ban appeal submitted',
+  'player_request.resolve':'Player edit request reviewed','ban_appeal.submit':'Ban appeal submitted','report.resolve':'Report resolved',
   'ban_appeal.lift':'Ban appeal approval','ban_appeal.deny':'Ban appeal denial','ban_appeal.resolve':'Ban appeal review',
   'weapon.definition.edit':'Weapon settings changed'
 });

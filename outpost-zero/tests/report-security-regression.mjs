@@ -18,7 +18,7 @@ check('Browser has no raw report-table read, insert, or update path',
   !/\.from\(['"]reports['"]\)/.test(browserCode));
 check('Report form tells guests to sign in and submits through the RPC',
   /if\(!authUser\)\{ \$\('repstatus'\)\.textContent='sign in to send a report'/.test(networking)&&
-  /rpc\('submit_outpost_zero_report'/.test(networking));
+  /rpc\('submit_outpost_zero_moderation_report'/.test(networking));
 check('Database removes every raw report policy and browser table privilege',
   /drop policy %I on public\.reports/.test(sql)&&
   /revoke all on table public\.reports from public,anon,authenticated/.test(sql)&&

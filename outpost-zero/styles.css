@@ -158,11 +158,15 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
     .settings-section .btn,#settingsactions .btn{min-height:44px;padding:8px}
   }
   #repwrap{inset:0;background:rgba(8,9,5,.86);display:none;align-items:center;justify-content:center;z-index:60}
-  #repbox{background:#101208;border:1px solid #4a4634;padding:26px;width:340px;text-align:center}
+  #repbox{background:#101208;border:1px solid #4a4634;padding:20px;width:min(390px,calc(100vw - 68px));max-height:calc(100dvh - 52px);overflow:auto;text-align:center}
   #repbox h2{color:#e8b658;font-size:18px;margin:0 0 6px}
   #repbox p{color:#8a9268;font-size:11px;margin:0 0 14px;line-height:1.5}
-  #repmsg{width:100%;box-sizing:border-box;height:110px;resize:none;background:rgba(0,0,0,.5);
+  #repbox label{display:block;text-align:left;color:#cdd6b0;font-size:11px;margin:0 0 4px}
+  #repbox [hidden]{display:none}
+  #reptype,#reptarget,#repmsg,#repfix{width:100%;box-sizing:border-box;background:#101208;
     border:1px solid #4a4634;color:#cdd6b0;font:12px ui-monospace,Consolas,monospace;padding:9px;margin-bottom:10px}
+  #repmsg,#repfix{min-height:68px;resize:vertical}
+  #appealbanreason,#appealhistory{color:#cdd6b0;font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:7em;overflow:auto;margin-bottom:8px}
   #repbox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
   #repstatus{color:#a7c15e;font-size:11px;min-height:15px;margin-top:2px}
   #postwrap{inset:0;background:rgba(8,9,5,.86);display:none;align-items:center;justify-content:center;z-index:60}
@@ -220,7 +224,8 @@ html,body{margin:0;height:100%;width:100%;background:#0b0d08;overflow:hidden;
   #promobox .btn{display:block;width:100%;margin-bottom:9px;padding:10px}
   #promostatus{color:#a7c15e;font-size:11px;min-height:15px;margin-top:2px}
   #appealwrap{inset:0;background:rgba(8,9,5,.92);display:none;align-items:center;justify-content:center;z-index:61}
-  #appealbox{background:#101208;border:1px solid #d05548;padding:26px;width:340px;text-align:center}
+  #appealbox{background:#101208;border:1px solid #d05548;padding:20px;width:min(390px,calc(100vw - 68px));max-height:calc(100dvh - 52px);overflow:auto;text-align:center}
+  #appealbox [hidden]{display:none}
   #appealbox h2{color:#e0a8a0;font-size:18px;margin:0 0 6px}
   #appealbox p{color:#8a9268;font-size:11px;margin:0 0 14px;line-height:1.5}
   #appealmsg{width:100%;box-sizing:border-box;height:110px;resize:none;background:rgba(0,0,0,.5);

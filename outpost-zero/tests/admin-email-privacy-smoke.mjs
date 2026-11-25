@@ -70,7 +70,7 @@ check('Client calls only protected admin identity boundaries',
   /list_outpost_zero_admin_audit_by_username/.test(administration)&&
   /list_outpost_zero_weapon_suggestions_by_username/.test(administration)&&
   /list_outpost_zero_bans_by_username/.test(ui)&&
-  /list_outpost_zero_ban_appeals_by_username/.test(ui));
+  /list_outpost_zero_moderation_appeals/.test(ui));
 
 let failed=0;
 for(const [name,ok] of checks){console.log(`${ok?'PASS':'FAIL'} ${name}`);if(!ok)failed++;}

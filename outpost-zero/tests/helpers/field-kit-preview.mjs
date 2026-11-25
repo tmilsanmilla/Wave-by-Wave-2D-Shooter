@@ -31,7 +31,10 @@ for(const key of [...FIELD_MELEE_KEYS,...FIELD_UTILITY_KEYS])makeButton((WEAPONS
 });
 makeButton('CATALOG',()=>{reset();state='select';selPage='weaponbrowse';weaponBrowserCat='MELEE';});
 reset();
-if(new URLSearchParams(location.search).get('view')==='armory'){
+const view=new URLSearchParams(location.search).get('view');
+if(view==='moderation'){
+  state='select';selPage='hub';openReport();
+}else if(view==='armory'){
   // Show the actual guest armory without the diagnostic toolbar covering it.
   state='select';selPage='weapons';
 }else{

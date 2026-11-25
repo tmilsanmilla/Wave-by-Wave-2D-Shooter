@@ -757,12 +757,22 @@ async function fetchBoard(){
   return anySuccess;
 }
 // ---- report a problem: signed-in, server-attributed report RPC ----
-let reportOpen=false, lastReportT=0, reportTargetUsername='';
+let reportOpen=false, lastReportT=0, reportTargetUsername='',reportFormGeneration=0;
+function syncReportFormKind(){
+  const player=$('reptype').value==='player';
+  $('reptargetlabel').hidden=$('reptarget').hidden=!player;
+  $('repfixlabel').hidden=$('repfix').hidden=player;
+  $('repmsg').maxLength=player?500:300;
+  $('repmsglabel').textContent=player?'What happened? (500 characters)':'Problem (300 characters)';
+}
 function openStaffReport(){ if(!isCoAdmin()||isMainAdmin()){sfx('dry');return false;}staffReport=true; adminPanelOpen=false; openReport();return true; }
 function openReport(targetUsername=''){
   const clean=String(targetUsername||'').trim().replace(/^@/,'');
   reportTargetUsername=/^[A-Za-z0-9_]{3,32}$/.test(clean)?clean:'';
-  reportOpen=true; menuOpen=false;
+  reportOpen=true; menuOpen=false;reportFormGeneration++;
+  $('reptype').value=reportTargetUsername?'player':'bug';$('reptype').disabled=!!reportTargetUsername;
+  $('reptarget').value=reportTargetUsername;$('reptarget').readOnly=!!reportTargetUsername;
+  $('repmsg').value=$('repfix').value='';$('repsend').disabled=false;syncReportFormKind();
   $('repwrap').style.display='flex'; $('repstatus').textContent='';
   const title=$('repbox')&&$('repbox').querySelector('h2'),hint=$('repbox')&&$('repbox').querySelector('p');
   if(title)title.textContent=reportTargetUsername?'\u26A0 REPORT @'+reportTargetUsername.toUpperCase():'\u26A0 REPORT A PROBLEM';
@@ -773,37 +783,46 @@ function openReport(targetUsername=''){
   try{ $('repmsg').focus(); }catch(e){}
 }
 function openReportForUsername(username){staffReport=false;openReport(username);}
-function closeReport(){ reportOpen=false; staffReport=false; reportTargetUsername=''; $('repwrap').style.display='none'; }
+function closeReport(){ reportOpen=false; staffReport=false; reportTargetUsername='';reportFormGeneration++; $('repwrap').style.display='none'; }
 async function sendReport(){
+  if(!reportOpen||$('repsend').disabled)return;
   if(staffReport&&(!isCoAdmin()||isMainAdmin())){closeReport();return;}
   if(!sb){ $('repstatus').textContent='preview build \u2014 reporting works on the live site'; return; }
   if(!authUser){ $('repstatus').textContent='sign in to send a report'; return; }
-  const msg=($('repmsg').value||'').trim();
+  const kind=$('reptype').value,msg=($('repmsg').value||'').trim(),
+    fix=kind==='player'?'':($('repfix').value||'').trim(),
+    target=kind==='player'?($('reptarget').value||'').trim().replace(/^@/,''):'',
+    limit=kind==='player'?500:300;
   if(!msg){ $('repstatus').textContent='write a few words first'; return; }
+  if([...msg].length>limit||[...fix].length>300){$('repstatus').textContent='shorten the text to the stated limit';return;}
+  if(kind==='player'&&!/^[A-Za-z0-9_]{3,32}$/.test(target)){
+    $('repstatus').textContent='enter the player’s username';return;
+  }
   const staffActor=typeof isAdmin==='function'&&isAdmin();
   if(!staffActor&&Date.now()-lastReportT<30000){ $('repstatus').textContent='hold on \u2014 one report per 30s'; return; }
-  $('repstatus').textContent='sending...';
-  const meta={ wave:Math.max(0,Math.min(999999999,Math.floor(+wave||0))),
-               score:Math.max(0,Math.min(Number.MAX_SAFE_INTEGER,Math.floor(+score||0))),
-               state:String(state||'select').replace(/[^A-Za-z0-9_-]/g,'').slice(0,32)||'select',w:W,h:H,
-               dpr:(window.devicePixelRatio||1),
-               ua:String((typeof navigator!=='undefined'&&navigator.userAgent)||'').replace(/[\u0000-\u001f\u007f]/g,'').slice(0,160) };
-  if(reportTargetUsername)meta.category='player';
+  $('repstatus').textContent='sending...';$('repsend').disabled=true;
+  const generation=reportFormGeneration,actor=String(authUser.id||''),
+    current=()=>reportOpen&&generation===reportFormGeneration&&String(authUser?.id||'')===actor;
   try{
-    const { error } = await sb.rpc('submit_outpost_zero_report',{
-      p_message:msg.slice(0,1000),p_context:meta,p_reported_username:reportTargetUsername||null
+    const {data,error} = await sb.rpc('submit_outpost_zero_moderation_report',{
+      p_kind:kind,p_problem:msg,p_suggested_fix:fix||null,p_reported_username:target||null
     });
     if(error) throw error;
+    if(!current())return;
+    if(!/^\d+$/.test(String(data||'')))throw new Error('Report receipt unavailable');
     if(!staffActor)lastReportT=Date.now();
     $('repstatus').textContent='sent \u2014 thank you!';
-    $('repmsg').value='';
-    setTimeout(closeReport, 1200);
+    $('repmsg').value=$('repfix').value='';
+    setTimeout(()=>{if(current())closeReport();},1200);
   }catch(err){
+    if(!current())return;
+    $('repsend').disabled=false;
     const detail=[err&&err.message,err&&err.details,err&&err.hint].filter(Boolean).join(' ');
     if(/REPORT_RATE_LIMIT/.test(detail))$('repstatus').textContent='hold on \u2014 one report per 30s';
     else if(/REPORT_SIGN_IN_REQUIRED/.test(detail))$('repstatus').textContent='sign in to send a report';
     else if(/REPORT_USERNAME_REQUIRED/.test(detail))$('repstatus').textContent='choose your username before reporting';
-    else if(/REPORTED_USERNAME_NOT_FOUND/.test(detail))$('repstatus').textContent='that username no longer exists';
+    else if(/REPORTED_USERNAME_NOT_FOUND/.test(detail))$('repstatus').textContent='choose another existing player';
+    else if(/REPORT_MESSAGE_LENGTH/.test(detail))$('repstatus').textContent='shorten the text to the stated limit';
     else $('repstatus').textContent='could not send \u2014 try again in a bit';
   }
 }
@@ -840,7 +859,7 @@ function accountMenuElements(){
   return {
     trigger:$('accountmenutrigger'),wrap:$('accountmenuwrap'),box:$('accountmenubox'),
     title:$('accountmenutitle'),identity:$('accountmenuidentity'),email:$('accountmenuemail'),detail:$('accountmenudetail'),
-    actions:$('accountmenuactions'),settings:$('accountmenusettings'),signout:$('accountmenusignout'),cancel:$('accountmenucancel'),
+    actions:$('accountmenuactions'),settings:$('accountmenusettings'),appeals:$('accountmenuappeals'),signout:$('accountmenusignout'),cancel:$('accountmenucancel'),
     confirm:$('accountmenuconfirm'),warning:$('accountmenuwarning'),confirmCancel:$('accountmenusignoutcancel'),
     confirmSignout:$('accountmenusignoutconfirm'),status:$('accountmenustatus')
   };
@@ -876,7 +895,7 @@ function syncAccountMenu(){
   if(el.actions)el.actions.hidden=accountMenuConfirming;
   if(el.confirm)el.confirm.hidden=!accountMenuConfirming;
   if(el.warning)el.warning.textContent=accountMenuForfeitWarning();
-  for(const button of [el.settings,el.signout,el.cancel,el.confirmCancel,el.confirmSignout])if(button)button.disabled=accountMenuBusy;
+  for(const button of [el.settings,el.appeals,el.signout,el.cancel,el.confirmCancel,el.confirmSignout])if(button)button.disabled=accountMenuBusy;
   if(el.status)el.status.textContent=accountMenuBusy?'SIGNING OUT\u2026':'';
   return true;
 }
@@ -896,7 +915,7 @@ function closeAccountMenu(force=false){
   if(el.wrap){el.wrap.style.display='none';el.wrap.setAttribute('aria-hidden','true');el.wrap.classList.remove('confirming','busy');}
   if(el.actions)el.actions.hidden=false;if(el.confirm)el.confirm.hidden=true;
   if(el.identity)el.identity.textContent='';if(el.email)el.email.textContent='';if(el.status)el.status.textContent='';
-  for(const button of [el.settings,el.signout,el.cancel,el.confirmCancel,el.confirmSignout])if(button)button.disabled=false;
+  for(const button of [el.settings,el.appeals,el.signout,el.cancel,el.confirmCancel,el.confirmSignout])if(button)button.disabled=false;
   // Forced closes happen after sign-out/account replacement too. Do not leave
   // keyboard focus inside the now-hidden account or confirmation dialog.
   if(hadFocus)restoreAccountMenuFocus();
@@ -962,7 +981,7 @@ function accountMenuKeydown(event){
   }
   if(event.key!=='Tab')return;
   const el=accountMenuElements(),buttons=(accountMenuConfirming
-    ?[el.confirmCancel,el.confirmSignout]:[el.settings,el.signout,el.cancel]).filter(button=>button&&!button.disabled);
+    ?[el.confirmCancel,el.confirmSignout]:[el.settings,el.appeals,el.signout,el.cancel]).filter(button=>button&&!button.disabled);
   if(!buttons.length){event.preventDefault();return;}
   const first=buttons[0],last=buttons[buttons.length-1],active=document.activeElement;
   if(event.shiftKey&&(active===first||!buttons.includes(active))){event.preventDefault();last.focus();}
@@ -1486,6 +1505,7 @@ async function saveAccountSettingsPassword(){
 }
 function bindDomEvents(){
   $('repsend').onclick=sendReport;
+  $('reptype').onchange=syncReportFormKind;
   $('repcancel').onclick=closeReport;
   $('postsend').onclick=sendPost;
   $('postcancel').onclick=closePost;
@@ -1496,6 +1516,7 @@ function bindDomEvents(){
   $('promosend').onclick=redeemPromo;
   $('promocancel').onclick=closePromo;
   $('appealsend').onclick=sendAppeal;
+  $('accountmenuappeals').onclick=()=>{if(authUser&&!accountMenuBusy&&closeAccountMenu())openAppeal(!myBan);};
   $('appealcancel').onclick=closeAppeal;
   $('scoresend').onclick=submitScoreEdit;
   $('scorecancel').onclick=closeScoreEdit;

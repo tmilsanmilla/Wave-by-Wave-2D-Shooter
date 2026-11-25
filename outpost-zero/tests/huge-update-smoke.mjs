@@ -43,7 +43,7 @@ check('Client setup guidance uses the consolidated Admin modules',!/Administrati
 check('Reports screen has Action and Amount dropdowns for Copy or Resolve',/report_action_menu/.test(adminUi)&&/report_amount_menu/.test(adminUi)&&/report_action_copy/.test(adminUi)&&/report_action_resolve/.test(adminUi)&&/report_amount_all/.test(adminUi)&&/report_amount_custom/.test(adminUi));
 check('Report export uses explicit labeled fields',/OUTPOST ZERO REPORT EXPORT/.test(admin)&&/TYPE: /.test(admin)&&/STATUS: /.test(admin)&&/MESSAGE: /.test(admin));
 check('Copied reports omit per-report usernames and timestamps',!/'FROM: '/.test(reportExportSection)&&!/'CREATED: '/.test(reportExportSection));
-check('Report identity and staff role are derived by the server',/submit_outpost_zero_report/.test(read('js/networking.js'))&&
+check('Report identity and staff role are derived by the server',/submit_outpost_zero_moderation_report/.test(read('js/networking.js'))&&
   !/from\('reports'\)/.test(read('js/networking.js'))&&/v_role:=public\._outpost_zero_staff_role\(\)/.test(admin03Sql));
 check('Fresh music and sound defaults are both 50% while saved values still override them',/let musicVol = 0\.5, sfxVol = 0\.5/.test(audio)&&/if\(typeof m\.mv==='number'\) musicVol=m\.mv/.test(persistence)&&/if\(typeof m\.sv==='number'\) sfxVol=m\.sv/.test(persistence));
 check('Audit summaries explain representative weapon and player edits',grantSummary==='Granted permanent access to SCAR-H Rifle, Twin Sai.'&&/requested changes: permanent weapon access, score/i.test(editSummary)&&/that player was not found/i.test(editSummary));
